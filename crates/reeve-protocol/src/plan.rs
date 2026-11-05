@@ -73,6 +73,11 @@ pub struct PlanStory {
     pub labels: Vec<String>,
     #[serde(default)]
     pub external_ref: Option<String>,
+    /// The state of the migrated ticket: todo when absent. Any state needs `external_ref`; one other than
+    /// todo is created in that state and logged `imported`, as the importer does, never `override`. Done is the
+    /// importer's alone (it needs a resolution).
+    #[serde(default)]
+    pub delivery: Option<DeliveryState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

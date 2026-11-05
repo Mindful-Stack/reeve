@@ -33,12 +33,15 @@ impl Handlers {
             labels,
             external_ref,
             owner,
+            DeliveryState::Todo,
         )
         .await
         .map(|(x, _)| x)
     }
 
-    /// `create_story`, and whether this call inserted it (false when its idempotency key already had one).
+    /// `create_story`, and whether this call inserted it (false when its idempotency key already had one). A `delivery`
+    /// other than todo grandfathers a migrated story (a plan's): it is inserted in that state and logged
+    /// `imported` with its reference, exactly as the importer logs it; the gate is never consulted.
     pub(crate) async fn create_story_reporting(
         &self,
         c: &Ctx,
@@ -51,7 +54,15 @@ impl Handlers {
         labels: Vec<String>,
         external_ref: Option<String>,
         owner: Option<String>,
+        delivery: DeliveryState,
     ) -> Result<(Story, bool), HandlerError> {
+        if delivery != DeliveryState::Todo
+            && (external_ref.is_none() || delivery == DeliveryState::Done)
+        {
+            return Err(HandlerError::Validation(
+                "only a migrated story (with an external_ref) is created in a state, and never done".into(),
+            ));
+        }
         if let Some(k) = self.repo.find_by_idempotency(ItemType::Story, idem).await? {
             return Ok((self.repo.get_story(&k).await?, false));
         }
@@ -83,7 +94,8 @@ impl Handlers {
             owner.map(|e| reeve_protocol::normalise_email(&e)),
             labels,
         )?
-        .with_external_ref(r);
+        .with_external_ref(r)
+        .grandfathered(delivery);
         if !self.repo.insert_story(&mut tx, &s, idem, c.now).await? {
             tx.rollback().await?;
             let k = self
@@ -93,19 +105,19 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.repo.get_story(&k).await?, false));
         }
+        let (action, payload) = match s.external_ref() {
+            Some(r) if delivery != DeliveryState::Todo => {
+                ("imported", serde_json::json!({"external_ref": r}))
+            }
+            r => (
+                "created",
+                with_ref(serde_json::json!({"title": s.title(), "kind": s.kind()}), r),
+            ),
+        };
         self.activity
             .record(
                 &mut tx,
-                self.rec(
-                    c,
-                    "story",
-                    &s.key().to_string(),
-                    "created",
-                    with_ref(
-                        serde_json::json!({"title": s.title(), "kind": s.kind()}),
-                        s.external_ref(),
-                    ),
-                ),
+                self.rec(c, "story", &s.key().to_string(), action, payload),
             )
             .await?;
         tx.commit().await?;

@@ -233,3 +233,93 @@ async fn plan_ids_and_external_references_are_checked_before_writing() {
     assert_eq!(st, 200, "{b}");
     assert_eq!(b["value"]["items"][0]["created"], false);
 }
+
+/// A plan story may carry the delivery state of the ticket it migrates. A state other than todo is
+/// grandfathered like the importer's: created in that state and logged `imported`, never `override`.
+#[tokio::test]
+async fn a_plan_story_carries_its_delivery_state_and_is_logged_imported() {
+    let h = harness().await;
+    let plan = json!({"id": "scrum", "stories": [
+        {"name": "a", "title": "A", "external_ref": "SCRUM-1", "delivery": "in_progress"},
+        {"name": "b", "title": "B", "external_ref": "SCRUM-2", "delivery": "in_review"},
+        {"name": "c", "title": "C", "external_ref": "SCRUM-3", "delivery": "testing"},
+        {"name": "d", "title": "D", "external_ref": "SCRUM-4", "delivery": "todo"},
+        {"name": "e", "title": "E"}
+    ]});
+    let (st, b) = post(&h, "/api/v1/plans", plan.clone()).await;
+    assert_eq!(st, 200, "{b}");
+    let items = b["value"]["items"].as_array().unwrap().clone();
+    let want = [
+        ("a", "in_progress", "imported"),
+        ("b", "in_review", "imported"),
+        ("c", "testing", "imported"),
+        ("d", "todo", "created"),
+        ("e", "todo", "created"),
+    ];
+    for (name, delivery, action) in want {
+        let key = items.iter().find(|i| i["name"] == name).unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let s = get(&h, &format!("/api/v1/stories/{key}")).await;
+        assert_eq!(s["delivery"], delivery, "{name}: {s}");
+        let act = get(&h, &format!("/api/v1/activity?entity_key={key}")).await;
+        let actions: Vec<&str> = act
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["action"].as_str())
+            .collect();
+        assert_eq!(actions, vec![action], "{name}: {act}");
+    }
+
+    // applying it again creates nothing and leaves the states as they are
+    let (st, again) = post(&h, "/api/v1/plans", plan).await;
+    assert_eq!(st, 200, "{again}");
+    assert!(
+        again["value"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["created"] == false),
+        "{again}"
+    );
+    let a = &items[0]["key"].as_str().unwrap().to_string();
+    assert_eq!(
+        get(&h, &format!("/api/v1/stories/{a}")).await["delivery"],
+        "in_progress"
+    );
+}
+
+/// Only migrated work can skip the gate, and done (which needs a resolution) is the importer's alone.
+#[tokio::test]
+async fn a_plan_delivery_state_needs_an_external_ref_and_is_never_done() {
+    let h = harness().await;
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "bad-delivery", "stories": [
+            {"name": "noref", "title": "No ref", "delivery": "in_progress"},
+            {"name": "done", "title": "Done", "external_ref": "SCRUM-5", "delivery": "done"},
+            {"name": "fine", "title": "Fine", "external_ref": "SCRUM-6", "delivery": "testing"}
+        ]}),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    let m = b["message"].as_str().unwrap();
+    assert!(
+        m.contains("story \"noref\": a delivery state requires an external_ref"),
+        "{m}"
+    );
+    assert!(m.contains("story \"done\": delivery done"), "{m}");
+    assert!(!m.contains("\"fine\""), "{m}");
+    assert_eq!(get(&h, "/api/v1/stories").await, json!([]));
+    // an unknown state is refused too
+    let (st, _) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "typo", "stories": [{"name": "s", "title": "S", "external_ref": "SCRUM-7", "delivery": "doing"}]}),
+    )
+    .await;
+    assert_eq!(st, 400);
+}

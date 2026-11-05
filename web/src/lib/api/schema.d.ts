@@ -1422,6 +1422,7 @@ export interface components {
         };
         PlanStory: {
             criteria?: string[];
+            delivery?: null | components["schemas"]["DeliveryState"];
             description?: string | null;
             /** @description A plan epic's name, or an existing epic's key. */
             epic?: string | null;

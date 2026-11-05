@@ -345,6 +345,11 @@ impl Story {
         self.external_ref = external_ref;
         self
     }
+    /// A migrated story created in the state its ticket had; the handler allows it only with a reference.
+    pub fn grandfathered(mut self, delivery: DeliveryState) -> Self {
+        self.delivery = delivery;
+        self
+    }
     pub fn external_ref(&self) -> Option<&str> {
         self.external_ref.as_deref()
     }
