@@ -1,0 +1,1130 @@
+[
+  {
+    "name": "empty doc",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": []
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": ""
+  },
+  {
+    "name": "marks, heading, rule, hard break, code block",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 1
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Title"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "bold",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " and "
+            },
+            {
+              "type": "text",
+              "text": "em",
+              "marks": [
+                {
+                  "type": "em"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " and "
+            },
+            {
+              "type": "text",
+              "text": "code",
+              "marks": [
+                {
+                  "type": "code"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " and "
+            },
+            {
+              "type": "text",
+              "text": "link",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "href": "https://example.com"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "hardBreak"
+            },
+            {
+              "type": "text",
+              "text": "next line"
+            }
+          ]
+        },
+        {
+          "type": "rule"
+        },
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "rust"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "fn main() {}"
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "# Title\n\n**bold** and _em_ and `code` and [link](https://example.com)  \nnext line\n\n---\n\n```rust\nfn main() {}\n```"
+  },
+  {
+    "name": "nested lists",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "one"
+                    }
+                  ]
+                },
+                {
+                  "type": "orderedList",
+                  "attrs": {
+                    "order": 1
+                  },
+                  "content": [
+                    {
+                      "type": "listItem",
+                      "content": [
+                        {
+                          "type": "paragraph",
+                          "content": [
+                            {
+                              "type": "text",
+                              "text": "one.a"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "listItem",
+                      "content": [
+                        {
+                          "type": "paragraph",
+                          "content": [
+                            {
+                              "type": "text",
+                              "text": "one.b"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "two"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "- one\n  1. one.a\n  1. one.b\n- two"
+  },
+  {
+    "name": "task list",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "taskList",
+          "attrs": {
+            "localId": "tl"
+          },
+          "content": [
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "a",
+                "state": "DONE"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "done thing"
+                }
+              ]
+            },
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "b",
+                "state": "TODO"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "open thing"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "- [x] done thing\n- [ ] open thing"
+  },
+  {
+    "name": "criteria section with mixed done items",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Intro text."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Acceptance Criteria"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Totals add up"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Export works"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "taskList",
+          "attrs": {
+            "localId": "tl"
+          },
+          "content": [
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "a",
+                "state": "DONE"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Reviewed by finance"
+                }
+              ]
+            },
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "b",
+                "state": "TODO"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Reviewed by legal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Out of scope"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Currency conversion"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Also: "
+            }
+          ]
+        },
+        {
+          "type": "taskList",
+          "attrs": {
+            "localId": "tl"
+          },
+          "content": [
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "c",
+                "state": "DONE"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Kick-off held"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Intro text.\n\n## Acceptance Criteria\n\n## Out of scope\n\n- Currency conversion\n\nAlso:",
+    "expected_criteria": [
+      {
+        "text": "Totals add up",
+        "done": false
+      },
+      {
+        "text": "Export works",
+        "done": false
+      },
+      {
+        "text": "Reviewed by finance",
+        "done": true
+      },
+      {
+        "text": "Reviewed by legal",
+        "done": false
+      },
+      {
+        "text": "Kick-off held",
+        "done": true
+      }
+    ]
+  },
+  {
+    "name": "the criteria document through to_markdown alone",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Intro text."
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Acceptance Criteria"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Totals add up"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Export works"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "taskList",
+          "attrs": {
+            "localId": "tl"
+          },
+          "content": [
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "a",
+                "state": "DONE"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Reviewed by finance"
+                }
+              ]
+            },
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "b",
+                "state": "TODO"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Reviewed by legal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Out of scope"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Currency conversion"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Also: "
+            }
+          ]
+        },
+        {
+          "type": "taskList",
+          "attrs": {
+            "localId": "tl"
+          },
+          "content": [
+            {
+              "type": "taskItem",
+              "attrs": {
+                "localId": "c",
+                "state": "DONE"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Kick-off held"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Intro text.\n\n## Acceptance Criteria\n\n- Totals add up\n- Export works\n\n- [x] Reviewed by finance\n- [ ] Reviewed by legal\n\n## Out of scope\n\n- Currency conversion\n\nAlso:\n\n- [x] Kick-off held"
+  },
+  {
+    "name": "unknown node",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "panel",
+          "attrs": {
+            "panelType": "info"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Heads up."
+                }
+              ]
+            },
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Second line."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "expand",
+          "attrs": {
+            "title": "More"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Inside."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "decisionList",
+          "content": [
+            {
+              "type": "decisionItem",
+              "attrs": {
+                "state": "DECIDED"
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Go."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Heads up.\n\nSecond line.\n\nInside.\n\nGo."
+  },
+  {
+    "name": "table",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "table",
+          "content": [
+            {
+              "type": "tableRow",
+              "content": [
+                {
+                  "type": "tableHeader",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Name"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "tableHeader",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Amount"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableRow",
+              "content": [
+                {
+                  "type": "tableCell",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Rent"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "tableCell",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "1 200"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "SEK"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Name | Amount\nRent | 1 200 SEK"
+  },
+  {
+    "name": "literal text is escaped",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "<img src=x> and a*b*c and Vec<T> and [x](y) and snake_case and back\\slash"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "# not a heading"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "1. not a list"
+            },
+            {
+              "type": "hardBreak"
+            },
+            {
+              "type": "text",
+              "text": "- nor this"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "a `tick`",
+              "marks": [
+                {
+                  "type": "code"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " and "
+            },
+            {
+              "type": "text",
+              "text": "<b>bold</b>",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": ""
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "```\nnested fence\n```"
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "\\<img src=x\\> and a\\*b\\*c and Vec\\<T\\> and \\[x\\](y) and snake\\_case and back\\\\slash\n\n\\# not a heading\n\n1\\. not a list  \n\\- nor this\n\n`` a `tick` `` and **\\<b\\>bold\\</b\\>**\n\n````\n```\nnested fence\n```\n````"
+  },
+  {
+    "name": "a criteria heading with a trailing colon",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Acceptance criteria:"
+            }
+          ]
+        },
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Uses <Vec> as is"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "## Acceptance criteria:",
+    "expected_criteria": [
+      {
+        "text": "Uses <Vec> as is",
+        "done": false
+      }
+    ]
+  },
+  {
+    "name": "mention",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Ping "
+            },
+            {
+              "type": "mention",
+              "attrs": {
+                "id": "acc-daniel",
+                "text": "@Dana"
+              }
+            },
+            {
+              "type": "text",
+              "text": " and "
+            },
+            {
+              "type": "mention",
+              "attrs": {
+                "id": "acc-carol",
+                "text": "Carol"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Ping @Dana and @Carol"
+  },
+  {
+    "name": "inline card",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "See "
+            },
+            {
+              "type": "inlineCard",
+              "attrs": {
+                "url": "https://example.com/a"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "See [https://example.com/a](https://example.com/a)"
+  },
+  {
+    "name": "block card",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Spec:"
+            }
+          ]
+        },
+        {
+          "type": "blockCard",
+          "attrs": {
+            "url": "https://example.com/spec"
+          }
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Spec:\n\n[https://example.com/spec](https://example.com/spec)"
+  },
+  {
+    "name": "media in mediaSingle",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "mediaSingle",
+          "attrs": {
+            "layout": "center"
+          },
+          "content": [
+            {
+              "type": "media",
+              "attrs": {
+                "id": "6e7c7f2c-3b1a-4d2e-9f3a-1c2b3d4e5f60",
+                "type": "file",
+                "collection": "jira-10042"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "[attachment](https://acme.atlassian.net/browse/SCRUM-11)"
+  },
+  {
+    "name": "date and status",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Due "
+            },
+            {
+              "type": "date",
+              "attrs": {
+                "timestamp": "1793059200000"
+              }
+            },
+            {
+              "type": "text",
+              "text": ", now "
+            },
+            {
+              "type": "status",
+              "attrs": {
+                "text": "BLOCKED",
+                "color": "red",
+                "localId": "s1"
+              }
+            },
+            {
+              "type": "text",
+              "text": " (was "
+            },
+            {
+              "type": "date",
+              "attrs": {
+                "timestamp": 1767225600000
+              }
+            },
+            {
+              "type": "text",
+              "text": ")"
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Due 2026-10-27, now \\[BLOCKED\\] (was 2026-01-01)"
+  },
+  {
+    "name": "extensions",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "See "
+            },
+            {
+              "type": "inlineExtension",
+              "attrs": {
+                "extensionType": "com.atlassian.confluence.macro.core",
+                "extensionKey": "anchor",
+                "text": "the anchor",
+                "parameters": {
+                  "macroParams": {}
+                }
+              }
+            },
+            {
+              "type": "text",
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "extension",
+          "attrs": {
+            "extensionType": "com.atlassian.confluence.macro.core",
+            "extensionKey": "toc",
+            "text": "Table of contents",
+            "parameters": {}
+          }
+        },
+        {
+          "type": "extension",
+          "attrs": {
+            "extensionType": "com.atlassian.confluence.macro.core",
+            "extensionKey": "jira",
+            "parameters": {
+              "macroParams": {
+                "key": {
+                  "value": "X-1"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "See the anchor.\n\nTable of contents"
+  },
+  {
+    "name": "entity text stays literal",
+    "adf": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Use &lt;T&gt; & "
+            },
+            {
+              "type": "text",
+              "text": "Tom & Jerry",
+              "marks": [
+                {
+                  "type": "strong"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "issue_url": "https://acme.atlassian.net/browse/SCRUM-11",
+    "expected_markdown": "Use &amp;lt;T&amp;gt; &amp; **Tom &amp; Jerry**"
+  }
+]

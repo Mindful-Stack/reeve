@@ -1,0 +1,33 @@
+{
+  "startAt": 0,
+  "maxResults": 100,
+  "total": 1,
+  "comments": [
+    {
+      "id": "901",
+      "author": {
+        "accountId": "acc-daniel",
+        "displayName": "Dana Example",
+        "emailAddress": "dana@example.com",
+        "active": true
+      },
+      "body": {
+        "type": "doc",
+        "version": 1,
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Still blocked."
+              }
+            ]
+          }
+        ]
+      },
+      "created": "2026-09-02T08:00:00.000+0000",
+      "updated": "2026-09-02T08:00:00.000+0000"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "zen": "Keep it logically awesome.",
+  "hook_id": 4001,
+  "hook": { "type": "Repository", "id": 4001, "events": ["pull_request"], "active": true },
+  "repository": { "id": 3001, "full_name": "Acme/portal", "private": true },
+  "sender": { "login": "dan", "id": 1 }
+}

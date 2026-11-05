@@ -1,0 +1,69 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/reeve-protocol",
+  "crates/reeve-planning",
+  "crates/reeve-identity",
+  "crates/reeve-activity",
+  "crates/reeve-server",
+  "crates/reeve",
+  "crates/reeve-testdb",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.3.0"
+license = "MIT"
+repository = "https://github.com/Mindful-Stack/reeve"
+
+[workspace.dependencies]
+reeve-protocol = { path = "crates/reeve-protocol" }
+reeve-planning = { path = "crates/reeve-planning" }
+reeve-identity = { path = "crates/reeve-identity" }
+reeve-activity = { path = "crates/reeve-activity" }
+reeve-server = { path = "crates/reeve-server" }
+reeve-testdb = { path = "crates/reeve-testdb" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "signal"] }
+axum = { version = "0.8", features = ["json", "macros"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-axum = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"
+hex = "0.4"
+hmac = "0.12"
+rand = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+testcontainers-modules = { version = "0.15", features = ["postgres"] }
+assert_cmd = "2"
+tempfile = "3"
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+url = "2"
+axum-extra = { version = "0.12", features = ["cookie"] }
+time = "0.3"
+futures-util = "0.3"
+urlencoding = "2"
+rust-embed = "8"
+mime_guess = "2"
+base64 = "0.22"
+rsa = "0.9"
+
+# RSA key generation for the test-only fake OpenID issuer (reeve-identity, `static-oidc`) takes seconds per key
+# unoptimised. The test profile inherits these from dev.
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

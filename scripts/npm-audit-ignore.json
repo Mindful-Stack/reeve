@@ -1,0 +1,3 @@
+{
+	"$comment": "Advisories the web audit (scripts/npm-audit.mjs) ignores: the GHSA id, then why it cannot be fixed now and when to revisit. Every entry needs a reason; an entry no advisory matches fails the audit."
+}

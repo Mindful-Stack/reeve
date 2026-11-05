@@ -1,0 +1,22 @@
+{
+  "bug": {
+    "ascii": "[B]",
+    "glyph": "▲"
+  },
+  "chore": {
+    "ascii": "[C]",
+    "glyph": "○"
+  },
+  "epic": {
+    "ascii": "[E]",
+    "glyph": "■"
+  },
+  "initiative": {
+    "ascii": "[I]",
+    "glyph": "◆"
+  },
+  "story": {
+    "ascii": "[S]",
+    "glyph": "●"
+  }
+}

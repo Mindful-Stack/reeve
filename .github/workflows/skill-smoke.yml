@@ -1,0 +1,100 @@
+name: skill-smoke
+# The real-planner smoke for the Lorekeeper skills (scripts/skill-smoke.sh): every command of Lorekeeper's
+# references/reeve-cli.md against a real server and the fake CLI. Its own workflow because `paths` filters apply per
+# workflow; not a required check (a pull request outside these paths reports no status). It runs on main too, so drift
+# shows there after a merge and main keeps a Rust cache the pull requests can restore.
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "reeve.skill-smoke.toml"
+      - "scripts/skill-smoke.sh"
+      - ".github/workflows/skill-smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - "reeve.skill-smoke.toml"
+      - "scripts/skill-smoke.sh"
+      - ".github/workflows/skill-smoke.yml"
+  workflow_dispatch:
+permissions: { contents: read }
+# A newer push to the same pull request supersedes its run in progress. A push to main gets a group of its own (its run
+# id), since a shared group would still drop a waiting main run when a third push arrives.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  # The Lorekeeper ref the smoke runs against: `main` once the Lorekeeper pull request has merged, its branch until then
+  # Do not merge while this is not `main`.
+  LOREKEEPER_REF: main
+jobs:
+  skill-smoke:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      # No step needs git credentials, and Lorekeeper's test code runs in this job: the token stays out of .git/config.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      # actions/checkout places a repository only under the workspace, so Lorekeeper sits at lorekeeper/ inside it.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: Mindful-Stack/lorekeeper
+          ref: ${{ env.LOREKEEPER_REF }}
+          path: lorekeeper
+          persist-credentials: false
+      - if: env.LOREKEEPER_REF != 'main'
+        run: echo "::warning::the skill smoke runs against Lorekeeper ${LOREKEEPER_REF}, not main; switch LOREKEEPER_REF back to main before merging"
+      # Once the Lorekeeper pull request from LOREKEEPER_REF has merged, its branch is frozen: smoking against it would stay
+      # green while main drifts. Lorekeeper is public, so the job's read-only token can list its pull requests.
+      - name: lorekeeper ref not merged
+        if: env.LOREKEEPER_REF != 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          merged=$(gh api -X GET repos/Mindful-Stack/lorekeeper/pulls -f state=closed -f head="Mindful-Stack:${LOREKEEPER_REF}" \
+            -f per_page=100 --jq '[.[] | select(.merged_at != null)] | length')
+          if [ "$merged" != 0 ]; then
+            echo "::error::the Lorekeeper pull request has merged: switch LOREKEEPER_REF to main"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      # mise's pinned ShellCheck (mise.toml), the one script-test uses; the lint runs before the long build.
+      - name: shellcheck
+        run: |
+          mise exec -- shellcheck --version
+          mise exec -- shellcheck scripts/skill-smoke.sh
+      - name: skill-smoke
+        run: mise run skill-smoke
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          LOREKEEPER_DIR: ${{ github.workspace }}/lorekeeper
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        # A timeout cancels the job; a hung run's logs matter most.
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: skill-smoke
+          path: |
+            target/skill-smoke/server.log
+            target/skill-smoke/answers
+            target/skill-smoke/lorekeeper.tap

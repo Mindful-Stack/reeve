@@ -1,0 +1,18 @@
+[package]
+name = "reeve-planning"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+reeve-protocol.workspace = true
+sqlx.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+reeve-testdb.workspace = true

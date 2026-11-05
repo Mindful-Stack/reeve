@@ -1,0 +1,14 @@
+# Starts reeve-decision-check.service every ten minutes, each start up to two minutes late (RandomizedDelaySec plus
+# the default AccuracySec of one minute). No Persistent=: a run missed while the host was down gains nothing, and
+# catching it up at boot would start it before compose has the server up, failing on every boot. After a boot the
+# first run is the next ten-minute tick; one that falls right after boot can still find the server not up yet and
+# fail once, and the tick after it recovers.
+[Unit]
+Description=Run the Reeve decision check every ten minutes
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

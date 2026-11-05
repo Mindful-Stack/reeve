@@ -1,0 +1,19 @@
+[package]
+name = "reeve-testdb"
+description = "Test support, not a bounded context: a PostgreSQL database per test (dev-dependency only)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] } # the clone backoff sleeps; a test's barrier
+testcontainers-modules.workspace = true
+sha2.workspace = true
+hex.workspace = true
+url.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile.workspace = true

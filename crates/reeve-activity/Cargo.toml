@@ -1,0 +1,19 @@
+[package]
+name = "reeve-activity"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+reeve-protocol.workspace = true
+reeve-planning.workspace = true
+reeve-identity.workspace = true
+sqlx.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+reeve-testdb.workspace = true

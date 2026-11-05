@@ -1,0 +1,23 @@
+{
+  "action": "opened",
+  "number": NUMBER,
+  "pull_request": {
+    "id": 2001,
+    "node_id": "PR_kwDOA",
+    "number": NUMBER,
+    "html_url": "https://github.com/REPO/pull/NUMBER",
+    "title": "Fix the login redirect",
+    "state": "open",
+    "draft": false,
+    "merged": false,
+    "locked": false,
+    "updated_at": "UPDATED",
+    "created_at": "2026-10-26T09:00:00Z",
+    "user": { "login": "dan", "id": 1 },
+    "labels": [],
+    "head": { "ref": "BRANCH", "sha": "a1b2c3d4", "repo": { "full_name": "REPO" } },
+    "base": { "ref": "main", "sha": "e5f6a7b8" }
+  },
+  "repository": { "id": 3001, "full_name": "REPO", "private": true },
+  "sender": { "login": "dan", "id": 1 }
+}

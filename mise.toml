@@ -1,0 +1,134 @@
+# The project's tasks: `mise tasks` lists them, `mise run <task>` runs one. CI runs the same tasks.
+# Rust is not pinned here: rust-toolchain.toml is the single source for rustup and CI.
+[tools]
+shellcheck = "0.10.0" # the script tests lint the scripts; CI installs [tools] and fails without it
+actionlint = "1.7.12" # lints .github/workflows/ (mise run lint), shellchecking each run: block with the pin above
+node = "22" # the web client and the Playwright smoke; the Dockerfile uses node:22
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.150" # the test runner (mise run test); prebuilt, not compiled
+cargo-deny = "0.20.2" # the Rust dependency audit (deny.toml)
+yq = "4.53.6" # scripts/check-action-pins.sh parses the workflows with it
+
+[env]
+# The server tests select the static OIDC provider, which exists only under this feature; the Dockerfile never enables it.
+REEVE_FEATURES = "--features reeve-server/static-oidc"
+
+[tasks.test]
+description = "One PostgreSQL per run (scripts/test.sh): workspace tests under nextest with the static OIDC provider, the doc tests, then the production config test without it (needs Docker)"
+run = "scripts/test.sh"
+
+[tasks.lint]
+description = "rustfmt check, clippy -D warnings with and without static-oidc, the isolation lint, actionlint and the action pins"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --workspace --all-targets $REEVE_FEATURES -- -D warnings",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "scripts/check-context-isolation.sh",
+  "actionlint",
+  "scripts/check-action-pins.sh",
+]
+
+[tasks.isolation]
+description = "Run the context-isolation lint"
+run = "scripts/check-context-isolation.sh"
+
+[tasks.isolation-test]
+description = "Prove the isolation lint catches every bypass shape"
+run = "scripts/tests/isolation.sh"
+
+# The backup and restore-rehearsal scripts' control flow against a fake `docker compose`, the skill smoke's safety
+# logic (its create/drop, URL rewrite and TAP verdict, sourced), shellchecking both smoke scripts, the release
+# workflow's shell, the action-pin check's cases, ci.yml's Rust path classifier (scripts/ci-needs-rust.sh) and the npm
+# audit gate's (node --test) (no Docker needed).
+[tasks.script-test]
+description = "The backup, restore-rehearsal and skill-smoke scripts' logic against fakes, the release workflow's shell, the action-pin check, ci.yml's path classifier and the npm audit gate (no Docker needed)"
+run = ["scripts/tests/restore-rehearsal.sh", "scripts/tests/backup.sh", "scripts/tests/skill-smoke.sh", "scripts/tests/workflows.sh", "scripts/tests/action-pins.sh", "scripts/tests/ci-needs-rust.sh", "node --test scripts/tests/npm-audit.test.mjs"]
+
+# Dependency audits. CI runs them in .github/workflows/audit.yml
+# on dependency changes and daily, so a new advisory surfaces without a code change. Both fetch advisory data.
+[tasks.audit]
+description = "Both dependency audits: RustSec advisories (cargo-deny) and npm audit for web/"
+depends = ["audit-rust", "audit-web"]
+
+# Every RustSec advisory fails; ignores live in deny.toml, each with its reason.
+[tasks.audit-rust]
+description = "cargo deny check advisories against Cargo.lock (deny.toml holds the policy and the ignores)"
+run = "cargo deny check advisories"
+
+# Reads web/package-lock.json only (no npm ci needed). Moderate and above fail across the whole tree (npm's dev split
+# does not say what ships: svelte is a devDependency bundled into the client); ignores live in
+# scripts/npm-audit-ignore.json.
+[tasks.audit-web]
+description = "npm audit for web/: moderate and above fail, dev dependencies included"
+run = "node scripts/npm-audit.mjs --level moderate"
+
+[tasks.decision-check-test]
+description = "The scheduled decision check's script against fake binaries and a real git remote"
+run = "scripts/tests/decision-check.sh"
+
+[tasks.db-up]
+description = "Start the compose PostgreSQL"
+run = "docker compose up -d postgres"
+
+[tasks.db-down]
+description = "Stop the compose stack"
+run = "docker compose down"
+
+[tasks.fmt]
+description = "Format the workspace with rustfmt"
+run = "cargo fmt"
+
+[tasks.run]
+description = "Start PostgreSQL and run the server on the host"
+depends = ["db-up"]
+run = "cargo run -p reeve-server -- serve"
+
+[tasks.acceptance]
+description = "The CLI end-to-end acceptance test"
+run = "scripts/test.sh -p reeve --test acceptance $REEVE_FEATURES"
+
+# `reeve import jira` against a real server and an in-test fake Jira serving the committed fixtures (needs Docker).
+[tasks.import-test]
+description = "reeve import jira against a real server and an in-test fake Jira (needs Docker)"
+run = "scripts/test.sh -p reeve --test jira_import $REEVE_FEATURES"
+
+# The TUI against a scripted server, the real server (needs Docker) and a real terminal (a pty).
+[tasks.tui-test]
+description = "The TUI's scripted, end-to-end and pty tests (needs Docker)"
+run = "scripts/test.sh -p reeve --test tui_scripted --test tui_e2e --test tui_pty $REEVE_FEATURES"
+
+# The server embeds whatever web/build holds (an empty folder is created by build.rs), so `run` needs no web step.
+[tasks.web]
+description = "npm ci and build the web client into web/build (embedded by the next reeve-server build)"
+dir = "web"
+run = ["npm ci", "npm run build"]
+
+# Types come from the committed OpenAPI snapshot; a stale schema.d.ts fails here and in CI.
+[tasks.web-check]
+description = "Regenerate schema.d.ts and fail on drift, svelte-check, vitest"
+dir = "web"
+run = [
+  "npm run gen",
+  "git diff --exit-code src/lib/api/schema.d.ts",
+  "npm run check",
+  "npm run test",
+]
+
+[tasks.web-dev]
+description = "The Vite dev server (proxies /api and /auth to 127.0.0.1:7474)"
+dir = "web"
+run = "npm run dev"
+
+# Testing layer five: builds the client and the binaries (static-oidc), seeds a fresh database, runs Playwright.
+# Uses a fresh reeve_smoke database in the compose Postgres; an exported DATABASE_URL (an empty database) only when
+# CI=true or REEVE_SMOKE_ALLOW_DATABASE_URL=1. Fails when port 7475 is already taken.
+[tasks.web-smoke]
+description = "The Playwright smoke against a real server and a fresh database (scripts/web-smoke.sh)"
+run = "scripts/web-smoke.sh"
+
+# The real-planner smoke for the Lorekeeper skills: Lorekeeper's reeve-real-server and reeve-reference tests against a
+# real server (static-oidc) and the fake CLI. Needs a Lorekeeper checkout (LOREKEEPER_DIR, default ../lorekeeper) and
+# the compose Postgres or an allowed DATABASE_URL's server, on which it creates and drops a database of its own. Fails
+# when port 7476 is already taken.
+[tasks.skill-smoke]
+description = "Every Lorekeeper skill command against a real server and the fake (scripts/skill-smoke.sh)"
+run = "scripts/skill-smoke.sh"

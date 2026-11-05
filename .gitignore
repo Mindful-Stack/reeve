@@ -1,0 +1,16 @@
+/target
+**/*.rs.bk
+.cargo/
+*.pdb
+/web/node_modules
+/web/build
+/web/.svelte-kit
+.env
+# sibling repos of this household are cloned here and never tracked
+/reeve-runner/
+/reeve.toml
+/web/test-results
+/web/playwright-report
+
+# Design specs and plans are working documents, not committed here.
+docs/superpowers/

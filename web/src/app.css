@@ -1,0 +1,292 @@
+/* The scheme: data-mode on <html> wins (a personal theme sets it later); otherwise the system preference. */
+/* tokens:light */
+:root,
+:root[data-mode='light'] {
+	--background: #faf4ed;
+	--lighter-background: #f2e9e1;
+	--raised: #fffaf3;
+	--line: #dfdad9;
+	--line-control: #87828f;
+	--foreground: #575279;
+	--muted: #655f80;
+	--accent: #765f93;
+	--on-accent: #fffaf3;
+	--selection: #eee8f2;
+	--focus: #575279;
+	--ready: #4f8e99;
+	--ready-soft: #e9f1f1;
+	--warn: #c27a1e;
+	--warn-soft: #fbf1e4;
+	--danger: #a05068;
+	--pr-open: #286983;
+	--pr-merged: #765f93;
+	--mark: #f6e2c3;
+	--scrim: rgb(25 23 36 / 0.28);
+	--shadow: 0 8px 28px rgb(25 23 36 / 0.14);
+	color-scheme: light;
+}
+/* tokens:dark */
+:root[data-mode='dark'] {
+	--background: #191724;
+	--lighter-background: #26233a;
+	--raised: #1f1d2e;
+	--line: #403d52;
+	--line-control: #716d89;
+	--foreground: #e0def4;
+	--muted: #908caa;
+	--accent: #c4a7e7;
+	--on-accent: #191724;
+	--selection: #2d2840;
+	--focus: #e0def4;
+	--ready: #9ccfd8;
+	--ready-soft: #1e2a33;
+	--warn: #f6c177;
+	--warn-soft: #2e2620;
+	--danger: #eb6f92;
+	--pr-open: #31748f;
+	--pr-merged: #c4a7e7;
+	--mark: #403d52;
+	--scrim: rgb(0 0 0 / 0.5);
+	--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+	color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+	/* tokens:dark-media */
+	:root:not([data-mode='light']) {
+		--background: #191724;
+		--lighter-background: #26233a;
+		--raised: #1f1d2e;
+		--line: #403d52;
+		--line-control: #716d89;
+		--foreground: #e0def4;
+		--muted: #908caa;
+		--accent: #c4a7e7;
+		--on-accent: #191724;
+		--selection: #2d2840;
+		--focus: #e0def4;
+		--ready: #9ccfd8;
+		--ready-soft: #1e2a33;
+		--warn: #f6c177;
+		--warn-soft: #2e2620;
+		--danger: #eb6f92;
+		--pr-open: #31748f;
+		--pr-merged: #c4a7e7;
+		--mark: #403d52;
+		--scrim: rgb(0 0 0 / 0.5);
+		--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+		color-scheme: dark;
+	}
+}
+:root {
+	--mono: 'JetBrains Mono', ui-monospace, monospace;
+	/* The narrowest a board or planning column gets before the view scrolls sideways. */
+	--column-min: 260px;
+	font-family: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
+	font-size: 16px;
+	line-height: 1.45;
+	color: var(--foreground);
+	background: var(--background);
+}
+body {
+	margin: 0;
+	background: var(--background);
+}
+a {
+	color: var(--accent);
+	text-underline-offset: 3px;
+}
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+h1 {
+	margin: 0;
+	font-size: 28px;
+	font-weight: 650;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+}
+h2 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+.count {
+	color: var(--muted);
+	font-weight: 400;
+}
+.muted {
+	color: var(--muted);
+}
+.small {
+	font-size: 13px;
+}
+.key {
+	font-family: var(--mono);
+	font-size: 13px;
+}
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* Buttons: every <button> is a quiet bordered button; .primary, .ghost and .icon vary it. */
+button,
+.button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 12px;
+	border: 1px solid var(--line-control);
+	border-radius: 4px;
+	background: var(--raised);
+	color: var(--foreground);
+	font: inherit;
+	font-size: 14px;
+	font-weight: 500;
+	text-decoration: none;
+	cursor: pointer;
+}
+button:hover:not(:disabled):not(.primary),
+.button:hover:not(.primary) {
+	background: var(--lighter-background);
+}
+button.primary:hover:not(:disabled),
+.button.primary:hover {
+	background: color-mix(in srgb, var(--accent) 88%, var(--foreground));
+	border-color: color-mix(in srgb, var(--accent) 88%, var(--foreground));
+}
+button.primary,
+.button.primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--on-accent);
+	font-weight: 600;
+}
+button.ghost {
+	border-color: transparent;
+	background: transparent;
+}
+button.icon {
+	width: 32px;
+	padding: 0;
+	justify-content: center;
+}
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Fields */
+input:where(:not([type='checkbox']):not([type='radio'])),
+select,
+textarea {
+	box-sizing: border-box;
+	min-height: 32px;
+	padding: 4px 8px;
+	border: 1px solid var(--line-control);
+	border-radius: 4px;
+	background: var(--background);
+	color: var(--foreground);
+	font: inherit;
+	font-size: 15px;
+}
+input[type='checkbox'],
+input[type='radio'] {
+	accent-color: var(--accent);
+}
+label.field {
+	display: grid;
+	gap: 4px;
+	font-size: 14px;
+	color: var(--muted);
+}
+
+/* Dialogs (override, resolution and the create forms) */
+dialog {
+	max-width: min(520px, calc(100vw - 32px));
+	padding: 20px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--raised);
+	color: var(--foreground);
+	box-shadow: var(--shadow);
+}
+dialog::backdrop {
+	background: var(--scrim);
+}
+
+/* Page shell */
+header.top-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 20px;
+	padding: 8px 20px;
+	border-bottom: 1px solid var(--line);
+}
+main {
+	padding: 16px 20px 32px;
+}
+.status {
+	padding: 16px 20px;
+	color: var(--muted);
+}
+
+/* Narrow widths: one rule here, each layout wraps on its own. */
+@media (max-width: 720px) {
+	header.top-bar nav {
+		order: 3;
+		flex-basis: 100%;
+	}
+	main {
+		padding: 12px 16px 24px;
+	}
+}
+
+/* Bordered row lists: the backlog, search, tokens, users, activity and the epic page's stories. */
+.rows {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--raised);
+	overflow: hidden;
+}
+.rows > li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 16px;
+	padding: 9px 12px;
+}
+.rows > li + li {
+	border-top: 1px solid var(--line);
+}
+
+/* Live changes: a card or row someone else just changed gets the ring and one .note line. */
+.rows > li.fresh {
+	box-shadow: inset 0 0 0 2px var(--accent);
+}
+.card.fresh {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--selection);
+}
+.note {
+	margin: 0;
+	color: var(--accent);
+	font-size: 13px;
+}
+
+/* A search hit's match: body text on the mark, also inside the accent link (accent on --mark misses AA in light). */
+mark {
+	background: var(--mark);
+	color: var(--foreground);
+	border-radius: 2px;
+}

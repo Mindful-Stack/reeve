@@ -1,0 +1,58 @@
+name: audit
+# The dependency audits (`mise run audit-rust`, `mise run audit-web`; policy and ignores in deny.toml and
+# scripts/npm-audit-ignore.json). On pull requests and pushes that change dependencies or the policy, and daily, so a
+# new advisory against an unchanged lock file surfaces without a code change. Not a required check: a new advisory
+# must not block unrelated pull requests, and a pull request outside these paths reports no status. The jobs are named
+# audit-rust and audit-web so no check run shares a name with ci.yml's required `web`. GitHub mails a failed scheduled
+# run to whoever last changed the cron line, and the Actions tab shows it.
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+      - "deny.toml"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "scripts/npm-audit.mjs"
+      - "scripts/npm-audit-ignore.json"
+      - "mise.toml"
+      - ".github/workflows/audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+      - "deny.toml"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "scripts/npm-audit.mjs"
+      - "scripts/npm-audit-ignore.json"
+      - "mise.toml"
+      - ".github/workflows/audit.yml"
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  audit-rust:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - name: cargo deny check advisories
+        run: mise run audit-rust
+  audit-web:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - name: npm audit
+        run: mise run audit-web

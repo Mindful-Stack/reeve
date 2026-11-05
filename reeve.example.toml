@@ -1,0 +1,71 @@
+database_url = "postgres://reeve:reeve@localhost:5433/reeve"
+bind = "127.0.0.1:7474"
+# The URL users reach the instance at (behind the reverse proxy). The OIDC redirect is <public_url>/auth/callback,
+# and cookies are Secure (the session cookie `__Host-` prefixed) when it is https. Required with [oidc]; without
+# sign-in it defaults to http://<bind> (http://127.0.0.1:<port> for a 0.0.0.0 or :: bind).
+public_url = "https://reeve.example.com"
+# How long a browser session (an interactive token labelled "web session") lasts, 1 to 365 days.
+session_days = 30
+key_prefix = "ABC"
+horizon_buckets = ["Now", "Next", "Upcoming", "Later", "Won't do"]
+allowed_domains = ["example.com"]
+allowed_emails = []
+admins = ["admin@example.com"]
+
+# Browser sign-in. Without an [oidc] section the web client cannot sign in and only CLI tokens work.
+# [oidc]
+# provider = "google"
+# client_id = "1234-abc.apps.googleusercontent.com"
+# client_secret = "..."
+#
+# Local development and tests only, on a binary built with `--features reeve-server/static-oidc`: signs everyone
+# in as one address. Refused unless both `bind` and `public_url` are loopback.
+# [oidc]
+# provider = "static"
+# static_email = "dev@example.com"
+
+# The GitHub pull-request webhook (POST /webhooks/github; see deploy/README.md). Without it the route answers 404.
+# Branches named after a story key (ABC-12-fix) link their pull requests to that story; the status is informational
+# and never moves a story. legacy_prefixes: the Jira delivery project key (stories, bugs, tasks; not the discovery
+# project), so that branches from before the import (SCRUM-11-old) resolve to the story imported from that key.
+# The repos entries are owner/name, compared case-insensitively; pull requests are stored and shown under the
+# lower-cased name (acme/portal), whatever spelling GitHub's payload or this list uses.
+# [github]
+# webhook_secret = "at least 16 characters; the same secret as on the GitHub webhook"
+# repos = ["Acme/portal"]
+# legacy_prefixes = ["SCRUM"]
+
+# The Jira import (POST /api/v1/import/*, used by `reeve import jira --apply`). Off by default: the endpoints answer 404.
+# Turn it on for the migration, run the import as an admin with an interactive token, then turn it off again.
+# [import]
+# enabled = true
+
+# The board's done column shows only stories done within this many days (1 to 3650); older ones stay one `?done=all` away.
+# [board]
+# done_window_days = 14
+
+# Sprints: a new sprint's default length in days (1 to 90) and the upkeep share's reference line in percent (0 to 100;
+# a line to compare against, not a budget).
+# [sprints]
+# length_days = 14
+# upkeep_line = 20
+
+# How often the live event stream reads the activity log, in milliseconds (10 to 10000).
+# [events]
+# poll_ms = 2000
+
+# Repositories whose records required decisions may link to. `decision link` refuses a repository
+# not listed here, so an empty list rejects every link. Each must be cloned at <household>/<name> on
+# the host that runs `reeve decision check`; the reference stack's scheduled check clones it from `url`
+# (`reeve-server repos` lists them). A name is one directory name: not empty, not starting with '.' or '-', without
+# '/' or '\'. Any other name stops every subcommand, `serve` included (see deploy/README.md, "Upgrading: repository
+# names"); the name is the planner's own label for the repository and need not match its name on GitHub.
+[[repos]]
+name = "knowledge-base"
+url = "git@github.com:Acme/knowledge-base.git"
+adr_dir = "knowledge/adrs"
+
+[[repos]]
+name = "portal"
+url = "git@github.com:Acme/portal.git"
+adr_dir = "docs/architectural-decision-records"

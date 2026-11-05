@@ -1,0 +1,20 @@
+# Template for the skill smoke (scripts/skill-smoke.sh). The script substitutes @DATABASE_URL@ and writes the result to
+# target/skill-smoke/reeve.toml; this file is never served from directly. The static provider needs a binary built with
+# `--features reeve-server/static-oidc` and is refused unless `bind` and `public_url` are loopback. The smoke signs in
+# with an automation token issued to the admin below, as the Lorekeeper skills run in production (kb/ADR-0008 R3).
+database_url = "@DATABASE_URL@"
+bind = "127.0.0.1:7476"
+public_url = "http://127.0.0.1:7476"
+key_prefix = "SKS"
+horizon_buckets = ["Now", "Next", "Later"]
+allowed_emails = ["skill-smoke@example.com"]
+admins = ["skill-smoke@example.com"]
+
+# The household repository the script builds under target/skill-smoke/household/kb, with one accepted record.
+[[repos]]
+name = "kb"
+adr_dir = "adrs"
+
+[oidc]
+provider = "static"
+static_email = "skill-smoke@example.com"

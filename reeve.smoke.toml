@@ -1,0 +1,14 @@
+# Template for the Playwright smoke (scripts/web-smoke.sh). The script substitutes @DATABASE_URL@ and writes the result
+# to target/smoke/reeve.toml; this file is never served from directly. The static provider needs a binary built with
+# `--features reeve-server/static-oidc` and is refused unless `bind` and `public_url` are loopback.
+database_url = "@DATABASE_URL@"
+bind = "127.0.0.1:7475"
+public_url = "http://127.0.0.1:7475"
+key_prefix = "SMK"
+horizon_buckets = ["Now", "Next", "Later"]
+allowed_emails = ["smoke@example.com"]
+admins = ["smoke@example.com"]
+
+[oidc]
+provider = "static"
+static_email = "smoke@example.com"

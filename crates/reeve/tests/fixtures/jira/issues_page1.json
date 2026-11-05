@@ -1,0 +1,261 @@
+{
+  "isLast": false,
+  "nextPageToken": "issues-page-2",
+  "issues": [
+    {
+      "id": "10",
+      "key": "SCRUM-10",
+      "fields": {
+        "summary": "Onboarding",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Onboarding flow, end to end."
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Acceptance criteria"
+                }
+              ]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Sign-up works"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Welcome email sent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "In Progress"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Epic"
+        },
+        "assignee": {
+          "accountId": "acc-daniel",
+          "displayName": "Dana Example",
+          "emailAddress": "dana@example.com",
+          "active": true
+        },
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10010",
+              "name": "Polaris work item link",
+              "inward": "is implemented by",
+              "outward": "implements"
+            },
+            "outwardIssue": {
+              "key": "JPD-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "20",
+      "key": "SCRUM-20",
+      "fields": {
+        "summary": "Ledger",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Put payments on a ledger."
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "To Do"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Epic"
+        },
+        "assignee": null,
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10010",
+              "name": "Polaris work item link",
+              "inward": "is implemented by",
+              "outward": "implements"
+            },
+            "inwardIssue": {
+              "key": "JPD-3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "30",
+      "key": "SCRUM-30",
+      "fields": {
+        "summary": "Maintenance",
+        "description": null,
+        "status": {
+          "name": "To Do"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Epic"
+        },
+        "assignee": null,
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10003",
+              "name": "Relates",
+              "inward": "relates to",
+              "outward": "relates to"
+            },
+            "outwardIssue": {
+              "key": "JPD-2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "11",
+      "key": "SCRUM-11",
+      "fields": {
+        "summary": "Sign-up form",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Build the form."
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "In Progress"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Story"
+        },
+        "assignee": {
+          "accountId": "acc-daniel",
+          "displayName": "Dana Example",
+          "emailAddress": "dana@example.com",
+          "active": true
+        },
+        "labels": [
+          "frontend"
+        ],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [],
+        "parent": {
+          "key": "SCRUM-10"
+        }
+      }
+    },
+    {
+      "id": "12",
+      "key": "SCRUM-12",
+      "fields": {
+        "summary": "SMS sign-up",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Not doing SMS."
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "Done"
+        },
+        "resolution": {
+          "name": "Won't Do"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "assignee": null,
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [],
+        "parent": {
+          "key": "SCRUM-10"
+        }
+      }
+    }
+  ]
+}

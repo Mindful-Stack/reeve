@@ -1,0 +1,51 @@
+name: release
+# Every push to main publishes ghcr.io/mindful-stack/reeve:<sha>, tagged by commit and never `latest`. Deploying an
+# image is the operator's business, outside this repository (deploy/README.md covers the reference stack).
+on:
+  push:
+    branches: [main]
+    # A push that changes only documentation publishes nothing: no Markdown file, docs/ or lore/ is a build input, so
+    # its commit gets no image.
+    paths-ignore: ["**.md", "docs/**", "lore/**"]
+permissions: { contents: read }
+# Every run: block is `bash --noprofile --norc -eo pipefail {0}` (GitHub's `shell: bash`); the implicit default is
+# `bash -e {0}`, without pipefail, where a failing command before a pipe goes unseen (scripts/tests/workflows.sh).
+defaults:
+  run:
+    shell: bash
+jobs:
+  publish:
+    if: github.event_name == 'push'
+    timeout-minutes: 45
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The Dockerfile as is: it never enables static-oidc (config_no_static proves a production build refuses it).
+      # Every published commit gets its own tag (docs-only pushes do not run, see `on`). Never `latest`.
+      - name: build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/mindful-stack/reeve:${{ github.sha }}
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,scope=image,mode=max
+      - name: the published image runs
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/mindful-stack/reeve@$DIGEST"
+          docker run --rm "$ref" --version
+          docker run --rm "$ref" migrations >/dev/null
+          docker run --rm --entrypoint bash "$ref" -euc \
+            'bash -n /usr/local/bin/reeve-decision-check; for t in git ssh flock timeout realpath readlink age age-keygen; do command -v "$t"; done'

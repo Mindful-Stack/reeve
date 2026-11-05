@@ -1,0 +1,172 @@
+{
+  "isLast": false,
+  "nextPageToken": "ideas-page-2",
+  "issues": [
+    {
+      "id": "1",
+      "key": "JPD-1",
+      "fields": {
+        "summary": "Self-serve onboarding",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Self-serve onboarding for new customers."
+                }
+              ]
+            },
+            {
+              "type": "heading",
+              "attrs": {
+                "level": 2
+              },
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Acceptance criteria"
+                }
+              ]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "A customer can sign up alone"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "taskList",
+              "attrs": {
+                "localId": "tl"
+              },
+              "content": [
+                {
+                  "type": "taskItem",
+                  "attrs": {
+                    "localId": "a",
+                    "state": "TODO"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Pricing agreed"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "Discovery"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Idea"
+        },
+        "assignee": {
+          "accountId": "acc-daniel",
+          "displayName": "Dana Example",
+          "emailAddress": "dana@example.com",
+          "active": true
+        },
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10010",
+              "name": "Polaris work item link",
+              "inward": "is implemented by",
+              "outward": "implements"
+            },
+            "inwardIssue": {
+              "key": "SCRUM-10"
+            }
+          }
+        ],
+        "customfield_10042": {
+          "self": "https://acme.atlassian.net/rest/api/3/customFieldOption/1",
+          "value": "Now",
+          "id": "1"
+        },
+        "customfield_10043": "{\"start\":\"2026-11-01\",\"end\":\"2026-12-15\"}"
+      }
+    },
+    {
+      "id": "2",
+      "key": "JPD-2",
+      "fields": {
+        "summary": "Team calendar",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A calendar of deadlines."
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "Discovery"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Idea"
+        },
+        "assignee": {
+          "accountId": "acc-daniel",
+          "displayName": "Dana Example",
+          "emailAddress": "dana@example.com",
+          "active": true
+        },
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10003",
+              "name": "Relates",
+              "inward": "relates to",
+              "outward": "relates to"
+            },
+            "inwardIssue": {
+              "key": "SCRUM-30"
+            }
+          }
+        ],
+        "customfield_10042": {
+          "self": "https://acme.atlassian.net/rest/api/3/customFieldOption/1",
+          "value": "Next",
+          "id": "1"
+        },
+        "customfield_10043": "2027-01-20"
+      }
+    }
+  ]
+}

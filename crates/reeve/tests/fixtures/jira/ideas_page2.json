@@ -1,0 +1,48 @@
+{
+  "isLast": true,
+  "issues": [
+    {
+      "id": "3",
+      "key": "JPD-3",
+      "fields": {
+        "summary": "Blockchain everything",
+        "description": null,
+        "status": {
+          "name": "Parking lot"
+        },
+        "resolution": null,
+        "issuetype": {
+          "name": "Idea"
+        },
+        "assignee": {
+          "accountId": "acc-daniel",
+          "displayName": "Dana Example",
+          "emailAddress": "dana@example.com",
+          "active": true
+        },
+        "labels": [],
+        "created": "2026-08-01T09:00:00.000+0000",
+        "issuelinks": [
+          {
+            "id": "1",
+            "type": {
+              "id": "10010",
+              "name": "Polaris work item link",
+              "inward": "is implemented by",
+              "outward": "implements"
+            },
+            "outwardIssue": {
+              "key": "SCRUM-20"
+            }
+          }
+        ],
+        "customfield_10042": {
+          "self": "https://acme.atlassian.net/rest/api/3/customFieldOption/1",
+          "value": "Parking lot",
+          "id": "1"
+        },
+        "customfield_10043": null
+      }
+    }
+  ]
+}

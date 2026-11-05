@@ -1,0 +1,138 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions: { contents: read }
+# A newer push to the same pull request supersedes its run in progress. A push to main gets a group of its own (its run
+# id), since a shared group would still drop a waiting main run when a third push arrives.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  # Whether a pull request's files can reach the Rust jobs (scripts/ci-needs-rust.sh): one that touches only the web
+  # client, docs, lore or top-level markdown skips lint and test; web and smoke always run. On a push to main the step
+  # is skipped and the output is empty, which runs everything; so does this job failing.
+  changes:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: read }
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - id: paths
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        # A renamed file counts at both its paths. The listing is fetched first, so a failed request fails this job
+        # (and the run) rather than reaching the script as an empty list; lint and test then run in full.
+        run: |
+          set -euo pipefail
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')
+          rust=$(printf '%s\n' "$files" | scripts/ci-needs-rust.sh)
+          echo "rust=$rust" >>"$GITHUB_OUTPUT"
+  # kb/ADR-0010 R5: the isolation lint runs here (mise run lint), with its own test.
+  lint:
+    needs: changes
+    # `!cancelled()`: a failed `changes` would otherwise skip this job, and a skipped job reports success. With it, the
+    # output is empty and the job runs.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain
+        with: { components: "rustfmt, clippy" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - name: lint (rustfmt, clippy with and without static-oidc, isolation lint, actionlint)
+        run: mise run lint
+      - name: isolation lint test
+        run: mise run isolation-test
+  # The scripts run against fakes and a local git remote: no Rust, no Docker.
+  scripts:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - name: script tests
+        run: mise run script-test
+      - name: decision check script test
+        run: mise run decision-check-test
+  test:
+    needs: changes
+    # `!cancelled()`: a failed `changes` would otherwise skip this job, and a skipped job reports success. With it, the
+    # output is empty and the job runs.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    # Backtraces keep file and line; the thirty test binaries link far less debug info. The test profile inherits
+    # dev's. Local builds are unchanged.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # The tests wait on PostgreSQL, not the CPU: twice the runner's four cores.
+      NEXTEST_TEST_THREADS: "8"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - name: test
+        run: mise run test
+  web:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: web }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - run: npm ci
+      - name: web-check (schema drift, svelte-check, vitest)
+        run: mise run web-check
+      - run: npm run build
+      - run: test -f build/index.html
+  # Testing layer five: the Playwright smoke against a real server (static OIDC provider) and a fresh database.
+  # scripts/web-smoke.sh builds the client and the binaries itself.
+  smoke:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+        with: { cache: true }
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: web
+      - name: web-smoke
+        run: mise run web-smoke
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: smoke-traces
+          path: |
+            web/test-results
+            target/smoke/server.log

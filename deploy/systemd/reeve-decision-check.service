@@ -1,0 +1,16 @@
+# The scheduled decision check, run once inside the server container (deploy/README.md, "Scheduled decision check").
+# WorkingDirectory is the directory holding docker-compose.yml, the one `docker compose up` runs from: change it if
+# the stack lives elsewhere. The token file holds an admin's automation token on one line and is root-only (0600);
+# it is the script's standard input, so the token is in no argument list and no environment outside the container.
+[Unit]
+Description=Reeve scheduled decision check
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/reeve
+StandardInput=file:/etc/reeve/decision-check.token
+ExecStart=/usr/bin/docker compose exec -T server reeve-decision-check
+# A oneshot has no start timeout by default. This is a backstop for compose itself hanging: the script's own deadline
+# (REEVE_CHECK_TIMEOUT, 8 minutes by default) ends the run inside the container first, with every process it started.
+TimeoutStartSec=9min

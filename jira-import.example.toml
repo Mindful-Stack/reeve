@@ -1,0 +1,34 @@
+# Copy to jira-import.toml and adjust to your Jira Cloud site. `reeve import jira` reads it.
+site = "https://acme-team.atlassian.net"  # --site overrides this
+# api_base = "https://api.atlassian.com/ex/jira/<cloudId>"   # only for scoped API tokens; default: <site>
+email = "dana@example.com"                  # Jira Cloud basic auth: email + API token (classic token) from JIRA_TOKEN
+discovery_project = "JPD"                     # Jira Product Discovery: ideas → initiatives
+delivery_project = "SCRUM"                    # software project: epics, stories, bugs, tasks
+                                              # epics are the issues whose type is named exactly "Epic": a renamed or localised Epic type is not recognised
+bucket_field = "customfield_10042"            # idea bucket: an option object, read `.value`
+target_date_field = "customfield_10043"       # idea target date: a date string, or start/end (as an object or a JSON string); `end` wins → "YYYY-MM"
+idea_link_type = ""                           # REQUIRED for --apply, no default: the link type joining ideas to delivery epics on YOUR site; a rehearsal lists every link type it saw
+acceptance_heading = "Acceptance criteria"
+default_resolution = "completed"              # for Done issues whose Jira resolution is null or unmapped (reported as a warning)
+[bucket_to_horizon]
+"Now" = "Now"
+"Next" = "Next"
+"Upcoming" = "Upcoming"
+"Later" = "Later"
+"Won't do" = "Won't do"
+[status_to_delivery]
+"To Do" = "todo"
+"In Progress" = "in_progress"
+"Ready for review" = "in_review"
+"In testing" = "testing"
+"Done" = "done"
+[resolution_map]
+"Done" = "completed"
+"Won't Do" = "dropped"
+"Duplicate" = "dropped"
+[type_to_kind]
+"Story" = "story"
+"Bug" = "bug"
+"Task" = "chore"
+[owner_map]                                   # accountId → email, for assignees whose email Jira hides
+# "5b10ac8d82e05b22cc7d4ef5" = "bob@example.com"

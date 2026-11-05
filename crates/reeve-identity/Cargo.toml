@@ -1,0 +1,37 @@
+[package]
+name = "reeve-identity"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+reeve-protocol.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+openidconnect.workspace = true
+url.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+axum = { workspace = true, optional = true }
+rsa = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+
+[features]
+# Test-only: the static provider, the fake OpenID issuer and the Google adapter's test factory. The Dockerfile never
+# enables it.
+static-oidc = ["dep:axum", "dep:rsa", "dep:base64", "tokio/net"]
+
+[dev-dependencies]
+tokio.workspace = true
+base64 = "0.22"
+reeve-testdb.workspace = true
+async-trait.workspace = true

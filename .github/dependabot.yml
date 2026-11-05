@@ -1,0 +1,14 @@
+# Dependabot keeps the SHA-pinned actions current (scripts/check-action-pins.sh requires the pins): it updates the SHA
+# and its trailing version comment together. Weekly, grouped into one pull request, so the pins do not rot and a week's
+# updates are reviewed at once. Cargo and npm updates stay manual; the audit workflow surfaces what needs one.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore

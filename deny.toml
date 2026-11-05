@@ -1,0 +1,33 @@
+# cargo-deny configuration (`mise run audit-rust`, which runs `cargo deny check advisories` only: licences, bans and
+# sources are not checked yet). Policy: every RustSec
+# advisory against any crate in Cargo.lock, dev and build dependencies included, fails: vulnerabilities, unmaintained,
+# unsound and yanked releases alike. RustSec does not grade every advisory, so severity is not a filter. An advisory
+# that cannot be fixed now is listed under `ignore` with why it does not reach Reeve and what clears it. An ignore
+# entry that no longer matches anything fails too (unused-ignored-advisory), so a fixed advisory's entry is removed.
+
+[graph]
+all-features = true
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+ignore = [
+  # crypto-bigint 0.5 (via openidconnect -> p256/p384 -> elliptic-curve 0.13): non-constant-time arithmetic. The fix is
+  # in 0.7.6 only and elliptic-curve 0.13 cannot take it. Reeve does elliptic-curve work only to verify ID token
+  # signatures against the provider's public keys: no secret operand. Clears when openidconnect moves to
+  # elliptic-curve 0.14.
+  { id = "RUSTSEC-2026-0387", reason = "public-key verification only (openidconnect); no fixed 0.5.x release" },
+  # rsa 0.9 (Marvin attack): a timing side channel on private-key operations, no fixed release. Production uses rsa
+  # only through openidconnect to verify ID token signatures with public keys. The direct dependency signs with a
+  # throwaway key in the test-only fake issuer (the static-oidc feature, never in the Dockerfile).
+  { id = "RUSTSEC-2023-0071", reason = "public-key verification in production; private keys only in the test fake issuer" },
+  # paste (via utoipa-axum 0.2): unmaintained, a proc-macro run at compile time, no code in the binary. utoipa-axum 0.3
+  # replaces it with pastey but needs utoipa 6, an upgrade that touches the OpenAPI snapshot (a separate change).
+  { id = "RUSTSEC-2024-0436", reason = "compile-time proc-macro only; clears with the utoipa 6 / utoipa-axum 0.3 upgrade" },
+  # unsafe-libyaml (via serde_yaml, itself deprecated): unmaintained. The CLI parses ADR front matter from the
+  # household's own repositories with it (crates/reeve/src/git.rs). Replacing serde_yaml is a parser swap, not an
+  # upgrade; asked in the pull request that added this file.
+  { id = "RUSTSEC-2024-0449", reason = "front matter of the household's own ADRs only; replacing serde_yaml is pending a decision" },
+]

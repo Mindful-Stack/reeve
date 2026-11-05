@@ -1,0 +1,25 @@
+//! Users, tokens and the principal every request runs as.
+mod domain;
+#[cfg(feature = "static-oidc")]
+mod fake_issuer;
+mod handler;
+mod oidc;
+mod ports;
+mod repo;
+pub use domain::{IdentityConfig, Principal, Role, TokenKind, hash_secret, normalise_email};
+#[cfg(feature = "static-oidc")]
+pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
+pub use handler::{
+    AuthError, IssuedToken, SESSION_LABEL, VerifiedIdentity, authenticate, disable_user,
+    enable_user, issue_token, list_tokens, list_users, list_users_in, revoke_all_for, revoke_token,
+    sign_in,
+};
+pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
+#[cfg(feature = "static-oidc")]
+pub use oidc::{GoogleOidcTestOptions, TestClock, make_google_oidc_for_tests, make_static_oidc};
+pub use ports::{IdentityActivity, IdentityEvent};
+pub use reeve_protocol::Via;
+pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};
+pub fn migrator() -> sqlx::migrate::Migrator {
+    sqlx::migrate!("./migrations")
+}

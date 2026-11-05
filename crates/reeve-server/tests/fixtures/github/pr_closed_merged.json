@@ -1,0 +1,20 @@
+{
+  "action": "closed",
+  "number": NUMBER,
+  "pull_request": {
+    "id": 2001,
+    "number": NUMBER,
+    "html_url": "https://github.com/REPO/pull/NUMBER",
+    "title": "Fix the login redirect",
+    "state": "closed",
+    "draft": false,
+    "merged": true,
+    "merged_at": "UPDATED",
+    "merge_commit_sha": "c0ffee00",
+    "updated_at": "UPDATED",
+    "head": { "ref": "BRANCH", "sha": "a1b2c3d4", "repo": { "full_name": "REPO" } },
+    "base": { "ref": "main", "sha": "e5f6a7b8" }
+  },
+  "repository": { "id": 3001, "full_name": "REPO", "private": true },
+  "sender": { "login": "dan", "id": 1 }
+}
