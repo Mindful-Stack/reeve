@@ -30,4 +30,10 @@ ignore = [
   # household's own repositories with it (crates/reeve/src/git.rs). Replacing serde_yaml is a parser swap, not an
   # upgrade; asked in the pull request that added this file.
   { id = "RUSTSEC-2024-0449", reason = "front matter of the household's own ADRs only; replacing serde_yaml is pending a decision" },
+  # astral-tokio-tar (via testcontainers-modules -> testcontainers): unmaintained since 2026-11-03, not a
+  # vulnerability, and no release replaces it. It reaches test code only: reeve-testdb and the crates' dev-dependencies
+  # start a throwaway PostgreSQL with testcontainers; nothing in the server binary or the Dockerfile builds it.
+  # testcontainers 0.28 still depends on it. Clears when testcontainers drops or replaces the crate (Astral suggests
+  # tar-codec).
+  { id = "RUSTSEC-2026-0440", reason = "unmaintained, test-only (testcontainers); clears when testcontainers replaces it" },
 ]
