@@ -2067,6 +2067,17 @@
             },
             "type": "array"
           },
+          "delivery": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DeliveryState",
+                "description": "The state of the migrated ticket: todo when absent. Any state needs `external_ref`; one other than\ntodo is created in that state and logged `imported`, as the importer does, never `override`. Done is the\nimporter's alone (it needs a resolution)."
+              }
+            ]
+          },
           "description": {
             "type": [
               "string",

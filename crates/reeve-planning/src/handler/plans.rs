@@ -3,11 +3,14 @@
 //! created through the ordinary create handlers, in dependency order, each under the idempotency key
 //! `plan:<len(id)>:<id>:<name>`, so a second apply of the same plan answers every item as existing and writes nothing. Nothing
 //! here bypasses a rule a single create keeps: activity entries, external references and blocker cycles are checked
-//! by the handlers the plan calls.
+//! by the handlers the plan calls. A story carrying a migrated ticket's active state is grandfathered as the
+//! importer does: created in that state and logged `imported`, never through `move_story`.
 use super::import::check_item_ref;
 use super::*;
 use crate::domain::items::*;
-use reeve_protocol::{ApplyPlan, Kind, PlanApplied, PlannedBlock, PlannedDecision, PlannedItem};
+use reeve_protocol::{
+    ApplyPlan, DeliveryState, Kind, PlanApplied, PlannedBlock, PlannedDecision, PlannedItem,
+};
 use std::collections::HashMap;
 
 /// What a plan reference names: an item the plan creates, or one that exists.
@@ -102,6 +105,7 @@ impl Handlers {
                     s.labels.clone(),
                     s.external_ref.clone(),
                     None,
+                    s.delivery.unwrap_or(DeliveryState::Todo),
                 )
                 .await?;
             keys.insert(s.name.clone(), made.key().clone());
@@ -259,6 +263,16 @@ impl Handlers {
                 && let Err(HandlerError::Validation(m)) = check_item_ref(r, prefix)
             {
                 errors.push(format!("{at}: {m}"));
+            }
+            if s.delivery.is_some() && s.external_ref.is_none() {
+                errors.push(format!(
+                    "{at}: a delivery state requires an external_ref; only migrated work skips the gate"
+                ));
+            }
+            if s.delivery == Some(DeliveryState::Done) {
+                errors.push(format!(
+                    "{at}: delivery done is the importer's (it needs a resolution); a plan takes todo, in_progress, in_review or testing"
+                ));
             }
             if let Some(r) = &s.epic {
                 pending.push((r.clone(), Some(ItemType::Epic), format!("{at}: epic {r:?}")));
