@@ -1,5 +1,6 @@
 //! Search items by text: is there already an item about X? Titles, briefs, descriptions and external
-//! references, across every level, newest first.
+//! references, across every level. A query that names a key (`12`, `#12`, `abc-12`) finds that item first; then an
+//! exact external reference, then titles, then the rest, newest first within each.
 use super::*;
 use reeve_protocol::SearchHit;
 
@@ -14,15 +15,19 @@ impl Handlers {
                 "search text must be 1..=200 characters".into(),
             ));
         }
+        let key = self.key_named_by(q);
         let needle = q.to_lowercase();
         let has = |s: &str| s.to_lowercase().contains(&needle);
         Ok(self
             .repo
-            .search_items(q, LIMIT)
+            .search_items(q, key.as_ref(), LIMIT)
             .await?
             .into_iter()
             .map(|r| {
                 let mut matched = vec![];
+                if key.as_ref() == Some(&r.key) {
+                    matched.push("key".to_string());
+                }
                 if has(&r.title) {
                     matched.push("title".to_string());
                 }
@@ -44,5 +49,15 @@ impl Handlers {
                 }
             })
             .collect())
+    }
+
+    /// The key a query names: a bare number or `#n` under the current prefix, or a key in any case (`abc-12`, an
+    /// earlier prefix's `old-3`).
+    fn key_named_by(&self, q: &str) -> Option<Key> {
+        let n = q.strip_prefix('#').unwrap_or(q);
+        if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+            return format!("{}-{n}", self.settings.key_prefix).parse().ok();
+        }
+        q.to_ascii_uppercase().parse().ok()
     }
 }

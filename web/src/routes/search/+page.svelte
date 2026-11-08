@@ -16,17 +16,23 @@
 	let latest = 0;
 	let attempt = $state(0);
 
-	const groups = $derived(
-		(
-			[
-				['initiative', 'Initiatives'],
-				['epic', 'Epics'],
-				['story', 'Stories']
-			] as const
-		)
-			.map(([item, label]) => ({ label, hits: (hits ?? []).filter((h) => h.item === item) }))
-			.filter((g) => g.hits.length > 0)
-	);
+	// The item the query names by key (`12`, `ABC-12`) heads the page, above the levels; each level keeps the
+	// server's order (exact reference, then titles, then the rest).
+	const groups = $derived.by(() => {
+		const all = hits ?? [];
+		const byKey = all.filter((h) => h.matched.includes('key'));
+		const rest = all.filter((h) => !h.matched.includes('key'));
+		return [
+			{ label: 'Key', hits: byKey },
+			...(
+				[
+					['initiative', 'Initiatives'],
+					['epic', 'Epics'],
+					['story', 'Stories']
+				] as const
+			).map(([item, label]) => ({ label, hits: rest.filter((h) => h.item === item) }))
+		].filter((g) => g.hits.length > 0);
+	});
 
 	// The field follows the URL only when the query changes, so a Retry never wipes what is being typed.
 	$effect(() => {
@@ -61,8 +67,8 @@
 
 <PageHeader title="Search" />
 <form role="search" aria-label="Search items" onsubmit={submit}>
-	<label for="search-q">Title, brief, description or Jira key</label>
-	<input id="search-q" type="search" bind:value={draft} placeholder="e.g. NorthCloud or JPD-30" />
+	<label for="search-q">Title, brief, description, key or external reference</label>
+	<input id="search-q" type="search" bind:value={draft} placeholder="e.g. 12, NorthCloud or JPD-30" />
 	<button type="submit">Search</button>
 </form>
 

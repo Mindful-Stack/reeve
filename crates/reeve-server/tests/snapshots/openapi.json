@@ -6070,7 +6070,7 @@
               },
               "value": {
                 "items": {
-                  "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,\n`brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
+                  "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the\nquery named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
                   "properties": {
                     "item": {
                       "$ref": "#/components/schemas/ItemType"
@@ -6509,7 +6509,7 @@
         "type": "string"
       },
       "SearchHit": {
-        "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,\n`brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
+        "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the\nquery named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
         "properties": {
           "item": {
             "$ref": "#/components/schemas/ItemType"

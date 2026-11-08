@@ -296,7 +296,12 @@ impl PlanningRepo for PgPlanningRepo {
         .await?;
         Ok(k.as_deref().map(key))
     }
-    async fn search_items(&self, text: &str, limit: i64) -> Result<Vec<SearchRow>, RepoError> {
+    async fn search_items(
+        &self,
+        text: &str,
+        exact: Option<&Key>,
+        limit: i64,
+    ) -> Result<Vec<SearchRow>, RepoError> {
         let mut pattern = String::from("%");
         for ch in text.chars() {
             if matches!(ch, '%' | '_' | '\\') {
@@ -310,11 +315,15 @@ impl PlanningRepo for PgPlanningRepo {
                SELECT 'initiative' AS t, key, NULL::text AS kind, title, brief AS text, external_ref, created_at FROM initiatives \
                UNION ALL SELECT 'epic', key, NULL, title, brief, external_ref, created_at FROM epics \
                UNION ALL SELECT 'story', key, kind, title, description, external_ref, created_at FROM stories \
-             ) x WHERE title ILIKE $1 ESCAPE '\\' OR text ILIKE $1 ESCAPE '\\' OR external_ref ILIKE $1 ESCAPE '\\' \
-             ORDER BY created_at DESC, key DESC LIMIT $2",
+             ) x WHERE key = $3 OR title ILIKE $1 ESCAPE '\\' OR text ILIKE $1 ESCAPE '\\' \
+               OR external_ref ILIKE $1 ESCAPE '\\' \
+             ORDER BY CASE WHEN key = $3 THEN 0 WHEN lower(external_ref) = lower($4) THEN 1 \
+               WHEN title ILIKE $1 ESCAPE '\\' THEN 2 ELSE 3 END, created_at DESC, key DESC LIMIT $2",
         )
         .bind(&pattern)
         .bind(limit)
+        .bind(exact.map(|k| k.to_string()))
+        .bind(text)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()

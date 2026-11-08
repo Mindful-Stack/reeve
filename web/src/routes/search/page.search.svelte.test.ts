@@ -15,7 +15,7 @@ vi.mock('$app/state', async () => {
 });
 vi.mock('$app/navigation', () => ({ goto: vi.fn((to: string | URL) => route.fake!.goto(to)) }));
 
-const net = vi.hoisted(() => ({ asked: [] as string[], mode: { fail: false } }));
+const net = vi.hoisted(() => ({ asked: [] as string[], mode: { fail: false, keyHit: false } }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
@@ -26,6 +26,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			{ key: 'ABC-3', item: 'story', kind: 'bug', title: 'Move the database', matched: ['description'] },
 			{ key: 'ABC-1', item: 'initiative', kind: null, title: 'Leave NorthCloud now', matched: ['title'] }
 		];
+		if (net.mode.keyHit) value.unshift({ key: 'ABC-12', item: 'story', kind: 'story', title: 'The one', matched: ['key'] });
 		return value;
 	});
 	return orig();
@@ -37,6 +38,7 @@ afterEach(() => {
 	app = null;
 	document.body.innerHTML = '';
 	net.mode.fail = false;
+	net.mode.keyHit = false;
 	route.fake!.reset();
 });
 
@@ -59,6 +61,33 @@ describe('search page', () => {
 		expect(items[0].querySelector('a')!.getAttribute('href')).toBe('/initiatives/ABC-1');
 		expect(items[0].querySelector('mark')!.textContent).toBe('NorthCloud');
 		expect(items[1].querySelector('mark')).toBeNull();
+	});
+
+	it('says what can be searched', () => {
+		app = mount(Page, { target: document.body });
+		flushSync();
+		expect(document.body.querySelector('label[for="search-q"]')!.textContent).toBe(
+			'Title, brief, description, key or external reference'
+		);
+		expect(document.body.querySelector('input[type="search"]')!.getAttribute('placeholder')).toBe('e.g. 12, NorthCloud or JPD-30');
+	});
+
+	it('shows the item the query names by key above every level', async () => {
+		net.mode.keyHit = true;
+		app = mount(Page, { target: document.body });
+		const items = await vi.waitFor(() => {
+			flushSync();
+			const li = [...document.body.querySelectorAll('li')];
+			expect(li).toHaveLength(3);
+			return li;
+		});
+		expect(items[0].querySelector('a')!.getAttribute('href')).toBe('/board?story=ABC-12');
+		expect(items[0].textContent).toContain('matched key');
+		expect([...document.body.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual([
+			'Key 1',
+			'Initiatives 1',
+			'Stories 1'
+		]);
 	});
 
 	it('keeps the typed text when Retry searches again', async () => {
