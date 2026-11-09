@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 
+/// An access write is `begin` -> `lock` -> `load_in` -> writes -> activity -> commit.
 #[async_trait]
 pub trait AccessStore: Send + Sync {
     /// The current policy, read on a connection of its own (no cache, kb/ADR-0015 R5).
@@ -17,7 +18,9 @@ pub trait AccessStore: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         floor: &IdentityConfig,
     ) -> Result<AccessPolicy, sqlx::Error>;
-    /// Serialises access writes until the transaction ends (kb/ADR-0015 R3).
+    /// Serialises access writes until the transaction ends (kb/ADR-0015 R3). It MUST be the first statement of a READ
+    /// COMMITTED transaction (`pool.begin()`'s default), so the `load_in` after it sees every write committed before the
+    /// lock was granted. Under REPEATABLE READ the snapshot would be taken before the wait and be stale.
     async fn lock(&self, tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx::Error>;
     async fn insert_entry(
         &self,
@@ -63,14 +66,18 @@ fn policy(floor: &IdentityConfig, rows: Vec<Row>) -> Result<AccessPolicy, sqlx::
             added_by,
             added_at,
         };
-        match kind.as_str() {
-            "domain" => domains.push(g),
-            "email" => emails.push(g),
-            "admin" => admins.push(g),
-            other => {
-                return Err(sqlx::Error::Decode(
-                    format!("unknown access kind {other:?}").into(),
-                ));
+        if kind == "admin" {
+            admins.push(g);
+        } else {
+            match AccessKind::parse(&kind) {
+                Some(AccessKind::Domain) => domains.push(g),
+                Some(AccessKind::Email) => emails.push(g),
+                // Unreachable while the kind CHECK holds; fails closed on purpose rather than guessing a list.
+                None => {
+                    return Err(sqlx::Error::Decode(
+                        format!("unknown access kind {kind:?}").into(),
+                    ));
+                }
             }
         }
     }

@@ -96,7 +96,25 @@ async fn lock_blocks_a_second_writer_until_the_first_transaction_ends() {
         store2.lock(&mut tx).await.unwrap();
         tx.commit().await.unwrap();
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Wait until the second writer is really queued on the advisory lock (pg_locks is server-wide, so scope it).
+    let mut conn = pool.acquire().await.unwrap();
+    let mut waiting = false;
+    for _ in 0..250 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        if n >= 1 {
+            waiting = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(conn);
+    assert!(waiting, "no writer waited on the lock");
     assert!(
         !second.is_finished(),
         "the second lock returned while the first transaction held it"
@@ -105,5 +123,24 @@ async fn lock_blocks_a_second_writer_until_the_first_transaction_ends() {
     tokio::time::timeout(Duration::from_secs(5), second)
         .await
         .expect("released at commit")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn hand_inserted_values_must_be_normalised() {
+    let (_db, pool) = common::pg().await;
+    for sql in [
+        "INSERT INTO allowed_entries VALUES ('domain','Partner.ORG','x',now())",
+        "INSERT INTO allowed_entries VALUES ('email',' g@other.org','x',now())",
+        "INSERT INTO allowed_entries VALUES ('email','','x',now())",
+        "INSERT INTO admin_grants VALUES ('Eve@gone.org','x',now())",
+    ] {
+        let err = sqlx::query(sql).execute(&pool).await.expect_err(sql);
+        let code = err.as_database_error().and_then(|e| e.code());
+        assert_eq!(code.as_deref(), Some("23514"), "{sql}: {err}");
+    }
+    sqlx::query("INSERT INTO allowed_entries VALUES ('domain','partner.org','x',now())")
+        .execute(&pool)
+        .await
         .unwrap();
 }
