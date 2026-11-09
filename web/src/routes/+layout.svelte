@@ -326,6 +326,18 @@
 		.notices {
 			padding: 12px 16px 0;
 		}
+		nav {
+			flex-wrap: wrap;
+			min-width: 0;
+		}
+		.right {
+			flex-wrap: wrap;
+			gap: 8px 12px;
+		}
+		form[role='search'] {
+			flex: 1 1 120px;
+			min-width: 80px;
+		}
 		.report .plus {
 			display: inline;
 			font-weight: 700;
