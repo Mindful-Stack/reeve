@@ -17,7 +17,7 @@ fn state_word(s: DeliveryState) -> &'static str {
 
 pub fn reason(r: &Reason) -> String {
     match r {
-        Reason::Untriaged => "untriaged: the story has no epic".into(),
+        Reason::Untriaged => "untriaged: no epic yet; triage places it".into(),
         Reason::NoCriteria => "no acceptance criteria".into(),
         Reason::AncestorDiscoveryIncomplete { item } => format!("discovery incomplete on {item}"),
         Reason::DecisionNoRecord { decision_id, title } => {

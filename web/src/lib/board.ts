@@ -87,7 +87,7 @@ export const SHORT = {
 
 /** The full sentence: the badge's title attribute, the override prompt and refusal notices. */
 export const FULL = {
-	untriaged: () => 'untriaged: the story has no epic',
+	untriaged: () => 'untriaged: no epic yet; triage places it',
 	no_criteria: () => 'no acceptance criteria',
 	ancestor_discovery_incomplete: (r) => `discovery incomplete on ${r.item}`,
 	decision_no_record: (r) => `decision "${r.title}" has no record linked`,
@@ -163,8 +163,8 @@ function byKey(a: string, b: string): number {
  *  filters nothing. */
 export type Filters = { mine?: string; epic?: string; kind?: Kind; untriaged?: boolean; goal?: number | 'none' | null };
 
-/** Untriaged as the server reports it (kb/ADR-0002 R2: a story-kind item without an epic): a readiness reason, never
- *  re-derived from kind and epic on the client (kb/ADR-0003 R1). */
+/** Untriaged as the server reports it (kb/ADR-0018 R4: an item of any kind without an epic): a readiness reason, never
+ *  re-derived from kind and epic on the client (kb/ADR-0018 R1). */
 export function isUntriaged(s: StoryWithReadiness): boolean {
 	return s.readiness.reasons.some((r) => r.reason === 'untriaged');
 }

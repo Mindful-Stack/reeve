@@ -436,7 +436,8 @@ mod tests {
         sim.press(KeyCode::Enter, KeyModifiers::NONE);
         let (rows, _) = sim.render(120, 30);
         assert!(
-            has(&rows, "untriaged: the story has no epic") && has(&rows, "no acceptance criteria"),
+            has(&rows, "untriaged: no epic yet; triage places it")
+                && has(&rows, "no acceptance criteria"),
             "{rows:#?}"
         );
     }

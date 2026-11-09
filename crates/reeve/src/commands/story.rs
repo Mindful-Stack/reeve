@@ -17,7 +17,7 @@ pub enum Story {
         /// Kind of work.
         #[arg(long, value_enum, default_value = "story")]
         kind: KindArg,
-        /// Epic key (e.g. ABC-12). Without one the story is untriaged.
+        /// Epic key (e.g. ABC-12). Without one the item is untriaged until triage places it.
         #[arg(long)]
         epic: Option<KeyRef>,
         /// Longer description.
@@ -59,7 +59,7 @@ pub enum Story {
         /// Only stories with this label.
         #[arg(long)]
         label: Option<String>,
-        /// Only stories with no epic.
+        /// Only items with no epic that are not done.
         #[arg(long)]
         untriaged: bool,
         /// Only pickable work: ready stories still in todo.

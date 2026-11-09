@@ -131,8 +131,8 @@ async fn auth_envelope_gate_and_automation_rule() {
 }
 
 /// An item of any kind without an epic is untriaged (proposed kb/ADR-0018). The override rule: automation never gets
-/// past a refusal, with or without an override reason, and a refusal writes nothing (kb/ADR-0003 R2); only an
-/// interactive caller's override moves it, and it is logged once with its reason (kb/ADR-0015 R7).
+/// past a refusal (kb/ADR-0015 R7, kb/ADR-0003 R2) and a refusal writes nothing; only an interactive caller's
+/// override moves it, logged once with its reason (kb/ADR-0003 R2).
 #[tokio::test]
 async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     let h = harness().await;
