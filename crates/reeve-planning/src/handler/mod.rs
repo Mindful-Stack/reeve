@@ -18,7 +18,7 @@ use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use sprints::Sprints;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
-pub use urgent::WarRoomEntry;
+pub use urgent::{WarRoomEntry, WarRoomInitiative};
 
 #[derive(Debug, Clone)]
 pub struct Ctx {

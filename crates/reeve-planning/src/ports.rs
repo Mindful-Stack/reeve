@@ -573,6 +573,15 @@ pub trait PlanningRepo: Send + Sync {
         key: &Key,
         mark: &UrgentMark,
     ) -> Result<bool, RepoError>;
+    /// Like `set_urgent_mark`, but only on a row that still carries a mark; Ok(false) when it carries none (or does
+    /// not exist), so a renewal never revives a mark cleared meanwhile.
+    async fn renew_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        mark: &UrgentMark,
+    ) -> Result<bool, RepoError>;
     /// Clears the mark; Ok(false) when the item carried none (or does not exist). Touches no other column.
     async fn clear_urgent_mark(
         &self,

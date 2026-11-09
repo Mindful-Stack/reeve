@@ -1358,6 +1358,15 @@ impl PlanningRepo for PgPlanningRepo {
     ) -> Result<bool, RepoError> {
         repo_urgent::set_urgent_mark(tx, item, key, mark).await
     }
+    async fn renew_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        mark: &UrgentMark,
+    ) -> Result<bool, RepoError> {
+        repo_urgent::renew_urgent_mark(tx, item, key, mark).await
+    }
     async fn clear_urgent_mark(
         &self,
         tx: &mut Transaction<'_, Postgres>,

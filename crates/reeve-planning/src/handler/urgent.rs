@@ -1,11 +1,19 @@
 //! Urgent marks (kb/ADR-0017): marking, clearing, the war room, and the urgency every DTO assembler reads.
 use super::*;
 use crate::domain::items::{Epic, Initiative, Story};
-use crate::domain::urgency::{MarkState, Urgency, UrgentMark, urgency};
+use crate::domain::urgency::{Lineage, MarkState, Urgency, UrgentMark, expires_at, urgency};
 use std::collections::HashMap;
 
 const MAX_REASON: usize = 200;
 const MAX_BULK: usize = 100;
+
+/// The initiative a war room row belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WarRoomInitiative {
+    pub key: Key,
+    pub title: String,
+    pub horizon: String,
+}
 
 /// One row of the war room strip.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,7 +22,7 @@ pub struct WarRoomEntry {
     pub key: Key,
     pub title: String,
     /// The marked item's initiative (itself for an initiative): key, title, horizon.
-    pub initiative: Option<(Key, String, String)>,
+    pub initiative: Option<WarRoomInitiative>,
     pub state: MarkState,
 }
 
@@ -29,7 +37,10 @@ fn clean_reason(r: Option<String>) -> Result<Option<String>, HandlerError> {
 }
 
 impl Handlers {
-    /// The urgency of every item, from the caller's snapshot: two statements when any mark exists, one otherwise.
+    /// The urgency of every item, from the caller's snapshot: three statements when an active mark reaches an epic or
+    /// initiative, one otherwise.
+    // The DTO assemblers are its callers (next task); until they land nothing in the crate reads it.
+    #[allow(dead_code)]
     pub(crate) async fn urgency_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -39,6 +50,10 @@ impl Handlers {
         let mut epics = Vec::new();
         let mut initiatives = Vec::new();
         for m in &marks {
+            // Expired marks and marks on done stories make nothing urgent, so their lineage is not needed.
+            if m.done || now >= expires_at(m.mark.at, self.settings.sprint_length_days) {
+                continue;
+            }
             match m.item {
                 ItemType::Initiative => initiatives.push(m.key.clone()),
                 ItemType::Epic => epics.push(m.key.clone()),
@@ -89,6 +104,17 @@ impl Handlers {
         if !self.repo.set_urgent_mark(tx, item, key, &mark).await? {
             return Err(HandlerError::NotFound);
         }
+        self.record_marked(tx, c, item, key, &reason).await
+    }
+
+    async fn record_marked(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        c: &Ctx,
+        item: ItemType,
+        key: &Key,
+        reason: &Option<String>,
+    ) -> Result<(), HandlerError> {
         let name = item_name(item);
         self.activity
             .record(
@@ -162,7 +188,14 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,
     ) -> Result<Vec<WarRoomEntry>, HandlerError> {
-        let urg = self.urgency_in(tx, now).await?;
+        // The strip needs only the marks themselves, not who inherits them, so no lineage is read.
+        let marks = self.repo.urgent_marks_in(tx).await?;
+        let urg = urgency(
+            &marks,
+            &Lineage::default(),
+            now,
+            self.settings.sprint_length_days,
+        );
         if urg.marks().next().is_none() {
             return Ok(Vec::new());
         }
@@ -195,16 +228,16 @@ impl Handlers {
             .map(|s| (s.key().clone(), s))
             .collect();
         let initiative = |k: Option<&Key>| {
-            k.and_then(|k| initiatives.get(k)).map(|i| {
-                (
-                    i.key().clone(),
-                    i.title().to_string(),
-                    i.horizon().to_string(),
-                )
-            })
+            k.and_then(|k| initiatives.get(k))
+                .map(|i| WarRoomInitiative {
+                    key: i.key().clone(),
+                    title: i.title().to_string(),
+                    horizon: i.horizon().to_string(),
+                })
         };
         let mut out: Vec<WarRoomEntry> = urg
             .marks()
+            // The marks and these rows come from one snapshot, so a miss below is unreachable.
             .filter_map(|(k, m)| {
                 let (title, init) = match m.item {
                     ItemType::Initiative => {
@@ -245,8 +278,8 @@ impl Handlers {
         items: &[(ItemType, Key)],
     ) -> Result<(), HandlerError> {
         interactive(c)?;
-        let mut tx = self.bulk_begin(items).await?;
-        for (t, k) in items {
+        let (mut tx, items) = self.bulk_begin(items).await?;
+        for (t, k) in &items {
             self.clear_in(&mut tx, c, *t, k).await?;
         }
         tx.commit().await?;
@@ -260,7 +293,7 @@ impl Handlers {
         items: &[(ItemType, Key)],
     ) -> Result<(), HandlerError> {
         interactive(c)?;
-        let mut tx = self.bulk_begin(items).await?;
+        let (mut tx, items) = self.bulk_begin(items).await?;
         let reasons: HashMap<Key, Option<String>> = self
             .repo
             .urgent_marks_in(&mut tx)
@@ -268,9 +301,18 @@ impl Handlers {
             .into_iter()
             .map(|m| (m.key, m.mark.reason))
             .collect();
-        for (t, k) in items {
-            if let Some(reason) = reasons.get(k) {
-                self.mark_in(&mut tx, c, *t, k, reason.clone()).await?;
+        for (t, k) in &items {
+            let Some(reason) = reasons.get(k) else {
+                continue;
+            };
+            let mark = UrgentMark {
+                at: c.now,
+                by: c.actor.clone(),
+                reason: reason.clone(),
+            };
+            // Only a row still marked: a clear that committed since the read is not undone.
+            if self.repo.renew_urgent_mark(&mut tx, *t, k, &mark).await? {
+                self.record_marked(&mut tx, c, *t, k, reason).await?;
             }
         }
         tx.commit().await?;
@@ -280,12 +322,19 @@ impl Handlers {
     async fn bulk_begin(
         &self,
         items: &[(ItemType, Key)],
-    ) -> Result<Transaction<'static, Postgres>, HandlerError> {
+    ) -> Result<(Transaction<'static, Postgres>, Vec<(ItemType, Key)>), HandlerError> {
         if items.len() > MAX_BULK {
             return Err(HandlerError::Validation(format!(
                 "at most {MAX_BULK} items"
             )));
         }
+        // A repeated item is one item: it writes one entry.
+        let mut seen = std::collections::HashSet::new();
+        let items: Vec<(ItemType, Key)> = items
+            .iter()
+            .filter(|(t, k)| seen.insert((item_name(*t), k.clone())))
+            .cloned()
+            .collect();
         let mut tx = self.pool.begin().await?;
         let keys: Vec<Key> = items.iter().map(|(_, k)| k.clone()).collect();
         let types = self.repo.item_types_in(&mut tx, &keys).await?;
@@ -295,6 +344,6 @@ impl Handlers {
                 item_name(*t)
             )));
         }
-        Ok(tx)
+        Ok((tx, items))
     }
 }

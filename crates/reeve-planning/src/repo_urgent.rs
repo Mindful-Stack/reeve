@@ -111,6 +111,25 @@ pub(crate) async fn set_urgent_mark(
     Ok(r.rows_affected() == 1)
 }
 
+pub(crate) async fn renew_urgent_mark(
+    tx: Tx<'_, '_>,
+    item: ItemType,
+    k: &Key,
+    m: &UrgentMark,
+) -> Result<bool, RepoError> {
+    let r = sqlx::query(&format!(
+        "UPDATE {} SET urgent_at = $2, urgent_by = $3, urgent_reason = $4 WHERE key = $1 AND urgent_at IS NOT NULL",
+        table(item)
+    ))
+    .bind(k.to_string())
+    .bind(m.at)
+    .bind(&m.by)
+    .bind(&m.reason)
+    .execute(&mut **tx)
+    .await?;
+    Ok(r.rows_affected() == 1)
+}
+
 pub(crate) async fn clear_urgent_mark(
     tx: Tx<'_, '_>,
     item: ItemType,

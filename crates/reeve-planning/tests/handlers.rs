@@ -5279,6 +5279,58 @@ async fn urgent_marks_are_set_renewed_and_cleared_by_people_only() {
     )
     .await
     .unwrap();
+    let payload = |sink: &MemSink, n: usize| {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.action == "urgent_marked")
+            .nth(n)
+            .unwrap()
+            .payload
+            .clone()
+    };
+    assert_eq!(
+        payload(&sink, 0),
+        serde_json::json!({"item_type": "initiative", "reason": "Customer X"})
+    );
+    // characters, not bytes; and a blank reason is no reason
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("é".repeat(200)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Initiative, &k, Some("é".repeat(201)))
+            .await
+            .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("   ".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.war_room(dan.now).await.unwrap()[0].state.mark.reason,
+        None
+    );
+    h.mark_urgent(
+        &dan,
+        ItemType::Initiative,
+        &k,
+        Some("  Customer X  ".into()),
+    )
+    .await
+    .unwrap();
+    // wrong type and unknown key on clear
+    assert!(matches!(
+        h.clear_urgent(&dan, ItemType::Epic, &k).await.unwrap_err(),
+        HandlerError::NotFound
+    ));
+    let ghost: Key = "ABC-9999".parse().unwrap();
+    assert!(matches!(
+        h.clear_urgent(&dan, ItemType::Initiative, &ghost)
+            .await
+            .unwrap_err(),
+        HandlerError::NotFound
+    ));
     let first = h.war_room(dan.now).await.unwrap();
     assert_eq!(first[0].state.mark.reason.as_deref(), Some("Customer X"));
     let later = Ctx {
@@ -5290,16 +5342,19 @@ async fn urgent_marks_are_set_renewed_and_cleared_by_people_only() {
         .unwrap();
     assert_eq!(
         count(&sink, "urgent_marked", &k.to_string()),
-        2,
-        "renewing logs again"
+        5,
+        "every mark and renewal logs"
     );
     let room = h.war_room(later.now).await.unwrap();
     assert_eq!(room.len(), 1);
     assert_eq!(room[0].state.mark.at, later.now, "renew replaces the time");
     assert_eq!(room[0].state.mark.reason, None, "and the reason");
-    h.clear_urgent(&bot, ItemType::Initiative, &k)
-        .await
-        .unwrap_err();
+    assert!(matches!(
+        h.clear_urgent(&bot, ItemType::Initiative, &k)
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
     h.clear_urgent(&dan, ItemType::Initiative, &k)
         .await
         .unwrap();
@@ -5370,7 +5425,11 @@ async fn the_war_room_lists_active_then_expired_marks() {
     assert_eq!(room[0].title, "Orion");
     assert_eq!(
         room[0].initiative,
-        Some((ini.key().clone(), "Orion".into(), "Now".into())),
+        Some(WarRoomInitiative {
+            key: ini.key().clone(),
+            title: "Orion".into(),
+            horizon: "Now".into()
+        }),
         "an initiative is its own initiative"
     );
     assert_eq!((room[1].item, &room[1].key), (ItemType::Story, story.key()));
@@ -5379,7 +5438,11 @@ async fn the_war_room_lists_active_then_expired_marks() {
     assert_eq!(room[1].state.mark.reason.as_deref(), Some("blocker"));
     assert_eq!(
         room[1].initiative,
-        Some((ini.key().clone(), "Orion".into(), "Now".into())),
+        Some(WarRoomInitiative {
+            key: ini.key().clone(),
+            title: "Orion".into(),
+            horizon: "Now".into()
+        }),
         "a nested item carries its initiative"
     );
     // at the mark's own time both are active, oldest first
@@ -5520,8 +5583,65 @@ async fn an_urgent_entry_sees_the_mark_inside_and_not_outside() {
         .await
         .unwrap();
     let seen = sink.entries("urgent_marked");
+    assert_eq!(seen.len(), 1);
     assert_eq!(
         (seen[0].1.as_deref(), seen[0].2.as_deref()),
         (Some("dan@example.com"), None)
     );
+    h.clear_urgent(&dan, ItemType::Initiative, ini.key())
+        .await
+        .unwrap();
+    let seen = sink.entries("urgent_cleared");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].1.as_deref(), seen[0].2.as_deref()),
+        (None, Some("dan@example.com")),
+        "the clear is made before the entry and visible outside only after commit"
+    );
+}
+
+/// A repeated item in a bulk request writes one entry; the renewing write skips a row that is no longer marked.
+#[tokio::test]
+async fn renew_dedupes_and_never_revives_a_cleared_mark() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    h.mark_urgent(&dan, ItemType::Initiative, &k, None)
+        .await
+        .unwrap();
+    let twice = [
+        (ItemType::Initiative, k.clone()),
+        (ItemType::Initiative, k.clone()),
+    ];
+    h.war_room_renew(&dan, &twice).await.unwrap();
+    assert_eq!(
+        count(&sink, "urgent_marked", &k.to_string()),
+        2,
+        "mark + one renewal"
+    );
+    h.war_room_clear(&dan, &twice).await.unwrap();
+    assert_eq!(count(&sink, "urgent_cleared", &k.to_string()), 1);
+    // the repo variant on an unmarked row: false, and no change
+    let mark = UrgentMark {
+        at: dan.now,
+        by: "dan@example.com".into(),
+        reason: None,
+    };
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        !h.repo
+            .renew_urgent_mark(&mut tx, ItemType::Initiative, &k, &mark)
+            .await
+            .unwrap()
+    );
+    assert!(h.repo.urgent_marks_in(&mut tx).await.unwrap().is_empty());
+    tx.commit().await.unwrap();
+    // and a renewal of an unmarked item through the handler writes nothing
+    h.war_room_renew(&dan, &twice[..1]).await.unwrap();
+    assert_eq!(count(&sink, "urgent_marked", &k.to_string()), 2);
 }
