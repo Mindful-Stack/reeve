@@ -47,7 +47,7 @@
             ]
           },
           "allowed": {
-            "description": "False only on an admin grant whose email nothing allows: it grants nothing until the email is allowed again.",
+            "description": "Meaningful only under `admins` (always true on domains, emails and configuration rows): false on an admin grant\nwhose email nothing allows, which grants nothing until the email is allowed again.",
             "type": "boolean"
           },
           "also_in_config": {
@@ -55,7 +55,7 @@
             "type": "boolean"
           },
           "source": {
-            "$ref": "#/components/schemas/AccessSourceDto"
+            "$ref": "#/components/schemas/AccessSource"
           },
           "value": {
             "type": "string"
@@ -76,7 +76,7 @@
         ],
         "type": "string"
       },
-      "AccessSourceDto": {
+      "AccessSource": {
         "description": "Where an entry comes from: the instance configuration (locked) or the database (editable by admins).",
         "enum": [
           "config",

@@ -1050,11 +1050,14 @@ export interface components {
             /** Format: date-time */
             added_at?: string | null;
             added_by?: string | null;
-            /** @description False only on an admin grant whose email nothing allows: it grants nothing until the email is allowed again. */
+            /**
+             * @description Meaningful only under `admins` (always true on domains, emails and configuration rows): false on an admin grant
+             *     whose email nothing allows, which grants nothing until the email is allowed again.
+             */
             allowed: boolean;
             /** @description A database row that duplicates a configuration entry: listed separately and removable. */
             also_in_config: boolean;
-            source: components["schemas"]["AccessSourceDto"];
+            source: components["schemas"]["AccessSource"];
             value: string;
         };
         /** @enum {string} */
@@ -1063,7 +1066,7 @@ export interface components {
          * @description Where an entry comes from: the instance configuration (locked) or the database (editable by admins).
          * @enum {string}
          */
-        AccessSourceDto: "config" | "database";
+        AccessSource: "config" | "database";
         /** @description One row of the activity feed, as served on the wire. */
         ActivityEntryDto: {
             action: string;

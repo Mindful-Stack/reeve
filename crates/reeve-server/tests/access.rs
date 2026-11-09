@@ -317,6 +317,18 @@ async fn admins_list_add_and_remove_entries_and_everyone_else_is_forbidden() {
         .0,
         400
     );
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/entries",
+        Some(json!({"kind":"email","value":"guest@other.org"})),
+    )
+    .await;
+    assert_eq!(
+        (s, b["message"].as_str()),
+        (400, Some("invalid request: already allowed"))
+    );
     let (s, dto) = access(
         &h,
         &h.admin_token,
@@ -747,4 +759,38 @@ async fn disable_refuses_a_configured_admin_whatever_the_spelling() {
             .0,
         200
     );
+}
+
+#[tokio::test]
+async fn an_invalid_kind_in_the_path_is_a_validation_error() {
+    let h = harness().await;
+    let (s, b) = access(&h, &h.admin_token, "DELETE", "/entries/foo/x.org", None).await;
+    assert_eq!(s, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+}
+
+#[tokio::test]
+async fn path_values_with_plus_and_at_round_trip() {
+    let h = harness().await;
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/admins",
+        Some(json!({"email":"a+b@x.org"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+    let (s, b) = access(&h, &h.admin_token, "DELETE", "/admins/a%2Bb%40x.org", None).await;
+    assert_eq!(s, 200, "{b}");
+    assert!(!values(&b, "admins").iter().any(|(v, _)| v == "a+b@x.org"));
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "DELETE",
+        "/entries/email/a%2Bb%40x.org",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
 }

@@ -7,7 +7,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_identity::{AccessPolicy, AccessRow, AccessSource};
+use reeve_identity::{AccessPolicy, AccessRow};
 use reeve_protocol::*;
 use std::sync::Arc;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -21,9 +21,9 @@ fn kind(k: AccessKind) -> reeve_identity::AccessKind {
 
 fn row(r: AccessRow) -> AccessEntryDto {
     let (source, added_by, added_at) = match r.source {
-        AccessSource::Config => (AccessSourceDto::Config, None, None),
-        AccessSource::Database { added_by, added_at } => {
-            (AccessSourceDto::Database, Some(added_by), Some(added_at))
+        reeve_identity::AccessSource::Config => (AccessSource::Config, None, None),
+        reeve_identity::AccessSource::Database { added_by, added_at } => {
+            (AccessSource::Database, Some(added_by), Some(added_at))
         }
     };
     AccessEntryDto {
@@ -46,10 +46,7 @@ fn dto(p: &AccessPolicy) -> AccessDto {
 }
 
 #[utoipa::path(get, path = "/access", responses((status = 200, body = Response<AccessDto>), (status = 403, description = "admins only")))]
-async fn get_access(
-    State(_s): State<AppState>,
-    c: Caller,
-) -> Result<Json<Response<AccessDto>>, AppError> {
+async fn get_access(c: Caller) -> Result<Json<Response<AccessDto>>, AppError> {
     if c.0.role != Role::Admin {
         return Err(AppError::Forbidden);
     }

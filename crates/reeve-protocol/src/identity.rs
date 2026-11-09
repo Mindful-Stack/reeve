@@ -62,7 +62,7 @@ pub enum AccessKind {
 /// Where an entry comes from: the instance configuration (locked) or the database (editable by admins).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum AccessSourceDto {
+pub enum AccessSource {
     Config,
     Database,
 }
@@ -71,10 +71,11 @@ pub enum AccessSourceDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccessEntryDto {
     pub value: String,
-    pub source: AccessSourceDto,
+    pub source: AccessSource,
     /// A database row that duplicates a configuration entry: listed separately and removable.
     pub also_in_config: bool,
-    /// False only on an admin grant whose email nothing allows: it grants nothing until the email is allowed again.
+    /// Meaningful only under `admins` (always true on domains, emails and configuration rows): false on an admin grant
+    /// whose email nothing allows, which grants nothing until the email is allowed again.
     pub allowed: bool,
     pub added_by: Option<String>,
     pub added_at: Option<DateTime<Utc>>,
