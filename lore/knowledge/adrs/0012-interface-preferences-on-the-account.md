@@ -67,6 +67,7 @@ We decided to keep a user's interface preferences on their user row, owned by th
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (public copy, one-time edit): See also named an internal design document. The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No fact, rule or decision changed; the decision holds.
+- 2026-11-09 (kb/ADR-0015): kb/ADR-0008 is superseded by kb/ADR-0015; R3's rule that automation writes are logged as the owner now rests on kb/ADR-0015 R7, unchanged in substance. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0006, kb/ADR-0008, kb/ADR-0010, kb/ADR-0011.
