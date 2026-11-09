@@ -160,6 +160,10 @@
 	.card.urgent {
 		box-shadow: inset 0 0 0 2px var(--danger);
 	}
+	/* Both rings at once: the urgent inset ring and app.css's live-change ring outside the border. */
+	.card.urgent.fresh {
+		box-shadow: inset 0 0 0 2px var(--danger), 0 0 0 3px var(--selection);
+	}
 	.head {
 		display: flex;
 		align-items: flex-start;

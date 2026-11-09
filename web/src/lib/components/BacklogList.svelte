@@ -154,6 +154,10 @@
 	.rows > li.urgent {
 		box-shadow: inset 0 0 0 2px var(--danger);
 	}
+	/* Both rings at once: the urgent ring at the edge, app.css's live-change accent ring just inside it. */
+	.rows > li.urgent.fresh {
+		box-shadow: inset 0 0 0 2px var(--danger), inset 0 0 0 4px var(--accent);
+	}
 	.handle {
 		cursor: grab;
 		color: var(--muted);
