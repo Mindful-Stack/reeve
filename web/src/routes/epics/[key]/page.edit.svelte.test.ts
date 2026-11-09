@@ -952,6 +952,7 @@ describe('epic page: urgent mark', () => {
 		item(await menu(), 'Mark urgent…')!.click();
 		flushSync();
 		net.urgentFail = true;
+		(document.body.querySelector('dialog button[type="submit"]') as HTMLButtonElement).focus();
 		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();

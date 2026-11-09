@@ -1223,6 +1223,17 @@ describe('initiative page: urgent mark', () => {
 		expect(cards.find((c) => c.textContent?.includes('Login'))!.querySelector('.urgent-chip')?.textContent).toBe('Urgent');
 		expect(cards.find((c) => c.textContent?.includes('Quiet'))!.querySelector('.urgent-chip')).toBeNull();
 	});
+
+	it('says Urgent mark expired on an epic card whose own mark ran out', async () => {
+		const m = { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: null, expires_at: '2026-11-02T00:00:00Z', active: false, done: false };
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: m, urgent_sources: [] } as Epic];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li.epic-card')?.textContent).toContain('Urgent mark expired');
+		});
+		expect(document.body.querySelector('li.epic-card .urgent-chip')).toBeNull();
+	});
 	it('moves focus to the Actions menu after the expired line is cleared', async () => {
 		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
 		await open();
@@ -1256,6 +1267,7 @@ describe('initiative page: urgent mark', () => {
 		item(await menu(), 'Mark urgent…')!.click();
 		flushSync();
 		net.urgentFail = true;
+		(document.body.querySelector('dialog button[type="submit"]') as HTMLButtonElement).focus();
 		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();

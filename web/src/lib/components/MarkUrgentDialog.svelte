@@ -24,12 +24,9 @@
 	// svelte-ignore state_referenced_locally
 	let reason = $state(initial ?? '');
 	let input = $state<HTMLInputElement | null>(null);
-	let wasBusy = false;
 	// A failed write frees the form: the input was disabled while saving, so focus returns to it.
 	$effect(() => {
-		const b = busy;
-		if (wasBusy && !b && error) void tick().then(() => input?.focus());
-		wasBusy = b;
+		if (error && !busy) void tick().then(() => input?.focus());
 	});
 
 	function submit(e: SubmitEvent) {

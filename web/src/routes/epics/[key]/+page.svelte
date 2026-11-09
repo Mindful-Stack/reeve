@@ -128,9 +128,9 @@
 		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
 	]);
 
-	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
 	/** When the page last loaded: the urgent line's "N d ago" counts from it. */
 	let loadedAt = $state(new Date());
+	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
 	let marking = $state(false);
 	let markError = $state<string | null>(null);
 	/** The source's title, when the page has loaded it; otherwise the line shows its key and type only. */
