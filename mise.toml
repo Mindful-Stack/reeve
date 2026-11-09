@@ -40,7 +40,7 @@ run = "scripts/tests/isolation.sh"
 # workflow's shell, the action-pin check's cases, ci.yml's Rust path classifier (scripts/ci-needs-rust.sh) and the npm
 # audit gate's (node --test) (no Docker needed).
 [tasks.script-test]
-description = "The backup, restore-rehearsal and skill-smoke scripts' logic against fakes, the release workflow's shell and its downstream dispatch, the action-pin check, ci.yml's path classifier and the npm audit gate (no Docker needed)"
+description = "The backup, restore-rehearsal and skill-smoke scripts' logic against fakes, the release workflow's shell and its subscriber notifications, the action-pin check, ci.yml's path classifier and the npm audit gate (no Docker needed)"
 run = ["scripts/tests/restore-rehearsal.sh", "scripts/tests/backup.sh", "scripts/tests/skill-smoke.sh", "scripts/tests/workflows.sh", "scripts/tests/release-dispatch.sh", "scripts/tests/action-pins.sh", "scripts/tests/ci-needs-rust.sh", "node --test scripts/tests/npm-audit.test.mjs"]
 
 # Dependency audits. CI runs them in .github/workflows/audit.yml

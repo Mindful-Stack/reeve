@@ -1,8 +1,8 @@
 name: release
 # Every push to main publishes ghcr.io/mindful-stack/reeve:<sha>, tagged by commit and never `latest`. Deploying an
 # image is the operator's business, outside this repository (deploy/README.md covers the reference stack).
-# Once it is published, `notify` can tell one downstream workflow about it (scripts/release-dispatch.sh; inert unless
-# its two secrets are set).
+# Once it is published, `notify` tells every subscriber: each repository with the release App installed gets its
+# reeve-release.yml started (scripts/release-dispatch.sh; inert unless the App's two secrets are set).
 on:
   push:
     branches: [main]
@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
@@ -52,21 +54,23 @@ jobs:
           docker run --rm --entrypoint bash "$ref" -euc \
             'bash -n /usr/local/bin/reeve-decision-check; for t in git ssh flock timeout realpath readlink age age-keygen; do command -v "$t"; done'
 
-  # Starts the operator's own workflow (a pin bump, say) minutes after the image exists, instead of leaving it to a
-  # schedule GitHub may start hours late. The target and the token are secrets, so this public repository's run logs
-  # mask them; the script never prints the target and never fails the release (deploy/README.md, "Tell your
-  # deployment about a release").
+  # Starts every subscriber's .github/workflows/reeve-release.yml minutes after the image exists, instead of leaving
+  # them to a schedule GitHub may start hours late. Subscribing is installing the release App; the job finds the
+  # repositories through the App's installations, so this repository names none, and its public run logs show counts
+  # only. Never fails the release (deploy/README.md, "Subscribe to releases").
   notify:
     needs: publish
     if: needs.publish.result == 'success'
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
-      - name: dispatch the downstream workflow (inert unless configured)
+      - name: start every subscriber's reeve-release workflow (inert unless configured)
         env:
-          RELEASE_DISPATCH_TARGET: ${{ secrets.RELEASE_DISPATCH_TARGET }}
-          RELEASE_DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_DIGEST: ${{ needs.publish.outputs.digest }}
         run: scripts/release-dispatch.sh
