@@ -32,7 +32,7 @@
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
 		{ label: 'Activity', onselect: () => goto('/activity') },
-		...(isAdmin() ? [{ label: 'Users', onselect: () => goto('/users') }] : []),
+		...(isAdmin() ? [{ label: 'Users', onselect: () => goto('/users') }, { label: 'Access', onselect: () => goto('/access') }] : []),
 		{ label: 'Sign out', onselect: signOut }
 	]);
 	let search: HTMLInputElement | undefined = $state();
