@@ -619,3 +619,68 @@ async fn export_at_computes_urgency_at_that_instant() {
     assert_eq!(out.status.code(), Some(2), "clap refuses the value");
     assert!(out.stdout.is_empty());
 }
+
+/// A grant committed after the snapshot is not in that export: roles come from the snapshot's own reads.
+#[tokio::test]
+async fn export_roles_come_from_the_snapshot_not_from_later_grants() {
+    use sqlx::Connection;
+    let h = harness().await;
+    call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/access/entries",
+        Some(serde_json::json!({"kind":"email","value":"ada@other.org"})),
+    )
+    .await;
+    sqlx::query("INSERT INTO users (email, created_at) VALUES ('ada@other.org', now())")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let mut exporter = sqlx::PgConnection::connect(&h.url).await.unwrap();
+    sqlx::Executor::execute(&mut exporter, "BEGIN ISOLATION LEVEL REPEATABLE READ")
+        .await
+        .unwrap();
+    let id: String = sqlx::query_scalar("SELECT pg_export_snapshot()")
+        .fetch_one(&mut exporter)
+        .await
+        .unwrap();
+    let (s, _) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/access/admins",
+        Some(serde_json::json!({"email":"ada@other.org"})),
+    )
+    .await;
+    assert_eq!(s, 200);
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config_file(dir.path(), &h.url);
+    let role = |o: &Output| -> String {
+        let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+        v["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|u| u["email"] == "ada@other.org")
+            .unwrap()["role"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let at = reeve_server(&cfg, &["export", "--snapshot", &id]).await;
+    assert_eq!(
+        at.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&at.stderr)
+    );
+    let now = reeve_server(&cfg, &["export"]).await;
+    assert_eq!(
+        (role(&at), role(&now)),
+        ("member".to_string(), "admin".to_string())
+    );
+    sqlx::Executor::execute(&mut exporter, "COMMIT")
+        .await
+        .unwrap();
+}

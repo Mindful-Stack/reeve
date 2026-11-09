@@ -786,6 +786,31 @@ mod through_the_google_adapter {
     }
 
     #[tokio::test]
+    async fn a_guest_allowed_only_in_the_database_signs_in_through_the_real_adapter() {
+        let h = harness().await;
+        let fake = FakeIssuer::start(CLIENT_ID, CLIENT_SECRET).await;
+        let app = app_with_google(&h, &fake).await;
+        let res = sign_in_as(&app, &fake, "code-guest-1", "guest@other.org", true).await;
+        assert_eq!(res.headers()["location"], "/auth/signin?reason=not_allowed");
+        let (s, _) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/access/entries",
+            Some(serde_json::json!({"kind":"email","value":"guest@other.org"})),
+        )
+        .await;
+        assert_eq!(s, 200);
+        let res = sign_in_as(&app, &fake, "code-guest-2", "guest@other.org", true).await;
+        assert_eq!(res.headers()["location"], "/board");
+        assert!(
+            cookies_of(&res)
+                .iter()
+                .any(|c| c.starts_with("reeve_session="))
+        );
+    }
+
+    #[tokio::test]
     async fn the_callback_signs_people_in_through_the_real_adapter_and_refuses_unverified_and_unlisted_emails()
      {
         let h = harness().await;

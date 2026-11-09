@@ -438,3 +438,282 @@ async fn a_database_row_duplicating_the_floor_lists_twice_and_its_database_row_i
         "the floor still allows bob"
     );
 }
+
+/// The router a restarted server would serve: the same database, this configuration.
+async fn restarted(
+    h: &Harness,
+    edit: impl FnOnce(&mut reeve_server::ServerConfig),
+) -> axum::Router {
+    let mut cfg = (*h.state.config).clone();
+    edit(&mut cfg);
+    reeve_server::app(
+        reeve_server::build_state(cfg, h.state.pool.clone())
+            .await
+            .unwrap(),
+    )
+}
+
+async fn activity_count(h: &Harness) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM activity")
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_grant_orphaned_by_the_configuration_is_kept_inert_and_counts_again_when_the_configuration_is_restored()
+ {
+    let h = harness().await;
+    assert_eq!(
+        access(
+            &h,
+            &h.admin_token,
+            "POST",
+            "/admins",
+            Some(json!({"email":"ada@example.com"}))
+        )
+        .await
+        .0,
+        200
+    );
+    let ada = token_for(&h, "ada@example.com", TokenKind::Interactive).await;
+    let before = activity_count(&h).await;
+    // the floor loses example.com; dan stays allowed by email so the configuration still validates
+    let narrowed = restarted(&h, |c| {
+        c.allowed_domains = vec![];
+        c.allowed_emails = vec!["dan@example.com".into()];
+    })
+    .await;
+    assert_eq!(
+        activity_count(&h).await,
+        before,
+        "a server start writes no activity"
+    );
+    assert_eq!(
+        call(&narrowed, Some(&ada), "GET", "/api/v1/me", None)
+            .await
+            .0,
+        401,
+        "ada is no longer allowed"
+    );
+    let (_, dto) = call(
+        &narrowed,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/access",
+        None,
+    )
+    .await;
+    let row = dto["value"]["admins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["value"] == "ada@example.com")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (row["source"].as_str(), row["allowed"].as_bool()),
+        (Some("database"), Some(false))
+    );
+    // restored: the same grant counts again
+    let restored = restarted(&h, |_| {}).await;
+    assert_eq!(
+        call(&restored, Some(&ada), "GET", "/api/v1/users", None)
+            .await
+            .0,
+        200
+    );
+}
+
+#[tokio::test]
+async fn revoking_an_inert_grant_deletes_it_and_granting_its_email_revives_it() {
+    let h = harness().await;
+    sql(
+        &h,
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('eve@gone.org','x',now())",
+    )
+    .await;
+    let (_, dto) = access(&h, &h.admin_token, "GET", "", None).await;
+    let eve = dto["value"]["admins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["value"] == "eve@gone.org")
+        .expect("an inert grant is listed")
+        .clone();
+    assert_eq!(eve["allowed"], false);
+    // granting the email's access revives the grant
+    access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/entries",
+        Some(json!({"kind":"email","value":"eve@gone.org"})),
+    )
+    .await;
+    let (_, dto) = access(&h, &h.admin_token, "GET", "", None).await;
+    let eve = dto["value"]["admins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["value"] == "eve@gone.org")
+        .unwrap()
+        .clone();
+    assert_eq!(eve["allowed"], true);
+    // inert again, then revoked: the row is deleted
+    sql(
+        &h,
+        "DELETE FROM allowed_entries WHERE value = 'eve@gone.org'",
+    )
+    .await;
+    let (s, dto) = access(&h, &h.admin_token, "DELETE", "/admins/eve@gone.org", None).await;
+    assert_eq!(s, 200);
+    assert!(
+        dto["value"]["admins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["value"] != "eve@gone.org")
+    );
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM admin_grants WHERE email = 'eve@gone.org'")
+            .fetch_one(&h.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn an_open_event_stream_ends_at_its_next_batch_after_the_owner_is_removed() {
+    use axum::body::Body;
+    use futures_util::StreamExt;
+    let h = harness_patched(|c| c.events.poll_ms = 50).await;
+    access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/entries",
+        Some(json!({"kind":"email","value":"guest@other.org"})),
+    )
+    .await;
+    let guest = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
+    let res = call_raw(
+        &h.app,
+        axum::http::Request::get("/api/v1/events")
+            .header("authorization", format!("Bearer {guest}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(res.status(), 200);
+    let mut body = res.into_body().into_data_stream();
+    let _cursor = tokio::time::timeout(std::time::Duration::from_secs(5), body.next())
+        .await
+        .expect("cursor");
+    access(
+        &h,
+        &h.admin_token,
+        "DELETE",
+        "/entries/email/guest@other.org",
+        None,
+    )
+    .await;
+    let end = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while body.next().await.is_some() {}
+    })
+    .await;
+    assert!(
+        end.is_ok(),
+        "the stream did not end after the owner's removal"
+    );
+}
+
+#[tokio::test]
+async fn remove_then_disable_then_re_add_leaves_the_old_tokens_revoked() {
+    let h = harness().await;
+    let entry = json!({"kind":"email","value":"guest@other.org"});
+    access(&h, &h.admin_token, "POST", "/entries", Some(entry.clone())).await;
+    let guest = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
+    access(
+        &h,
+        &h.admin_token,
+        "DELETE",
+        "/entries/email/guest@other.org",
+        None,
+    )
+    .await;
+    assert_eq!(
+        call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/users/guest@other.org/disable",
+            None
+        )
+        .await
+        .0,
+        200
+    );
+    access(&h, &h.admin_token, "POST", "/entries", Some(entry)).await;
+    call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/users/guest@other.org/enable",
+        None,
+    )
+    .await;
+    assert_eq!(
+        call(&h.app, Some(&guest), "GET", "/api/v1/me", None)
+            .await
+            .0,
+        401
+    );
+}
+
+#[tokio::test]
+async fn a_database_only_guest_can_issue_their_own_token() {
+    let h = harness().await;
+    access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/entries",
+        Some(json!({"kind":"email","value":"guest@other.org"})),
+    )
+    .await;
+    let guest = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
+    let (s, b) = call(
+        &h.app,
+        Some(&guest),
+        "POST",
+        "/api/v1/tokens",
+        Some(json!({"kind":"automation","label":"ci"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+}
+
+#[tokio::test]
+async fn disable_refuses_a_configured_admin_whatever_the_spelling() {
+    let h = harness().await;
+    sql(&h, "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('ada@example.com','dan@example.com',now())").await;
+    let ada = token_for(&h, "ada@example.com", TokenKind::Interactive).await;
+    for path in [
+        "/api/v1/users/DAN@Example.COM/disable",
+        "/api/v1/users/%20dan@example.com%20/disable",
+    ] {
+        let (status, body) = call(&h.app, Some(&ada), "POST", path, None).await;
+        assert_eq!(
+            (status, body["message"].as_str()),
+            (400, Some("admin in reeve.toml; change it there")),
+            "{path}: {body}"
+        );
+    }
+    assert_eq!(
+        call(&h.app, Some(&h.admin_token), "GET", "/api/v1/me", None)
+            .await
+            .0,
+        200
+    );
+}
