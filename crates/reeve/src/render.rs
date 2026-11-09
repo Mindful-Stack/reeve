@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use reeve_protocol::*;
 use std::fmt::Write;
 
-fn state_word(s: DeliveryState) -> &'static str {
+pub fn state_word(s: DeliveryState) -> &'static str {
     match s {
         DeliveryState::Todo => "todo",
         DeliveryState::InProgress => "in-progress",

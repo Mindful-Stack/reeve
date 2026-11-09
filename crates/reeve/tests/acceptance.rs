@@ -301,6 +301,22 @@ async fn flow() {
         .output()
         .unwrap());
     let key = story["value"]["key"].as_str().unwrap().to_string();
+
+    // The duplicate check: a reworded title finds the story; a too short text is a failure (exit 1), not a refusal.
+    let similar = reeve(&human)
+        .args(["story", "similar", "Booking", "flows"])
+        .output()
+        .unwrap();
+    assert_eq!(similar.status.code(), Some(0), "{similar:?}");
+    let hits: serde_json::Value = serde_json::from_slice(&similar.stdout).unwrap();
+    assert_eq!(hits["value"][0]["key"], key.as_str(), "{hits}");
+    let short = reeve(&human)
+        .args(["story", "similar", "short"])
+        .output()
+        .unwrap();
+    assert_eq!(short.status.code(), Some(1), "a too short text fails");
+    let body: serde_json::Value = serde_json::from_slice(&short.stdout).unwrap();
+    assert_eq!(body["code"], "validation", "{body}");
     ok(reeve(&human)
         .args([
             "initiative",
