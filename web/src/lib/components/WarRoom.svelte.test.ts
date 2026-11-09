@@ -205,6 +205,16 @@ describe('WarRoom', () => {
 		expect(document.body.textContent).not.toContain('Clear 2 marks?');
 	});
 
+	it('drops a renew confirmation when a confirmed row is no longer expired', async () => {
+		await open([active, expired]);
+		click('Re-mark all expired');
+		expect(document.body.textContent).toContain('Re-mark 1 expired?');
+		net.entries = [active, { ...expired, mark: { ...expired.mark, active: true, expires_at: iso(14 * day) } }];
+		for (const f of live.fns) void f();
+		await vi.waitFor(() => expect(document.body.textContent).not.toContain('Re-mark 1 expired?'));
+		expect(button('End war room')).toBeDefined();
+	});
+
 	it('moves focus to the next row after a row clear', async () => {
 		await open([active, expired]);
 		button('Clear urgent mark on ABC-1 Payments rebuild')!.click();

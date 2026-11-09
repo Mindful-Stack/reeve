@@ -49,7 +49,11 @@
 	function apply(list: WarRoomEntry[]) {
 		entries = list;
 		at = clock();
-		if (confirm && !confirm.items.every((r) => list.some((e) => same(e.item, r)))) confirm = null;
+		if (confirm) {
+			// Every confirmed ref must still be listed, and for a renewal still be expired (renewed elsewhere otherwise).
+			const pool = confirm.kind === 'renew' ? list.filter((e) => !e.mark.active) : list;
+			if (!confirm.items.every((r) => pool.some((e) => same(e.item, r)))) confirm = null;
+		}
 	}
 
 	/** Refetches the list. A failed load keeps what is shown; the page's own notice reports load failures. */
@@ -66,9 +70,9 @@
 	onLive(reload);
 
 	/** A write that answers with the refreshed list (or nothing). Returns the failure text, or null on success. A failed
-	 *  write reloads too, since the list may have changed under it. */
-	async function run(write: () => Promise<WarRoomEntry[] | unknown>): Promise<string | null> {
-		if (busy) return 'busy';
+	 *  write reloads too, since the list may have changed under it. `ran` is false when another write is in flight. */
+	async function run(write: () => Promise<WarRoomEntry[] | unknown>): Promise<{ ran: boolean; error: string | null }> {
+		if (busy) return { ran: false, error: null };
 		busy = true;
 		writeError = null;
 		try {
@@ -78,10 +82,10 @@
 				apply(answer as WarRoomEntry[]);
 			} else await reload();
 			onchange?.();
-			return null;
+			return { ran: true, error: null };
 		} catch (e) {
 			await reload();
-			return show(e);
+			return { ran: true, error: show(e) };
 		} finally {
 			busy = false;
 		}
@@ -127,16 +131,18 @@
 		const c = confirm;
 		confirm = null;
 		if (!c) return;
-		const err = await run(() =>
+		const { ran, error } = await run(() =>
 			unwrap(api.POST(c.kind === 'clear' ? '/api/v1/war-room/clear' : '/api/v1/war-room/renew', { body: { items: c.items } }))
 		);
-		if (err) writeError = err;
+		if (!ran) return;
+		if (error) writeError = error;
 		await refocusRow(0);
 	}
 
 	async function clearRow(e: WarRoomEntry, index: number) {
-		const err = await run(() => del(e.item));
-		if (err) writeError = err;
+		const { ran, error } = await run(() => del(e.item));
+		if (!ran) return;
+		if (error) writeError = error;
 		await refocusRow(index);
 	}
 
@@ -144,8 +150,9 @@
 		const target = remarking;
 		if (!target) return;
 		dialogError = null;
-		const err = await run(() => post(target.item, reason));
-		if (err) dialogError = err;
+		const { ran, error } = await run(() => post(target.item, reason));
+		if (!ran) return;
+		if (error) dialogError = error;
 		else {
 			remarking = null;
 			await refocusRow(0);
