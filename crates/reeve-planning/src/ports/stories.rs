@@ -25,6 +25,15 @@ pub trait StoryRepo: Send + Sync {
         f: &StoryFilter,
         done_since: Option<DateTime<Utc>>,
     ) -> Result<Vec<Story>, RepoError>;
+    /// Stories whose title is similar to `text` (pg_trgm `similarity` at or above `min`), not done or done at or after
+    /// `done_since`; most similar first, then newest; at most `limit`. The caller owns the clock (kb/ADR-0010 R4).
+    async fn similar_stories(
+        &self,
+        text: &str,
+        min: f32,
+        done_since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<Story>, RepoError>;
     async fn update_story(
         &self,
         tx: &mut Transaction<'_, Postgres>,

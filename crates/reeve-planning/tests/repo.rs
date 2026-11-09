@@ -1583,3 +1583,110 @@ async fn untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readi
         );
     }
 }
+
+// Measured once with `SELECT title, similarity(title, 'PDF export shows a blank page') FROM stories`:
+// "The export PDF is blank" 0.47, "PDF export blank page" 0.72, "Export to PDF shows a blank page" 0.91,
+// "Login redirects twice" 0.0. So 0.3 straddles the reworded titles and the unrelated one.
+#[tokio::test]
+async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let mut c = dan();
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let mk = |idem: &'static str, title: &'static str| {
+        let (h, c, e) = (&h, &c, e.key().clone());
+        async move {
+            h.create_story(
+                c,
+                idem,
+                title,
+                Kind::Bug,
+                Some(e),
+                "",
+                vec!["c".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let blank = mk("1", "The export PDF is blank").await;
+    let other = mk("2", "Login redirects twice").await;
+    let old = mk("3", "PDF export blank page").await;
+    let recent = mk("4", "Export to PDF shows a blank page").await;
+    // `old` is dropped 30 days before `now`; `recent` 2 days before. The window starts 14 days before `now`.
+    c.now = Utc.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    h.move_story(
+        &c,
+        old.key(),
+        old.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+    c.now = Utc.with_ymd_and_hms(2026, 10, 24, 9, 0, 0).unwrap();
+    h.move_story(
+        &c,
+        recent.key(),
+        recent.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+    let since = Utc.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap();
+
+    let text = "PDF export shows a blank page";
+    let got: Vec<String> = h
+        .ports
+        .stories
+        .similar_stories(text, 0.3, since, 5)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.key().to_string())
+        .collect();
+    assert!(
+        got.contains(&blank.key().to_string()),
+        "a reworded title is found: {got:?}"
+    );
+    assert!(
+        got.contains(&recent.key().to_string()),
+        "done inside the window is found: {got:?}"
+    );
+    assert!(
+        !got.contains(&old.key().to_string()),
+        "done before the window is not: {got:?}"
+    );
+    assert!(
+        !got.contains(&other.key().to_string()),
+        "an unrelated title is below the threshold: {got:?}"
+    );
+    assert_eq!(
+        got.first(),
+        Some(&recent.key().to_string()),
+        "most similar first"
+    );
+    assert_eq!(
+        h.ports
+            .stories
+            .similar_stories(text, 0.3, since, 1)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        h.ports
+            .stories
+            .similar_stories(text, 0.99, since, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

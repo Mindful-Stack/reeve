@@ -45,6 +45,31 @@ impl StoryRepo for PgPlanningRepo {
             .bind(f.epic.as_ref().map(|k| k.to_string())).bind(&f.owner).bind(f.delivery.map(delivery_str)).bind(f.untriaged).bind(&f.label).bind(done_since).fetch_all(&mut **tx).await?;
         Ok(rows.iter().map(story_from).collect::<Result<Vec<_>, _>>()?)
     }
+    async fn similar_stories(
+        &self,
+        text: &str,
+        min: f32,
+        done_since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<Story>, RepoError> {
+        let mut tx = self.pool.begin().await?;
+        // set_config(.., true) is SET LOCAL with a bindable value: the `%` operator reads this threshold.
+        sqlx::query("SELECT set_config('pg_trgm.similarity_threshold', $1, true)")
+            .bind(min.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {STORY_COLS} FROM stories WHERE title % $1 AND (delivery <> 'done' OR done_at >= $2) \
+             ORDER BY similarity(title, $1) DESC, created_at DESC, length(key) DESC, key DESC LIMIT $3"
+        ))
+        .bind(text)
+        .bind(done_since)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.rollback().await?;
+        Ok(rows.iter().map(story_from).collect::<Result<Vec<_>, _>>()?)
+    }
     async fn update_story(
         &self,
         tx: &mut Transaction<'_, Postgres>,
