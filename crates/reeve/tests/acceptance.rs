@@ -461,15 +461,16 @@ async fn flow() {
         .output()
         .unwrap());
 
-    // Urgent marks through the CLI (kb/ADR-0017). The flow's own override is already logged, so every count is
-    // compared before and after.
-    let count = |action: &'static str| {
+    // Urgent marks through the CLI (kb/ADR-0017). The flow's own override is already logged, so the override count is
+    // compared before and after; marks and clears are counted on the epic.
+    let count = |action: &'static str, entity: Option<String>| {
         let activity = activity.clone();
         async move {
             reeve_activity::ActivityReader::list(
                 &*activity,
                 reeve_activity::ActivityFilter {
                     action: Some(action.into()),
+                    entity_key: entity,
                     ..Default::default()
                 },
             )
@@ -478,51 +479,55 @@ async fn flow() {
             .len()
         }
     };
-    let text = |token: &str, args: &[&str]| {
+    let plain = |token: &str| {
         let mut c = Command::cargo_bin("reeve").unwrap();
         c.env("REEVE_URL", &base)
             .env("REEVE_CONFIG_DIR", cfg_dir.path())
             .env("REEVE_TOKEN", token)
-            .args(args)
             .timeout(std::time::Duration::from_secs(60));
-        c.output().unwrap()
+        c
     };
-    let urgent_line = |out: &std::process::Output| -> Option<String> {
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .find(|l| l.starts_with("urgent"))
-            .map(str::to_string)
+    let show = |token: &str| {
+        let out = plain(token).args(["story", "show", &key]).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            text.lines().any(|l| l.contains(key.as_str())),
+            "story show printed nothing useful: {text:?}"
+        );
+        text
     };
-    let before_override = count("override").await;
-    let before_marked = count("urgent_marked").await;
-    let before_cleared = count("urgent_cleared").await;
+    let before_override = count("override", None).await;
+    let before_marked = count("urgent_marked", Some(epic_key.clone())).await;
+    let before_cleared = count("urgent_cleared", Some(epic_key.clone())).await;
 
-    let marked = text(
-        &human,
-        &["epic", "urgent", &epic_key, "--reason", "acceptance"],
-    );
+    let marked = plain(&human)
+        .args(["epic", "urgent", &epic_key, "--reason", "acceptance"])
+        .output()
+        .unwrap();
     assert!(
         marked.status.success(),
         "{}",
         String::from_utf8_lossy(&marked.stderr)
     );
-    let shown = text(&human, &["story", "show", &key]);
-    assert!(shown.status.success());
-    let line = urgent_line(&shown).expect("the story is urgent through its epic");
+    let shown = show(&human);
+    let line = shown.lines().nth(1).unwrap_or_default();
     assert!(
         line.starts_with(&format!("urgent · via epic {epic_key}")),
-        "{line}"
+        "{shown}"
     );
     let room = ok(reeve(&human).args(["war-room", "ls"]).output().unwrap());
-    assert!(
-        room["value"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["item"]["key"] == epic_key.as_str()),
-        "{room}"
-    );
-    let emptied = text(&human, &["war-room", "clear", "--yes"]);
+    let rows = room["value"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{room}");
+    assert_eq!(rows[0]["item"]["key"], epic_key.as_str(), "{room}");
+    let emptied = plain(&human)
+        .args(["war-room", "clear", "--yes"])
+        .output()
+        .unwrap();
     assert!(
         emptied.status.success(),
         "{}",
@@ -532,12 +537,18 @@ async fn flow() {
         String::from_utf8_lossy(&emptied.stdout).trim(),
         "The war room is empty."
     );
-    let shown = text(&human, &["story", "show", &key]);
-    assert_eq!(urgent_line(&shown), None);
-    assert_eq!(count("urgent_marked").await, before_marked + 1);
-    assert_eq!(count("urgent_cleared").await, before_cleared + 1);
+    let shown = show(&human);
+    assert!(!shown.lines().any(|l| l.starts_with("urgent")), "{shown}");
     assert_eq!(
-        count("override").await,
+        count("urgent_marked", Some(epic_key.clone())).await,
+        before_marked + 1
+    );
+    assert_eq!(
+        count("urgent_cleared", Some(epic_key.clone())).await,
+        before_cleared + 1
+    );
+    assert_eq!(
+        count("override", None).await,
         before_override,
         "marking and clearing never write an override"
     );
@@ -548,13 +559,17 @@ async fn flow() {
     assert_eq!(refused.status.code(), Some(2));
     let refused: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
     assert_eq!(refused["outcome"], "refused");
-    assert!(
-        refused["reasons"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["reason"] == "interactive_only"),
-        "{refused}"
+    let names: Vec<&str> = refused["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["reason"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["interactive_only"]);
+    assert_eq!(
+        count("urgent_marked", Some(key.clone())).await,
+        0,
+        "a refused mark writes nothing"
     );
 
     // 6. The record is accepted. Committed locally but not pushed, the default branch on origin still lacks it, so the
@@ -930,14 +945,6 @@ async fn flow() {
     );
 
     // 10. Sprints and goals (kb/ADR-0014). Text-mode commands read stderr for the refusal's words.
-    let plain = |token: &str| {
-        let mut c = Command::cargo_bin("reeve").unwrap();
-        c.env("REEVE_URL", &base)
-            .env("REEVE_CONFIG_DIR", cfg_dir.path())
-            .env("REEVE_TOKEN", token)
-            .timeout(std::time::Duration::from_secs(60));
-        c
-    };
     let refused_with = |out: std::process::Output, reason: &str| {
         assert_eq!(
             out.status.code(),
