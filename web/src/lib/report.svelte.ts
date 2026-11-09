@@ -96,7 +96,7 @@ export function payloadOf(d: Draft) {
 	if (d.kind === null) throw new Error('a report needs a kind');
 	const body = isUntouched(d.description) ? '' : d.description.trimEnd();
 	const label = d.origin.label.replace(/[[\]\\]/g, '\\$&');
-	const path = d.origin.path.replace(/[()\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+	const path = d.origin.path.replace(/[()]/g, (c) => (c === '(' ? '%28' : '%29'));
 	const from = `Reported from: [${label}](${path})`;
 	return {
 		title: d.title.trim(),
