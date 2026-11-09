@@ -449,7 +449,7 @@ impl ServerConfig {
             anyhow::bail!("admins must name at least one admin");
         }
         let floor = self.identity();
-        for a in &self.admins {
+        for a in self.admins.iter().filter(|a| !a.trim().is_empty()) {
             if !floor.is_allowed(a) {
                 anyhow::bail!(
                     "admin {} is not allowed by allowed_domains or allowed_emails",
@@ -526,6 +526,23 @@ mod tests {
             e.to_string()
                 .contains("admins must name at least one admin"),
             "{e}"
+        );
+    }
+
+    #[test]
+    fn blank_admin_entries_are_ignored_like_at_sign_in() {
+        let e = bare("allowed_domains = [\"example.com\"]\nadmins = [\"  \"]").unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("admins must name at least one admin"),
+            "{e}"
+        );
+        assert!(
+            bare("allowed_domains = [\"example.com\"]\nadmins = [\"\", \"admin@example.com\"]")
+                .is_ok()
+        );
+        assert!(
+            bare("allowed_domains = [\"example.com\"]\nadmins = [\" Admin@Example.com \"]").is_ok()
         );
     }
 

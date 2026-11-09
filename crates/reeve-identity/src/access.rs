@@ -45,7 +45,7 @@ pub enum AccessSource {
 }
 
 /// One listed entry. `also_in_config` marks a database row that duplicates a floor entry (kb/ADR-0015 R2); `allowed`
-/// is false only on an admin row whose email nothing allows (an inert grant, kb/ADR-0015 R4).
+/// is false only on a database admin grant whose email nothing allows (an inert grant, kb/ADR-0015 R4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessRow {
     pub value: String,
@@ -187,7 +187,7 @@ impl AccessPolicy {
                     value: v.clone(),
                     source: AccessSource::Config,
                     also_in_config: false,
-                    allowed: allowed(v),
+                    allowed: true,
                 })
                 .collect();
             out.extend(table.iter().map(|g| AccessRow {
@@ -201,10 +201,9 @@ impl AccessPolicy {
             }));
             out
         }
-        let any = |_: &str| true;
         AccessView {
-            domains: rows(&self.floor_domains, &self.domains, &any),
-            emails: rows(&self.floor_emails, &self.emails, &any),
+            domains: rows(&self.floor_domains, &self.domains, &|_| true),
+            emails: rows(&self.floor_emails, &self.emails, &|_| true),
             admins: rows(&self.floor_admins, &self.admins, &|e| self.is_allowed(e)),
         }
     }
@@ -347,6 +346,67 @@ mod tests {
             ]
         );
         assert!(v.emails.iter().all(|r| r.allowed));
+    }
+
+    #[test]
+    fn domains_match_exactly_never_by_suffix() {
+        let p = AccessPolicy::new(
+            &IdentityConfig {
+                allowed_domains: vec!["example.com".into()],
+                allowed_emails: vec![],
+                admins: vec![],
+            },
+            vec![g("partner.org")],
+            vec![],
+            vec![],
+        );
+        for bad in [
+            "a@evil-example.com",
+            "a@sub.example.com",
+            "a@example.com.evil",
+            "a@sub.partner.org",
+        ] {
+            assert!(!p.is_allowed(bad), "{bad}");
+        }
+        assert!(p.is_allowed("a@example.com") && p.is_allowed("a@partner.org"));
+    }
+
+    #[test]
+    fn a_floor_only_policy_answers_like_the_configuration() {
+        let cfg = IdentityConfig {
+            allowed_domains: vec!["Example.com".into(), "  ".into(), "".into()],
+            allowed_emails: vec![" Guest@Other.org ".into(), "".into()],
+            admins: vec!["Dan@Example.com".into()],
+        };
+        let p = AccessPolicy::floor_only(&cfg);
+        for i in [
+            "dan@example.com",
+            " DAN@EXAMPLE.COM ",
+            "guest@other.org",
+            "x@other.org",
+            "a@b@example.com",
+            "@example.com",
+            "example.com",
+            "",
+            " ",
+        ] {
+            assert_eq!(p.is_allowed(i), cfg.is_allowed(i), "is_allowed({i:?})");
+            if !i.trim().is_empty() {
+                assert_eq!(p.role_for(i), cfg.role_for(i), "role_for({i:?})");
+            }
+        }
+    }
+
+    #[test]
+    fn floor_admin_rows_are_always_allowed() {
+        let cfg = IdentityConfig {
+            allowed_domains: vec!["example.com".into()],
+            allowed_emails: vec![],
+            admins: vec!["boss@other.org".into()],
+        };
+        let v = AccessPolicy::new(&cfg, vec![], vec![], vec![]).view();
+        assert_eq!(v.admins.len(), 1);
+        assert!(v.admins[0].allowed);
     }
 
     #[test]
