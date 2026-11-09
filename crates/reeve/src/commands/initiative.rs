@@ -1,5 +1,6 @@
 use super::finish;
 use crate::client::Client;
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -95,6 +96,17 @@ pub enum Initiative {
         #[arg(long)]
         reopen: bool,
     },
+    /// Mark the initiative urgent for one cycle, or renew its mark; --clear removes it (interactive tokens only).
+    Urgent {
+        /// Initiative key.
+        key: KeyRef,
+        /// Why it is urgent (optional, at most 200 characters).
+        #[arg(long, conflicts_with = "clear")]
+        reason: Option<String>,
+        /// Remove the initiative's urgent mark (clearing one with none changes nothing).
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
@@ -125,6 +137,33 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::initiative,
         ),
+        Initiative::Urgent { key, reason, clear } => {
+            let path = format!("/initiatives/{key}/urgent");
+            if clear {
+                finish(c.delete::<InitiativeDto>(&path).await?, json, |s| {
+                    format!("urgent mark cleared on {}", s.key)
+                })
+            } else {
+                let now = chrono::Utc::now();
+                let reason = reason
+                    .map(|r| r.trim().to_string())
+                    .filter(|r| !r.is_empty());
+                finish(
+                    c.post::<InitiativeDto>(&path, serde_json::to_value(MarkUrgent { reason })?)
+                        .await?,
+                    json,
+                    |s| {
+                        crate::render::urgent_answer(
+                            Level::Initiative,
+                            &s.key,
+                            s.urgent_mark.as_ref(),
+                            &s.urgent_sources,
+                            now,
+                        )
+                    },
+                )
+            }
+        }
         Initiative::Show { key } => {
             let out = c
                 .get::<InitiativeDto>(&format!("/initiatives/{key}"))

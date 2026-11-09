@@ -2571,3 +2571,121 @@ fn story_context_prints_the_urgent_line_after_the_storys_first_line() {
     assert!(lines[at].contains(" !"), "{text}");
     assert_eq!(lines[at + 1], "urgent · via epic ABC-40", "{text}");
 }
+
+/// A story as the urgent route answers a mark: urgent by its own mark, which carries `reason`.
+fn marked_story_json(key: &str, reason: Option<&str>) -> serde_json::Value {
+    let at = chrono::Utc::now();
+    let mut s = urgent_story(vec![reeve_protocol::ItemRefDto {
+        key: key.parse().unwrap(),
+        item: reeve_protocol::ItemType::Story,
+    }]);
+    s.key = key.parse().unwrap();
+    s.urgent_mark = Some(reeve_protocol::UrgentMarkDto {
+        at,
+        by: "dana@example.com".into(),
+        reason: reason.map(Into::into),
+        expires_at: at + chrono::Duration::days(14),
+        active: true,
+        done: false,
+    });
+    serde_json::to_value(s).unwrap()
+}
+
+/// Marking posts the trimmed reason to the story's urgent route and prints the mark line then the urgent line; a CLI
+/// that sends the reason untrimmed, or prints the whole story, fails.
+#[test]
+fn story_urgent_posts_the_trimmed_reason() {
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/TST-1/urgent",
+        200,
+        ok(marked_story_json("TST-1", Some("Customer X blocked"))),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "story",
+            "urgent",
+            "TST-1",
+            "--reason",
+            "  Customer X blocked ",
+        ],
+    );
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":"Customer X blocked"}));
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].ends_with("TST-1 !") && lines[0].len() > "TST-1 !".len(),
+        "{text}"
+    );
+    assert!(lines[1].starts_with("urgent · marked by"), "{text}");
+}
+
+/// A blank reason is no reason: `null`, as the web sends it. Epics use their own path.
+#[test]
+fn epic_urgent_with_a_blank_reason_posts_null() {
+    let (url, server) = serve(vec![(
+        "POST /api/v1/epics/ABC-40/urgent",
+        404,
+        serde_json::json!({"outcome":"error","code":"not_found","message":"not found"}),
+    )]);
+    let out = reeve_at(&url, &["epic", "urgent", "ABC-40", "--reason", "   "]);
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":null}));
+    assert_eq!(out.status.code(), Some(1));
+}
+
+/// `--clear` is a bodiless DELETE on the same path and prints one fixed line.
+#[test]
+fn initiative_urgent_clear_sends_delete() {
+    let init = serde_json::json!({"key":"ABC-2","title":"Leave","brief":"","horizon":"Now","target_month":null,
+        "owner":null,"discovery_complete":null,"progress":null,"external_ref":null,"version":1,
+        "urgent_mark":null,"urgent_sources":[]});
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/initiatives/ABC-2/urgent",
+        200,
+        ok(init),
+    )]);
+    let out = reeve_at(&url, &["initiative", "urgent", "ABC-2", "--clear"]);
+    assert_eq!(server.join().unwrap(), vec![String::new()], "no body");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "urgent mark cleared on ABC-2\n"
+    );
+}
+
+/// `--clear` with `--reason` is a clap error before any request (nothing listens on the port).
+#[test]
+fn urgent_clear_with_reason_is_a_usage_error() {
+    let out = Command::cargo_bin("reeve")
+        .unwrap()
+        .env("REEVE_URL", "http://127.0.0.1:9")
+        .env("REEVE_TOKEN", "reeve_test")
+        .args(["story", "urgent", "TST-1", "--clear", "--reason", "x"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--reason"), "{err}");
+}
+
+/// An automation token's refusal exits 2 and the human text goes to stderr, none to stdout.
+#[test]
+fn urgent_refused_interactive_only_exits_2() {
+    let body = serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false});
+    let (url, server) = serve(vec![("POST /api/v1/stories/TST-1/urgent", 403, body)]);
+    let out = reeve_at(&url, &["story", "urgent", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    // `render::reason(&Reason::InteractiveOnly)`; `render` is private to the crate, so the wording is spelled out.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("only an interactive user may do this"),
+        "{err}"
+    );
+    assert!(out.stdout.is_empty());
+}

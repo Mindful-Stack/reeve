@@ -112,6 +112,19 @@ pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
     )
 }
 
+/// The answer to marking an item urgent: its mark line (`!` after the key once the server counts it urgent), then
+/// the urgent lines. The server's `sources` decide urgency; nothing here reads the mark's timestamps.
+pub fn urgent_answer(
+    level: Level,
+    key: &Key,
+    own: Option<&UrgentMarkDto>,
+    sources: &[ItemRefDto],
+    now: DateTime<Utc>,
+) -> String {
+    let first = format!("{}{}", mark(level, key), urgent_marker(sources));
+    with_urgency(first, urgent_lines(own, sources, key, now))
+}
+
 pub fn story(s: &StoryDto) -> String {
     let mut out = format!(
         "{}{} [{}] {}\n  kind: {:?}  version: {}",
@@ -1158,6 +1171,31 @@ mod tests {
         want.insert(1, "urgent · marked by dana, 2 d ago · expires in 10 d");
         assert_eq!(story_show(&s, now()), want.join("\n"));
         assert!(plain.contains("\n  [ ] It works"), "{plain}");
+    }
+
+    #[test]
+    fn urgent_answer_is_the_mark_line_then_the_urgent_lines() {
+        let key: Key = "ABC-1".parse().unwrap();
+        let m = own_mark(true, false);
+        let out = urgent_answer(
+            Level::Story,
+            &key,
+            Some(&m),
+            &[ref_("ABC-1", ItemType::Story)],
+            now(),
+        );
+        assert_eq!(
+            out,
+            format!(
+                "{} !\nurgent · marked by dana, 2 d ago · expires in 10 d",
+                mark(Level::Story, &key)
+            )
+        );
+        // Nothing urgent by the server's count: no bang, and the expired own mark gets its line.
+        let m = own_mark(false, false);
+        let out = urgent_answer(Level::Epic, &key, Some(&m), &[], now());
+        assert!(out.starts_with(&mark(Level::Epic, &key)), "{out}");
+        assert!(!out.lines().next().unwrap().ends_with('!'), "{out}");
     }
 
     #[test]

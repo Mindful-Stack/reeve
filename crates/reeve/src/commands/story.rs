@@ -1,5 +1,6 @@
 use super::{finish, whoami};
 use crate::client::Client;
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -161,6 +162,17 @@ pub enum Story {
         #[arg(long)]
         by: KeyRef,
     },
+    /// Mark the story urgent for one cycle, or renew its mark; --clear removes it (interactive tokens only).
+    Urgent {
+        /// Story key.
+        key: KeyRef,
+        /// Why it is urgent (optional, at most 200 characters).
+        #[arg(long, conflicts_with = "clear")]
+        reason: Option<String>,
+        /// Remove the story's urgent mark (clearing one with none changes nothing).
+        #[arg(long)]
+        clear: bool,
+    },
 }
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum KindArg {
@@ -246,6 +258,33 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::story,
         ),
+        Story::Urgent { key, reason, clear } => {
+            let path = format!("/stories/{key}/urgent");
+            if clear {
+                finish(c.delete::<StoryDto>(&path).await?, json, |s| {
+                    format!("urgent mark cleared on {}", s.key)
+                })
+            } else {
+                let now = chrono::Utc::now();
+                let reason = reason
+                    .map(|r| r.trim().to_string())
+                    .filter(|r| !r.is_empty());
+                finish(
+                    c.post::<StoryDto>(&path, serde_json::to_value(MarkUrgent { reason })?)
+                        .await?,
+                    json,
+                    |s| {
+                        crate::render::urgent_answer(
+                            Level::of_kind(s.kind),
+                            &s.key,
+                            s.urgent_mark.as_ref(),
+                            &s.urgent_sources,
+                            now,
+                        )
+                    },
+                )
+            }
+        }
         Story::Show { key } => {
             let now = chrono::Utc::now();
             finish(
