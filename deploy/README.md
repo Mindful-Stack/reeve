@@ -254,6 +254,10 @@ The household directory must hold a real `git clone` of each repository named in
 
 The restore source is a `pg_dump` archive of the planner's database. It holds everything: users, token hashes (people stay signed in and automation keeps working after a restore), idempotency keys (a create retried after the restore still deduplicates), the key sequence, the activity log with its ids, and the migration table. Store a dump like a secret: it holds every user's email and every token hash. The JSON export is the readable record taken beside it, and what a restore is checked against; nothing restores from the export.
 
+### Releases and rollback
+
+Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost.
+
 ### Back up
 
 On the host, in the directory holding `docker-compose.yml`. This is the command the host's backup script runs:
