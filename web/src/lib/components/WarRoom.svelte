@@ -5,10 +5,9 @@
 	import { page } from '$app/state';
 	import { api, ApiError, Refused, unwrap } from '#lib/api/client.ts';
 	import type { ItemRef, WarRoomEntry } from '#lib/api/types.ts';
-	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
-	import { expiry } from '#lib/urgency.ts';
+	import { expiry, itemRoute } from '#lib/urgency.ts';
 	import MarkUrgentDialog from './MarkUrgentDialog.svelte';
 
 	let {
@@ -170,10 +169,7 @@
 			.filter(Boolean)
 			.join(' · ');
 
-	const route = (r: ItemRef) =>
-		r.item === 'story'
-			? storyHref(page.url, r.key)
-			: `/${r.item === 'initiative' ? 'initiatives' : 'epics'}/${encodeURIComponent(r.key)}`;
+	const route = (r: ItemRef) => itemRoute(r, page.url);
 </script>
 
 {#if entries.length}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemRef, UrgentMark } from '#lib/api/types.ts';
-import { daysAgo, expiry, urgentLine } from './urgency.ts';
+import { daysAgo, expiry, itemRoute, ownMarkText, urgentLine, via } from './urgency.ts';
 
 const now = new Date('2026-11-10T12:00:00Z');
 const day = 86_400_000;
@@ -57,5 +57,25 @@ describe('urgentLine', () => {
 		expect(urgentLine(mark({ active: false, expires_at: iso(-day) }), [ref('ABC-311', 'story')], 'ABC-1', now, titles)).toBe(
 			'Urgent · via story ABC-311 Payments outage'
 		);
+	});
+});
+
+describe('ownMarkText, via, itemRoute', () => {
+	it('says who, when, why and the expiry', () => {
+		expect(ownMarkText(mark({ reason: 'Burning' }), now)).toBe("marked by dana, 2 d ago · 'Burning' · expires in 5 d");
+	});
+	it('finds the first other source and counts the rest', () => {
+		const t = (r: ItemRef) => (r.key === 'ABC-9' ? 'Nine' : undefined);
+		expect(via([ref('ABC-1'), ref('ABC-9', 'story'), ref('ABC-2', 'epic')], 'ABC-1', t)).toEqual({ ref: ref('ABC-9', 'story'), title: 'Nine', more: 1 });
+		expect(via([ref('ABC-1')], 'ABC-1', t)).toBeNull();
+	});
+	it('routes a story to its drawer and the others to their pages', () => {
+		const url = { href: 'http://x/epics/ABC-5' };
+		expect(itemRoute(ref('ABC-9', 'story'), url)).toBe('/epics/ABC-5?story=ABC-9');
+		expect(itemRoute(ref('ABC-5', 'epic'), url)).toBe('/epics/ABC-5');
+		expect(itemRoute(ref('ABC-1'), url)).toBe('/initiatives/ABC-1');
+	});
+	it('finds the own mark anywhere among the sources', () => {
+		expect(urgentLine(mark(), [ref('ABC-9', 'story'), ref('ABC-1')], 'ABC-1', now, () => undefined)).toContain('marked by dana');
 	});
 });

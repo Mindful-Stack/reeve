@@ -1,5 +1,6 @@
 <!-- The reason prompt every "Mark urgent…" shares. The parent owns the write and passes its failure back as `error`. -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let {
@@ -22,6 +23,14 @@
 
 	// svelte-ignore state_referenced_locally
 	let reason = $state(initial ?? '');
+	let input = $state<HTMLInputElement | null>(null);
+	let wasBusy = false;
+	// A failed write frees the form: the input was disabled while saving, so focus returns to it.
+	$effect(() => {
+		const b = busy;
+		if (wasBusy && !b && error) void tick().then(() => input?.focus());
+		wasBusy = b;
+	});
 
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -32,7 +41,7 @@
 
 <Dialog title="Mark {item} urgent" onclose={oncancel} closable={!busy}>
 	<form class="mark" aria-label="Mark urgent" onsubmit={submit}>
-		<label class="field">Reason (optional) <input bind:value={reason} maxlength="200" disabled={busy} /></label>
+		<label class="field">Reason (optional) <input bind:this={input} bind:value={reason} maxlength="200" disabled={busy} /></label>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		<div class="actions">
 			<button type="button" onclick={oncancel} disabled={busy}>Cancel</button>

@@ -1,5 +1,6 @@
 import type { ItemRef, UrgentMark } from '#lib/api/types.ts';
 import { short } from '#lib/format.ts';
+import { storyHref } from '#lib/drawer.ts';
 
 const DAY = 86_400_000;
 /** "2 d ago", "today": whole days between two instants, never negative. */
@@ -16,6 +17,27 @@ export function expiry(mark: UrgentMark, now: Date): string {
 	}
 	return `expired ${daysAgo(mark.expires_at, now)}`;
 }
+/** "marked by dana, 2 d ago · 'reason' · expires in 5 d": the own-mark part of a line. */
+export function ownMarkText(mark: UrgentMark, now: Date): string {
+	const parts = [`marked by ${short(mark.by)}, ${daysAgo(mark.at, now)}`];
+	if (mark.reason) parts.push(`'${mark.reason}'`);
+	parts.push(expiry(mark, now));
+	return parts.join(' · ');
+}
+/** The first source that is not the item itself, its title when known, and how many more there are. */
+export function via(
+	sources: ItemRef[],
+	key: string,
+	titleOf: (r: ItemRef) => string | undefined
+): { ref: ItemRef; title: string | undefined; more: number } | null {
+	const others = sources.filter((s) => s.key !== key);
+	return others[0] ? { ref: others[0], title: titleOf(others[0]), more: others.length - 1 } : null;
+}
+/** Where an item's page is; a story opens the drawer over `url`'s page. */
+export function itemRoute(r: ItemRef, url: { readonly href: string }): string {
+	if (r.item === 'story') return storyHref(url, r.key);
+	return `/${r.item === 'initiative' ? 'initiatives' : 'epics'}/${encodeURIComponent(r.key)}`;
+}
 /** The chip's tooltip and the page badge line. `own` is the item's own mark when it is among the sources. */
 export function urgentLine(
 	own: UrgentMark | null | undefined,
@@ -25,17 +47,8 @@ export function urgentLine(
 	titleOf: (r: ItemRef) => string | undefined
 ): string {
 	const parts: string[] = [];
-	if (own && sources[0]?.key === key) {
-		parts.push(`marked by ${short(own.by)}, ${daysAgo(own.at, now)}`);
-		if (own.reason) parts.push(`'${own.reason}'`);
-		parts.push(expiry(own, now));
-	}
-	const others = sources.filter((s) => s.key !== key);
-	if (others[0]) {
-		const t = titleOf(others[0]);
-		parts.push(
-			`via ${others[0].item} ${others[0].key}${t ? ` ${t}` : ''}${others.length > 1 ? ` and ${others.length - 1} more` : ''}`
-		);
-	}
+	if (own && sources.some((s) => s.key === key)) parts.push(ownMarkText(own, now));
+	const v = via(sources, key, titleOf);
+	if (v) parts.push(`via ${v.ref.item} ${v.ref.key}${v.title ? ` ${v.title}` : ''}${v.more > 0 ? ` and ${v.more} more` : ''}`);
 	return ['Urgent', ...parts].join(' · ');
 }

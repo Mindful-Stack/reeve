@@ -115,10 +115,17 @@
 	]);
 
 	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
+	/** When the page last loaded: the urgent line's "N d ago" counts from it. */
+	let loadedAt = $state(new Date());
 	let marking = $state(false);
 	let markError = $state<string | null>(null);
 	/** The source's title, when the page has loaded it; otherwise the line shows its key and type only. */
-	const titleOf = (r: ItemRef): string | undefined => r.item === 'epic' ? epics.find((e) => e.key === r.key)?.title : r.item === 'story' ? stories.find((s) => s.story.key === r.key)?.story.title : undefined;
+	const titleOf = (r: ItemRef): string | undefined =>
+		r.item === 'epic'
+			? epics.find((e) => e.key === r.key)?.title
+			: r.item === 'story'
+				? stories.find((s) => s.story.key === r.key)?.story.title
+				: undefined;
 
 	function openMark() {
 		markError = null;
@@ -128,8 +135,13 @@
 	async function markUrgent(reason: string | null) {
 		const k = initiative?.key;
 		if (!k) return;
-		if (await write(() => unwrap(api.POST('/api/v1/initiatives/{key}/urgent', { params: { path: { key: k } }, body: { reason } })))) marking = false;
-		else {
+		const ok = await write(() =>
+			unwrap(api.POST('/api/v1/initiatives/{key}/urgent', { params: { path: { key: k } }, body: { reason } }))
+		);
+		if (ok) {
+			marking = false;
+			await refocusActions();
+		} else {
 			markError = notice;
 			notice = null;
 		}
@@ -137,7 +149,13 @@
 
 	async function clearUrgent() {
 		const k = initiative?.key;
-		if (k) await write(() => unwrap(api.DELETE('/api/v1/initiatives/{key}/urgent', { params: { path: { key: k } } })));
+		if (k && (await write(() => unwrap(api.DELETE('/api/v1/initiatives/{key}/urgent', { params: { path: { key: k } } }))))) await refocusActions();
+	}
+
+	/** The control that opened a write (the expired line's buttons, a dialog) is gone: focus goes to the Actions menu, unless the user moved it. */
+	async function refocusActions() {
+		await tick();
+		if (focusIsFree(null)) document.body.querySelector<HTMLElement>(`button[aria-label="Actions for ${initiative?.key}"]`)?.focus();
 	}
 
 	let latest = 0;
@@ -156,6 +174,7 @@
 			]);
 			if (seq !== latest) return;
 			initiative = i;
+			loadedAt = new Date();
 			if (editing) briefBase = followBase(briefBase, { version: i.version, text: i.brief ?? '' });
 			if (editingDetails) detailsBase = followBase(detailsBase, { version: i.version, text: fieldsText(initiativeDetails(i)) });
 			epics = e;
@@ -472,6 +491,7 @@
 				mark={i.urgent_mark}
 				sources={i.urgent_sources}
 				{titleOf}
+				now={loadedAt}
 				{busy}
 				onremark={openMark}
 				onclear={() => void clearUrgent()}

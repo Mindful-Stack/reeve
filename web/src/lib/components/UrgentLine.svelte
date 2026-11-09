@@ -3,8 +3,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import type { ItemRef, UrgentMark } from '#lib/api/types.ts';
-	import { storyHref } from '#lib/drawer.ts';
-	import { daysAgo, urgentLine } from '#lib/urgency.ts';
+	import { daysAgo, itemRoute, ownMarkText, urgentLine, via } from '#lib/urgency.ts';
 	import UrgentChip from './UrgentChip.svelte';
 
 	let {
@@ -12,6 +11,7 @@
 		mark,
 		sources,
 		titleOf,
+		now,
 		busy = false,
 		onremark,
 		onclear
@@ -21,35 +21,28 @@
 		sources: ItemRef[];
 		/** The title of a source, when the page has it loaded. */
 		titleOf: (r: ItemRef) => string | undefined;
+		/** The page's last load time: the "N d ago" texts count from it. */
+		now: Date;
 		busy?: boolean;
 		onremark: () => void;
 		onclear: () => void;
 	} = $props();
 
-	const now = $derived(new Date());
 	const own = $derived(sources.some((s) => s.key === itemKey) ? mark : null);
-	const others = $derived(sources.filter((s) => s.key !== itemKey));
+	const v = $derived(via(sources, itemKey, titleOf));
 	const expired = $derived(mark && !mark.active ? mark : null);
-	const ownText = $derived(
-		own ? urgentLine(own, [{ key: itemKey, item: sources.find((s) => s.key === itemKey)!.item }], itemKey, now, () => undefined).replace(/^Urgent · /, '') : ''
-	);
 	const full = $derived(urgentLine(own, sources, itemKey, now, titleOf));
-
-	function href(r: ItemRef): string {
-		if (r.item === 'story') return storyHref(page.url, r.key);
-		return `/${r.item === 'epic' ? 'epics' : 'initiatives'}/${encodeURIComponent(r.key)}`;
-	}
 </script>
 
 {#if sources.length > 0}
 	<p class="urgent-line" data-testid="urgent-line">
 		<UrgentChip line={full} />
-		{#if ownText}<span>{ownText}</span>{/if}
-		{#if others[0]}
-			{@const t = titleOf(others[0])}
+		{#if own}<span>{ownMarkText(own, now)}</span>{/if}
+		{#if own && v}<span aria-hidden="true">·</span>{/if}
+		{#if v}
 			<span
-				>via {others[0].item} <a href={href(others[0])}>{others[0].key}</a>{t ? ` ${t}` : ''}{others.length > 1
-					? ` and ${others.length - 1} more`
+				>via {v.ref.item} <a href={itemRoute(v.ref, page.url)}>{v.ref.key}</a>{v.title ? ` ${v.title}` : ''}{v.more > 0
+					? ` and ${v.more} more`
 					: ''}</span
 			>
 		{/if}
@@ -58,7 +51,9 @@
 {#if expired}
 	<p class="urgent-line expired" data-testid="urgent-expired">
 		<span>Urgent mark expired {daysAgo(expired.expires_at, now)}</span>
+		<span aria-hidden="true">·</span>
 		<button type="button" class="ghost" aria-label="Re-mark {itemKey}" onclick={onremark} disabled={busy}>Re-mark</button>
+		<span aria-hidden="true">·</span>
 		<button type="button" class="ghost" aria-label="Clear urgent mark on {itemKey}" onclick={onclear} disabled={busy}>Clear</button>
 	</p>
 {/if}

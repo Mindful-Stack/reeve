@@ -825,7 +825,7 @@ describe('epic page: urgent mark', () => {
 	};
 	const item = (items: HTMLButtonElement[], name: string) => items.find((b) => b.textContent?.trim() === name);
 
-	it('offers Mark urgent only while there is no mark, and Clear urgent mark with one', async () => {
+	it('always offers Mark urgent…, and Clear urgent mark only with a mark', async () => {
 		await open();
 		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…']);
 		unmount(app!);
@@ -919,4 +919,55 @@ describe('epic page: urgent mark', () => {
 			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
 		});
 	});
+	it('moves focus to the Actions menu after the expired line is cleared', async () => {
+		net.epic = { ...net.epic, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		const clear = document.body.querySelector('button[aria-label="Clear urgent mark on ABC-5"]') as HTMLButtonElement;
+		clear.focus();
+		clear.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-expired"]')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
+		});
+	});
+
+	it('moves focus to the Actions menu after a successful Re-mark', async () => {
+		net.epic = { ...net.epic, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		const re = document.body.querySelector('button[aria-label="Re-mark ABC-5"]') as HTMLButtonElement;
+		re.focus();
+		re.click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
+		});
+	});
+
+	it('returns focus to the reason input after a failed mark', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		net.urgentFail = true;
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')).not.toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('dialog input'));
+		});
+	});
+
+	it('shows a line derived from the parent initiative with its title', async () => {
+		net.epic = { ...net.epic, urgent_mark: null, urgent_sources: [{ key: 'ABC-1', item: 'initiative' }] };
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain('via initiative ABC-1 Orion');
+		});
+		expect(document.body.querySelector('[data-testid="urgent-line"] a')!.getAttribute('href')).toBe('/initiatives/ABC-1');
+	});
+
 });
