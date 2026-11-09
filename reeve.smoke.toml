@@ -6,7 +6,7 @@ bind = "127.0.0.1:7475"
 public_url = "http://127.0.0.1:7475"
 key_prefix = "SMK"
 horizon_buckets = ["Now", "Next", "Later"]
-allowed_emails = ["smoke@example.com"]
+allowed_emails = ["smoke@example.com", "smoke-member@example.com"]
 admins = ["smoke@example.com"]
 
 [oidc]

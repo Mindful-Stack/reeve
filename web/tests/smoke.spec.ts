@@ -606,3 +606,41 @@ test('an initiative marked urgent from its card shows in the War room with its r
 	await warRoom.locator('[data-confirm]').click();
 	await expect(warRoom).toHaveCount(0);
 });
+
+const MEMBER_TOKEN = env('SMOKE_MEMBER_TOKEN');
+
+test('an admin allows a guest email on the Access page and removes it', async ({ page }) => {
+	const guest = `guest-${crypto.randomUUID().slice(0, 8)}@partner.example`;
+	await page.goto('/access');
+	await page.getByLabel('Guest email').fill(guest);
+	await page.getByRole('form', { name: 'Allow a guest' }).getByRole('button', { name: 'Allow' }).click();
+	const row = page.getByRole('listitem').filter({ hasText: guest });
+	await expect(row).toContainText('added by smoke@example.com');
+	await row.getByRole('button', { name: 'Remove' }).click();
+	await expect(page.getByText(`Remove ${guest}? They lose access on their next request.`)).toBeVisible();
+	await page.getByRole('button', { name: 'Yes, remove' }).click();
+	await expect(row).toHaveCount(0);
+});
+
+test("a member's open tab gains and loses the Access link as an admin grants and revokes, without a reload", async ({ page, browser }) => {
+	const member = await browser.newContext({ baseURL: process.env.REEVE_URL });
+	await member.addCookies([{ name: 'reeve_session', value: MEMBER_TOKEN, url: process.env.REEVE_URL! }]);
+	const b = await member.newPage();
+	let navigations = 0;
+	b.on('framenavigated', (f) => {
+		if (f === b.mainFrame()) navigations++;
+	});
+	await b.goto('/tokens');
+	await expect(b.getByText('live', { exact: true })).toBeAttached();
+	const nav = b.getByRole('navigation', { name: 'Account' });
+	await expect(nav.getByRole('link', { name: 'Access' })).toHaveCount(0);
+	const loaded = navigations;
+	const grant = await page.request.post('/api/v1/access/admins', { headers, data: { email: 'smoke-member@example.com' } });
+	expect(grant.ok()).toBe(true);
+	await expect(nav.getByRole('link', { name: 'Access' })).toBeVisible({ timeout: 10_000 });
+	const revoke = await page.request.delete('/api/v1/access/admins/smoke-member@example.com', { headers });
+	expect(revoke.ok()).toBe(true);
+	await expect(nav.getByRole('link', { name: 'Access' })).toHaveCount(0, { timeout: 10_000 });
+	expect(navigations).toBe(loaded);
+	await member.close();
+});
