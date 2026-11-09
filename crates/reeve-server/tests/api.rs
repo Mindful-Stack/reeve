@@ -1080,7 +1080,7 @@ async fn only_an_admin_stores_an_accepted_check() {
         &h.state.pool,
         &*h.state.tokens,
         &*ident_log,
-        &h.state.identity,
+        &reeve_identity::AccessPolicy::floor_only(&h.state.identity),
         "test",
         reeve_protocol::Via::Interactive,
         &h.victim_email,

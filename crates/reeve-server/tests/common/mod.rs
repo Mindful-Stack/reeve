@@ -91,6 +91,7 @@ legacy_prefixes = ["SCRUM"]"#
     )))
     .unwrap();
     let identity = config.identity();
+    let policy = reeve_identity::AccessPolicy::floor_only(&identity);
     let tokens = reeve_identity::make_token_store(pool.clone());
     let now = chrono::Utc::now();
     let activity = reeve_activity::make_activity_store(pool.clone());
@@ -99,7 +100,7 @@ legacy_prefixes = ["SCRUM"]"#
         &pool,
         &*tokens,
         &*ident_log,
-        &identity,
+        &policy,
         "test",
         reeve_protocol::Via::Interactive,
         "dan@example.com",
@@ -115,7 +116,7 @@ legacy_prefixes = ["SCRUM"]"#
         &pool,
         &*tokens,
         &*ident_log,
-        &identity,
+        &policy,
         "test",
         reeve_protocol::Via::Interactive,
         "dan@example.com",
@@ -131,7 +132,7 @@ legacy_prefixes = ["SCRUM"]"#
         &pool,
         &*tokens,
         &*ident_log,
-        &identity,
+        &policy,
         "test",
         reeve_protocol::Via::Interactive,
         "bob@example.com",

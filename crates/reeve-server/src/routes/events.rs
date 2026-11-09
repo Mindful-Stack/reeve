@@ -61,7 +61,11 @@ async fn events(
                 tokio::time::sleep(poll).await;
             }
             // The browser's EventSource reconnects, gets 401 and goes to sign-in.
-            if reeve_identity::authenticate(&*s.tokens, &s.identity, &secret, Utc::now())
+            // Every batch re-reads the policy (kb/ADR-0015 R5): a removal or a load failure ends the stream.
+            let Ok(policy) = s.access.load(&s.identity).await else {
+                return None;
+            };
+            if reeve_identity::authenticate(&*s.tokens, &policy, &secret, Utc::now())
                 .await
                 .is_err()
             {

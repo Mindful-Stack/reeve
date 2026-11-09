@@ -235,7 +235,7 @@ async fn flow() {
         &pool,
         &*tokens,
         &*ident_log,
-        &identity,
+        &reeve_identity::AccessPolicy::floor_only(&identity),
         "test",
         reeve_protocol::Via::Interactive,
         ADMIN,

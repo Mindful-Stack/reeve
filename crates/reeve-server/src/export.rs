@@ -52,6 +52,7 @@ pub struct ExportSources {
     pub(crate) handlers: Handlers,
     pub(crate) activity: Arc<dyn reeve_activity::ActivityStore>,
     pub(crate) identity: IdentityConfig,
+    pub(crate) access: Arc<dyn reeve_identity::AccessStore>,
 }
 
 impl ExportSources {
@@ -64,6 +65,7 @@ impl ExportSources {
             handlers: crate::state::handlers_for(config, pool.clone(), activity.clone()),
             activity,
             identity: config.identity(),
+            access: reeve_identity::make_access_store(pool.clone()),
             pool,
         }
     }
@@ -97,7 +99,9 @@ pub async fn export_document_in(
         )
         .await?;
     }
-    // The first query: without a snapshot, PostgreSQL takes one here, not at BEGIN.
+    // The first query: without a snapshot, PostgreSQL takes one here, not at BEGIN. Roles come from this snapshot's
+    // policy, so they match the users and the dump (kb/ADR-0015 consequences).
+    let policy = src.access.load_in(&mut tx, &src.identity).await?;
     let urgency = src.handlers.urgency_in(&mut tx, exported_at).await?;
     let initiatives = src.handlers.export_initiatives(&mut tx, &urgency).await?;
     let epics = src.handlers.export_epics(&mut tx, &urgency).await?;
@@ -109,7 +113,7 @@ pub async fn export_document_in(
         .await?
         .into_iter()
         .map(|u| UserDto {
-            role: src.identity.role_for(&u.email),
+            role: policy.role_for(&u.email),
             email: u.email,
             display_name: u.display_name,
             disabled: u.disabled,

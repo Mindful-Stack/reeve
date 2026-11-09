@@ -167,11 +167,14 @@ async fn main() -> anyhow::Result<()> {
                 KindArg::Interactive => reeve_protocol::TokenKind::Interactive,
                 KindArg::Automation => reeve_protocol::TokenKind::Automation,
             };
+            let policy = reeve_identity::make_access_store(pool.clone())
+                .load(&config.identity())
+                .await?;
             let t = reeve_identity::issue_token(
                 &pool,
                 &*store,
                 &*log,
-                &config.identity(),
+                &policy,
                 "operator",
                 reeve_protocol::Via::System,
                 &email,

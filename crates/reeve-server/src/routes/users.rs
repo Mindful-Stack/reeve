@@ -28,7 +28,7 @@ async fn list(
     Ok(ok(rows
         .into_iter()
         .map(|u| UserDto {
-            role: s.identity.role_for(&u.email),
+            role: c.policy().role_for(&u.email),
             email: u.email,
             display_name: u.display_name,
             disabled: u.disabled,
@@ -49,7 +49,7 @@ async fn disable(
     }
     // Checked here, not in `disable_user`: the operator command `reeve-server user-disable` keeps plan A's semantics
     // (it may disable an address not yet seen). Symmetric with enable, so no row is written that enable would refuse.
-    if !s.identity.is_allowed(&email) {
+    if !c.policy().is_allowed(&email) {
         return Err(AppError::Validation(
             "email is not allowed by configuration".into(),
         ));
@@ -80,7 +80,7 @@ async fn enable(
         &s.pool,
         &*s.tokens,
         &*log,
-        &s.identity,
+        c.policy(),
         &c.0.email,
         via_of(&c),
         &email,

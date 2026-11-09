@@ -41,10 +41,17 @@ struct Seeded {
 
 /// Every kind of row, through the API: an initiative and an epic with discovery marks, stories in todo, in progress
 /// and done (`done_at` is set where the column exists), a block, a decision linked to a record with a check result,
-/// a comment with an idempotency key on a story and one on the decision, a goal linked to the epic in an opened sprint,
+/// a comment with an idempotency key on a story and one on the decision, an allowed email and an admin grant, a goal linked to the epic in an opened sprint,
 /// a pull request through the signed webhook, and the activity of all of it. The harness already issued two users' tokens, one of them automation.
 async fn seed(h: &Harness) -> Seeded {
     let (app, t) = (&h.app, h.admin_token.as_str());
+    // Access rows (kb/ADR-0015), written with SQL: the API that writes them comes in a later change.
+    for q in [
+        "INSERT INTO allowed_entries VALUES ('email','guest@other.org','dan@example.com',now())",
+        "INSERT INTO admin_grants VALUES ('ada@example.com','dan@example.com',now())",
+    ] {
+        sqlx::query(q).execute(&h.state.pool).await.unwrap();
+    }
     let ini = post(
         app,
         t,

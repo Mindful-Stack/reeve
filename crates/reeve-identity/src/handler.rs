@@ -1,4 +1,5 @@
 use crate::{
+    access::AccessPolicy,
     domain::*,
     ports::*,
     repo::{TokenStore, TokenSummary, UserRow},
@@ -32,7 +33,7 @@ pub async fn issue_token(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     actor: &str,
     via: Via,
     email: &str,
@@ -42,7 +43,7 @@ pub async fn issue_token(
     now: DateTime<Utc>,
 ) -> Result<IssuedToken, AuthError> {
     let email = normalise_email(email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     if expires_at.is_some_and(|e| e <= now) {
@@ -88,7 +89,7 @@ pub async fn issue_token(
 /// can be told apart afterwards: not found, revoked, owner disabled, expired, owner not allowed, bad kind.
 pub async fn authenticate(
     store: &dyn TokenStore,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<Principal, AuthError> {
@@ -109,7 +110,7 @@ pub async fn authenticate(
         Some("owner disabled")
     } else if row.expires_at.is_some_and(|e| e <= now) {
         Some("expired")
-    } else if !cfg.is_allowed(&owner) {
+    } else if !policy.is_allowed(&owner) {
         Some("owner not allowed")
     } else {
         None
@@ -123,7 +124,7 @@ pub async fn authenticate(
         return Err(AuthError::Unauthenticated);
     };
     Ok(Principal {
-        role: cfg.role_for(&owner),
+        role: policy.role_for(&owner),
         email: owner,
         token_kind,
     })
@@ -205,7 +206,7 @@ pub async fn sign_in(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     who: VerifiedIdentity,
     session_days: i64,
     now: DateTime<Utc>,
@@ -219,7 +220,7 @@ pub async fn sign_in(
         return Err(AuthError::NotAllowed);
     }
     let email = normalise_email(&who.email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     let mut tx = pool.begin().await?;
@@ -308,14 +309,14 @@ pub async fn enable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     actor: &str,
     via: Via,
     email: &str,
     now: DateTime<Utc>,
 ) -> Result<(), AuthError> {
     let email = normalise_email(email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     let mut tx = pool.begin().await?;
