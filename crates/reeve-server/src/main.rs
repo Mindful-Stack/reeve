@@ -55,8 +55,9 @@ enum Cmd {
         email: String,
     },
     /// Operator command: print who may sign in and who is admin, merged from the configuration and the database, one
-    /// `kind<TAB>value<TAB>source` per line. Read-only: the floor in reeve.toml is the break-glass path, so there is no
-    /// add or remove here.
+    /// `kind<TAB>value<TAB>source<TAB>flag` line per entry (flag is `not allowed` or empty; control characters in
+    /// value and source are escaped). Read-only: connects read-only, never migrates and refuses a database at another
+    /// migration. The floor in reeve.toml is the break-glass path, so there is no add or remove here.
     AccessList,
     /// Print `name<TAB>url` for every `[[repos]]` entry that has a url: what the scheduled decision check clones. Reads
     /// the configuration only; never connects to the database.
@@ -138,6 +139,42 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if let Cmd::AccessList = cli.cmd {
+        let pool = connect_offline(&config.database_url, None).await?;
+        check_migrations(&pool).await?;
+        let policy = reeve_identity::make_access_store(pool.clone())
+            .load(&config.identity())
+            .await
+            .context("loading the access lists")?;
+        let v = policy.view();
+        let mut text = String::new();
+        for (kind, rows) in [
+            ("domain", &v.domains),
+            ("email", &v.emails),
+            ("admin", &v.admins),
+        ] {
+            for r in rows {
+                let source = match &r.source {
+                    reeve_identity::AccessSource::Config => "reeve.toml".to_string(),
+                    reeve_identity::AccessSource::Database { added_by, added_at } => {
+                        format!("added by {added_by} {}", added_at.format("%Y-%m-%d"))
+                    }
+                };
+                let flag = if r.allowed { "" } else { "not allowed" };
+                text.push_str(&format!(
+                    "{kind}\t{}\t{}\t{flag}\n",
+                    r.value.escape_debug(),
+                    source.escape_debug()
+                ));
+            }
+        }
+        pool.close().await;
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(text.as_bytes())?;
+        stdout.flush()?;
+        return Ok(());
+    }
     // Configuration only: the scheduled check calls this inside the server container, and it must answer whether or
     // not the database is up.
     if let Cmd::Repos = cli.cmd {
@@ -207,28 +244,7 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
         }
-        Cmd::AccessList => {
-            let policy = reeve_identity::make_access_store(pool.clone())
-                .load(&config.identity())
-                .await?;
-            let v = policy.view();
-            let source = |r: &reeve_identity::AccessRow| match &r.source {
-                reeve_identity::AccessSource::Config => "reeve.toml".to_string(),
-                reeve_identity::AccessSource::Database { added_by, added_at } => {
-                    format!("added by {added_by} {}", added_at.format("%Y-%m-%d"))
-                }
-            };
-            for (kind, rows) in [
-                ("domain", &v.domains),
-                ("email", &v.emails),
-                ("admin", &v.admins),
-            ] {
-                for r in rows {
-                    let flag = if r.allowed { "" } else { "\tnot allowed" };
-                    println!("{kind}\t{}\t{}{flag}", r.value, source(r));
-                }
-            }
-        }
+        Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
     }
     Ok(())
 }

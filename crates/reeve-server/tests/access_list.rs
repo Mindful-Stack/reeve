@@ -41,9 +41,9 @@ async fn access_list_prints_floor_and_database_entries_with_their_sources() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "domain\texample.com\treeve.toml\n\
-         email\tguest@other.org\tadded by dan@example.com 2026-11-09\n\
-         admin\tdan@example.com\treeve.toml\n\
+        "domain\texample.com\treeve.toml\t\n\
+         email\tguest@other.org\tadded by dan@example.com 2026-11-09\t\n\
+         admin\tdan@example.com\treeve.toml\t\n\
          admin\teve@gone.org\tadded by dan@example.com 2026-11-09\tnot allowed\n"
     );
 }
@@ -91,4 +91,37 @@ async fn token_issue_accepts_a_guest_allowed_only_in_the_database() {
             .trim()
             .starts_with("reeve_")
     );
+}
+
+#[tokio::test]
+async fn access_list_refuses_a_database_at_another_migration() {
+    let h = harness().await;
+    let m: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
+        .bind(m)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = tokio::process::Command::new(env!("CARGO_BIN_EXE_reeve-server"))
+        .arg("--config")
+        .arg(config_file(dir.path(), &h.url))
+        .arg("access-list")
+        .env_remove("REEVE_CONFIG")
+        .env("RUST_LOG", "warn")
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("this binary expects"), "{stderr}");
+    let still: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE version = $1")
+        .bind(m)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(still, 0, "access-list never migrates");
 }

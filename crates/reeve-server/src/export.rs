@@ -235,6 +235,24 @@ pub async fn check_migrations(pool: &PgPool) -> anyhow::Result<()> {
     );
 }
 
+/// A read-only pool for the offline commands: `offline_options`, a short connect timeout, and a context naming the
+/// database, host and port it tried (never the user or the password).
+pub async fn connect_offline(database_url: &str, database: Option<&str>) -> anyhow::Result<PgPool> {
+    let options = offline_options(database_url, database)?;
+    let target = format!(
+        "connecting to database {} on {}:{}",
+        options.get_database().unwrap_or("(default)"),
+        options.get_host(),
+        options.get_port()
+    );
+    crate::state::pool_options()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .connect_with(options)
+        .await
+        .context(target)
+}
+
 /// `reeve-server export`: connect read-only to the configured database (or `database` on the same server), refuse a
 /// database at another migration, and return the document's text. The caller writes it; nothing is written here.
 pub async fn offline_export(
@@ -243,20 +261,7 @@ pub async fn offline_export(
     snapshot: Option<&SnapshotId>,
     exported_at: DateTime<Utc>,
 ) -> anyhow::Result<String> {
-    let options = offline_options(&config.database_url, database)?;
-    // Names the database, host and port it tried; never the user or the password.
-    let target = format!(
-        "connecting to database {} on {}:{}",
-        options.get_database().unwrap_or("(default)"),
-        options.get_host(),
-        options.get_port()
-    );
-    let pool = crate::state::pool_options()
-        .max_connections(2)
-        .acquire_timeout(std::time::Duration::from_secs(10))
-        .connect_with(options)
-        .await
-        .context(target)?;
+    let pool = connect_offline(&config.database_url, database).await?;
     check_migrations(&pool).await?;
     let doc = export_document_in(
         &ExportSources::offline(config, pool.clone()),
