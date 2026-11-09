@@ -5240,3 +5240,288 @@ async fn decision_queue_over_real_readiness() {
         (2, 1, 1)
     );
 }
+
+/// Marking and clearing: interactive only, logged under their own actions, renew replaces, clear is idempotent.
+#[tokio::test]
+async fn urgent_marks_are_set_renewed_and_cleared_by_people_only() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("dan@example.com", true);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    assert!(matches!(
+        h.mark_urgent(&bot, ItemType::Initiative, &k, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Initiative, &k, Some("x".repeat(201)))
+            .await
+            .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Epic, &k, None)
+            .await
+            .unwrap_err(),
+        HandlerError::NotFound
+    ));
+    h.mark_urgent(
+        &dan,
+        ItemType::Initiative,
+        &k,
+        Some("  Customer X  ".into()),
+    )
+    .await
+    .unwrap();
+    let first = h.war_room(dan.now).await.unwrap();
+    assert_eq!(first[0].state.mark.reason.as_deref(), Some("Customer X"));
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(3),
+        ..dan.clone()
+    };
+    h.mark_urgent(&later, ItemType::Initiative, &k, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&sink, "urgent_marked", &k.to_string()),
+        2,
+        "renewing logs again"
+    );
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 1);
+    assert_eq!(room[0].state.mark.at, later.now, "renew replaces the time");
+    assert_eq!(room[0].state.mark.reason, None, "and the reason");
+    h.clear_urgent(&bot, ItemType::Initiative, &k)
+        .await
+        .unwrap_err();
+    h.clear_urgent(&dan, ItemType::Initiative, &k)
+        .await
+        .unwrap();
+    h.clear_urgent(&dan, ItemType::Initiative, &k)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&sink, "urgent_cleared", &k.to_string()),
+        1,
+        "a second clear logs nothing"
+    );
+    assert!(h.war_room(later.now).await.unwrap().is_empty());
+    assert_eq!(
+        h.initiative_dto(&k).await.unwrap().version,
+        ini.version(),
+        "no version bump"
+    );
+}
+
+/// The war room lists active marks first, expired ones after, with the marked item's initiative.
+#[tokio::test]
+async fn the_war_room_lists_active_then_expired_marks() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i1", "Orion", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let epic = h
+        .create_epic(&dan, "e1", "Orion v2", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    let story = h
+        .create_story(
+            &dan,
+            "s1",
+            "Booking flow",
+            Kind::Story,
+            Some(epic.key().clone()),
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(h.war_room(dan.now).await.unwrap().is_empty());
+    h.mark_urgent(&dan, ItemType::Story, story.key(), Some("blocker".into()))
+        .await
+        .unwrap();
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(15),
+        ..dan.clone()
+    };
+    h.mark_urgent(&later, ItemType::Initiative, ini.key(), None)
+        .await
+        .unwrap();
+    // sprint length is 14 days: the story's mark is 15 days old, the initiative's is fresh.
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 2);
+    assert_eq!(
+        (room[0].item, &room[0].key),
+        (ItemType::Initiative, ini.key())
+    );
+    assert!(room[0].state.active);
+    assert_eq!(room[0].title, "Orion");
+    assert_eq!(
+        room[0].initiative,
+        Some((ini.key().clone(), "Orion".into(), "Now".into())),
+        "an initiative is its own initiative"
+    );
+    assert_eq!((room[1].item, &room[1].key), (ItemType::Story, story.key()));
+    assert!(!room[1].state.active, "expired sorts after active");
+    assert_eq!(room[1].title, "Booking flow");
+    assert_eq!(room[1].state.mark.reason.as_deref(), Some("blocker"));
+    assert_eq!(
+        room[1].initiative,
+        Some((ini.key().clone(), "Orion".into(), "Now".into())),
+        "a nested item carries its initiative"
+    );
+    // at the mark's own time both are active, oldest first
+    let early = h.war_room(dan.now).await.unwrap();
+    assert!(early.iter().all(|e| e.state.active));
+    assert_eq!(early[0].key, *story.key());
+}
+
+/// Bulk clear and renew touch exactly the listed items and roll back as a whole.
+#[tokio::test]
+async fn bulk_clear_and_renew_touch_exactly_the_listed_items() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("dan@example.com", true);
+    let mut keys = vec![];
+    for n in 0..3 {
+        let i = h
+            .create_initiative(&dan, &format!("i{n}"), "Init", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        h.mark_urgent(
+            &dan,
+            ItemType::Initiative,
+            i.key(),
+            Some(format!("why {n}")),
+        )
+        .await
+        .unwrap();
+        keys.push(i.key().clone());
+    }
+    let (a, b, c) = (keys[0].clone(), keys[1].clone(), keys[2].clone());
+    h.war_room_clear(
+        &dan,
+        &[
+            (ItemType::Initiative, a.clone()),
+            (ItemType::Initiative, b.clone()),
+        ],
+    )
+    .await
+    .unwrap();
+    let room = h.war_room(dan.now).await.unwrap();
+    assert_eq!(room.len(), 1, "only the listed marks are cleared");
+    assert_eq!(room[0].key, c);
+    assert_eq!(count(&sink, "urgent_cleared", &a.to_string()), 1);
+    assert_eq!(count(&sink, "urgent_cleared", &b.to_string()), 1);
+    assert_eq!(count(&sink, "urgent_cleared", &c.to_string()), 0);
+    // a wrong type fails the whole request: nothing is cleared, nothing is logged
+    assert!(matches!(
+        h.war_room_clear(
+            &dan,
+            &[
+                (ItemType::Initiative, c.clone()),
+                (ItemType::Epic, c.clone())
+            ]
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    // an unknown key fails it too
+    let ghost: Key = "ABC-9999".parse().unwrap();
+    assert!(matches!(
+        h.war_room_clear(
+            &dan,
+            &[
+                (ItemType::Initiative, c.clone()),
+                (ItemType::Initiative, ghost)
+            ]
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    assert_eq!(h.war_room(dan.now).await.unwrap().len(), 1, "rolled back");
+    assert_eq!(count(&sink, "urgent_cleared", &c.to_string()), 0);
+    // renew keeps the reason and replaces the time; an unmarked listed item is skipped
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(20),
+        ..dan.clone()
+    };
+    h.war_room_renew(
+        &later,
+        &[
+            (ItemType::Initiative, c.clone()),
+            (ItemType::Initiative, a.clone()),
+        ],
+    )
+    .await
+    .unwrap();
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 1, "the unmarked item stays unmarked");
+    assert_eq!(room[0].state.mark.at, later.now);
+    assert_eq!(room[0].state.mark.reason.as_deref(), Some("why 2"));
+    assert!(room[0].state.active);
+    assert_eq!(count(&sink, "urgent_marked", &c.to_string()), 2);
+    assert_eq!(
+        count(&sink, "urgent_marked", &a.to_string()),
+        1,
+        "a was not renewed"
+    );
+    // limits and roles
+    let many: Vec<(ItemType, Key)> = (0..101)
+        .map(|_| (ItemType::Initiative, c.clone()))
+        .collect();
+    assert!(matches!(
+        h.war_room_clear(&dan, &many).await.unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    for r in [
+        h.war_room_clear(&bot, &[(ItemType::Initiative, c.clone())])
+            .await,
+        h.war_room_renew(&bot, &[(ItemType::Initiative, c.clone())])
+            .await,
+    ] {
+        assert!(matches!(
+            r.unwrap_err(),
+            HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+        ));
+    }
+    assert_eq!(h.war_room(later.now).await.unwrap().len(), 1);
+}
+
+/// The entry is written last and inside the mark's transaction (kb/ADR-0010 R5).
+#[tokio::test]
+async fn an_urgent_entry_sees_the_mark_inside_and_not_outside() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_probe(
+        pool,
+        "SELECT (SELECT urgent_by FROM initiatives WHERE key = $1)",
+    );
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Initiative, ini.key(), None)
+        .await
+        .unwrap();
+    let seen = sink.entries("urgent_marked");
+    assert_eq!(
+        (seen[0].1.as_deref(), seen[0].2.as_deref()),
+        (Some("dan@example.com"), None)
+    );
+}

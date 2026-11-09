@@ -10,6 +10,7 @@ mod prs;
 mod search;
 mod sprints;
 mod stories;
+mod urgent;
 use crate::ports::*;
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
@@ -17,6 +18,7 @@ use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use sprints::Sprints;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
+pub use urgent::WarRoomEntry;
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
@@ -190,6 +192,16 @@ fn item_name(item: ItemType) -> &'static str {
         ItemType::Initiative => "initiative",
         ItemType::Epic => "epic",
         ItemType::Story => "story",
+    }
+}
+
+/// kb/ADR-0014 R5, kb/ADR-0017 R4: only an interactive user may take these actions. Automation and the system are both
+/// refused.
+pub(crate) fn interactive(c: &Ctx) -> Result<(), HandlerError> {
+    if c.via == Via::Interactive {
+        Ok(())
+    } else {
+        Err(HandlerError::Refused(vec![Reason::InteractiveOnly]))
     }
 }
 
