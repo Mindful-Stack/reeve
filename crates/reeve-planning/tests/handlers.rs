@@ -5928,6 +5928,7 @@ async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
     let now = dan.now;
+    let epic = ready_epic(&h, &dan).await;
     // A story: read, then marked by someone else, then edited and moved with the version that was read.
     let s = h
         .create_story(
@@ -5935,7 +5936,7 @@ async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
             "s",
             "S",
             Kind::Chore,
-            None,
+            Some(epic),
             "",
             vec!["works".into()],
             vec![],
