@@ -62,8 +62,12 @@ async fn events(
             }
             // The browser's EventSource reconnects, gets 401 and goes to sign-in.
             // Every batch re-reads the policy (kb/ADR-0015 R5): a removal or a load failure ends the stream.
-            let Ok(policy) = s.access.load(&s.identity).await else {
-                return None;
+            let policy = match s.access.load(&s.identity).await {
+                Ok(policy) => policy,
+                Err(e) => {
+                    tracing::warn!(error = %e, "event stream ended: the access policy could not be read");
+                    return None;
+                }
             };
             if reeve_identity::authenticate(&*s.tokens, &policy, &secret, Utc::now())
                 .await

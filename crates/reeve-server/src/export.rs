@@ -45,7 +45,7 @@ impl SnapshotId {
     }
 }
 
-/// What the export reads: the three contexts' export readers and the configuration that decides roles.
+/// What the export reads: the three contexts' export readers and the access policy that decides roles, read inside the export's snapshot.
 #[derive(Clone)]
 pub struct ExportSources {
     pub(crate) pool: PgPool,

@@ -12,7 +12,7 @@ use sqlx::PgPool;
 pub enum AuthError {
     #[error("unauthenticated")]
     Unauthenticated,
-    #[error("email not allowed by configuration")]
+    #[error("email not allowed")]
     NotAllowed,
     #[error("user is disabled")]
     Disabled,

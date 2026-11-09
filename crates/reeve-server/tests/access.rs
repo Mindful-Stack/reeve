@@ -37,7 +37,7 @@ async fn a_database_entry_lets_its_email_in_and_its_removal_shuts_them_out_on_th
     let h = harness().await;
     sql(
         &h,
-        "INSERT INTO allowed_entries VALUES ('email','guest@other.org','dan@example.com',now())",
+        "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())",
     )
     .await;
     let t = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
@@ -52,7 +52,7 @@ async fn a_database_entry_lets_its_email_in_and_its_removal_shuts_them_out_on_th
     );
     sql(
         &h,
-        "INSERT INTO allowed_entries VALUES ('email','guest@other.org','dan@example.com',now())",
+        "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())",
     )
     .await;
     assert_eq!(
@@ -74,7 +74,7 @@ async fn a_database_admin_grant_is_admin_on_the_next_request_and_in_the_export()
     );
     sql(
         &h,
-        "INSERT INTO admin_grants VALUES ('ada@example.com','dan@example.com',now())",
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('ada@example.com','dan@example.com',now())",
     )
     .await;
     let (status, me) = call(&h.app, Some(&ada), "GET", "/api/v1/me", None).await;
@@ -115,7 +115,7 @@ async fn a_story_owner_may_be_a_guest_allowed_only_by_the_database() {
     assert_eq!(status, 400);
     sql(
         &h,
-        "INSERT INTO allowed_entries VALUES ('email','guest@other.org','dan@example.com',now())",
+        "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())",
     )
     .await;
     let (status, body) = call(&h.app, Some(&h.admin_token), "POST", "/api/v1/stories",

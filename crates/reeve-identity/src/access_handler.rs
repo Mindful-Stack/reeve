@@ -101,7 +101,7 @@ pub async fn allow_entry(
         return Err(AuthError::Validation("already set in reeve.toml".into()));
     }
     store
-        .insert_entry(&mut tx, kind, &value, &caller.email, now)
+        .insert_entry(&mut tx, kind, &value, &normalise_email(&caller.email), now)
         .await?;
     let e = event(
         caller,
@@ -186,7 +186,13 @@ pub async fn grant_admin(
     let mut events = vec![];
     if !policy.is_allowed(&email) {
         store
-            .insert_entry(&mut tx, AccessKind::Email, &email, &caller.email, now)
+            .insert_entry(
+                &mut tx,
+                AccessKind::Email,
+                &email,
+                &normalise_email(&caller.email),
+                now,
+            )
             .await?;
         events.push(event(
             caller,
@@ -198,7 +204,7 @@ pub async fn grant_admin(
     }
     if !granted {
         store
-            .insert_admin(&mut tx, &email, &caller.email, now)
+            .insert_admin(&mut tx, &email, &normalise_email(&caller.email), now)
             .await?;
         events.push(event(
             caller,

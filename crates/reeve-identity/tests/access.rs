@@ -217,12 +217,8 @@ async fn allow_writes_the_entry_with_its_activity_and_refuses_duplicates_and_flo
         validation(e.allow(&dan(), AccessKind::Domain, "example.com").await),
         "already set in reeve.toml"
     );
-    assert!(
-        e.allow(&dan(), AccessKind::Domain, "not a domain")
-            .await
-            .is_err()
-    );
-    assert!(e.allow(&dan(), AccessKind::Email, "nope").await.is_err());
+    validation(e.allow(&dan(), AccessKind::Domain, "not a domain").await);
+    validation(e.allow(&dan(), AccessKind::Email, "nope").await);
     assert_eq!(e.log.actions().len(), 1);
 }
 
@@ -238,7 +234,7 @@ async fn remove_targets_the_database_row_only() {
         Err(AuthError::NotFound)
     ));
     // a database row duplicating the floor is listed separately and removable; the floor still allows
-    e.sql("INSERT INTO allowed_entries VALUES ('domain','example.com','x',now())")
+    e.sql("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('domain','example.com','x',now())")
         .await;
     let p = e
         .remove(&dan(), AccessKind::Domain, "example.com")
@@ -288,6 +284,33 @@ async fn grant_admin_allows_the_email_too_and_refuses_existing_admins() {
 }
 
 #[tokio::test]
+async fn granting_a_guest_then_removing_their_email_entry_deletes_the_grant() {
+    let e = env().await;
+    e.grant(&dan(), "pat@partner.org").await.unwrap();
+    let p = e
+        .remove(&dan(), AccessKind::Email, "pat@partner.org")
+        .await
+        .unwrap();
+    assert!(!p.has_admin_grant("pat@partner.org"));
+    let acts = e.log.actions();
+    assert_eq!(
+        acts[acts.len() - 2..],
+        [
+            (
+                "pat@partner.org".to_string(),
+                "access_removed",
+                serde_json::json!({"kind": "email"})
+            ),
+            (
+                "pat@partner.org".to_string(),
+                "admin_revoked",
+                serde_json::json!({"reason": "access_removed"})
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn revoke_admin_refuses_self_floor_and_absent_and_logs_the_revocation() {
     let e = env().await;
     e.grant(&dan(), "ada@example.com").await.unwrap();
@@ -316,10 +339,10 @@ async fn revoke_admin_refuses_self_floor_and_absent_and_logs_the_revocation() {
 #[tokio::test]
 async fn removing_an_entry_deletes_the_grants_it_leaves_unallowed_but_not_already_inert_ones() {
     let e = env().await;
-    e.sql("INSERT INTO allowed_entries VALUES ('domain','partner.org','x',now())")
+    e.sql("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('domain','partner.org','x',now())")
         .await;
     e.sql(
-        "INSERT INTO admin_grants VALUES ('pat@partner.org','x',now()), ('eve@gone.org','x',now())",
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('pat@partner.org','x',now()), ('eve@gone.org','x',now())",
     )
     .await;
     let p = e
@@ -351,9 +374,11 @@ async fn removing_an_entry_deletes_the_grants_it_leaves_unallowed_but_not_alread
 #[tokio::test]
 async fn an_admin_cannot_remove_an_entry_that_shuts_them_out_but_may_remove_one_that_overlaps() {
     let e = env().await;
-    e.sql("INSERT INTO allowed_entries VALUES ('email','pat@partner.org','x',now()), ('domain','partner.org','x',now())").await;
-    e.sql("INSERT INTO admin_grants VALUES ('pat@partner.org','x',now())")
-        .await;
+    e.sql("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','pat@partner.org','x',now()), ('domain','partner.org','x',now())").await;
+    e.sql(
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('pat@partner.org','x',now())",
+    )
+    .await;
     let pat = who("pat@partner.org", Role::Admin, TokenKind::Interactive);
     e.remove(&pat, AccessKind::Email, "pat@partner.org")
         .await
@@ -368,9 +393,11 @@ async fn an_admin_cannot_remove_an_entry_that_shuts_them_out_but_may_remove_one_
 #[tokio::test]
 async fn two_concurrent_removals_that_would_together_shut_the_caller_out_cannot_both_succeed() {
     let e = env().await;
-    e.sql("INSERT INTO allowed_entries VALUES ('email','pat@partner.org','x',now()), ('domain','partner.org','x',now())").await;
-    e.sql("INSERT INTO admin_grants VALUES ('pat@partner.org','x',now())")
-        .await;
+    e.sql("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','pat@partner.org','x',now()), ('domain','partner.org','x',now())").await;
+    e.sql(
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('pat@partner.org','x',now())",
+    )
+    .await;
     let pat = who("pat@partner.org", Role::Admin, TokenKind::Interactive);
     let (a, b) = tokio::join!(
         e.remove(&pat, AccessKind::Email, "pat@partner.org"),
@@ -387,7 +414,7 @@ async fn two_concurrent_removals_that_would_together_shut_the_caller_out_cannot_
 #[tokio::test]
 async fn an_inert_grant_confers_nothing_is_revived_by_granting_and_is_deleted_by_revoking() {
     let e = env().await;
-    e.sql("INSERT INTO admin_grants VALUES ('eve@gone.org','x',now())")
+    e.sql("INSERT INTO admin_grants (email, added_by, added_at) VALUES ('eve@gone.org','x',now())")
         .await;
     assert_eq!(e.policy().await.role_for("eve@gone.org"), Role::Member);
     let p = e.grant(&dan(), "eve@gone.org").await.unwrap();

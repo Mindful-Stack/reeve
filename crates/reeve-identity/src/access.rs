@@ -209,23 +209,40 @@ impl AccessPolicy {
     }
 }
 
-/// A domain an admin may allow: non-empty, contains a `.`, no `@`, no whitespace. Returns it normalised.
+/// The longest stored value (an email address is at most 254 characters); a longer one overflows the btree key.
+const MAX_VALUE_BYTES: usize = 254;
+
+fn too_long(what: &str) -> String {
+    format!("the {what} is too long (at most {MAX_VALUE_BYTES} characters)")
+}
+
+/// A domain an admin may allow: non-empty, contains a `.`, no `@`, no whitespace or control character, at most 254 bytes. Returns it normalised.
 pub fn parse_domain(raw: &str) -> Result<String, String> {
     let v = normalise_email(raw);
-    if v.is_empty() || !v.contains('.') || v.contains('@') || v.chars().any(char::is_whitespace) {
+    if v.len() > MAX_VALUE_BYTES {
+        return Err(too_long("domain"));
+    }
+    if v.is_empty()
+        || !v.contains('.')
+        || v.contains('@')
+        || v.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
         return Err(format!("{:?} is not a domain", raw.trim()));
     }
     Ok(v)
 }
 
-/// An email an admin may allow: one `@`, non-empty local part and domain, no whitespace. Returns it normalised.
+/// An email an admin may allow: one `@`, non-empty local part and domain, no whitespace or control character, at most 254 bytes. Returns it normalised.
 pub fn parse_email(raw: &str) -> Result<String, String> {
     let v = normalise_email(raw);
+    if v.len() > MAX_VALUE_BYTES {
+        return Err(too_long("email address"));
+    }
     let ok = match v.split_once('@') {
         Some((local, domain)) => !local.is_empty() && !domain.is_empty() && !domain.contains('@'),
         None => false,
     };
-    if !ok || v.chars().any(char::is_whitespace) {
+    if !ok || v.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!("{:?} is not an email address", raw.trim()));
     }
     Ok(v)
@@ -252,6 +269,21 @@ mod tests {
             allowed_emails: vec!["svc@bots.dev".into()],
             admins: vec!["dan@example.com".into()],
         }
+    }
+
+    #[test]
+    fn control_characters_and_overlong_values_are_refused() {
+        assert!(parse_email("a\u{0}@x.org").is_err());
+        assert!(parse_domain("x\u{7}.org").is_err());
+        let long_email = format!("{}@x.org", "a".repeat(255 - 6));
+        assert_eq!(long_email.len(), 255);
+        let e = parse_email(&long_email).unwrap_err();
+        assert!(e.contains("too long (at most 254 characters)") && e.len() < 100);
+        assert!(parse_email(&format!("{}@x.org", "a".repeat(254 - 6))).is_ok());
+        let long_domain = format!("{}.org", "a".repeat(252));
+        assert_eq!(long_domain.len(), 256);
+        assert!(parse_domain(&long_domain).is_err());
+        assert!(parse_domain(&format!("{}.org", "a".repeat(250))).is_ok());
     }
 
     #[test]

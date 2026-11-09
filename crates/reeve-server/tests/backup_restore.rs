@@ -47,8 +47,8 @@ async fn seed(h: &Harness) -> Seeded {
     let (app, t) = (&h.app, h.admin_token.as_str());
     // Access rows (kb/ADR-0015), written with SQL: the API that writes them comes in a later change.
     for q in [
-        "INSERT INTO allowed_entries VALUES ('email','guest@other.org','dan@example.com',now())",
-        "INSERT INTO admin_grants VALUES ('ada@example.com','dan@example.com',now())",
+        "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())",
+        "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('ada@example.com','dan@example.com',now())",
     ] {
         sqlx::query(q).execute(&h.state.pool).await.unwrap();
     }
