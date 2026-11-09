@@ -5,6 +5,7 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SimilarStory, Story } from '#lib/api/types.ts';
+import { fullLabel } from '#lib/board.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
 import ReportDialog from './ReportDialog.svelte';
 
@@ -39,7 +40,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			await new Promise((r) => setTimeout(r, 5));
 			const mode = net.post.shift() ?? 'ok';
 			if (mode === 'throw') throw new TypeError('network down');
-			if (mode === 'refuse') return json({ outcome: 'refused', reasons: [], overridable: false });
+			if (mode === 'refuse') return json({ outcome: 'refused', reasons: [{ reason: 'no_criteria' }], overridable: false });
 			if (mode === 'error') return failure('boom');
 			return story({ key: 'SMK-9', title: posted.title, kind: posted.kind, epic: posted.epic });
 		}
@@ -65,6 +66,7 @@ afterEach(() => {
 	vi.useRealTimers();
 	discardDraft();
 	document.body.innerHTML = '';
+	document.body.removeAttribute('tabindex');
 	Object.assign(net, { hold: false, similarFails: false, hits: [] });
 	net.posts.length = 0;
 	net.similarCalls.length = 0;
@@ -100,9 +102,8 @@ function choose(label: string) {
 const settle = () => new Promise((r) => setTimeout(r, 20)).then(() => flushSync());
 
 describe('ReportDialog', () => {
-	it('focuses the title and refuses a submit with no kind', async () => {
+	it('refuses a submit with no kind', async () => {
 		mountDialog();
-		await vi.waitFor(() => expect(document.activeElement).toBe(title()));
 		type(title(), 'The board is slow');
 		form().requestSubmit();
 		flushSync();
@@ -316,5 +317,257 @@ describe('ReportDialog', () => {
 		type(title(), '😀😀😀😀😀😀😀😀');
 		await vi.waitFor(() => expect(net.similarCalls).toHaveLength(1));
 		await vi.waitFor(() => expect(form().querySelector('[data-hit="ABC-7"] .glyph')?.textContent).toBe('▲'));
+	});
+
+	it('shows the refusal reasons, not "refused", when the server refuses a create', async () => {
+		mountDialog();
+		type(title(), 'Refused report here');
+		choose('Idea or change');
+		net.post.push('refuse');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(alertText()).toBe(fullLabel({ reason: 'no_criteria' })));
+	});
+
+	it('shows no error from a previous draft on a new one, but keeps the uncertain notice on a kept draft', async () => {
+		mountDialog();
+		type(title(), 'Lost answer report');
+		choose('Idea or change');
+		net.post.push('throw');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(alertText()).not.toBeNull());
+		report.open = false;
+		flushSync();
+		report.open = true;
+		flushSync();
+		expect(alertText()).toBe("We couldn't confirm the report was filed. Send again to retry safely.");
+		button('Discard draft')!.click();
+		flushSync();
+		openReport(ctx);
+		flushSync();
+		expect(form()).not.toBeNull();
+		expect(alertText()).toBeNull();
+	});
+
+	it('puts focus back on the title after a failed send', async () => {
+		mountDialog();
+		type(title(), 'Failing report here');
+		choose('Idea or change');
+		net.post.push('error');
+		title().focus();
+		form().requestSubmit();
+		flushSync();
+		// A browser drops focus from a field that becomes disabled; jsdom keeps it, so move it to the page by hand.
+		document.body.tabIndex = -1;
+		document.body.focus();
+		expect(document.activeElement).toBe(document.body);
+		await vi.waitFor(() => expect(alertText()).toBe('boom'));
+		await vi.waitFor(() => expect(document.activeElement).toBe(title()));
+	});
+
+	it('sends one check for two keystrokes 100 ms apart, with the last query', async () => {
+		vi.useFakeTimers();
+		mountDialog();
+		type(title(), 'Board is slo');
+		await vi.advanceTimersByTimeAsync(100);
+		type(title(), 'Board is slow');
+		await vi.advanceTimersByTimeAsync(300);
+		expect(net.similarCalls).toEqual(['Board is slow']);
+	});
+
+	it('never renders an answer held past close, and a reopened dialog waits for its own answer to refocus', async () => {
+		vi.useFakeTimers();
+		mountDialog();
+		net.hold = true;
+		type(title(), 'Board is slow');
+		await vi.advanceTimersByTimeAsync(300);
+		report.draft!.leftFrom = 'ABC-1';
+		report.open = false;
+		flushSync();
+		net.held[0].resolve([hit('ABC-1', 'old answer')]);
+		await vi.advanceTimersByTimeAsync(10);
+		report.open = true;
+		flushSync();
+		await vi.advanceTimersByTimeAsync(10);
+		expect(net.similarCalls).toHaveLength(2);
+		expect(form().querySelector('[data-hit]')).toBeNull();
+		expect(form().textContent).not.toContain('old answer');
+		expect(report.draft?.leftFrom).toBe('ABC-1');
+		net.held[1].resolve([hit('ABC-1', 'new answer')]);
+		await vi.advanceTimersByTimeAsync(10);
+		flushSync();
+		expect(document.activeElement).toBe(form().querySelector('[data-hit="ABC-1"]'));
+		expect(form().textContent).toContain('new answer');
+	});
+
+	it('shows the counter only from 180 code points', () => {
+		mountDialog();
+		type(title(), 'a'.repeat(179));
+		expect(form().textContent).not.toContain('/ 200');
+		type(title(), 'a'.repeat(183));
+		expect(form().textContent).toContain('183 / 200');
+		expect(title().getAttribute('aria-describedby')).toContain(form().querySelector('.counter')!.id);
+	});
+
+	it('words the duplicate check states as the spec does', async () => {
+		vi.useFakeTimers();
+		mountDialog();
+		net.hold = true;
+		type(title(), 'Board is slow');
+		await vi.advanceTimersByTimeAsync(300);
+		expect(form().querySelector('[aria-live]')!.textContent).toContain('Checking similar work…');
+		net.held[0].resolve([]);
+		await vi.advanceTimersByTimeAsync(10);
+		expect(form().querySelector('[aria-live]')!.textContent?.trim()).toBe('Nothing similar found');
+		type(title(), 'Board is slow now');
+		await vi.advanceTimersByTimeAsync(300);
+		net.held[1].resolve([hit('ABC-1', 'a'), hit('ABC-2', 'b')]);
+		await vi.advanceTimersByTimeAsync(10);
+		const live = form().querySelector('[aria-live]')!;
+		expect(live.textContent?.trim()).toBe('2 similar items');
+		expect(live.querySelector('[data-hit]')).toBeNull();
+		expect(form().textContent).toContain('Already reported?');
+		vi.useRealTimers();
+		net.hold = false;
+		net.similarFails = true;
+		type(title(), 'Board is slow later');
+		await vi.waitFor(() => expect(form().querySelector('[aria-live]')!.textContent?.trim()).toBe("Couldn't check similar work. You can still submit."));
+	});
+
+	it('shows the Reported from line with its link', () => {
+		mountDialog({ path: '/epics/ABC-30', label: 'Payments', epic: null });
+		const line = [...form().querySelectorAll('p')].find((p) => p.textContent?.startsWith('Reported from:'))!;
+		expect(line.textContent?.trim()).toBe('Reported from: Payments');
+		expect(line.querySelector('a')!.getAttribute('href')).toBe('/epics/ABC-30');
+	});
+
+	it('uses the new key for an unchanged retry after "Send anyway" is lost too, and stays uncertain after a refusal', async () => {
+		const { oncreated } = mountDialog();
+		type(title(), 'Maybe filed report');
+		choose('Idea or change');
+		net.post.push('throw');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(report.draft?.uncertain).toBe(true));
+		type(title(), 'Maybe filed report, edited');
+		form().requestSubmit();
+		flushSync();
+		net.post.push('throw');
+		button('Send anyway')!.click();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(2));
+		await vi.waitFor(() => expect(alertText()).toContain("couldn't confirm"));
+		net.post.push('refuse');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(3));
+		await vi.waitFor(() => expect(alertText()).toBe(fullLabel({ reason: 'no_criteria' })));
+		expect(report.draft?.uncertain).toBe(true);
+		form().requestSubmit();
+		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(1));
+		expect(net.posts[1].idempotency_key).not.toBe(net.posts[0].idempotency_key);
+		expect(net.posts[2].idempotency_key).toBe(net.posts[1].idempotency_key);
+		expect(net.posts[3].idempotency_key).toBe(net.posts[1].idempotency_key);
+	});
+
+	it('reads a finished hit as "done, dropped" or "done, completed"', async () => {
+		net.hits = [
+			hit('ABC-1', 'one', { delivery: 'done', resolution: 'dropped' }),
+			hit('ABC-2', 'two', { delivery: 'done', resolution: 'completed' }),
+			hit('ABC-3', 'three', { delivery: 'in_progress' })
+		];
+		mountDialog();
+		type(title(), 'Board is slow');
+		await vi.waitFor(() => expect(form().querySelectorAll('[data-hit]')).toHaveLength(3));
+		const text = (k: string) => form().querySelector(`[data-hit="${k}"]`)!.textContent!;
+		expect(text('ABC-1')).toContain('done, dropped');
+		expect(text('ABC-2')).toContain('done, completed');
+		expect(text('ABC-3')).toContain('in progress');
+	});
+
+	it('focuses the title and clears leftFrom when the hit is gone from the answer or the check fails', async () => {
+		vi.useFakeTimers();
+		openReport(ctx);
+		report.draft!.title = 'Board is slow';
+		report.draft!.leftFrom = 'ABC-412';
+		net.hold = true;
+		app = mount(ReportDialog, { target: document.body, props: { oncreated: vi.fn(), onviewstory: vi.fn() } });
+		flushSync();
+		await vi.advanceTimersByTimeAsync(10);
+		desc().focus();
+		net.held[0].resolve([hit('ABC-9', 'another')]);
+		await vi.advanceTimersByTimeAsync(10);
+		flushSync();
+		expect(document.activeElement).toBe(title());
+		expect(report.draft?.leftFrom).toBeNull();
+
+		report.draft!.leftFrom = 'ABC-412';
+		report.open = false;
+		flushSync();
+		report.open = true;
+		flushSync();
+		await vi.advanceTimersByTimeAsync(10);
+		desc().focus();
+		net.held[1].fail();
+		await vi.advanceTimersByTimeAsync(10);
+		flushSync();
+		expect(document.activeElement).toBe(title());
+		expect(report.draft?.leftFrom).toBeNull();
+	});
+
+	it('counts the 200-character limit in code points, truncating a longer title', () => {
+		mountDialog();
+		expect(title().hasAttribute('maxlength')).toBe(false);
+		type(title(), 'a'.repeat(150) + '😀'.repeat(100));
+		expect([...title().value]).toHaveLength(200);
+		expect([...report.draft!.title]).toHaveLength(200);
+		expect(form().textContent).toContain('200 / 200');
+		type(title(), '😀'.repeat(200));
+		expect([...report.draft!.title]).toHaveLength(200);
+	});
+
+	it('disables the hit buttons while a send is in flight', async () => {
+		net.hits = [hit('ABC-1', 'one')];
+		mountDialog();
+		type(title(), 'Board is slow');
+		choose('Idea or change');
+		await vi.waitFor(() => expect(form().querySelector('[data-hit]')).not.toBeNull());
+		form().requestSubmit();
+		flushSync();
+		expect((form().querySelector('[data-hit]') as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it('leaves a different draft alone when the send it started finishes', async () => {
+		const { oncreated } = mountDialog();
+		type(title(), 'First report here');
+		choose('Idea or change');
+		form().requestSubmit();
+		flushSync();
+		discardDraft();
+		openReport(ctx);
+		flushSync();
+		type(title(), 'Second report');
+		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(1));
+		expect(report.draft?.title).toBe('Second report');
+		expect(report.open).toBe(true);
+	});
+
+	it('asks for a title when it is only whitespace, and focuses it', () => {
+		mountDialog();
+		type(title(), '   ');
+		choose('Idea or change');
+		desc().focus();
+		form().requestSubmit();
+		flushSync();
+		expect(alertText()).toBe('Give it a title.');
+		expect(document.activeElement).toBe(title());
+	});
+
+	it('links the kind error to the fieldset and each radio to its help text', () => {
+		mountDialog();
+		const radioHelp = radio("Something's broken").getAttribute('aria-describedby')!;
+		expect(document.getElementById(radioHelp)!.textContent).toContain('It worked before');
+		type(title(), 'Needs a kind');
+		form().requestSubmit();
+		flushSync();
+		const set = form().querySelector('fieldset')!;
+		expect(set.getAttribute('aria-invalid')).toBe('true');
+		expect(document.getElementById(set.getAttribute('aria-describedby')!)!.textContent).toContain('Choose what kind');
 	});
 });
