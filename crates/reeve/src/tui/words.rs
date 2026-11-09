@@ -83,10 +83,7 @@ pub fn index(s: DeliveryState) -> usize {
         .expect("every state is in STATES")
 }
 
-/// The email's local part, as the ticker and cards show owners.
-pub fn local_part(email: &str) -> &str {
-    email.split('@').next().unwrap_or(email)
-}
+pub(crate) use crate::urgency::local_part;
 #[cfg(test)]
 mod tests {
     use super::*;
