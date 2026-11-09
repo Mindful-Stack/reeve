@@ -716,3 +716,134 @@ describe('StoryDrawer Goal field', () => {
 		expect([...d.querySelectorAll('.fields .name')].map((n) => n.textContent)).toEqual(['Owner', 'Labels', 'Epic']);
 	});
 });
+
+describe('StoryDrawer urgent mark', () => {
+	const mark = (over: Partial<NonNullable<Story['urgent_mark']>> = {}) => ({
+		at: '2026-11-07T00:00:00Z',
+		by: 'dana@example.com',
+		reason: 'customer waiting',
+		expires_at: '2099-01-01T00:00:00Z',
+		active: true,
+		done: false,
+		...over
+	});
+	/** Serves `current` for the story, applies the urgent POST and DELETE to it. */
+	function serve(current: Story) {
+		net.answers.of = (url, method) => {
+			if (url.pathname === '/api/v1/stories/RV-5/urgent') {
+				current =
+					method === 'POST'
+						? { ...current, urgent_mark: mark(), urgent_sources: [{ key: 'RV-5', item: 'story' }] }
+						: { ...current, urgent_mark: null, urgent_sources: [] };
+				return current;
+			}
+			if (url.pathname === '/api/v1/epics') return [{ key: 'RV-2', title: 'Migration findings' }];
+			if (url.pathname === '/api/v1/stories/RV-5') return current;
+			return answer(url, method);
+		};
+	}
+	async function open(): Promise<HTMLElement> {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		return vi.waitFor(() => {
+			flushSync();
+			const el = document.body.querySelector<HTMLElement>('[data-testid="story-drawer"]');
+			expect(el?.querySelector('.title')).not.toBeNull();
+			return el!;
+		});
+	}
+	const items = () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+	async function openMenu(d: HTMLElement) {
+		d.querySelector<HTMLButtonElement>('button[aria-label="Actions for RV-5"]')!.click();
+		flushSync();
+		await tick();
+	}
+
+	it('offers Mark urgent… only while unmarked, and posts the reason', async () => {
+		serve(storyDto({ ...story }));
+		const d = await open();
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…']);
+		items()[0].click();
+		flushSync();
+		await tick();
+		const dialog = document.body.querySelector('dialog')!;
+		const input = dialog.querySelector('input')!;
+		input.value = 'customer waiting';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		[...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Mark urgent')!.click();
+		await vi.waitFor(() => expect(net.bodies.at(-1)).toEqual({ path: '/api/v1/stories/RV-5/urgent', body: { reason: 'customer waiting' } }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(d.querySelector('[data-testid="urgent-line"]')?.textContent).toContain('marked by dana');
+		});
+	});
+
+	it('shows the own and the derived parts under the title, and clears with DELETE', async () => {
+		serve(
+			storyDto({
+				...story,
+				epic: 'RV-2',
+				urgent_mark: mark(),
+				urgent_sources: [
+					{ key: 'RV-5', item: 'story' },
+					{ key: 'RV-2', item: 'epic' }
+				]
+			})
+		);
+		const d = await open();
+		const line = await vi.waitFor(() => {
+			flushSync();
+			const l = d.querySelector('[data-testid="urgent-line"]');
+			expect(l).not.toBeNull();
+			return l!;
+		});
+		expect(line.textContent).toContain("'customer waiting'");
+		await vi.waitFor(() => {
+			flushSync();
+			expect(line.textContent).toContain('via epic RV-2 Migration findings');
+		});
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Clear urgent mark']);
+		items()[1].click();
+		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/urgent')).toBe(true));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(d.querySelector('[data-testid="urgent-line"]')).toBeNull();
+		});
+	});
+
+	it('shows a failed mark in the dialog, not the drawer notice', async () => {
+		serve(storyDto({ ...story }));
+		const base = net.answers.of;
+		net.answers.of = (url, method) =>
+			method === 'POST' && url.pathname.endsWith('/urgent') ? failure('boom') : base(url, method);
+		const d = await open();
+		await openMenu(d);
+		items()[0].click();
+		flushSync();
+		await tick();
+		[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent === 'Mark urgent')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')).not.toBeNull();
+		});
+		expect(d.querySelector('[role="alert"]')).toBeNull();
+	});
+
+	it('a mark on a done story reads "Urgent mark · done" with Clear and no chip', async () => {
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', urgent_mark: mark({ done: true }), urgent_sources: [] }));
+		const d = await open();
+		const line = await vi.waitFor(() => {
+			flushSync();
+			const l = d.querySelector('[data-testid="urgent-done"]');
+			expect(l).not.toBeNull();
+			return l!;
+		});
+		expect(line.textContent).toContain('Urgent mark · done');
+		expect(d.querySelector('[data-testid="urgent-line"]')).toBeNull();
+		d.querySelector<HTMLButtonElement>('button[aria-label="Clear urgent mark on RV-5"]')!.click();
+		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/urgent')).toBe(true));
+	});
+});

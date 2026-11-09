@@ -7,6 +7,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type {
 		ActivityEntry,
+		ItemRef,
 		Comment,
 		EditItem,
 		Epic,
@@ -32,8 +33,10 @@
 	import Comments from '#lib/components/Comments.svelte';
 	import CriteriaEditor from '#lib/components/CriteriaEditor.svelte';
 	import DecisionList from '#lib/components/DecisionList.svelte';
+	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
+	import UrgentLine from '#lib/components/UrgentLine.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
-	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
+	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -126,6 +129,7 @@
 			]);
 			if (seq !== latest) return;
 			story = s;
+			loadedAt = new Date();
 			if (editingDescription) descriptionBase = followBase(descriptionBase, { version: s.version, text: s.description });
 			readiness = r;
 			decisions = d;
@@ -333,6 +337,52 @@
 			await tick();
 			document.getElementById('drawer-goal-edit')?.focus();
 		}
+	}
+
+	/** When the drawer last loaded: the urgent line's "N d ago" counts from it. */
+	let loadedAt = $state(new Date());
+	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
+	let marking = $state(false);
+	let markError = $state<string | null>(null);
+	/** A source's title, when the drawer has it (the epics list); otherwise the line shows its key and type only. */
+	const titleOf = (r: ItemRef): string | undefined => (r.item === 'epic' ? epics.find((e) => e.key === r.key)?.title : undefined);
+
+	const menuItems = $derived<MenuItem[]>([
+		{ label: 'Mark urgent…', onselect: openMark, disabled: busy },
+		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
+	]);
+
+	function openMark() {
+		markError = null;
+		marking = true;
+	}
+
+	async function markUrgent(reason: string | null) {
+		const s = story;
+		if (!s) return;
+		const ok = await write(() =>
+			unwrap(api.POST('/api/v1/stories/{key}/urgent', { params: { path: { key: s.key } }, body: { reason } }))
+		);
+		if (ok) {
+			marking = false;
+			await refocusActions();
+		} else {
+			markError = notice;
+			notice = null;
+		}
+	}
+
+	async function clearUrgent() {
+		const s = story;
+		if (s && (await write(() => unwrap(api.DELETE('/api/v1/stories/{key}/urgent', { params: { path: { key: s.key } } }))))) {
+			await refocusActions();
+		}
+	}
+
+	/** The control that opened a write (a dialog, the expired or done line's buttons) is gone: focus goes to the Actions menu, unless the user moved it. */
+	async function refocusActions() {
+		await tick();
+		if (focusIsFree(null)) document.body.querySelector<HTMLElement>(`button[aria-label="Actions for ${story?.key}"]`)?.focus();
 	}
 
 	async function saveCriteria(criteria: Story['criteria']) {
@@ -544,7 +594,26 @@
 			</ActionsMenu>
 			{#if s.delivery === 'done' && s.resolution}<span class="chip">{s.resolution}</span>{/if}
 			<span class="owner"><span class="muted">Owner</span> <Avatar email={s.owner} /> {s.owner ? short(s.owner) : 'unowned'}</span>
+			<ActionsMenu label="Actions for {s.key}" items={menuItems} />
 		</div>
+
+		<UrgentLine
+			itemKey={s.key}
+			mark={s.urgent_mark?.done ? null : s.urgent_mark}
+			sources={s.urgent_sources}
+			{titleOf}
+			now={loadedAt}
+			{busy}
+			onremark={openMark}
+			onclear={() => void clearUrgent()}
+		/>
+		{#if s.urgent_mark?.done}
+			<p class="urgent-done muted" data-testid="urgent-done">
+				<span>Urgent mark · done</span>
+				<span aria-hidden="true">·</span>
+				<button type="button" class="ghost" aria-label="Clear urgent mark on {s.key}" onclick={() => void clearUrgent()} disabled={busy}>Clear</button>
+			</p>
+		{/if}
 
 		<section class="readiness {r.ready ? 'ready' : 'blocked'}" aria-labelledby="drawer-readiness">
 			<h3 id="drawer-readiness">{r.ready ? 'Ready to start' : 'Not ready'}</h3>
@@ -849,6 +918,19 @@
 	</Dialog>
 {/if}
 
+{#if marking && story}
+	<MarkUrgentDialog
+		item={story.key}
+		initial={story.urgent_mark?.reason ?? null}
+		{busy}
+		error={markError}
+		onsubmit={markUrgent}
+		oncancel={() => {
+			if (!busy) marking = false;
+		}}
+	/>
+{/if}
+
 {#if override && story}
 	{@const o = override}
 	<OverridePrompt
@@ -862,6 +944,14 @@
 {/if}
 
 <style>
+	.urgent-done {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 10px;
+		margin: 0;
+		font-size: 14px;
+	}
 	.drawer {
 		position: fixed;
 		top: 0;
