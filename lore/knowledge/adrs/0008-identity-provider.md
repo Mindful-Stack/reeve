@@ -3,7 +3,7 @@ id: kb/ADR-0008
 title: "ADR-0008: Users sign in with Google, gated by a configured allowlist, with admins named in configuration, two token kinds and no password store"
 description: "The planner authenticates humans through Google OpenID Connect only, refuses emails outside configured domains and addresses, treats configured emails as admins and everyone else as members, issues interactive and automation tokens with different powers, and stores no passwords, because everyone on the team has a Google identity, an open sign-in would expose the roadmap, and automation must not pass for a person."
 tags: [adr, reeve, identity, auth, oidc, tokens]
-status: accepted
+status: superseded
 date: 2026-10-25
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: [security]
 scope: ["reeve:crates/reeve-identity/**", "reeve:crates/reeve-server/src/auth/**", "reeve:web/src/routes/auth/**"]
 supersedes: []
-superseded_by:
+superseded_by: kb/ADR-0015
 depends_on: []
 related: [kb/ADR-0009]
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-10-25.
 Accepted 2026-10-26 by Daniel Thyselius.
+Superseded 2026-11-09 by kb/ADR-0015.
 
 ## Context
 The team is about six people, including non-coders without GitHub accounts; everyone has a Google identity. The CLI needs a credential that is not a browser session, Lorekeeper skills act for a person but must not be able to use the human-only readiness override, and a token that outlives its owner is a hole. Earlier drafts added a GitHub OAuth adapter, approval queues, a viewer role and team-derived roles; review found all of it to be account management for six people.
@@ -57,6 +58,7 @@ We decided that the planner authenticates humans through Google OpenID Connect o
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (kb/ADR-0014 R5): the interactive-only actions grow: opening or closing a sprint, editing its dates, creating, editing or removing a goal, and recording confidence or a verdict require an interactive token; automation tokens and the system may only link and unlink work and suggest a confidence. No trigger fired; the decision holds.
 - 2026-11-04 (public copy, one-time edit): F1's source was a local path; F2 and a sentence of the context, about a third-party prototype the design research studied, are left out of this copy (the numbering is kept). The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No rule or decision changed; the decision holds.
+- 2026-11-09 (kb/ADR-0015): the invalidation trigger fired on 2026-11-02: people outside the company domain need access as guests, and each guest costs a configuration edit, a deploy and a restart. kb/ADR-0015 replaces this record with a configured floor plus database grants admins edit at runtime.
 
 ## See also
 - kb/ADR-0009.

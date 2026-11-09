@@ -59,6 +59,7 @@ We decided to carry Reeve's architecture rules into the planner with exactly thr
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (kb/ADR-0014): R3's list of planning tables grows by `sprints`, `goals` and `goal_links`, owned by the planning context with foreign keys inside it only; goal links refer to items by key. Planning never reads the activity table: a sprint's counts at close live in its `closed` activity entry and the CLI and web compose them. No trigger fired; the decision holds.
 - 2026-11-04 (public copy, one-time edit): F1's source now names the public reeve-runner repository that holds the cited design; F3 and a sentence of the context, about a third-party prototype the design research studied, are left out of this copy (the numbering is kept). The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No rule or decision changed; the decision holds.
+- 2026-11-09 (kb/ADR-0015): R3's identity tables grow by `allowed_entries` and `admin_grants`, owned by the identity context with no foreign key leaving it. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0006, kb/ADR-0007.

@@ -3,7 +3,7 @@ id: kb/ADR-0016
 title: "ADR-0016: The planner is self-hosted, one team per instance, with no organisation or household column"
 description: "We decided to keep shipping Reeve as one self-hosted instance per team, with its key prefix, repositories, buckets and sprint settings in configuration and no tenant column, while sign-in access moves to kb/ADR-0015, because tenant scoping is effort the product does not need."
 tags: [adr, reeve, deployment, tenancy, hosting]
-status: proposed
+status: accepted
 date: 2026-11-09
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-09.
+Accepted 2026-11-09 by Daniel Thyselius.
 
 ## Context
 kb/ADR-0009 made the planner a self-hosted instance serving one team and listed, in its R2, what is instance configuration: the key prefix, the repositories and their ADR directories, the horizon bucket names, the sign-in allowlist and the admin emails. A later observation on it added the sprint settings. kb/ADR-0015 takes the allowlist and the admins out of configuration alone: they become a configured floor plus database grants admins edit at runtime. An accepted record cannot be amended, so this record replaces kb/ADR-0009 with that clause moved; nothing else about tenancy or the reference deployment changes.

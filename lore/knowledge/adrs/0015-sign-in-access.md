@@ -3,7 +3,7 @@ id: kb/ADR-0015
 title: "ADR-0015: Sign-in access is a locked configuration floor plus admin-edited database grants"
 description: "We decided that who may sign in and who is admin is the union of reeve.toml, as a locked floor, and database grants interactive admins edit at runtime, still through Google only, because letting a guest in must not take a config edit, deploy and restart."
 tags: [adr, reeve, identity, auth, oidc, tokens]
-status: proposed
+status: accepted
 date: 2026-11-09
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-09.
+Accepted 2026-11-09 by Daniel Thyselius.
 
 ## Context
 kb/ADR-0008 put the sign-in allowlist and the admin emails in configuration, so that an open sign-in would not expose the roadmap, and named its own remedy: when one config file can no longer keep up, supersede with an admin page. The production instance allows one company domain and one service address. People outside that domain now need access as guests: consultants, partners and customers who sign in with a Google identity on another address. Each guest today costs a change to the rendered `reeve.toml`, a deploy and a server restart, made by someone with access to the host. The team is still about six people; the pressure is the number and churn of guests, not the size of the team.

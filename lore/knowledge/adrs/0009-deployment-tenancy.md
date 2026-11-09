@@ -3,7 +3,7 @@ id: kb/ADR-0009
 title: "ADR-0009: The planner is self-hosted, one team per instance, with no organisation or household column"
 description: "Reeve is deployed as one self-hosted instance per team, with the key prefix, repositories and sign-in rules in configuration and no organisation or household column in the schema, because a hosted multi-organisation service and its tenant scoping are effort the product does not need and a recurring source of bugs."
 tags: [adr, reeve, deployment, tenancy, hosting]
-status: accepted
+status: superseded
 date: 2026-10-25
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: [privacy]
 scope: ["reeve:crates/**", "reeve:deploy/**"]
 supersedes: []
-superseded_by:
+superseded_by: kb/ADR-0016
 depends_on: []
 related: [kb/ADR-0008, kb/ADR-0007]
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-10-25.
 Accepted 2026-10-26 by Daniel Thyselius.
+Superseded 2026-11-09 by kb/ADR-0016.
 
 ## Context
 The planner replaces Jira for one company and is open source as the successor to Reeve. The team's services run as Docker containers on hosts in Stockholm so that data stays in Sweden. An earlier draft kept a household as a grouping inside an instance; review found that one team has one household and that the concept was a second tenant boundary in disguise.
