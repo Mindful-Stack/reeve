@@ -96,7 +96,10 @@ describe('WarRoom', () => {
 		expect(rows).toHaveLength(2);
 		expect(rows[0].textContent).toContain('Payments rebuild');
 		expect(rows[0].textContent).toContain('Now');
-		expect(rows[0].querySelector('.why')!.textContent).toBe("'Customer escalation' · marked by dana · expires in 5 d");
+		// The same wording as the item pages' own-mark line (ownMarkText), and the item type before the key.
+		expect(rows[0].querySelector('.why')!.textContent).toBe("marked by dana, 1 d ago · 'Customer escalation' · expires in 5 d");
+		expect(rows[0].querySelector('.key')!.textContent).toBe('initiative ABC-1');
+		expect(rows[1].querySelector('.key')!.textContent).toBe('story ABC-311');
 		expect(rows[1].classList.contains('expired')).toBe(true);
 		expect(rows[1].textContent).toContain('expired 2 d ago');
 		expect([...rows[1].querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Re-mark', 'Clear']);
@@ -134,7 +137,7 @@ describe('WarRoom', () => {
 	it('renews only the expired rows', async () => {
 		await open([active, expired]);
 		click('Re-mark all expired');
-		expect(document.body.textContent).toContain('Re-mark 1 expired?');
+		expect(document.body.textContent).toContain('Re-mark 1 expired for another cycle?');
 		click('Re-mark');
 		await vi.waitFor(() => expect(net.writes).toHaveLength(1));
 		expect(net.writes[0]).toEqual({ method: 'POST', path: '/api/v1/war-room/renew', body: { items: [expired.item] } });
@@ -208,10 +211,10 @@ describe('WarRoom', () => {
 	it('drops a renew confirmation when a confirmed row is no longer expired', async () => {
 		await open([active, expired]);
 		click('Re-mark all expired');
-		expect(document.body.textContent).toContain('Re-mark 1 expired?');
+		expect(document.body.textContent).toContain('Re-mark 1 expired for another cycle?');
 		net.entries = [active, { ...expired, mark: { ...expired.mark, active: true, expires_at: iso(14 * day) } }];
 		for (const f of live.fns) void f();
-		await vi.waitFor(() => expect(document.body.textContent).not.toContain('Re-mark 1 expired?'));
+		await vi.waitFor(() => expect(document.body.textContent).not.toContain('Re-mark 1 expired for another cycle?'));
 		expect(button('End war room')).toBeDefined();
 	});
 

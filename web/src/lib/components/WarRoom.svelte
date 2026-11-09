@@ -6,8 +6,8 @@
 	import { api, ApiError, Refused, unwrap } from '#lib/api/client.ts';
 	import type { ItemRef, WarRoomEntry } from '#lib/api/types.ts';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { errorMessage, short } from '#lib/format.ts';
-	import { expiry, itemRoute } from '#lib/urgency.ts';
+	import { errorMessage } from '#lib/format.ts';
+	import { itemRoute, ownMarkText } from '#lib/urgency.ts';
 	import MarkUrgentDialog from './MarkUrgentDialog.svelte';
 
 	let {
@@ -35,7 +35,8 @@
 	let latest = 0;
 	let heading: HTMLElement | undefined = $state();
 
-	const expired = $derived(entries.filter((e) => !e.mark.active));
+	const renewable = (e: WarRoomEntry) => !e.mark.active;
+	const renewables = $derived(entries.filter(renewable));
 	const word = (n: number) => `${n} ${n === 1 ? 'mark' : 'marks'}`;
 	const same = (a: ItemRef, b: ItemRef) => a.item === b.item && a.key === b.key;
 
@@ -49,8 +50,8 @@
 		entries = list;
 		at = clock();
 		if (confirm) {
-			// Every confirmed ref must still be listed, and for a renewal still be expired (renewed elsewhere otherwise).
-			const pool = confirm.kind === 'renew' ? list.filter((e) => !e.mark.active) : list;
+			// Every confirmed ref must still be listed, and for a renewal still be renewable (renewed elsewhere otherwise).
+			const pool = confirm.kind === 'renew' ? list.filter(renewable) : list;
 			if (!confirm.items.every((r) => pool.some((e) => same(e.item, r)))) confirm = null;
 		}
 	}
@@ -114,7 +115,7 @@
 	}
 
 	async function ask(kind: 'clear' | 'renew') {
-		confirm = { kind, items: (kind === 'clear' ? entries : expired).map((e) => e.item) };
+		confirm = { kind, items: (kind === 'clear' ? entries : renewables).map((e) => e.item) };
 		await tick();
 		document.querySelector<HTMLElement>('section[aria-label="War room"] [data-confirm]')?.focus();
 	}
@@ -158,16 +159,8 @@
 		}
 	}
 
-	/** "'Reason' · marked by dana · expires in 5 d · done": every separator has a space on both sides. */
-	const whyLine = (e: WarRoomEntry, now: Date) =>
-		[
-			e.mark.reason ? `'${e.mark.reason}'` : null,
-			`marked by ${short(e.mark.by)}`,
-			expiry(e.mark, now),
-			e.mark.done ? 'done' : null
-		]
-			.filter(Boolean)
-			.join(' · ');
+	/** "marked by dana, 2 d ago · 'reason' · expires in 5 d · done": the item pages' own-mark line, word for word. */
+	const whyLine = (e: WarRoomEntry, now: Date) => [ownMarkText(e.mark, now), ...(e.mark.done ? ['done'] : [])].join(' · ');
 
 	const route = (r: ItemRef) => itemRoute(r, page.url);
 </script>
@@ -182,7 +175,7 @@
 			</h2>
 			{#if confirm}
 				<span class="ask">
-					{confirm.kind === 'clear' ? `Clear ${word(confirm.items.length)}?` : `Re-mark ${confirm.items.length} expired?`}
+					{confirm.kind === 'clear' ? `Clear ${word(confirm.items.length)}?` : `Re-mark ${confirm.items.length} expired for another cycle?`}
 					<button
 						type="button"
 						class="primary"
@@ -195,7 +188,7 @@
 				</span>
 			{:else}
 				<span class="bulk">
-					{#if expired.length}<button type="button" data-bulk="renew" onclick={() => ask('renew')} disabled={busy}
+					{#if renewables.length}<button type="button" data-bulk="renew" onclick={() => ask('renew')} disabled={busy}
 							>Re-mark all expired</button
 						>{/if}
 					<button type="button" data-bulk="clear" onclick={() => ask('clear')} disabled={busy}>End war room</button>
@@ -208,7 +201,7 @@
 				<li class:expired={!e.mark.active}>
 					<span class="what">
 						<a href={route(e.item)}>{e.title}</a>
-						<span class="key">{e.item.key}</span>
+						<span class="key">{e.item.item} {e.item.key}</span>
 					</span>
 					<span class="where">
 						{#if e.initiative && e.item.item !== 'initiative'}in {e.initiative.title} · {e.initiative.horizon}
@@ -216,7 +209,7 @@
 					</span>
 					<span class="why">{whyLine(e, at)}</span>
 					<span class="row-actions">
-						{#if !e.mark.active}<button
+						{#if renewable(e)}<button
 								type="button"
 								class="ghost"
 								aria-label="Re-mark {e.item.key} {e.title}"
