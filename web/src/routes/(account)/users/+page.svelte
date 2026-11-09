@@ -2,6 +2,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import type { Access, User } from '#lib/api/types.ts';
+	import { allowedBy } from '#lib/access.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
@@ -98,6 +99,12 @@
 							<span class="muted">you</span>
 						{:else if floorAdmin(u.email)}
 							<span class="muted">admin (reeve.toml)</span>
+						{:else if access && allowedBy(access, u.email) === null}
+							<!-- Make admin would silently re-allow them and the server refuses Enable; Disable still revokes their tokens. -->
+							<span class="muted">not allowed (<a href="/access">manage on Access</a>)</span>
+							{#if !u.disabled}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => disable(u)}>Disable</button>
+							{/if}
 						{:else}
 							{#if dbAdmin(u.email)}
 								<button

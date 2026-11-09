@@ -2,6 +2,7 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const fail = vi.hoisted(() => ({ next: false }));
 const calls: { method: string; path: string; init: unknown }[] = [];
 const user = (email: string, role: string, disabled = false) => ({ email, display_name: '', role, disabled });
 const entry = (value: string, source: string) => ({
@@ -28,6 +29,10 @@ const data = {
 vi.mock('#lib/api/client.ts', () => {
 	const respond = (method: string) => async (path: string, init: unknown) => {
 		calls.push({ method, path, init });
+		if (fail.next && method !== 'GET') {
+			fail.next = false;
+			throw new Error('boom');
+		}
 		return path === '/api/v1/users' ? data.users : data.access;
 	};
 	return {
@@ -57,6 +62,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	calls.length = 0;
+	fail.next = false;
 	me.setRole('admin');
 	data.users = [...baseUsers];
 	data.access = structuredClone(baseAccess);
@@ -132,5 +138,45 @@ describe('Users page', () => {
 		flushSync();
 		await vi.waitFor(() => expect(document.querySelector('ul.rows li')).not.toBeNull());
 		expect(buttons('ada@example.com')).toEqual(['Make admin', 'Disable']);
+	});
+
+	it('marks a user no longer allowed: Disable stays, Make admin goes', async () => {
+		await open();
+		expect(rowOf('old@gone.org').textContent).toContain('not allowed');
+		expect(buttons('old@gone.org')).toEqual(['Disable']);
+	});
+
+	it('offers no Enable to a disabled user who is not allowed, but does to one who is', async () => {
+		data.users.push(user('off@gone.org', 'member', true), user('on@example.com', 'member', true));
+		await open();
+		expect(buttons('off@gone.org')).toEqual([]);
+		expect(rowOf('off@gone.org').textContent).toContain('not allowed');
+		expect(buttons('on@example.com')).toContain('Enable');
+	});
+
+	it('treats an email in both a config and a database admin row as a locked floor admin', async () => {
+		data.users.push(user('both@example.com', 'admin'));
+		data.access.admins.push(entry('both@example.com', 'config'), entry('both@example.com', 'database'));
+		await open();
+		expect(rowOf('both@example.com').textContent).toContain('admin (reeve.toml)');
+		expect(buttons('both@example.com')).toEqual([]);
+	});
+
+	it('reloads both lists after a write', async () => {
+		await open();
+		calls.length = 0;
+		click('ada@example.com', 'Make admin');
+		await vi.waitFor(() => {
+			const after = calls.slice(calls.findIndex((c) => c.method === 'POST') + 1).map((c) => `${c.method} ${c.path}`);
+			expect(after).toContain('GET /api/v1/users');
+			expect(after).toContain('GET /api/v1/access');
+		});
+	});
+
+	it('shows the notice when a write fails', async () => {
+		await open();
+		fail.next = true;
+		click('ada@example.com', 'Make admin');
+		await vi.waitFor(() => expect(document.body.textContent).toContain('boom'));
 	});
 });
