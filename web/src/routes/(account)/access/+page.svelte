@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { Access, AccessEntry, User } from '#lib/api/types.ts';
+	import { focusIsFree } from '#lib/focus.ts';
 	import { locksOut, removalNote, type Removal } from '#lib/access.ts';
+	import { tick } from 'svelte';
 	import { errorMessage } from '#lib/format.ts';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -17,7 +19,34 @@
 	let domain = $state('');
 	let admin = $state('');
 	/** The removal awaiting its inline confirmation. */
-	let asking = $state<{ what: 'entry'; removal: Removal } | { what: 'admin'; email: string } | null>(null);
+	let asking = $state<
+		({ what: 'entry'; removal: Removal } | { what: 'admin'; email: string }) & { opener: string } | null
+	>(null);
+	let dialogEl: HTMLElement | undefined = $state();
+
+	// Opening the confirmation puts focus on its first button.
+	$effect(() => {
+		if (asking) tick().then(() => dialogEl?.querySelector('button')?.focus());
+	});
+
+	/** Back to the row's opener button, or the section's first input when the row is gone. Only if focus is free. */
+	async function restore(opener: string, dialog: Element | null | undefined) {
+		await tick();
+		if (!focusIsFree(dialog)) return;
+		const section = opener.split('|')[0];
+		const btn = [...document.querySelectorAll<HTMLElement>('button[data-opener]')].find((b) => b.dataset.opener === opener);
+		(btn ?? document.querySelector<HTMLElement>(`section[aria-label="${section}"] input`))?.focus();
+	}
+	async function focusForm(label: string, form: Element | null) {
+		await tick();
+		if (focusIsFree(form)) document.querySelector<HTMLElement>(`form[aria-label="${label}"] input`)?.focus();
+	}
+	function cancel() {
+		if (!asking) return;
+		const [opener, dlg] = [asking.opener, dialogEl];
+		asking = null;
+		restore(opener, dlg);
+	}
 
 	function failure(e: unknown): string {
 		if (e instanceof Refused) return e.reasons.map((r) => r.reason).join(', ');
@@ -44,48 +73,62 @@
 		}
 	});
 
-	async function act(f: () => Promise<Access>) {
+	/** Runs a write and shows the result. True when the write succeeded, even if the follow-up reload failed. */
+	async function act(f: () => Promise<Access>, opener?: string): Promise<boolean> {
 		busy = true;
 		notice = null;
+		const dlg = dialogEl;
 		asking = null;
+		let ok = false;
 		try {
 			access = await f();
+			ok = true;
 			users = await unwrap(api.GET('/api/v1/users'));
 		} catch (e) {
-			notice = failure(e);
+			notice = ok ? `Saved, but the list of users could not be reloaded: ${failure(e)}` : failure(e);
 		} finally {
 			busy = false;
 		}
+		if (opener) restore(opener, dlg);
+		return ok;
 	}
 
-	const allowGuest = (e: SubmitEvent) => {
+	function submit(e: SubmitEvent, label: string, f: () => Promise<Access>, clear: () => void) {
 		e.preventDefault();
-		const value = guest;
-		act(() =>
-			alsoAdmin
-				? unwrap(api.POST('/api/v1/access/admins', { body: { email: value } }))
-				: unwrap(api.POST('/api/v1/access/entries', { body: { kind: 'email', value } }))
-		).then(() => {
-			if (!notice) [guest, alsoAdmin] = ['', false];
+		const form = e.currentTarget as Element;
+		act(f).then((ok) => {
+			if (ok) clear();
+			focusForm(label, form);
 		});
+	}
+	const allowGuest = (e: SubmitEvent) => {
+		const value = guest;
+		submit(
+			e,
+			'Allow a guest',
+			() =>
+				alsoAdmin
+					? unwrap(api.POST('/api/v1/access/admins', { body: { email: value } }))
+					: unwrap(api.POST('/api/v1/access/entries', { body: { kind: 'email', value } })),
+			() => ([guest, alsoAdmin] = ['', false])
+		);
 	};
 	const allowDomain = (e: SubmitEvent) => {
-		e.preventDefault();
 		const value = domain;
-		act(() => unwrap(api.POST('/api/v1/access/entries', { body: { kind: 'domain', value } }))).then(() => {
-			if (!notice) domain = '';
-		});
+		submit(e, 'Allow a domain', () => unwrap(api.POST('/api/v1/access/entries', { body: { kind: 'domain', value } })), () => (domain = ''));
 	};
 	const grant = (e: SubmitEvent) => {
-		e.preventDefault();
 		const email = admin;
-		act(() => unwrap(api.POST('/api/v1/access/admins', { body: { email } }))).then(() => {
-			if (!notice) admin = '';
-		});
+		submit(e, 'Grant admin', () => unwrap(api.POST('/api/v1/access/admins', { body: { email } })), () => (admin = ''));
 	};
-	const remove = (r: Removal) =>
-		act(() => unwrap(api.DELETE('/api/v1/access/entries/{kind}/{value}', { params: { path: { kind: r.kind, value: r.value } } })));
-	const revoke = (email: string) => act(() => unwrap(api.DELETE('/api/v1/access/admins/{email}', { params: { path: { email } } })));
+	const remove = (r: Removal, opener: string) =>
+		act(() => unwrap(api.DELETE('/api/v1/access/entries/{kind}/{value}', { params: { path: { kind: r.kind, value: r.value } } })), opener);
+	const revoke = (email: string, opener: string) =>
+		act(() => unwrap(api.DELETE('/api/v1/access/admins/{email}', { params: { path: { email } } })), opener);
+	const revokeNote = (email: string) =>
+		access?.admins.find((r) => r.source === 'database' && r.value === email)?.also_in_config
+			? `Revoke admin from ${email}? They stay admin through reeve.toml.`
+			: `Revoke admin from ${email}? They keep member access while an entry allows them.`;
 
 	const me = $derived(session.me?.email ?? '');
 	const added = (r: AccessEntry) => `added by ${r.added_by}, ${r.added_at?.slice(0, 10)}`;
@@ -105,7 +148,13 @@
 				{:else}
 					<span class="muted">{added(r)}{r.also_in_config ? ' · also in reeve.toml' : ''}</span>
 					{#if !locksOut(access!, me, kind, r.value)}
-						<button type="button" disabled={busy} onclick={() => (asking = { what: 'entry', removal: { kind, value: r.value } })}>Remove</button>
+						{@const opener = `${kind === 'email' ? 'Guests' : 'Domains'}|${r.value}`}
+						<button
+							type="button"
+							data-opener={opener}
+							disabled={busy}
+							onclick={() => (asking = { what: 'entry', removal: { kind, value: r.value }, opener })}>Remove</button
+						>
 					{/if}
 				{/if}
 			</li>
@@ -123,17 +172,27 @@
 		<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>
 	{/if}
 	{#if asking}
-		<div class="ask" role="alertdialog" aria-label="Confirm">
+		<div
+			class="ask"
+			role="alertdialog"
+			tabindex="-1"
+			aria-label={asking.what === 'entry' ? 'Confirm removal' : 'Confirm revoke'}
+			aria-describedby="ask-text"
+			bind:this={dialogEl}
+			onkeydown={(e) => e.key === 'Escape' && cancel()}
+		>
 			{#if asking.what === 'entry'}
 				{@const r = asking.removal}
-				<p>{removalNote(access!, users, r.kind, r.value)}</p>
-				<button type="button" disabled={busy} onclick={() => remove(r)}>Yes, remove</button>
+				{@const op = asking.opener}
+				<p id="ask-text">{removalNote(access!, users, r.kind, r.value)}</p>
+				<button type="button" disabled={busy} onclick={() => remove(r, op)}>Yes, remove</button>
 			{:else}
 				{@const email = asking.email}
-				<p>Revoke admin from {email}? They keep member access while an entry allows them.</p>
-				<button type="button" disabled={busy} onclick={() => revoke(email)}>Yes, revoke</button>
+				{@const op = asking.opener}
+				<p id="ask-text">{revokeNote(email)}</p>
+				<button type="button" disabled={busy} onclick={() => revoke(email, op)}>Yes, revoke</button>
 			{/if}
-			<button type="button" class="ghost" onclick={() => (asking = null)}>Cancel</button>
+			<button type="button" class="ghost" onclick={cancel}>Cancel</button>
 		</div>
 	{/if}
 	{#if loadError}
@@ -174,7 +233,13 @@
 							<span class="muted">{added(r)}{r.also_in_config ? ' · also in reeve.toml' : ''}</span>
 							{#if !r.allowed}<span class="muted">not allowed: grants nothing until their email is allowed again</span>{/if}
 							{#if r.value !== me}
-								<button type="button" disabled={busy} onclick={() => (asking = { what: 'admin', email: r.value })}>Revoke</button>
+								{@const opener = `Admins|${r.value}`}
+								<button
+									type="button"
+									data-opener={opener}
+									disabled={busy}
+									onclick={() => (asking = { what: 'admin', email: r.value, opener })}>Revoke</button
+								>
 							{/if}
 						{/if}
 					</li>

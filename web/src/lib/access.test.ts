@@ -34,6 +34,24 @@ describe('removalNote', () => {
 	});
 });
 
+describe('mixed case, whitespace and config duplicates', () => {
+	it('normalises input to allowedBy', () => {
+		expect(allowedBy(access, '  PAT@Partner.ORG ')).toBe('pat@partner.org');
+		expect(allowedBy(access, 'Kim@PARTNER.org')).toBe('@partner.org');
+		expect(allowedBy(access, 'no-at-sign')).toBeNull();
+	});
+	it('words a database duplicate of a config entry as still allowed through it', () => {
+		const dup: Access = { ...access, domains: [row('partner.org', 'config'), row('partner.org', 'database')] };
+		expect(removalNote(dup, users, 'domain', 'partner.org')).toBe('Remove @partner.org? 0 listed users lose access on their next request.');
+		const email: Access = { ...access, emails: [row('guest@other.org', 'config'), row('guest@other.org', 'database')] };
+		expect(removalNote(email, users, 'email', 'guest@other.org')).toBe('Remove guest@other.org? They stay allowed through guest@other.org.');
+	});
+	it('locks out a config admin allowed only by the database row being removed', () => {
+		const a: Access = { domains: [], emails: [row('boss@other.org', 'database')], admins: [row('boss@other.org', 'config')] };
+		expect(locksOut(a, 'boss@other.org', 'email', 'boss@other.org')).toBe(true);
+	});
+});
+
 describe('locksOut', () => {
 	it('is true when the removal leaves me unallowed or no longer admin', () => {
 		expect(locksOut(access, 'pat@partner.org', 'email', 'pat@partner.org')).toBe(false); // the domain still allows

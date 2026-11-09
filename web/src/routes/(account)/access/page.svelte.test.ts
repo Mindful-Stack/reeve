@@ -2,7 +2,14 @@
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ role: 'admin', email: 'dan@example.com' }));
+const state = vi.hoisted(() => ({
+	role: 'admin',
+	email: 'dan@example.com',
+	/** Replaces the data a read returns. */
+	read: null as unknown,
+	/** Makes the next write throw this. */
+	fail: null as Error | null
+}));
 const calls: { method: string; path: string; init: unknown }[] = [];
 const access = {
 	domains: [{ value: 'example.com', source: 'config', also_in_config: false, allowed: true, added_by: null, added_at: null }],
@@ -15,7 +22,11 @@ const access = {
 vi.mock('#lib/api/client.ts', () => {
 	const respond = (method: string) => async (path: string, init: unknown) => {
 		calls.push({ method, path, init });
-		return path === '/api/v1/users' ? [] : access;
+		if (path === '/api/v1/users') return [];
+		if (method === 'GET') return state.read ?? access;
+		if (state.fail) throw state.fail;
+		// A write answers with a different list than a read, so a page that ignores it shows.
+		return { domains: [], emails: [], admins: [{ ...access.admins[0] }] };
 	};
 	return {
 		api: { GET: respond('GET'), POST: respond('POST'), DELETE: respond('DELETE') },
@@ -37,8 +48,21 @@ afterEach(() => {
 	app = null;
 	calls.length = 0;
 	state.role = 'admin';
+	state.email = 'dan@example.com';
+	state.read = null;
+	state.fail = null;
 	document.body.innerHTML = '';
 });
+const entry = (value: string, source: 'config' | 'database', extra = {}) => ({
+	value,
+	source,
+	also_in_config: false,
+	allowed: true,
+	added_by: source === 'database' ? 'dan@example.com' : null,
+	added_at: source === 'database' ? '2026-11-09T09:00:00Z' : null,
+	...extra
+});
+const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement;
 const write = () => calls.filter((c) => c.method !== 'GET').at(-1);
 async function open() {
 	app = mount(Page, { target: document.body });
@@ -106,6 +130,100 @@ describe('Access page', () => {
 		} finally {
 			access.admins.splice(-extra.length, extra.length);
 		}
+	});
+
+	it('sends nothing before Yes, and Cancel closes the dialog and returns focus to Remove', async () => {
+		await open();
+		const remove = rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement;
+		remove.click();
+		await tick();
+		expect(document.querySelector('[role=alertdialog]')?.getAttribute('aria-label')).toBe('Confirm removal');
+		expect(document.activeElement?.textContent).toBe('Yes, remove');
+		expect(write()).toBeUndefined();
+		button('Cancel').click();
+		await tick();
+		await tick();
+		expect(document.querySelector('[role=alertdialog]')).toBeNull();
+		expect(write()).toBeUndefined();
+		expect(document.activeElement).toBe(remove);
+	});
+
+	it('Escape cancels the dialog', async () => {
+		await open();
+		(rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		document.querySelector('[role=alertdialog]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await tick();
+		expect(document.querySelector('[role=alertdialog]')).toBeNull();
+		expect(write()).toBeUndefined();
+	});
+
+	it('shows what a write answered, not what the earlier read said', async () => {
+		await open();
+		(rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		button('Yes, remove').click();
+		await vi.waitFor(() => expect(document.body.textContent).not.toContain('guest@other.org'));
+	});
+
+	it('revokes through the dialog with a DELETE to the admin path', async () => {
+		await open();
+		(rowOf('Admins', 'eve@gone.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		expect(document.querySelector('[role=alertdialog]')?.getAttribute('aria-label')).toBe('Confirm revoke');
+		expect(write()).toBeUndefined();
+		button('Yes, revoke').click();
+		await vi.waitFor(() =>
+			expect(write()).toMatchObject({ method: 'DELETE', path: '/api/v1/access/admins/{email}', init: { params: { path: { email: 'eve@gone.org' } } } })
+		);
+	});
+
+	it('says an admin also in reeve.toml stays admin when the database grant is revoked', async () => {
+		state.read = { domains: [entry('example.com', 'config')], emails: [], admins: [entry('dan@example.com', 'config'), entry('boss@example.com', 'database', { also_in_config: true })] };
+		await open();
+		(rowOf('Admins', 'boss@example.com').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		expect(document.body.textContent).toContain('Revoke admin from boss@example.com? They stay admin through reeve.toml.');
+	});
+
+	it('words a domain removal as a domain', async () => {
+		state.read = { domains: [entry('example.com', 'config'), entry('partner.org', 'database')], emails: [], admins: [entry('dan@example.com', 'config')] };
+		await open();
+		(rowOf('Domains', 'partner.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		expect(document.body.textContent).toContain('Remove @partner.org? 0 listed users lose access on their next request.');
+	});
+
+	it('has no action on my own database admin row, but does on another', async () => {
+		state.email = 'pat@partner.org';
+		state.read = {
+			domains: [entry('partner.org', 'database')],
+			emails: [],
+			admins: [entry('pat@partner.org', 'database'), entry('ana@partner.org', 'database')]
+		};
+		await open();
+		expect(rowOf('Admins', 'pat@partner.org').querySelector('button')).toBeNull();
+		expect(rowOf('Admins', 'ana@partner.org').querySelector('button')?.textContent).toBe('Revoke');
+	});
+
+	it('hides Remove on the only entry that allows me', async () => {
+		state.email = 'pat@partner.org';
+		state.read = { domains: [], emails: [entry('pat@partner.org', 'database'), entry('guest@other.org', 'database')], admins: [entry('pat@partner.org', 'config')] };
+		await open();
+		expect(rowOf('Guests', 'pat@partner.org').querySelector('button')).toBeNull();
+		expect(rowOf('Guests', 'guest@other.org').querySelector('button')?.textContent).toBe('Remove');
+	});
+
+	it('keeps the input filled and shows the error when a write fails', async () => {
+		state.fail = new Error('invalid request: not a valid email address');
+		await open();
+		const form = document.querySelector('form[aria-label="Allow a guest"]') as HTMLFormElement;
+		const input = form.querySelector('input[type=email]') as HTMLInputElement;
+		input.value = 'new@other.org';
+		input.dispatchEvent(new Event('input'));
+		form.requestSubmit();
+		await vi.waitFor(() => expect(document.querySelector('[role=alert]')?.textContent).toContain('invalid request: not a valid email address'));
+		expect(input.value).toBe('new@other.org');
 	});
 
 	it('shows members the admins-only notice and asks the server nothing', async () => {
