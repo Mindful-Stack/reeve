@@ -5,9 +5,10 @@ use crate::{
         pull_request::*,
         readiness::*,
         sprint::{Goal, GoalLink, Sprint, StoryTimes},
+        urgency::{Lineage, MarkFact, UrgentMark},
     },
     ports::*,
-    repo_sprint,
+    repo_sprint, repo_urgent,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -1333,6 +1334,37 @@ impl PlanningRepo for PgPlanningRepo {
         item: &Key,
     ) -> Result<bool, RepoError> {
         repo_sprint::delete_goal_link(tx, goal_id, item).await
+    }
+    async fn urgent_marks_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<MarkFact>, RepoError> {
+        repo_urgent::urgent_marks_in(tx).await
+    }
+    async fn urgency_lineage_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        epics: &[Key],
+        initiatives: &[Key],
+    ) -> Result<Lineage, RepoError> {
+        repo_urgent::urgency_lineage_in(tx, epics, initiatives).await
+    }
+    async fn set_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        mark: &UrgentMark,
+    ) -> Result<bool, RepoError> {
+        repo_urgent::set_urgent_mark(tx, item, key, mark).await
+    }
+    async fn clear_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+    ) -> Result<bool, RepoError> {
+        repo_urgent::clear_urgent_mark(tx, item, key).await
     }
     async fn links_of_in(
         &self,

@@ -4,6 +4,7 @@ use crate::domain::{
     pull_request::*,
     readiness::ReadinessInput,
     sprint::{Goal, GoalLink, Sprint, StoryTimes},
+    urgency::{Lineage, MarkFact, UrgentMark},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -550,6 +551,35 @@ pub trait PlanningRepo: Send + Sync {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<StoryTimes>, RepoError>;
+    /// Every stored urgent mark (active or expired) with its item's parent and done fact (kb/ADR-0017). One statement.
+    async fn urgent_marks_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<MarkFact>, RepoError>;
+    /// The lineage `urgency` needs: epics whose key is in `epics` or whose initiative is in `initiatives`, and the
+    /// stories under `epics` or under those initiatives' epics. Two statements; none when both inputs are empty.
+    async fn urgency_lineage_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        epics: &[Key],
+        initiatives: &[Key],
+    ) -> Result<Lineage, RepoError>;
+    /// Writes the mark on one item, replacing any; touches no other column (not `version`, not `updated_at`).
+    /// Ok(false) when no item of that type has the key.
+    async fn set_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        mark: &UrgentMark,
+    ) -> Result<bool, RepoError>;
+    /// Clears the mark; Ok(false) when the item carried none (or does not exist). Touches no other column.
+    async fn clear_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+    ) -> Result<bool, RepoError>;
 }
 
 /// What the planning context needs from the activity log: defined here, implemented by reeve-activity.

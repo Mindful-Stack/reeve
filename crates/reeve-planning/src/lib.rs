@@ -4,6 +4,7 @@ mod handler;
 mod ports;
 mod repo;
 mod repo_sprint;
+mod repo_urgent;
 pub use domain::{
     decision::{CloseError, Closed, RecordRef, RequiredDecision},
     delivery::{MoveEffect, MoveRefused, MoveRequest, validate_move},
