@@ -15,7 +15,7 @@ const row = (key: string, rank: number, epic: string | null, ready = true, kind:
 	);
 
 const data = vi.hoisted(() => {
-	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null };
+	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] };
 	const fresh = () => ({
 		stories: [] as StoryWithReadiness[],
 		epics: [{ ...loose }],

@@ -1,3 +1,4 @@
+use crate::urgency::{ItemRefDto, UrgentMarkDto};
 use crate::{enums::*, ids::Key};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,14 @@ pub struct InitiativeDto {
     pub progress: Option<f32>,
     pub external_ref: Option<String>,
     pub version: i64,
+    /// The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_mark: Option<UrgentMarkDto>,
+    /// The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_sources: Vec<ItemRefDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -33,6 +42,14 @@ pub struct EpicDto {
     pub discovery_complete: Option<DiscoveryMarkDto>,
     pub external_ref: Option<String>,
     pub version: i64,
+    /// The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_mark: Option<UrgentMarkDto>,
+    /// The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_sources: Vec<ItemRefDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -65,6 +82,14 @@ pub struct StoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub goals: Vec<crate::sprints::GoalRefDto>,
+    /// The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_mark: Option<UrgentMarkDto>,
+    /// The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent_sources: Vec<ItemRefDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

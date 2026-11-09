@@ -381,6 +381,8 @@ impl From<&Initiative> for reeve_protocol::InitiativeDto {
             progress: None,
             external_ref: i.external_ref.clone(),
             version: i.version,
+            urgent_mark: None,
+            urgent_sources: vec![],
         }
     }
 }
@@ -400,6 +402,8 @@ impl From<&Epic> for reeve_protocol::EpicDto {
                 }),
             external_ref: e.external_ref.clone(),
             version: e.version,
+            urgent_mark: None,
+            urgent_sources: vec![],
         }
     }
 }
@@ -430,6 +434,8 @@ impl From<&Story> for reeve_protocol::StoryDto {
             version: s.version,
             prs: vec![],
             goals: vec![],
+            urgent_mark: None,
+            urgent_sources: vec![],
         }
     }
 }

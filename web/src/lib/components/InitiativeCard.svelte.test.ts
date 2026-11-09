@@ -6,7 +6,7 @@ import type { Initiative } from '#lib/api/types.ts';
 import { decision } from '#lib/test/fixtures.ts';
 import InitiativeCard from './InitiativeCard.svelte';
 
-const ini: Initiative = { key: 'R-1', title: 'Plan', brief: '', horizon: 'Next', version: 1, progress: 0.5 };
+const ini: Initiative = { key: 'R-1', title: 'Plan', brief: '', horizon: 'Next', version: 1, progress: 0.5, urgent_mark: null, urgent_sources: [] };
 
 let app: ReturnType<typeof mount> | null = null;
 afterEach(() => {

@@ -173,7 +173,11 @@ impl Handlers {
         Ok(self.repo.get_initiative(key).await?)
     }
 
-    pub async fn initiative_dto(&self, key: &Key) -> Result<InitiativeDto, HandlerError> {
+    pub async fn initiative_dto(
+        &self,
+        key: &Key,
+        _now: DateTime<Utc>,
+    ) -> Result<InitiativeDto, HandlerError> {
         let i = self.repo.get_initiative(key).await?;
         let counts = self.repo.story_counts_under_initiative(key).await?;
         Ok(with_progress(&i, &counts))
@@ -190,7 +194,10 @@ impl Handlers {
         Ok(with_progress(&i, &counts))
     }
 
-    pub async fn list_initiatives(&self) -> Result<Vec<InitiativeDto>, HandlerError> {
+    pub async fn list_initiatives(
+        &self,
+        _now: DateTime<Utc>,
+    ) -> Result<Vec<InitiativeDto>, HandlerError> {
         let initiatives = self.repo.list_initiatives().await?;
         let counts = self.repo.story_counts_by_initiative().await?;
         let none = StoryCounts {

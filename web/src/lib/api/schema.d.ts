@@ -217,6 +217,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/epics/{key}/urgent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["epics_key_urgent_mark_urgent"];
+        delete: operations["epics_key_urgent_clear_urgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -478,6 +494,22 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/initiatives/{key}/urgent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["initiatives_key_urgent_mark_urgent"];
+        delete: operations["initiatives_key_urgent_clear_urgent"];
         options?: never;
         head?: never;
         patch?: never;
@@ -779,6 +811,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stories/{key}/urgent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stories_key_urgent_mark_urgent"];
+        delete: operations["stories_key_urgent_clear_urgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tokens": {
         parameters: {
             query?: never;
@@ -853,6 +901,54 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["enable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/war-room": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["war_room_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/war-room/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["war_room_clear"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/war-room/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["war_room_renew"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1134,6 +1230,9 @@ export interface components {
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
             title: string;
+            urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+            /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+            urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
         };
@@ -1316,6 +1415,9 @@ export interface components {
             progress?: number | null;
             target_month?: string | null;
             title: string;
+            urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+            /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+            urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
         };
@@ -1344,6 +1446,11 @@ export interface components {
             secret: string;
             token: components["schemas"]["TokenDto"];
         };
+        /** @description An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is. */
+        ItemRefDto: {
+            item: components["schemas"]["ItemType"];
+            key: components["schemas"]["Key"];
+        };
         /** @enum {string} */
         ItemType: "initiative" | "epic" | "story";
         /** @example ABC-412 */
@@ -1361,6 +1468,10 @@ export interface components {
             pr_url?: string | null;
             record_id: string;
             repo: string;
+        };
+        /** @description Mark (or renew) an item urgent; the reason is optional, at most 200 characters. */
+        MarkUrgent: {
+            reason?: string | null;
         };
         /** @description The caller, as `GET /me` reports it. */
         Me: {
@@ -1725,6 +1836,9 @@ export interface components {
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
                 title: string;
+                urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+                /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+                urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
             };
@@ -1897,6 +2011,9 @@ export interface components {
                 progress?: number | null;
                 target_month?: string | null;
                 title: string;
+                urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+                /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+                urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
             };
@@ -2302,6 +2419,9 @@ export interface components {
                 rank: number;
                 resolution?: null | components["schemas"]["Resolution"];
                 title: string;
+                urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+                /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+                urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
             };
@@ -2410,6 +2530,9 @@ export interface components {
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
                 title: string;
+                urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+                /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+                urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
             }[];
@@ -2492,6 +2615,9 @@ export interface components {
                 progress?: number | null;
                 target_month?: string | null;
                 title: string;
+                urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+                /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+                urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
             }[];
@@ -2693,6 +2819,36 @@ export interface components {
             /** @enum {string} */
             outcome: "error";
         };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_WarRoomEntryDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                initiative?: null | components["schemas"]["WarRoomInitiativeDto"];
+                item: components["schemas"]["ItemRefDto"];
+                mark: components["schemas"]["UrgentMarkDto"];
+                title: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
         /**
          * @description How hard a required decision is to undo (kb/ADR-0013 R1). Unset (`None`) behaves as two-way.
          * @enum {string}
@@ -2812,6 +2968,9 @@ export interface components {
             rank: number;
             resolution?: null | components["schemas"]["Resolution"];
             title: string;
+            urgent_mark: null | components["schemas"]["UrgentMarkDto"];
+            /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
+            urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
         };
@@ -2838,6 +2997,20 @@ export interface components {
         };
         /** @enum {string} */
         TokenKind: "interactive" | "automation";
+        /**
+         * @description The urgent mark stored on an item (kb/ADR-0017). `expires_at` and `active` are the server's answer; clients never
+         *     compute expiry. `done`: the marked item is a done story, so the mark makes nothing urgent.
+         */
+        UrgentMarkDto: {
+            active: boolean;
+            /** Format: date-time */
+            at: string;
+            by: string;
+            done: boolean;
+            /** Format: date-time */
+            expires_at: string;
+            reason?: string | null;
+        };
         UserDto: {
             /** Format: date-time */
             created_at: string;
@@ -2856,6 +3029,23 @@ export interface components {
         };
         /** @enum {string} */
         Via: "interactive" | "automation" | "system";
+        /** @description One row of the war room: a stored mark, active or expired. */
+        WarRoomEntryDto: {
+            initiative?: null | components["schemas"]["WarRoomInitiativeDto"];
+            item: components["schemas"]["ItemRefDto"];
+            mark: components["schemas"]["UrgentMarkDto"];
+            title: string;
+        };
+        /** @description The initiative a war room row belongs to. */
+        WarRoomInitiativeDto: {
+            horizon: string;
+            key: components["schemas"]["Key"];
+            title: string;
+        };
+        /** @description The war-room rows the caller saw; bulk clear and renew act on exactly these. */
+        WarRoomItems: {
+            items: components["schemas"]["ItemRefDto"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -4065,6 +4255,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_Finding"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    epics_key_urgent_mark_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkUrgent"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_EpicDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    epics_key_urgent_clear_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_EpicDto"];
                 };
             };
             /** @description validation error */
@@ -5391,6 +5717,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_Finding"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    initiatives_key_urgent_mark_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkUrgent"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_InitiativeDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    initiatives_key_urgent_clear_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_InitiativeDto"];
                 };
             };
             /** @description validation error */
@@ -6875,6 +7337,142 @@ export interface operations {
             };
         };
     };
+    stories_key_urgent_mark_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkUrgent"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_StoryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    stories_key_urgent_clear_urgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_StoryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
     tokens_list: {
         parameters: {
             query?: never;
@@ -7267,6 +7865,206 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    war_room_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WarRoomEntryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    war_room_clear: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarRoomItems"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WarRoomEntryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    war_room_renew: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarRoomItems"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WarRoomEntryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
             };
             /** @description not found */
             404: {

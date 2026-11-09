@@ -617,7 +617,11 @@ impl Handlers {
     }
 
     /// One story's DTO in its own read-only snapshot (the single-story routes).
-    pub async fn story_dto(&self, s: &Story) -> Result<StoryDto, HandlerError> {
+    pub async fn story_dto(
+        &self,
+        s: &Story,
+        _now: DateTime<Utc>,
+    ) -> Result<StoryDto, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -669,7 +673,11 @@ impl Handlers {
     /// The story, its ancestors, open decisions, blockers, comments, readiness and the active sprint's goals it serves,
     /// all from one `REPEATABLE READ READ ONLY` snapshot, in a number of statements that does not depend on the number
     /// of blockers or goals.
-    pub async fn story_context(&self, key: &Key) -> Result<StoryContextDto, HandlerError> {
+    pub async fn story_context(
+        &self,
+        key: &Key,
+        _now: DateTime<Utc>,
+    ) -> Result<StoryContextDto, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")

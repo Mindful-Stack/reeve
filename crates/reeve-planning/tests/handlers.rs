@@ -326,7 +326,7 @@ async fn the_acceptance_flow_at_handler_level() {
         .unwrap();
 
     // Context bundle carries the decision and the readiness.
-    let bundle = h.story_context(story.key()).await.unwrap();
+    let bundle = h.story_context(story.key(), Utc::now()).await.unwrap();
     assert_eq!(bundle.required_decisions.len(), 1);
     assert!(bundle.readiness.ready);
     assert_eq!(bundle.initiative.as_ref().unwrap().key, *ini.key());
@@ -407,7 +407,7 @@ async fn the_acceptance_flow_at_handler_level() {
     )
     .await
     .unwrap();
-    let dto = h.initiative_dto(ini.key()).await.unwrap();
+    let dto = h.initiative_dto(ini.key(), Utc::now()).await.unwrap();
     assert_eq!(
         dto.progress,
         Some(1.0),
@@ -849,7 +849,11 @@ async fn smaller_use_cases() {
     h.mark_discovery(&dan, ItemType::Initiative, ini.key(), 1, true)
         .await
         .unwrap();
-    let v = h.initiative_dto(ini.key()).await.unwrap().version;
+    let v = h
+        .initiative_dto(ini.key(), Utc::now())
+        .await
+        .unwrap()
+        .version;
     h.mark_discovery(&dan, ItemType::Initiative, ini.key(), v, true)
         .await
         .unwrap();
@@ -869,7 +873,7 @@ async fn smaller_use_cases() {
         1
     );
     assert!(
-        h.initiative_dto(ini.key())
+        h.initiative_dto(ini.key(), Utc::now())
             .await
             .unwrap()
             .discovery_complete
@@ -939,7 +943,7 @@ async fn item_scoped_decision_list_honours_open_with_record() {
     assert_eq!(open_linked, vec![ids[0]]);
     // The context bundle leaves the closed decision out.
     let bundle: Vec<i64> = h
-        .story_context(s.key())
+        .story_context(s.key(), Utc::now())
         .await
         .unwrap()
         .required_decisions
@@ -1646,7 +1650,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         PrChange::Linked
     );
     let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap())
+        .story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
         .await
         .unwrap();
     assert_eq!(dto.prs.len(), 1);
@@ -1721,7 +1725,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         PrChange::Ignored
     );
     let fresh = h.get_story(story.key()).await.unwrap();
-    let dto = h.story_dto(&fresh).await.unwrap();
+    let dto = h.story_dto(&fresh, Utc::now()).await.unwrap();
     assert_eq!(dto.prs[0].status, PrStatus::Merged);
     assert_eq!(dto.prs[0].title, "fix (retitled)");
     assert_eq!(dto.prs[0].updated_at, t12);
@@ -1764,14 +1768,14 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         }
     );
     assert!(
-        h.story_dto(&h.get_story(story.key()).await.unwrap())
+        h.story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
             .await
             .unwrap()
             .prs
             .is_empty()
     );
     assert_eq!(
-        h.story_dto(&h.get_story(other.key()).await.unwrap())
+        h.story_dto(&h.get_story(other.key()).await.unwrap(), Utc::now())
             .await
             .unwrap()
             .prs
@@ -1884,7 +1888,7 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
     tx.rollback().await.unwrap();
     let mut single = Vec::new();
     for s in &fresh {
-        single.push(h.story_dto(s).await.unwrap());
+        single.push(h.story_dto(s, Utc::now()).await.unwrap());
     }
     assert_eq!(batched, single);
     assert_eq!(
@@ -1962,7 +1966,7 @@ async fn two_first_deliveries_of_the_same_pull_request_do_not_error() {
         assert_eq!(got, vec![PrChange::Ignored, PrChange::Linked], "PR {n}");
     }
     let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap())
+        .story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
         .await
         .unwrap();
     assert_eq!(dto.prs.len(), numbers.len(), "one row per pull request");
@@ -2463,12 +2467,15 @@ async fn import_creates_with_state_once_and_never_logs_an_override() {
         .unwrap();
     let sk = story.key.clone().unwrap();
     let s = h.get_story(&sk).await.unwrap();
-    let dto = h.story_dto(&s).await.unwrap();
+    let dto = h.story_dto(&s, Utc::now()).await.unwrap();
     assert_eq!(dto.delivery, DeliveryState::InProgress); // created in state: no gate, no override
     assert_eq!(dto.external_ref.as_deref(), Some("SCRUM-11"));
     assert_eq!(dto.owner.as_deref(), Some("bob@example.com"));
     assert_eq!(dto.labels, vec!["legacy-import".to_string()]);
-    let ini_dto = h.initiative_dto(ini.key.as_ref().unwrap()).await.unwrap();
+    let ini_dto = h
+        .initiative_dto(ini.key.as_ref().unwrap(), Utc::now())
+        .await
+        .unwrap();
     assert_eq!(ini_dto.owner.as_deref(), Some("dan@example.com"));
     assert_eq!(ini_dto.external_ref.as_deref(), Some("JPD-5"));
     assert_eq!(ini_dto.discovery_complete.as_ref().unwrap().by, c.actor);
@@ -3155,7 +3162,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
         let h = h.clone();
         let x = x.clone();
         async move {
-            h.story_context(&x).await.unwrap();
+            h.story_context(&x, Utc::now()).await.unwrap();
         }
     };
     context().await; // warm up
@@ -3165,7 +3172,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
     }
     let five = common::statements(&pool, context).await;
     assert_eq!(one, five);
-    let ctx_dto = h.story_context(&x).await.unwrap();
+    let ctx_dto = h.story_context(&x, Utc::now()).await.unwrap();
     assert_eq!(
         ctx_dto
             .blockers
@@ -3441,7 +3448,7 @@ async fn story_context_reads_one_snapshot() {
     let call = tokio::spawn({
         let h = h.clone();
         let s = s.clone();
-        async move { h.story_context(&s).await }
+        async move { h.story_context(&s, Utc::now()).await }
     });
     wait_until_blocked(&pool).await;
     commit_during_the_pause(&pool, &s, &b, &t, Some(comment)).await;
@@ -3465,7 +3472,7 @@ async fn story_context_reads_one_snapshot() {
     assert_eq!(got.blockers[0].key, b);
     assert_eq!(got.blockers[0].delivery, DeliveryState::Todo);
 
-    let after = h.story_context(&s).await.unwrap();
+    let after = h.story_context(&s, Utc::now()).await.unwrap();
     assert!(after.readiness.ready);
     assert_eq!(after.story.prs.len(), 1);
     assert!(after.comments.is_empty());
@@ -3766,7 +3773,7 @@ async fn list_initiatives_costs_the_same_for_two_and_six_initiatives() {
     let list = || {
         let h = h.clone();
         async move {
-            h.list_initiatives().await.unwrap();
+            h.list_initiatives(Utc::now()).await.unwrap();
         }
     };
     list().await; // warm up
@@ -3784,7 +3791,7 @@ async fn list_initiatives_costs_the_same_for_two_and_six_initiatives() {
     h.create_epic(&dan, "f-e", "E", Some(f.key().clone()), "", None)
         .await
         .unwrap();
-    assert_eq!(h.list_initiatives().await.unwrap().len(), 6);
+    assert_eq!(h.list_initiatives(Utc::now()).await.unwrap().len(), 6);
     let six = common::statements(&pool, list).await;
     assert_eq!(two, six);
 }
@@ -3806,11 +3813,11 @@ async fn list_initiatives_progress_matches_one_at_a_time() {
     h.create_epic(&dan, "f-e", "E", Some(f.key().clone()), "", None)
         .await
         .unwrap();
-    let listed = h.list_initiatives().await.unwrap();
+    let listed = h.list_initiatives(Utc::now()).await.unwrap();
     assert_eq!(listed.len(), 3);
     for dto in &listed {
         let key = dto.key.clone();
-        assert_eq!(dto, &h.initiative_dto(&key).await.unwrap());
+        assert_eq!(dto, &h.initiative_dto(&key, Utc::now()).await.unwrap());
     }
     assert_eq!(listed.iter().filter(|d| d.progress.is_none()).count(), 2);
     assert_eq!(
@@ -4341,7 +4348,7 @@ async fn remove_block_deletes_one_edge_and_logs_unblocked_last() {
     h.remove_block(&dan, s.key(), b.key()).await.unwrap();
 
     let dto = h
-        .story_dto(&h.get_story(s.key()).await.unwrap())
+        .story_dto(&h.get_story(s.key()).await.unwrap(), Utc::now())
         .await
         .unwrap();
     assert_eq!(
@@ -4721,7 +4728,7 @@ async fn list_initiatives_orders_ties_by_key_number() {
         .await
         .unwrap();
     let keys: Vec<String> = h
-        .list_initiatives()
+        .list_initiatives(Utc::now())
         .await
         .unwrap()
         .iter()
@@ -5368,7 +5375,7 @@ async fn urgent_marks_are_set_renewed_and_cleared_by_people_only() {
     );
     assert!(h.war_room(later.now).await.unwrap().is_empty());
     assert_eq!(
-        h.initiative_dto(&k).await.unwrap().version,
+        h.initiative_dto(&k, Utc::now()).await.unwrap().version,
         ini.version(),
         "no version bump"
     );

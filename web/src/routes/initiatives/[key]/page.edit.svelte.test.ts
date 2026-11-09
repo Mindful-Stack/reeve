@@ -33,7 +33,7 @@ vi.mock('$app/state', async () => {
 type Patched = { version: number; title?: string; target_month?: string | null; owner?: string | null };
 
 const net = vi.hoisted(() => {
-	const ini: Initiative = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null };
+	const ini: Initiative = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 	const s = {
 		ini,
 		epics: [] as Epic[],
@@ -112,7 +112,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 				const ok = await new Promise<boolean>((r) => s.createQueue.push(r));
 				if (!ok) return failure('boom');
 			}
-			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative };
+			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative, urgent_mark: null, urgent_sources: [] };
 			s.epics = [...s.epics, e];
 			return e;
 		}
@@ -128,7 +128,7 @@ afterEach(() => {
 	live.fns.length = 0;
 	live.polls.length = 0;
 	document.body.innerHTML = '';
-	net.ini = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null };
+	net.ini = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 	net.epics = [];
 	net.patches.length = 0;
 	net.epicPosts.length = 0;

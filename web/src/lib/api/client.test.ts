@@ -27,6 +27,8 @@ const story: StoryWithReadiness = {
 		blocked_by: [],
 		prs: [],
 		goals: [],
+		urgent_mark: null,
+		urgent_sources: [],
 		rank: 1,
 		version: 2
 	},

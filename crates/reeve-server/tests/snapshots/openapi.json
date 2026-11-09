@@ -1003,6 +1003,24 @@
           "title": {
             "type": "string"
           },
+          "urgent_mark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UrgentMarkDto",
+                "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+              }
+            ]
+          },
+          "urgent_sources": {
+            "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+            "items": {
+              "$ref": "#/components/schemas/ItemRefDto"
+            },
+            "type": "array"
+          },
           "version": {
             "format": "int64",
             "type": "integer"
@@ -1012,7 +1030,9 @@
           "key",
           "title",
           "brief",
-          "version"
+          "version",
+          "urgent_mark",
+          "urgent_sources"
         ],
         "type": "object"
       },
@@ -1656,6 +1676,24 @@
           "title": {
             "type": "string"
           },
+          "urgent_mark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UrgentMarkDto",
+                "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+              }
+            ]
+          },
+          "urgent_sources": {
+            "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+            "items": {
+              "$ref": "#/components/schemas/ItemRefDto"
+            },
+            "type": "array"
+          },
           "version": {
             "format": "int64",
             "type": "integer"
@@ -1666,7 +1704,9 @@
           "title",
           "brief",
           "horizon",
-          "version"
+          "version",
+          "urgent_mark",
+          "urgent_sources"
         ],
         "type": "object"
       },
@@ -1748,6 +1788,22 @@
         ],
         "type": "object"
       },
+      "ItemRefDto": {
+        "description": "An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is.",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          }
+        },
+        "required": [
+          "key",
+          "item"
+        ],
+        "type": "object"
+      },
       "ItemType": {
         "enum": [
           "initiative",
@@ -1816,6 +1872,18 @@
           "path",
           "record_id"
         ],
+        "type": "object"
+      },
+      "MarkUrgent": {
+        "description": "Mark (or renew) an item urgent; the reason is optional, at most 200 characters.",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "Me": {
@@ -3170,6 +3238,24 @@
                   "title": {
                     "type": "string"
                   },
+                  "urgent_mark": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/UrgentMarkDto",
+                        "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+                      }
+                    ]
+                  },
+                  "urgent_sources": {
+                    "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemRefDto"
+                    },
+                    "type": "array"
+                  },
                   "version": {
                     "format": "int64",
                     "type": "integer"
@@ -3179,7 +3265,9 @@
                   "key",
                   "title",
                   "brief",
-                  "version"
+                  "version",
+                  "urgent_mark",
+                  "urgent_sources"
                 ],
                 "type": "object"
               }
@@ -3756,6 +3844,24 @@
                   "title": {
                     "type": "string"
                   },
+                  "urgent_mark": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/UrgentMarkDto",
+                        "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+                      }
+                    ]
+                  },
+                  "urgent_sources": {
+                    "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemRefDto"
+                    },
+                    "type": "array"
+                  },
                   "version": {
                     "format": "int64",
                     "type": "integer"
@@ -3766,7 +3872,9 @@
                   "title",
                   "brief",
                   "horizon",
-                  "version"
+                  "version",
+                  "urgent_mark",
+                  "urgent_sources"
                 ],
                 "type": "object"
               }
@@ -5098,6 +5206,24 @@
                   "title": {
                     "type": "string"
                   },
+                  "urgent_mark": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/UrgentMarkDto",
+                        "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+                      }
+                    ]
+                  },
+                  "urgent_sources": {
+                    "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemRefDto"
+                    },
+                    "type": "array"
+                  },
                   "version": {
                     "format": "int64",
                     "type": "integer"
@@ -5115,7 +5241,9 @@
                   "delivery",
                   "version",
                   "prs",
-                  "goals"
+                  "goals",
+                  "urgent_mark",
+                  "urgent_sources"
                 ],
                 "type": "object"
               }
@@ -5501,6 +5629,24 @@
                     "title": {
                       "type": "string"
                     },
+                    "urgent_mark": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/UrgentMarkDto",
+                          "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+                        }
+                      ]
+                    },
+                    "urgent_sources": {
+                      "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+                      "items": {
+                        "$ref": "#/components/schemas/ItemRefDto"
+                      },
+                      "type": "array"
+                    },
                     "version": {
                       "format": "int64",
                       "type": "integer"
@@ -5510,7 +5656,9 @@
                     "key",
                     "title",
                     "brief",
-                    "version"
+                    "version",
+                    "urgent_mark",
+                    "urgent_sources"
                   ],
                   "type": "object"
                 },
@@ -5803,6 +5951,24 @@
                     "title": {
                       "type": "string"
                     },
+                    "urgent_mark": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/UrgentMarkDto",
+                          "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+                        }
+                      ]
+                    },
+                    "urgent_sources": {
+                      "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+                      "items": {
+                        "$ref": "#/components/schemas/ItemRefDto"
+                      },
+                      "type": "array"
+                    },
                     "version": {
                       "format": "int64",
                       "type": "integer"
@@ -5813,7 +5979,9 @@
                     "title",
                     "brief",
                     "horizon",
-                    "version"
+                    "version",
+                    "urgent_mark",
+                    "urgent_sources"
                   ],
                   "type": "object"
                 },
@@ -6498,6 +6666,115 @@
           }
         ]
       },
+      "Response_Vec_WarRoomEntryDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "One row of the war room: a stored mark, active or expired.",
+                  "properties": {
+                    "initiative": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/WarRoomInitiativeDto"
+                        }
+                      ]
+                    },
+                    "item": {
+                      "$ref": "#/components/schemas/ItemRefDto"
+                    },
+                    "mark": {
+                      "$ref": "#/components/schemas/UrgentMarkDto"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "item",
+                    "title",
+                    "mark"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Reversibility": {
         "description": "How hard a required decision is to undo (kb/ADR-0013 R1). Unset (`None`) behaves as two-way.",
         "enum": [
@@ -6873,6 +7150,24 @@
           "title": {
             "type": "string"
           },
+          "urgent_mark": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UrgentMarkDto",
+                "description": "The urgent mark stored on this item, active or expired (kb/ADR-0017). Servers always send it."
+              }
+            ]
+          },
+          "urgent_sources": {
+            "description": "The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent.",
+            "items": {
+              "$ref": "#/components/schemas/ItemRefDto"
+            },
+            "type": "array"
+          },
           "version": {
             "format": "int64",
             "type": "integer"
@@ -6890,7 +7185,9 @@
           "delivery",
           "version",
           "prs",
-          "goals"
+          "goals",
+          "urgent_mark",
+          "urgent_sources"
         ],
         "type": "object"
       },
@@ -6973,6 +7270,42 @@
         ],
         "type": "string"
       },
+      "UrgentMarkDto": {
+        "description": "The urgent mark stored on an item (kb/ADR-0017). `expires_at` and `active` are the server's answer; clients never\ncompute expiry. `done`: the marked item is a done story, so the mark makes nothing urgent.",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "at",
+          "by",
+          "expires_at",
+          "active",
+          "done"
+        ],
+        "type": "object"
+      },
       "UserDto": {
         "properties": {
           "created_at": {
@@ -7038,6 +7371,71 @@
           "system"
         ],
         "type": "string"
+      },
+      "WarRoomEntryDto": {
+        "description": "One row of the war room: a stored mark, active or expired.",
+        "properties": {
+          "initiative": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WarRoomInitiativeDto"
+              }
+            ]
+          },
+          "item": {
+            "$ref": "#/components/schemas/ItemRefDto"
+          },
+          "mark": {
+            "$ref": "#/components/schemas/UrgentMarkDto"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "title",
+          "mark"
+        ],
+        "type": "object"
+      },
+      "WarRoomInitiativeDto": {
+        "description": "The initiative a war room row belongs to.",
+        "properties": {
+          "horizon": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "horizon"
+        ],
+        "type": "object"
+      },
+      "WarRoomItems": {
+        "description": "The war-room rows the caller saw; bulk clear and renew act on exactly these.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemRefDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -8685,6 +9083,178 @@
         "summary": "Advisory findings: computed on read, never stored, never consulted by a move."
       }
     },
+    "/api/v1/epics/{key}/urgent": {
+      "delete": {
+        "operationId": "epics_key_urgent_clear_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_EpicDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "epics_key_urgent_mark_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkUrgent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_EpicDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/events": {
       "get": {
         "operationId": "events",
@@ -10318,6 +10888,178 @@
           }
         ],
         "summary": "Advisory findings: computed on read, never stored, never consulted by a move."
+      }
+    },
+    "/api/v1/initiatives/{key}/urgent": {
+      "delete": {
+        "operationId": "initiatives_key_urgent_clear_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InitiativeDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "initiatives_key_urgent_mark_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkUrgent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_InitiativeDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/api/v1/items/{key}/comments": {
@@ -12174,6 +12916,178 @@
         ]
       }
     },
+    "/api/v1/stories/{key}/urgent": {
+      "delete": {
+        "operationId": "stories_key_urgent_clear_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_StoryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "stories_key_urgent_mark_urgent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkUrgent"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_StoryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/tokens": {
       "get": {
         "operationId": "tokens_list",
@@ -12618,6 +13532,242 @@
           },
           "403": {
             "description": "admins only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/war-room": {
+      "get": {
+        "operationId": "war_room_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_WarRoomEntryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/war-room/clear": {
+      "post": {
+        "operationId": "war_room_clear",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarRoomItems"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_WarRoomEntryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/war-room/renew": {
+      "post": {
+        "operationId": "war_room_renew",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarRoomItems"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_WarRoomEntryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
           },
           "404": {
             "content": {

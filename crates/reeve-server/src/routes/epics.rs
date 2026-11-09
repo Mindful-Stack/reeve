@@ -108,8 +108,34 @@ async fn findings(
     Ok(ok(s.handlers.findings(ItemType::Epic, &key).await?))
 }
 
+#[utoipa::path(post, path = "/epics/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<EpicDto>)))]
+async fn mark_urgent(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(b): ApiJson<MarkUrgent>,
+) -> Result<Json<Response<EpicDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
+    let ctx = c.ctx();
+    s.handlers
+        .mark_urgent(&ctx, ItemType::Epic, &key, b.reason)
+        .await?;
+    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+}
+#[utoipa::path(delete, path = "/epics/{key}/urgent", params(("key" = String, Path)), responses((status = 200, body = Response<EpicDto>)))]
+async fn clear_urgent(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+) -> Result<Json<Response<EpicDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
+    let ctx = c.ctx();
+    s.handlers.clear_urgent(&ctx, ItemType::Epic, &key).await?;
+    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+}
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .routes(routes!(mark_urgent, clear_urgent))
         .routes(routes!(list, create))
         .routes(routes!(get, edit))
         .routes(routes!(discovery))
