@@ -8,6 +8,8 @@
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
+	import UrgentChip from './UrgentChip.svelte';
+	import { urgentLine } from '#lib/urgency.ts';
 
 	let {
 		item,
@@ -65,12 +67,20 @@
 	const note = $derived(freshNote(live.recent, s.key, session.me?.email));
 	// The readiness word is the server's answer rendered short (kb/ADR-0003 R1); a done card shows its resolution.
 	const status = $derived(storyStatus(item));
+	// Urgent: the server's sources are non-empty (a done story has none). The ring is an inset shadow, distinct from
+	// `.fresh`'s accent border, and the chip keeps the word so it is never colour alone.
+	const urgent = $derived(s.urgent_sources.length > 0);
+	/** Tooltip text; `now` is read at each evaluation, so the expiry never freezes. */
+	function urgentTip(): string {
+		return urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), (r) => (r.item === 'epic' && r.key === s.epic ? epicTitle : undefined));
+	}
 </script>
 
 <article
 	class="card"
 	class:fresh={note}
 	class:done={s.delivery === 'done'}
+	class:urgent={urgent}
 	data-testid="card-{s.key}"
 	tabindex="-1"
 	draggable="true"
@@ -83,6 +93,7 @@
 	</div>
 	<div class="meta">
 		<span class="key">{s.key}</span>
+		{#if urgent}<UrgentChip line={urgentTip()} />{/if}
 		{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
 		{#if epicTitle}<span class="epic" title={s.epic ?? undefined}>{epicTitle}</span>{/if}
 		<!-- The first goal the server says the story serves (kb/ADR-0014 R3); the drawer lists them all. -->
@@ -145,6 +156,9 @@
 		border-radius: 6px;
 		background: var(--raised);
 		cursor: grab;
+	}
+	.card.urgent {
+		box-shadow: inset 0 0 0 2px var(--danger);
 	}
 	.head {
 		display: flex;
