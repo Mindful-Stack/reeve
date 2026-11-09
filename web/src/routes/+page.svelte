@@ -284,6 +284,7 @@
 
 {#if marking}
 	<MarkUrgentDialog
+		item={marking}
 		initial={markingReason}
 		{busy}
 		error={markError}

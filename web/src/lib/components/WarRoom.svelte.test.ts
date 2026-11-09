@@ -96,8 +96,7 @@ describe('WarRoom', () => {
 		expect(rows).toHaveLength(2);
 		expect(rows[0].textContent).toContain('Payments rebuild');
 		expect(rows[0].textContent).toContain('Now');
-		expect(rows[0].textContent).toContain('Customer escalation');
-		expect(rows[0].textContent).toContain('expires in 5 d');
+		expect(rows[0].querySelector('.why')!.textContent).toBe("'Customer escalation' · marked by dana · expires in 5 d");
 		expect(rows[1].classList.contains('expired')).toBe(true);
 		expect(rows[1].textContent).toContain('expired 2 d ago');
 		expect([...rows[1].querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Re-mark', 'Clear']);
@@ -154,6 +153,7 @@ describe('WarRoom', () => {
 		expect(document.body.querySelectorAll('li')[0].textContent).not.toContain('Re-mark');
 		button('Re-mark ABC-311 Payments outage')!.click();
 		flushSync();
+		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Mark ABC-311 urgent');
 		const input = document.body.querySelector<HTMLInputElement>('dialog input')!;
 		expect(input.value).toBe('Still burning');
 		click('Mark urgent');

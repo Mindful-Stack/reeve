@@ -159,6 +159,17 @@
 		}
 	}
 
+	/** "'Reason' · marked by dana · expires in 5 d · done": every separator has a space on both sides. */
+	const whyLine = (e: WarRoomEntry, now: Date) =>
+		[
+			e.mark.reason ? `'${e.mark.reason}'` : null,
+			`marked by ${short(e.mark.by)}`,
+			expiry(e.mark, now),
+			e.mark.done ? 'done' : null
+		]
+			.filter(Boolean)
+			.join(' · ');
+
 	const route = (r: ItemRef) =>
 		r.item === 'story'
 			? storyHref(page.url, r.key)
@@ -207,11 +218,7 @@
 						{#if e.initiative && e.item.item !== 'initiative'}in {e.initiative.title} · {e.initiative.horizon}
 						{:else if e.initiative}{e.initiative.horizon}{/if}
 					</span>
-					<span class="why">
-						{#if e.mark.reason}{e.mark.reason} · {/if}marked by {short(e.mark.by)} ·
-						{expiry(e.mark, at)}{#if e.mark.done}
-							· done{/if}
-					</span>
+					<span class="why">{whyLine(e, at)}</span>
 					<span class="row-actions">
 						{#if !e.mark.active}<button
 								type="button"
@@ -235,7 +242,7 @@
 {/if}
 
 {#if remarking}
-	<MarkUrgentDialog initial={remarking.mark.reason} {busy} error={dialogError} onsubmit={remark} oncancel={() => (remarking = null)} />
+	<MarkUrgentDialog item={remarking.item.key} initial={remarking.mark.reason} {busy} error={dialogError} onsubmit={remark} oncancel={() => (remarking = null)} />
 {/if}
 
 <style>

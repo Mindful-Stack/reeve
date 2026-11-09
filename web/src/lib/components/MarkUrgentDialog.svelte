@@ -3,12 +3,15 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let {
+		item,
 		initial = null,
 		busy = false,
 		error = null,
 		onsubmit,
 		oncancel
 	}: {
+		/** The key of the item being marked, named in the title. */
+		item: string;
 		/** Prefill for a re-mark. */
 		initial?: string | null;
 		busy?: boolean;
@@ -27,7 +30,7 @@
 	}
 </script>
 
-<Dialog title="Mark urgent" onclose={oncancel} closable={!busy}>
+<Dialog title="Mark {item} urgent" onclose={oncancel} closable={!busy}>
 	<form class="mark" aria-label="Mark urgent" onsubmit={submit}>
 		<label class="field">Reason (optional) <input bind:value={reason} maxlength="200" disabled={busy} /></label>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
