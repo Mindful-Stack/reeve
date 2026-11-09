@@ -3,7 +3,7 @@ use crate::client::{Client, Outcome};
 use crate::render;
 use crate::urgency::marks;
 use clap::Subcommand;
-use reeve_protocol::{ItemRefDto, WarRoomEntryDto, WarRoomItems};
+use reeve_protocol::{WarRoomEntryDto, WarRoomItems};
 
 #[derive(Subcommand)]
 pub enum WarRoom {
@@ -28,30 +28,21 @@ enum Verb {
     ReMark,
 }
 
-/// The rows `verb` acts on: `clear` takes every row; `re-mark` takes the expired ones that are not done (re-marking a
-/// done story's mark would make nothing urgent), as the web's "Re-mark all expired" does.
-fn picks(r: &WarRoomEntryDto, verb: Verb) -> bool {
+/// The rows `verb` acts on, in the server's order, and how many expired marks on done stories `re-mark` leaves out.
+/// `clear` takes every row; `re-mark` takes the expired ones that are not done (re-marking a done story's mark would
+/// make nothing urgent), as the web's "Re-mark all expired" does.
+fn selection(rows: &[WarRoomEntryDto], verb: Verb) -> (Vec<&WarRoomEntryDto>, usize) {
     match verb {
-        Verb::Clear => true,
-        Verb::ReMark => !r.mark.active && !r.mark.done,
+        Verb::Clear => (rows.iter().collect(), 0),
+        Verb::ReMark => (
+            rows.iter()
+                .filter(|r| !r.mark.active && !r.mark.done)
+                .collect(),
+            rows.iter()
+                .filter(|r| !r.mark.active && r.mark.done)
+                .count(),
+        ),
     }
-}
-
-/// The items to post, in the server's order, and how many expired marks on done stories `re-mark` leaves out.
-fn selection(rows: &[WarRoomEntryDto], verb: Verb) -> (Vec<ItemRefDto>, usize) {
-    let items = rows
-        .iter()
-        .filter(|r| picks(r, verb))
-        .map(|r| r.item.clone())
-        .collect();
-    let left = match verb {
-        Verb::Clear => 0,
-        Verb::ReMark => rows
-            .iter()
-            .filter(|r| !r.mark.active && r.mark.done)
-            .count(),
-    };
-    (items, left)
 }
 
 /// " (1 on a done story left out)", " (N on done stories left out)", or nothing.
@@ -82,10 +73,10 @@ fn rehearsal_line(verb: Verb, n: usize, left: usize) -> String {
 }
 
 pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
+    let now = chrono::Utc::now();
+    let listed = c.get::<Vec<WarRoomEntryDto>>("/war-room").await?;
     let (verb, yes) = match cmd {
         WarRoom::Ls => {
-            let now = chrono::Utc::now();
-            let listed = c.get::<Vec<WarRoomEntryDto>>("/war-room").await?;
             return Ok(finish(listed, json, |rows| {
                 render::war_room_rows(rows, now)
             }));
@@ -93,25 +84,23 @@ pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
         WarRoom::Clear { yes } => (Verb::Clear, yes),
         WarRoom::ReMark { yes } => (Verb::ReMark, yes),
     };
-    let now = chrono::Utc::now();
-    let listed = c.get::<Vec<WarRoomEntryDto>>("/war-room").await?;
     let Outcome::Ok(rows) = &listed else {
         return Ok(finish(listed, json, |_| String::new()));
     };
-    let (items, left) = selection(rows, verb);
-    if items.is_empty() {
+    let (selected, left) = selection(rows, verb);
+    if selected.is_empty() {
         let text = empty_text(verb, left);
         return Ok(finish(listed, json, |_| text.clone()));
     }
     if !yes {
-        let selected: Vec<_> = rows.iter().filter(|r| picks(r, verb)).cloned().collect();
         let text = format!(
             "{}\n{}",
-            render::war_room_rows(&selected, now),
-            rehearsal_line(verb, items.len(), left)
+            render::war_room_rows(selected.iter().copied(), now),
+            rehearsal_line(verb, selected.len(), left)
         );
         return Ok(finish(listed, json, |_| text.clone()));
     }
+    let items = selected.iter().map(|r| r.item.clone()).collect();
     let path = match verb {
         Verb::Clear => "/war-room/clear",
         Verb::ReMark => "/war-room/renew",
@@ -128,7 +117,7 @@ pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use reeve_protocol::{ItemType, UrgentMarkDto, WarRoomInitiativeDto};
+    use reeve_protocol::{ItemRefDto, ItemType, UrgentMarkDto};
 
     fn row(key: &str, item: ItemType, active: bool, done: bool) -> WarRoomEntryDto {
         WarRoomEntryDto {
@@ -158,20 +147,22 @@ mod tests {
         ]
     }
 
-    fn keys(v: &[ItemRefDto]) -> Vec<String> {
-        v.iter().map(|r| r.key.to_string()).collect()
+    fn keys(v: &[&WarRoomEntryDto]) -> Vec<String> {
+        v.iter().map(|r| r.item.key.to_string()).collect()
     }
 
     #[test]
     fn clear_selects_every_row_and_leaves_none_out() {
-        let (sel, left) = selection(&four(), Verb::Clear);
+        let rows = four();
+        let (sel, left) = selection(&rows, Verb::Clear);
         assert_eq!(keys(&sel), ["ABC-1", "ABC-2", "ABC-3", "ABC-4"]);
         assert_eq!(left, 0);
     }
 
     #[test]
     fn re_mark_selects_only_expired_not_done_and_counts_expired_done_as_left_out() {
-        let (sel, left) = selection(&four(), Verb::ReMark);
+        let rows = four();
+        let (sel, left) = selection(&rows, Verb::ReMark);
         assert_eq!(keys(&sel), ["ABC-2"]);
         // The active-and-done row is neither selected nor counted.
         assert_eq!(left, 1);
@@ -213,31 +204,5 @@ mod tests {
             empty_text(Verb::ReMark, 3),
             "No expired marks to re-mark (3 on done stories left out)."
         );
-    }
-
-    #[test]
-    fn rows_name_the_initiative_once_and_never_for_an_initiative_row() {
-        let now = Utc.with_ymd_and_hms(2026, 11, 10, 12, 0, 0).unwrap();
-        let init = Some(WarRoomInitiativeDto {
-            key: "ABC-2".parse().unwrap(),
-            title: "Payments".into(),
-            horizon: "h".into(),
-        });
-        let mut i = row("ABC-2", ItemType::Initiative, true, false);
-        i.initiative = init.clone();
-        let mut e = row("ABC-40", ItemType::Epic, true, false);
-        e.initiative = init;
-        let out = render::war_room_rows(&[i, e], now);
-        let lines: Vec<&str> = out.lines().collect();
-        assert!(!lines[0].contains(" · in "), "{out}");
-        assert!(lines[0].contains("t-ABC-2 · marked by dana"), "{out}");
-        assert!(
-            lines[1].contains("t-ABC-40 · in Payments · marked by dana"),
-            "{out}"
-        );
-        assert_eq!(out.matches("Payments").count(), 1, "{out}");
-        assert_eq!(render::war_room_rows(&[], now), "The war room is empty.");
-        let done = row("ABC-9", ItemType::Story, false, true);
-        assert!(render::war_room_rows(&[done], now).ends_with(" · done"));
     }
 }

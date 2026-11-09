@@ -128,11 +128,12 @@ pub fn urgent_answer(
 /// The war room's rows, one per line, or its empty text.
 /// `<glyph> <KEY> <title> · in <initiative title> · <own mark text>[ · done]`. An initiative row's `initiative` is the
 /// row itself, so only epic and story rows name one.
-pub fn war_room_rows(rows: &[WarRoomEntryDto], now: DateTime<Utc>) -> String {
-    if rows.is_empty() {
-        return "The war room is empty.".into();
-    }
-    rows.iter()
+pub fn war_room_rows<'a>(
+    rows: impl IntoIterator<Item = &'a WarRoomEntryDto>,
+    now: DateTime<Utc>,
+) -> String {
+    let lines: Vec<String> = rows
+        .into_iter()
         .map(|r| {
             let mut parts = vec![format!(
                 "{} {}",
@@ -150,8 +151,12 @@ pub fn war_room_rows(rows: &[WarRoomEntryDto], now: DateTime<Utc>) -> String {
             }
             parts.join(" · ")
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    if lines.is_empty() {
+        "The war room is empty.".into()
+    } else {
+        lines.join("\n")
+    }
 }
 
 pub fn story(s: &StoryDto) -> String {
@@ -1232,6 +1237,58 @@ mod tests {
         assert_eq!(lines[0], mark(Level::Story, &key), "{out}");
         assert_eq!(lines[1], "urgent mark · done · expires in 10 d", "{out}");
         assert_eq!(lines.len(), 2, "{out}");
+    }
+
+    fn war_room_row(
+        key: &str,
+        item: ItemType,
+        initiative: Option<&str>,
+        done: bool,
+    ) -> WarRoomEntryDto {
+        WarRoomEntryDto {
+            item: ref_(key, item),
+            title: format!("t-{key}"),
+            initiative: initiative.map(|t| WarRoomInitiativeDto {
+                key: "ABC-2".parse().unwrap(),
+                title: t.into(),
+                horizon: "h".into(),
+            }),
+            mark: own_mark(true, done),
+        }
+    }
+
+    #[test]
+    fn war_room_rows_name_the_initiative_once_and_never_for_an_initiative_row() {
+        let rows = [
+            war_room_row("ABC-2", ItemType::Initiative, Some("Payments"), false),
+            war_room_row("ABC-40", ItemType::Epic, Some("Payments"), false),
+            war_room_row("ABC-9", ItemType::Story, None, true),
+        ];
+        let out = war_room_rows(&rows, now());
+        let lines: Vec<&str> = out.lines().collect();
+        let tail = "marked by dana, 2 d ago · expires in 10 d";
+        assert_eq!(
+            lines[0],
+            format!(
+                "{} t-ABC-2 · {tail}",
+                mark(Level::Initiative, &rows[0].item.key)
+            )
+        );
+        assert_eq!(
+            lines[1],
+            format!(
+                "{} t-ABC-40 · in Payments · {tail}",
+                mark(Level::Epic, &rows[1].item.key)
+            )
+        );
+        assert_eq!(
+            lines[2],
+            format!(
+                "{} t-ABC-9 · {tail} · done",
+                mark(Level::Story, &rows[2].item.key)
+            )
+        );
+        assert_eq!(war_room_rows(&[], now()), "The war room is empty.");
     }
 
     #[test]

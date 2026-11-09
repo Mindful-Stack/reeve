@@ -2753,6 +2753,9 @@ fn urgent_refused_interactive_only_exits_2() {
 }
 
 // ---- war-room ls | clear | re-mark ----
+//
+// `serve` closes its listener after the last answer, so an unexpected POST makes the CLI fail: the exit-0 assert on
+// a GET-only test is what proves nothing was posted.
 
 /// A war-room row. `at_d` and `exp_d` are days from now (half days, so floor and ceiling are unambiguous).
 fn wr_row(
@@ -2808,7 +2811,7 @@ fn war_room_ls_lists_rows() {
     ]);
     let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
     let out = reeve_at(&url, &["war-room", "ls"]);
-    assert_eq!(server.join().unwrap().len(), 1);
+    server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         out_text(&out),
@@ -2838,17 +2841,15 @@ fn war_room_clear_without_yes_rehearses() {
     let rows = serde_json::json!([wr_active("ABC-1", "story"), wr_expired("ABC-2")]);
     let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
     let out = reeve_at(&url, &["war-room", "clear"]);
-    assert_eq!(server.join().unwrap().len(), 1);
+    server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
-    let text = out_text(&out);
-    assert_eq!(text.lines().count(), 3, "{text}");
-    assert!(
-        text.lines().next().unwrap().contains("T ABC-1 · marked by"),
-        "{text}"
-    );
     assert_eq!(
-        text.lines().last().unwrap(),
-        "Would clear 2 marks; run again with --yes."
+        out_text(&out),
+        format!(
+            "{} T ABC-1 · marked by dana, 2 d ago · expires in 10 d\n{} T ABC-2 · marked by dana, 12 d ago · expired 2 d ago\nWould clear 2 marks; run again with --yes.\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-1"),
+            glyph(reeve::glyphs::Level::Story, "ABC-2"),
+        )
     );
 }
 
@@ -2861,7 +2862,7 @@ fn war_room_re_mark_without_yes_names_what_it_left_out() {
     ]);
     let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
     let out = reeve_at(&url, &["war-room", "re-mark"]);
-    assert_eq!(server.join().unwrap().len(), 1);
+    server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         out_text(&out),
@@ -2920,6 +2921,18 @@ fn war_room_renew_alias_posts_only_expired_not_done() {
         sent,
         serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
     );
+    assert_eq!(out_text(&out), "The war room is empty.\n");
+}
+
+/// A refused read posts nothing: `serve` closes after the GET, so an attempted POST would change the outcome.
+#[test]
+fn war_room_clear_yes_with_a_refused_get_posts_nothing() {
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 403, forbidden())]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out_text(&out), "");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("forbidden"));
 }
 
 /// Nothing selected: the GET only, exit 0, and the note about done stories.
@@ -2928,7 +2941,7 @@ fn war_room_re_mark_with_only_done_expired_says_so() {
     let rows = serde_json::json!([wr_expired_done("ABC-3")]);
     let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
     let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
-    assert_eq!(server.join().unwrap().len(), 1);
+    server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         out_text(&out),
@@ -2941,7 +2954,7 @@ fn war_room_clear_json_without_yes_prints_the_get_envelope() {
     let rows = serde_json::json!([wr_active("ABC-1", "story")]);
     let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows.clone()))]);
     let out = reeve_at(&url, &["--json", "war-room", "clear"]);
-    assert_eq!(server.join().unwrap().len(), 1);
+    server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
     assert_eq!(env["outcome"], "ok");
