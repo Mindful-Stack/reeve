@@ -42,16 +42,33 @@ export async function refresh(): Promise<void> {
 	if (mine === generation) session.me = me;
 }
 
+const RETRY_MS = 5000;
 const ACCESS_ACTIONS = new Set(['access_allowed', 'access_removed', 'admin_granted', 'admin_revoked']);
 
 /** Refreshes the signed-in user on every access entry, whoever its subject (removing a domain can change the viewer's
  *  access without naming them), and on every reopen of the stream. Returns the unsubscribe. */
 export function followAccess(): () => void {
-	const quietly = () => void refresh().catch(() => {}); // a network failure here is retried by the next trigger
-	return onStream({
+	let retry: ReturnType<typeof setTimeout> | undefined;
+	// A failed refresh is retried once after RETRY_MS, so a transient error does not leave a stale role until some later
+	// trigger. One retry per failure, and the retry schedules none: this is not polling (kb/ADR-0012 R3). Any newer
+	// refresh cancels a pending retry.
+	const attempt = (again: boolean) => {
+		clearTimeout(retry);
+		retry = undefined;
+		refresh().catch(() => {
+			if (again) retry = setTimeout(() => attempt(false), RETRY_MS);
+		});
+	};
+	const quietly = () => attempt(true);
+	const stop = onStream({
 		entry: (e) => {
 			if (ACCESS_ACTIONS.has(e.action)) quietly();
 		},
 		reopened: quietly
 	});
+	quietly(); // the stream starts at the newest id and does not replay what happened since `load()`
+	return () => {
+		clearTimeout(retry);
+		stop();
+	};
 }

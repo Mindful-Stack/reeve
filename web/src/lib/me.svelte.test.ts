@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const get = vi.fn();
 vi.mock('#lib/api/client.ts', () => ({ api: { GET: (path: string) => get(path) }, unwrap: (p: Promise<unknown>) => p }));
@@ -48,6 +48,40 @@ describe('followAccess', () => {
 		hooks.entry!({ action: 'moved' });
 		hooks.reopened!();
 		await Promise.resolve();
-		expect(get.mock.calls.filter(([p]) => p === '/api/v1/me')).toHaveLength(5);
+		expect(get.mock.calls.filter(([p]) => p === '/api/v1/me')).toHaveLength(6); // wiring + four access entries + reopen
+	});
+});
+
+describe('followAccess retry', () => {
+	const meCalls = () => get.mock.calls.filter(([p]) => p === '/api/v1/me').length;
+	const wire = () => {
+		const hooks: { entry?: (e: { action: string }) => void; reopened?: () => void } = {};
+		onStreamMock.mockImplementation((h: typeof hooks) => (Object.assign(hooks, h), () => {}));
+		return { hooks, stop: followAccess() };
+	};
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it('retries a failure once after 5 s and schedules nothing after a second failure', async () => {
+		get.mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down'));
+		const { stop } = wire();
+		await vi.advanceTimersByTimeAsync(4999);
+		expect(meCalls()).toBe(1);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(meCalls()).toBe(2);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(meCalls()).toBe(2);
+		stop();
+	});
+
+	it('cancels a pending retry when a newer refresh runs', async () => {
+		get.mockRejectedValueOnce(new Error('down'));
+		get.mockImplementation(async () => me);
+		const { hooks, stop } = wire();
+		await vi.advanceTimersByTimeAsync(1000);
+		hooks.reopened!();
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(meCalls()).toBe(2);
+		stop();
 	});
 });
