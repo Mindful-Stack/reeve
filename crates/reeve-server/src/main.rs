@@ -19,7 +19,7 @@ enum Cmd {
     /// Run migrations and exit.
     Migrate,
     /// Operator command, run on the host with database access: issue a token for an allowlisted email and print the secret once.
-    /// This is not a sign-in path (kb/ADR-0008 R1); users sign in with Google in plan B, which issues interactive tokens.
+    /// This is not a sign-in path (kb/ADR-0015 R1); users sign in with Google in plan B, which issues interactive tokens.
     TokenIssue {
         #[arg(long)]
         email: String,

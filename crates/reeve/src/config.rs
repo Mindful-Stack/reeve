@@ -66,7 +66,7 @@ pub fn save(c: &CliConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolution order (kb/ADR-0008 R3): REEVE_TOKEN in the environment is an automation token and wins;
+/// Resolution order (kb/ADR-0015 R7): REEVE_TOKEN in the environment is an automation token and wins;
 /// otherwise the interactive token stored by `reeve auth set-token` / plan B's `reeve auth login`.
 pub struct Resolved {
     pub url: String,

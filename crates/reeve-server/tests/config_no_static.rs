@@ -1,5 +1,5 @@
 //! A binary built without the `static-oidc` feature has no static provider at all: naming it is a parse error, not a
-//! configuration that a loopback check might let through (kb/ADR-0008 R1). Run with
+//! configuration that a loopback check might let through (kb/ADR-0015 R1). Run with
 //! `cargo test -p reeve-server --test config_no_static` (no features); with the feature this file is empty.
 #![cfg(not(feature = "static-oidc"))]
 

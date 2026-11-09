@@ -1,5 +1,5 @@
 //! Who is calling: the bearer header (CLI, automation) or the browser's session cookie, resolved to the same
-//! `Principal` on every request (kb/ADR-0008 R2). The browser sign-in flow lives in `routes`.
+//! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`.
 pub mod routes;
 
 use crate::{error::AppError, state::AppState};
@@ -48,7 +48,7 @@ pub fn has_client_header(headers: &axum::http::HeaderMap) -> bool {
 }
 
 /// The authenticated caller, the instant the request was authenticated (the clock is read once per request, here),
-/// and the secret it presented, kept so a long-lived response can re-authenticate on every tick (kb/ADR-0008 R2).
+/// and the secret it presented, kept so a long-lived response can re-authenticate on every tick (kb/ADR-0015 R5).
 pub struct Caller(pub Principal, pub DateTime<Utc>, String);
 
 impl FromRequestParts<AppState> for Caller {

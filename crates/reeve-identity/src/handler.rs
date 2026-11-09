@@ -158,7 +158,7 @@ pub async fn revoke_all_for(
     Ok(n)
 }
 
-/// Disable and revoke commit together (kb/ADR-0008 R2, kb/ADR-0010 R5). Works for a user not yet seen.
+/// Disable and revoke commit together (kb/ADR-0015 R6, kb/ADR-0010 R5). Works for a user not yet seen.
 pub async fn disable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
@@ -200,7 +200,7 @@ pub struct VerifiedIdentity {
 pub const SESSION_LABEL: &str = "web session";
 
 /// Browser sign-in: the session is an interactive token, so everything plan A knows about tokens (expiry, revocation,
-/// disable) applies to it unchanged. Refuses an unverified email before looking at the allowlist (kb/ADR-0008 R1).
+/// disable) applies to it unchanged. Refuses an unverified email before looking at the allowlist (kb/ADR-0015 R1).
 pub async fn sign_in(
     pool: &PgPool,
     store: &dyn TokenStore,
@@ -300,7 +300,7 @@ pub async fn revoke_token(
     Ok(changed)
 }
 
-/// Re-enables sign-in. Tokens revoked by the disable stay revoked: the person signs in again (kb/ADR-0008 R2 says
+/// Re-enables sign-in. Tokens revoked by the disable stay revoked: the person signs in again (kb/ADR-0015 R6 says
 /// what disable must do; nothing says enable restores, and restoring would resurrect automation tokens nobody re-approved).
 /// Records `user_enabled` only when the flag actually changed. Refuses an email outside the allowlist, so `set_disabled`'s upsert cannot create a user row for a stranger.
 #[allow(clippy::too_many_arguments)]

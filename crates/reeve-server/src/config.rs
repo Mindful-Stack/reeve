@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 /// A repository of the team's household. `name` is the allowlist a record reference must match and the clone's directory
 /// under the household; `url` is what the scheduled check clones (`reeve-server repos`); `adr_dir` is instance
-/// configuration kb/ADR-0009 R2 requires, read by nothing yet.
+/// configuration kb/ADR-0016 R2 requires, read by nothing yet.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoConfig {
     pub name: String,

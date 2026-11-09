@@ -189,7 +189,7 @@ mod tests {
                 4,
                 CheckResult::NotAccepted {
                     status: "superseded".into(),
-                    superseded_by: Some("kb/ADR-0009".into()),
+                    superseded_by: Some("kb/ADR-0016".into()),
                     commit: "abc".into(),
                     reversibility: None,
                 },
@@ -227,7 +227,7 @@ mod tests {
             Reason::DecisionRecordNotFound { decision_id: 3, .. }
         ));
         assert!(
-            matches!(&r.reasons[3], Reason::DecisionNotAccepted { decision_id: 4, status, superseded_by: Some(s), .. } if status == "superseded" && s == "kb/ADR-0009")
+            matches!(&r.reasons[3], Reason::DecisionNotAccepted { decision_id: 4, status, superseded_by: Some(s), .. } if status == "superseded" && s == "kb/ADR-0016")
         );
     }
     #[test]

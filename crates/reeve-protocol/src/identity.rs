@@ -28,7 +28,7 @@ pub struct IssuedTokenDto {
     pub secret: String,
 }
 
-/// What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client.
+/// What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct InstanceConfigDto {
     pub key_prefix: String,

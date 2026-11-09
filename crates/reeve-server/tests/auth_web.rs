@@ -427,7 +427,7 @@ async fn the_cookie_path_checks_the_token_on_every_request_and_accepts_only_the_
     );
     let res = call_raw(&h.app, callback(&state, &login_cookie)).await;
     assert_eq!(res.status(), 303);
-    // disabling the user stops the cookie on the next request (kb/ADR-0008 R2)
+    // disabling the user stops the cookie on the next request (kb/ADR-0015 R6)
     let (st, _) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/me", None).await;
     assert_eq!(st, 200);
     let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();

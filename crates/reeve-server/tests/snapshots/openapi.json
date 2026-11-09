@@ -1711,7 +1711,7 @@
         "type": "object"
       },
       "InstanceConfigDto": {
-        "description": "What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client.",
+        "description": "What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client.",
         "properties": {
           "done_window_days": {
             "description": "`[board] done_window_days`: how far back `done=recent` reaches. Absent from servers before this field existed (deserialises as 0, meaning unknown).",
@@ -3955,7 +3955,7 @@
                 "type": "string"
               },
               "value": {
-                "description": "What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client.",
+                "description": "What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client.",
                 "properties": {
                   "done_window_days": {
                     "description": "`[board] done_window_days`: how far back `done=recent` reaches. Absent from servers before this field existed (deserialises as 0, meaning unknown).",

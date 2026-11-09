@@ -24,7 +24,7 @@ pub struct AppState {
     pub pool: PgPool,
     /// `None` when no `[oidc]` section is configured: browser sign-in is off, CLI tokens still work.
     pub oidc: Option<Arc<dyn OidcClient>>,
-    /// Pending browser sign-ins (state -> login), ten-minute TTL, capped at 1 000 entries (kb/ADR-0009: one instance).
+    /// Pending browser sign-ins (state -> login), ten-minute TTL, capped at 1 000 entries (kb/ADR-0016: one instance).
     pub logins: Arc<tokio::sync::Mutex<HashMap<String, PendingLogin>>>,
     /// Where the client files come from: embedded in the binary, except in debug builds with `REEVE_ASSETS_DIR`.
     pub assets: crate::assets::Assets,

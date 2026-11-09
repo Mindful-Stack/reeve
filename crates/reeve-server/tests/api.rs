@@ -1285,7 +1285,7 @@ async fn unblock_removes_one_edge_over_the_wire() {
         assert_eq!((st, v["code"].as_str()), (404, Some("not_found")), "{path}");
     }
 
-    // An automation token may unblock; the entry is logged `via: automation` (kb/ADR-0008 R3).
+    // An automation token may unblock; the entry is logged `via: automation` (kb/ADR-0015 R7).
     assert_eq!(block().await.0, 200);
     let (st, v) = call(
         &h.app,

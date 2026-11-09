@@ -50,7 +50,7 @@ async fn events(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
     let start = resume.map_or(newest, |id| id.min(newest));
-    // Re-checked every tick (kb/ADR-0008 R2): a revoked, expired or disabled session ends the stream.
+    // Re-checked every tick (kb/ADR-0015 R5): a revoked, expired or disabled session ends the stream.
     let secret = c.secret().to_string();
     let poll = Duration::from_millis(s.config.events.poll_ms);
     let polls = futures_util::stream::unfold(

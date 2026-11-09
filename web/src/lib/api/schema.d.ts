@@ -1421,7 +1421,7 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
-        /** @description What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client. */
+        /** @description What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client. */
         InstanceConfigDto: {
             /**
              * Format: int32
@@ -2041,7 +2041,7 @@ export interface components {
         Response_InstanceConfigDto: {
             /** @enum {string} */
             outcome: "ok";
-            /** @description What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client. */
+            /** @description What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client. */
             value: {
                 /**
                  * Format: int32

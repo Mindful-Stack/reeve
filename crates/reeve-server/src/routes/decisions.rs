@@ -205,7 +205,7 @@ async fn check(
     ApiPath(id): ApiPath<i64>,
     ApiJson(b): ApiJson<RecordCheckResult>,
 ) -> Result<Dec, AppError> {
-    // The request's current role (kb/ADR-0008 R2), handed to planning as a value (kb/ADR-0010 R2). Any token kind of
+    // The request's current role (kb/ADR-0015 R5), handed to planning as a value (kb/ADR-0010 R2). Any token kind of
     // an admin may store a result: storing is not an override (kb/ADR-0003 R2), and the scheduled run is automation.
     let is_admin = c.0.role == Role::Admin;
     let d = s

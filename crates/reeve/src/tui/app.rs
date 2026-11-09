@@ -22,7 +22,7 @@ pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
 pub struct Session {
     pub url: String,
     pub me: Option<Me>,
-    /// Final: no message clears it (kb/ADR-0008 R2).
+    /// Final: no message clears it (kb/ADR-0015 R5).
     pub signed_out: bool,
     pub reeve_token_set: bool,
     me_attempt: usize,
@@ -312,7 +312,7 @@ impl State {
             return Vec::new();
         }
         self.session.signed_out = true;
-        // Every follow-up, picker and prompt goes, so no late reply can start a write (kb/ADR-0008 R2).
+        // Every follow-up, picker and prompt goes, so no late reply can start a write (kb/ADR-0015 R5).
         let mut fx = self.moves_msg(moves::Msg::Reset, now);
         fx.extend(self.set_epic_msg(set_epic::Msg::Reset, now));
         fx.extend(self.live_msg(live::Msg::Stop, now));
@@ -420,7 +420,7 @@ impl State {
         let before = self.overlays();
         let mut fx = self.step(msg, now);
         fx.extend(self.one_overlay(&before, now));
-        // Sign-out is final for reads too (kb/ADR-0008 R2): the one choke point for every owner's requests.
+        // Sign-out is final for reads too (kb/ADR-0015 R5): the one choke point for every owner's requests.
         if self.session.signed_out {
             fx.retain(|e| !matches!(e, Effect::Http { .. } | Effect::Connect { .. }));
         }

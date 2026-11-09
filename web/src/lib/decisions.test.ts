@@ -39,11 +39,11 @@ describe('checkLabel', () => {
 		const text = checkLabel({
 			kind: 'not_accepted',
 			status: 'superseded',
-			superseded_by: 'ADR-0009',
+			superseded_by: 'ADR-0016',
 			commit: 'abc'
 		});
 		expect(text).toContain('re-point');
-		expect(text).toContain('ADR-0009');
+		expect(text).toContain('ADR-0016');
 	});
 
 	it('shows the short sha of an accepted record', () => {

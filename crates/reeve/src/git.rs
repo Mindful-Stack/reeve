@@ -369,7 +369,7 @@ mod tests {
     async fn missing_file_is_not_found_and_superseded_carries_target() {
         let f = repo_with(
             "knowledge/adrs/0002-old.md",
-            "---\nstatus: superseded\nsuperseded_by: kb/ADR-0009\n---\n",
+            "---\nstatus: superseded\nsuperseded_by: kb/ADR-0016\n---\n",
         );
         assert!(matches!(
             read(&f, "knowledge/adrs/none.md").await,
@@ -381,7 +381,7 @@ mod tests {
                 .unwrap()
                 .superseded_by
                 .as_deref(),
-            Some("kb/ADR-0009")
+            Some("kb/ADR-0016")
         );
     }
 
