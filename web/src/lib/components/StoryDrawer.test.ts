@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
+import { discardDraft, report } from '#lib/report.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
 vi.mock('$app/state', async () => ({
@@ -73,6 +74,20 @@ afterEach(() => {
 	net.sent.length = 0;
 	net.bodies.length = 0;
 	net.answers.of = answer;
+});
+
+describe('StoryDrawer Report action', () => {
+	it('has a Report button that opens the dialog with no epic chip', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const b = [...document.body.querySelectorAll('header.top button')].find((x) => x.textContent === 'Report') as HTMLButtonElement;
+		expect(b).toBeDefined();
+		b.click();
+		flushSync();
+		expect(report.open).toBe(true);
+		expect(report.draft!.epic).toBeNull();
+		expect(report.draft!.origin.path).toContain('story=SCRUM-11');
+		discardDraft();
+	});
 });
 
 describe('StoryDrawer opened by an external reference', () => {

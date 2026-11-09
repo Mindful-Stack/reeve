@@ -11,6 +11,10 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { hasDraft, openReport, persist, report, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
+	import type { Story } from '#lib/api/types.ts';
+	import Notice from '#lib/ui/Notice.svelte';
+	import ReportDialog from '#lib/components/ReportDialog.svelte';
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
@@ -63,10 +67,21 @@
 	// the user moved elsewhere is theirs). A drawer opened by loading its URL has no opener.
 	let opener: HTMLElement | null = null;
 	onNavigate(({ from, to }) => {
+		// A filed-report notice outlives the dialog; only opening its story (a drawer-only change) keeps it.
+		if (notice && !(from && to && sameApartFromStory(from.url, to.url))) notice = null;
 		if (!to?.url.searchParams.has('story') || from?.url.searchParams.has('story')) return;
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
 	});
+	function sameApartFromStory(a: URL, b: URL): boolean {
+		const strip = (u: URL) => {
+			const c = new URL(u.href);
+			c.searchParams.delete('story');
+			c.hash = '';
+			return c.href;
+		};
+		return strip(a) === strip(b);
+	}
 	let drawerWasOpen = false;
 	$effect.pre(() => {
 		const open = drawerKey !== null;
@@ -118,6 +133,60 @@
 		};
 	});
 
+	// Report from anywhere: the draft lives in #lib/report.svelte.ts; this is its button, notice and sign-in restore.
+	let notice = $state<{ story: Story; epicTitle: string | null } | null>(null);
+	const reportLabel = $derived(hasDraft() ? 'Resume report' : 'Report');
+	let restoredNotice = $state(false);
+	let restoredFor: string | null = null;
+	const noticeHref = $derived.by(() => {
+		if (!notice) return '';
+		const url = new URL(page.url.href);
+		url.searchParams.set('story', notice.story.key);
+		return url.pathname + url.search;
+	});
+
+	async function openFromHere() {
+		const path = page.url.pathname + page.url.search;
+		const epicKey = page.url.pathname.match(/^\/epics\/([^/]+)$/)?.[1];
+		const label = epicKey ? decodeURIComponent(epicKey) : (links.find((l) => current(l.href))?.label ?? page.url.pathname);
+		let epic: EpicRef | null = null;
+		// The chip is for epic pages only, and only a new draft needs it (a kept draft keeps its own context).
+		if (epicKey && !hasDraft()) {
+			try {
+				const key = decodeURIComponent(epicKey);
+				const e = await unwrap(api.GET('/api/v1/epics/{key}', { params: { path: { key } } }));
+				epic = { key: e.key, title: e.title };
+			} catch {
+				// no chip: the report goes to triage
+			}
+		}
+		openReport({ path, label, epic });
+	}
+
+	function filed(s: Story, epicTitle: string | null) {
+		notice = { story: s, epicTitle };
+	}
+
+	function viewStory(k: string) {
+		const url = new URL(page.url.href);
+		url.searchParams.set('story', k);
+		goto(url, { reset: false });
+	}
+
+	// Sign-in: bring back this tab's draft once per account; then keep it saved while it changes. Declared in this
+	// order so the restore runs before the first save can clear what is stored.
+	$effect(() => {
+		const email = session.me?.email;
+		if (!email || restoredFor === email) return;
+		restoredFor = email;
+		if (restoreDraft(email)) restoredNotice = true;
+	});
+	$effect(() => {
+		const email = session.me?.email;
+		JSON.stringify(report.draft);
+		if (email && restoredFor === email) persist(email);
+	});
+
 	function current(href: string): boolean {
 		return href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
 	}
@@ -145,6 +214,9 @@
 			</nav>
 			<div class="right">
 				<GoalPicker />
+				<button type="button" class="primary report" aria-label={reportLabel} onclick={openFromHere}>
+					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{reportLabel}</span>
+				</button>
 				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
 					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />
 					<kbd aria-hidden="true">/</kbd>
@@ -157,7 +229,20 @@
 				</ActionsMenu>
 			</div>
 		</header>
+		{#if restoredNotice}
+			<div class="notices"><Notice ondismiss={() => (restoredNotice = false)}>Your report draft was restored.</Notice></div>
+		{/if}
+		{#if notice}
+			{@const n = notice}
+			<div class="notices">
+				<Notice ondismiss={() => (notice = null)}>
+					Filed {n.story.kind} <a href={noticeHref}>{n.story.key}</a>{#if n.story.epic}{' '}under {n.story.epic}{#if n.epicTitle}&nbsp;{n.epicTitle}{/if}.{:else}. It's waiting for the team to place it; you won't get a notification, so check {n.story.key} for updates.{/if}
+					<button type="button" onclick={openFromHere}>Report another</button>
+				</Notice>
+			</div>
+		{/if}
 		<main>{@render children()}</main>
+		<ReportDialog oncreated={filed} onviewstory={viewStory} />
 		{#if drawerKey}
 			{#key drawerKey}
 				<StoryDrawer storyKey={drawerKey} onclose={closeDrawer} />
@@ -224,6 +309,29 @@
 		color: var(--muted);
 		font-family: var(--mono);
 		font-size: 13px;
+	}
+	.notices {
+		padding: 12px 20px 0;
+	}
+	.report .plus {
+		display: none;
+	}
+	@media (max-width: 720px) {
+		.notices {
+			padding: 12px 16px 0;
+		}
+		.report .plus {
+			display: inline;
+			font-weight: 700;
+		}
+		.report .word {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
 	}
 	.live {
 		display: grid;
