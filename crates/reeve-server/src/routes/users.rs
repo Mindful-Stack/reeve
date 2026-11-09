@@ -28,7 +28,7 @@ async fn list(
     Ok(ok(rows
         .into_iter()
         .map(|u| UserDto {
-            role: s.identity.role_for(&u.email),
+            role: c.policy().role_for(&u.email),
             email: u.email,
             display_name: u.display_name,
             disabled: u.disabled,
@@ -47,12 +47,19 @@ async fn disable(
     if normalise_email(&email) == normalise_email(&c.0.email) {
         return Err(AppError::Validation("you cannot disable yourself".into()));
     }
-    // Checked here, not in `disable_user`: the operator command `reeve-server user-disable` keeps plan A's semantics
-    // (it may disable an address not yet seen). Symmetric with enable, so no row is written that enable would refuse.
-    if !s.identity.is_allowed(&email) {
+    // Checked here, not in `disable_user`: the operator's `reeve-server user-disable` keeps its semantics (any address,
+    // configured admins included). kb/ADR-0015 R6: any existing user, allowed or not, except a configured admin.
+    if c.policy().is_floor_admin(&email) {
         return Err(AppError::Validation(
-            "email is not allowed by configuration".into(),
+            "admin in reeve.toml; change it there".into(),
         ));
+    }
+    if s.tokens
+        .find_user(&normalise_email(&email))
+        .await?
+        .is_none()
+    {
+        return Err(AppError::NotFound);
     }
     let log: Arc<dyn reeve_identity::IdentityActivity> = s.activity.clone();
     reeve_identity::disable_user(
@@ -80,7 +87,7 @@ async fn enable(
         &s.pool,
         &*s.tokens,
         &*log,
-        &s.identity,
+        c.policy(),
         &c.0.email,
         via_of(&c),
         &email,

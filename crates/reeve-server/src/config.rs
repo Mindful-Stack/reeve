@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 /// A repository of the team's household. `name` is the allowlist a record reference must match and the clone's directory
 /// under the household; `url` is what the scheduled check clones (`reeve-server repos`); `adr_dir` is instance
-/// configuration kb/ADR-0009 R2 requires, read by nothing yet.
+/// configuration kb/ADR-0016 R2 requires, read by nothing yet.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoConfig {
     pub name: String,
@@ -443,6 +443,20 @@ impl ServerConfig {
                 );
             }
         }
+        // kb/ADR-0015 R2: the floor guarantees a usable admin, so break-glass, "cannot revoke your own grant" and
+        // "cannot disable a configured admin" always rest on one.
+        if self.admins.iter().all(|a| a.trim().is_empty()) {
+            anyhow::bail!("admins must name at least one admin");
+        }
+        let floor = self.identity();
+        for a in self.admins.iter().filter(|a| !a.trim().is_empty()) {
+            if !floor.is_allowed(a) {
+                anyhow::bail!(
+                    "admin {} is not allowed by allowed_domains or allowed_emails",
+                    reeve_identity::normalise_email(a)
+                );
+            }
+        }
         Ok(())
     }
     /// The parsed public URL: the configured value, or the default from the bind. `load` has validated it, so this never fails
@@ -494,8 +508,61 @@ mod tests {
 
     fn cfg(extra: &str) -> anyhow::Result<ServerConfig> {
         ServerConfig::parse(&format!(
+            "database_url = \"postgres://x\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\n{extra}"
+        ))
+    }
+
+    /// A configuration without the helper's floor: `extra` supplies the identity lists itself.
+    fn bare(extra: &str) -> anyhow::Result<ServerConfig> {
+        ServerConfig::parse(&format!(
             "database_url = \"postgres://x\"\nkey_prefix = \"TST\"\n{extra}"
         ))
+    }
+
+    #[test]
+    fn a_configuration_must_name_an_admin() {
+        let e = bare("allowed_domains = [\"example.com\"]").unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("admins must name at least one admin"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn blank_admin_entries_are_ignored_like_at_sign_in() {
+        let e = bare("allowed_domains = [\"example.com\"]\nadmins = [\"  \"]").unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("admins must name at least one admin"),
+            "{e}"
+        );
+        assert!(
+            bare("allowed_domains = [\"example.com\"]\nadmins = [\"\", \"admin@example.com\"]")
+                .is_ok()
+        );
+        assert!(
+            bare("allowed_domains = [\"example.com\"]\nadmins = [\" Admin@Example.com \"]").is_ok()
+        );
+    }
+
+    #[test]
+    fn every_configured_admin_must_be_allowed_by_the_configuration() {
+        let e = bare("allowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\", \"Boss@Other.org\"]")
+            .unwrap_err();
+        assert!(
+            e.to_string().contains(
+                "admin boss@other.org is not allowed by allowed_domains or allowed_emails"
+            ),
+            "{e}"
+        );
+        // allowed by the domain, by the email list, and matched case-insensitively
+        assert!(
+            bare("allowed_domains = [\"Example.com\"]\nadmins = [\"Admin@example.com\"]").is_ok()
+        );
+        assert!(
+            bare("allowed_emails = [\"boss@other.org\"]\nadmins = [\"boss@other.org\"]").is_ok()
+        );
     }
 
     #[test]
@@ -755,9 +822,10 @@ mod tests {
             ),
             ("host=db user=reeve password=hunter2-pw", "<redacted>"),
         ] {
-            let c =
-                ServerConfig::parse(&format!("database_url = \"{url}\"\nkey_prefix = \"TST\"\n"))
-                    .unwrap();
+            let c = ServerConfig::parse(&format!(
+                "database_url = \"{url}\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\n"
+            ))
+            .unwrap();
             let shown = format!("{c:?}");
             assert!(!shown.contains("hunter2-pw"), "{shown}");
             assert!(shown.contains(shown_url), "{shown}");

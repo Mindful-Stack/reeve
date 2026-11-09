@@ -66,7 +66,7 @@ async fn issue(
         &s.pool,
         &*s.tokens,
         &*log,
-        &s.identity,
+        c.policy(),
         &c.0.email,
         Via::Interactive,
         &c.0.email,

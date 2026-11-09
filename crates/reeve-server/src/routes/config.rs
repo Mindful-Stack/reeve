@@ -1,4 +1,4 @@
-//! `GET /api/v1/config`: the instance settings the client must not hardcode (kb/ADR-0009 R2).
+//! `GET /api/v1/config`: the instance settings the client must not hardcode (kb/ADR-0016 R2).
 use crate::{
     auth::Caller,
     error::{AppError, ok},

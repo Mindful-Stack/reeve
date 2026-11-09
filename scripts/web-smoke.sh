@@ -88,6 +88,7 @@ export REEVE_CONFIG_DIR="$cli_dir"
 unset REEVE_TOKEN REEVE_URL
 "$server" token-issue --email "$email" --kind interactive --label smoke |
 	"$reeve" auth set-token --url "$url" --token-stdin >/dev/null
+SMOKE_MEMBER_TOKEN="$("$server" token-issue --email smoke-member@example.com --kind interactive --label smoke-member)"
 
 # `reeve --json …` prints the envelope; field PATH reads value.PATH from it and fails on anything but outcome ok.
 cli() { "$reeve" --json "$@"; }
@@ -121,7 +122,7 @@ SMOKE_BLOCKED_STORY="$(cli story create --idempotency-key smoke-blocked --epic "
 	field key)"
 SMOKE_DECISION_STORY="$(cli story create --idempotency-key smoke-decision-story --epic "$epic_b" \
 	--title 'Smoke story behind a decision' --criterion 'it is decided' | field key)"
-export REEVE_URL="$url" SMOKE_STORY SMOKE_BLOCKED_STORY SMOKE_DECISION_STORY
+export REEVE_URL="$url" SMOKE_MEMBER_TOKEN SMOKE_STORY SMOKE_BLOCKED_STORY SMOKE_DECISION_STORY
 echo "seeded $ini: $SMOKE_STORY (ready), $SMOKE_BLOCKED_STORY (no criteria), $SMOKE_DECISION_STORY (decision)" >&2
 
 log "running the Playwright smoke against $url"

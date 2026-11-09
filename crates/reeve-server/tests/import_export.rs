@@ -785,7 +785,7 @@ async fn export_is_one_snapshot_across_readers() {
         &h.state.pool,
         &*h.state.tokens,
         &*ident_log,
-        &h.state.identity,
+        &reeve_identity::AccessPolicy::floor_only(&h.state.identity),
         "test",
         Via::Interactive,
         "carol@example.com",

@@ -10,7 +10,7 @@
 	import { errorMessage } from '#lib/format.ts';
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
-	import { isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
@@ -32,7 +32,7 @@
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
 		{ label: 'Activity', onselect: () => goto('/activity') },
-		...(isAdmin() ? [{ label: 'Users', onselect: () => goto('/users') }] : []),
+		...(isAdmin() ? [{ label: 'Users', onselect: () => goto('/users') }, { label: 'Access', onselect: () => goto('/access') }] : []),
 		{ label: 'Sign out', onselect: signOut }
 	]);
 	let search: HTMLInputElement | undefined = $state();
@@ -91,6 +91,10 @@
 	// `/me`: a dead session answers 401 and `unwrap` sends the tab to sign in; a live one means the server was down, so
 	// try again a little later.
 	const signedIn = $derived(!signedOutPage && session.me !== null);
+	$effect(() => {
+		if (!signedIn) return;
+		return followAccess();
+	});
 	$effect(() => {
 		if (!signedIn) return;
 		let stopped = false;

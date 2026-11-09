@@ -723,7 +723,7 @@ describe('initiative page: dialogs, fold and discussion state', () => {
 describe('initiative page: Codex review fixes', () => {
 	const base = decision({ on: 'ABC-1', on_type: 'initiative', decider: 'dan@example.com', due: null, pr_url: null, checked_at: null,
 		closed: null, created_at: '2026-10-31T09:00:00Z', version: 1 });
-	const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0009.md', record_id: 'ADR-0009' };
+	const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0016.md', record_id: 'ADR-0016' };
 
 	it('shows the owner\'s title once, though the owner has activity', async () => {
 		net.ini = { ...net.ini, owner: 'own@example.com' };
@@ -794,7 +794,7 @@ describe('initiative page: decision focus across groups', () => {
 	it('does not take focus from another control when a decision changes group', async () => {
 		const base = decision({ on: 'ABC-1', on_type: 'initiative', decider: 'dan@example.com', due: null, pr_url: null, checked_at: null,
 			closed: null, created_at: '2026-10-31T09:00:00Z', version: 1, title: 'Settled' });
-		const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0009.md', record_id: 'ADR-0009' };
+		const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0016.md', record_id: 'ADR-0016' };
 		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
 		await open();
 		btn('1 accepted decision').click();
@@ -836,7 +836,7 @@ describe('initiative page: decision focus across groups', () => {
 describe('initiative page: decision rows keep their control through changes', () => {
 	const base = decision({ on: 'ABC-1', on_type: 'initiative', decider: 'dan@example.com', due: null, pr_url: null, checked_at: null,
 		closed: null, created_at: '2026-10-31T09:00:00Z', version: 1, title: 'Settled' });
-	const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0009.md', record_id: 'ADR-0009' };
+	const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0016.md', record_id: 'ADR-0016' };
 	it('restores focus to the same Actions button though a PR link appeared and the title changed', async () => {
 		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
 		await open();

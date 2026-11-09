@@ -158,7 +158,7 @@ describe('account menu', () => {
 	it('adds Users for an admin', async () => {
 		route.admin = true;
 		await open('/');
-		expect(await labels()).toEqual(['Tokens', 'Activity', 'Users', 'Sign out']);
+		expect(await labels()).toEqual(['Tokens', 'Activity', 'Users', 'Access', 'Sign out']);
 	});
 });
 

@@ -50,7 +50,7 @@ async fn events(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
     let start = resume.map_or(newest, |id| id.min(newest));
-    // Re-checked every tick (kb/ADR-0008 R2): a revoked, expired or disabled session ends the stream.
+    // Re-checked every tick (kb/ADR-0015 R5): a revoked, expired or disabled session ends the stream.
     let secret = c.secret().to_string();
     let poll = Duration::from_millis(s.config.events.poll_ms);
     let polls = futures_util::stream::unfold(
@@ -61,7 +61,15 @@ async fn events(
                 tokio::time::sleep(poll).await;
             }
             // The browser's EventSource reconnects, gets 401 and goes to sign-in.
-            if reeve_identity::authenticate(&*s.tokens, &s.identity, &secret, Utc::now())
+            // Every batch re-reads the policy (kb/ADR-0015 R5): a removal or a load failure ends the stream.
+            let policy = match s.access.load(&s.identity).await {
+                Ok(policy) => policy,
+                Err(e) => {
+                    tracing::warn!(error = %e, "event stream ended: the access policy could not be read");
+                    return None;
+                }
+            };
+            if reeve_identity::authenticate(&*s.tokens, &policy, &secret, Utc::now())
                 .await
                 .is_err()
             {

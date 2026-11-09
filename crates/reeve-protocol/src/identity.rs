@@ -28,7 +28,7 @@ pub struct IssuedTokenDto {
     pub secret: String,
 }
 
-/// What the client needs from instance configuration (kb/ADR-0009 R2): never hardcoded in the client.
+/// What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct InstanceConfigDto {
     pub key_prefix: String,
@@ -50,4 +50,52 @@ pub struct UserDto {
     pub role: Role,
     pub disabled: bool,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKind {
+    Domain,
+    Email,
+}
+
+/// Where an entry comes from: the instance configuration (locked) or the database (editable by admins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessSource {
+    Config,
+    Database,
+}
+
+/// One allowed domain, allowed email or admin, from one source (kb/ADR-0015 R2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AccessEntryDto {
+    pub value: String,
+    pub source: AccessSource,
+    /// A database row that duplicates a configuration entry: listed separately and removable.
+    pub also_in_config: bool,
+    /// Meaningful only under `admins` (always true on domains, emails and configuration rows): false on an admin grant
+    /// whose email nothing allows, which grants nothing until the email is allowed again.
+    pub allowed: bool,
+    pub added_by: Option<String>,
+    pub added_at: Option<DateTime<Utc>>,
+}
+
+/// Who may sign in and who is admin: configuration rows first, then database rows, each by value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AccessDto {
+    pub domains: Vec<AccessEntryDto>,
+    pub emails: Vec<AccessEntryDto>,
+    pub admins: Vec<AccessEntryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AllowEntryRequest {
+    pub kind: AccessKind,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GrantAdminRequest {
+    pub email: String,
 }

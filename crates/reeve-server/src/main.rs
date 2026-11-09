@@ -19,7 +19,7 @@ enum Cmd {
     /// Run migrations and exit.
     Migrate,
     /// Operator command, run on the host with database access: issue a token for an allowlisted email and print the secret once.
-    /// This is not a sign-in path (kb/ADR-0008 R1); users sign in with Google in plan B, which issues interactive tokens.
+    /// This is not a sign-in path (kb/ADR-0015 R1); users sign in with Google in plan B, which issues interactive tokens.
     TokenIssue {
         #[arg(long)]
         email: String,
@@ -54,6 +54,11 @@ enum Cmd {
         #[arg(long)]
         email: String,
     },
+    /// Operator command: print who may sign in and who is admin, merged from the configuration and the database, one
+    /// `kind<TAB>value<TAB>source<TAB>flag` line per entry (flag is `not allowed` or empty; control characters in
+    /// value and source are escaped). Read-only: connects read-only, never migrates and refuses a database at another
+    /// migration. The floor in reeve.toml is the break-glass path, so there is no add or remove here.
+    AccessList,
     /// Print `name<TAB>url` for every `[[repos]]` entry that has a url: what the scheduled decision check clones. Reads
     /// the configuration only; never connects to the database.
     Repos,
@@ -134,6 +139,42 @@ async fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if let Cmd::AccessList = cli.cmd {
+        let pool = connect_offline(&config.database_url, None).await?;
+        check_migrations(&pool).await?;
+        let policy = reeve_identity::make_access_store(pool.clone())
+            .load(&config.identity())
+            .await
+            .context("loading the access lists")?;
+        let v = policy.view();
+        let mut text = String::new();
+        for (kind, rows) in [
+            ("domain", &v.domains),
+            ("email", &v.emails),
+            ("admin", &v.admins),
+        ] {
+            for r in rows {
+                let source = match &r.source {
+                    reeve_identity::AccessSource::Config => "reeve.toml".to_string(),
+                    reeve_identity::AccessSource::Database { added_by, added_at } => {
+                        format!("added by {added_by} {}", added_at.format("%Y-%m-%d"))
+                    }
+                };
+                let flag = if r.allowed { "" } else { "not allowed" };
+                text.push_str(&format!(
+                    "{kind}\t{}\t{}\t{flag}\n",
+                    escape_control(&r.value),
+                    escape_control(&source)
+                ));
+            }
+        }
+        pool.close().await;
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(text.as_bytes())?;
+        stdout.flush()?;
+        return Ok(());
+    }
     // Configuration only: the scheduled check calls this inside the server container, and it must answer whether or
     // not the database is up.
     if let Cmd::Repos = cli.cmd {
@@ -167,11 +208,14 @@ async fn main() -> anyhow::Result<()> {
                 KindArg::Interactive => reeve_protocol::TokenKind::Interactive,
                 KindArg::Automation => reeve_protocol::TokenKind::Automation,
             };
+            let policy = reeve_identity::make_access_store(pool.clone())
+                .load(&config.identity())
+                .await?;
             let t = reeve_identity::issue_token(
                 &pool,
                 &*store,
                 &*log,
-                &config.identity(),
+                &policy,
                 "operator",
                 reeve_protocol::Via::System,
                 &email,
@@ -200,6 +244,21 @@ async fn main() -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
         }
+        Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
     }
     Ok(())
+}
+
+/// Escapes only control characters (a tab or newline in a hand-edited row must not break a line); every other
+/// character, quotes included, is left as is.
+fn escape_control(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }

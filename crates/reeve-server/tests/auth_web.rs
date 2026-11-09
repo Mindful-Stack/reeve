@@ -427,7 +427,7 @@ async fn the_cookie_path_checks_the_token_on_every_request_and_accepts_only_the_
     );
     let res = call_raw(&h.app, callback(&state, &login_cookie)).await;
     assert_eq!(res.status(), 303);
-    // disabling the user stops the cookie on the next request (kb/ADR-0008 R2)
+    // disabling the user stops the cookie on the next request (kb/ADR-0015 R6)
     let (st, _) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/me", None).await;
     assert_eq!(st, 200);
     let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
@@ -783,6 +783,31 @@ mod through_the_google_adapter {
             .unwrap(),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn a_guest_allowed_only_in_the_database_signs_in_through_the_real_adapter() {
+        let h = harness().await;
+        let fake = FakeIssuer::start(CLIENT_ID, CLIENT_SECRET).await;
+        let app = app_with_google(&h, &fake).await;
+        let res = sign_in_as(&app, &fake, "code-guest-1", "guest@other.org", true).await;
+        assert_eq!(res.headers()["location"], "/auth/signin?reason=not_allowed");
+        let (s, _) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/access/entries",
+            Some(serde_json::json!({"kind":"email","value":"guest@other.org"})),
+        )
+        .await;
+        assert_eq!(s, 200);
+        let res = sign_in_as(&app, &fake, "code-guest-2", "guest@other.org", true).await;
+        assert_eq!(res.headers()["location"], "/board");
+        assert!(
+            cookies_of(&res)
+                .iter()
+                .any(|c| c.starts_with("reeve_session="))
+        );
     }
 
     #[tokio::test]

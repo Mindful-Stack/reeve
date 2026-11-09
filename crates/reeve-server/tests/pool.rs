@@ -87,20 +87,47 @@ async fn new_session_after_a_cancelled_begin(
         name: None,
     };
     let now = chrono::Utc::now();
-    let old = reeve_identity::sign_in(&admin, &*admin_store, &*log, &cfg, who(), 30, now)
-        .await
-        .unwrap();
+    let old = reeve_identity::sign_in(
+        &admin,
+        &*admin_store,
+        &*log,
+        &reeve_identity::AccessPolicy::floor_only(&cfg),
+        who(),
+        30,
+        now,
+    )
+    .await
+    .unwrap();
 
     cancel_begin_after_it_ran(&app, &admin).await;
 
     // An earlier request on the same connection: it succeeds, and (on a poisoned connection) fixes the snapshot.
-    reeve_identity::authenticate(&*app_store, &cfg, &old.secret, now)
-        .await
-        .expect("the older session authenticates");
-    let new = reeve_identity::sign_in(&admin, &*admin_store, &*log, &cfg, who(), 30, now)
-        .await
-        .unwrap();
-    reeve_identity::authenticate(&*app_store, &cfg, &new.secret, now).await
+    reeve_identity::authenticate(
+        &*app_store,
+        &reeve_identity::AccessPolicy::floor_only(&cfg),
+        &old.secret,
+        now,
+    )
+    .await
+    .expect("the older session authenticates");
+    let new = reeve_identity::sign_in(
+        &admin,
+        &*admin_store,
+        &*log,
+        &reeve_identity::AccessPolicy::floor_only(&cfg),
+        who(),
+        30,
+        now,
+    )
+    .await
+    .unwrap();
+    reeve_identity::authenticate(
+        &*app_store,
+        &reeve_identity::AccessPolicy::floor_only(&cfg),
+        &new.secret,
+        now,
+    )
+    .await
 }
 
 #[tokio::test]

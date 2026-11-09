@@ -1,4 +1,5 @@
 use crate::{
+    access::AccessPolicy,
     domain::*,
     ports::*,
     repo::{TokenStore, TokenSummary, UserRow},
@@ -11,12 +12,16 @@ use sqlx::PgPool;
 pub enum AuthError {
     #[error("unauthenticated")]
     Unauthenticated,
-    #[error("email not allowed by configuration")]
+    #[error("email not allowed")]
     NotAllowed,
     #[error("user is disabled")]
     Disabled,
     #[error("invalid request: {0}")]
     Validation(String),
+    #[error("forbidden")]
+    Forbidden,
+    #[error("not found")]
+    NotFound,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
@@ -32,7 +37,7 @@ pub async fn issue_token(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     actor: &str,
     via: Via,
     email: &str,
@@ -42,7 +47,7 @@ pub async fn issue_token(
     now: DateTime<Utc>,
 ) -> Result<IssuedToken, AuthError> {
     let email = normalise_email(email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     if expires_at.is_some_and(|e| e <= now) {
@@ -88,7 +93,7 @@ pub async fn issue_token(
 /// can be told apart afterwards: not found, revoked, owner disabled, expired, owner not allowed, bad kind.
 pub async fn authenticate(
     store: &dyn TokenStore,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<Principal, AuthError> {
@@ -109,7 +114,7 @@ pub async fn authenticate(
         Some("owner disabled")
     } else if row.expires_at.is_some_and(|e| e <= now) {
         Some("expired")
-    } else if !cfg.is_allowed(&owner) {
+    } else if !policy.is_allowed(&owner) {
         Some("owner not allowed")
     } else {
         None
@@ -123,7 +128,7 @@ pub async fn authenticate(
         return Err(AuthError::Unauthenticated);
     };
     Ok(Principal {
-        role: cfg.role_for(&owner),
+        role: policy.role_for(&owner),
         email: owner,
         token_kind,
     })
@@ -158,7 +163,7 @@ pub async fn revoke_all_for(
     Ok(n)
 }
 
-/// Disable and revoke commit together (kb/ADR-0008 R2, kb/ADR-0010 R5). Works for a user not yet seen.
+/// Disable and revoke commit together (kb/ADR-0015 R6, kb/ADR-0010 R5). Works for a user not yet seen.
 pub async fn disable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
@@ -200,12 +205,12 @@ pub struct VerifiedIdentity {
 pub const SESSION_LABEL: &str = "web session";
 
 /// Browser sign-in: the session is an interactive token, so everything plan A knows about tokens (expiry, revocation,
-/// disable) applies to it unchanged. Refuses an unverified email before looking at the allowlist (kb/ADR-0008 R1).
+/// disable) applies to it unchanged. Refuses an unverified email before looking at the allowlist (kb/ADR-0015 R1).
 pub async fn sign_in(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     who: VerifiedIdentity,
     session_days: i64,
     now: DateTime<Utc>,
@@ -219,7 +224,7 @@ pub async fn sign_in(
         return Err(AuthError::NotAllowed);
     }
     let email = normalise_email(&who.email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     let mut tx = pool.begin().await?;
@@ -300,7 +305,7 @@ pub async fn revoke_token(
     Ok(changed)
 }
 
-/// Re-enables sign-in. Tokens revoked by the disable stay revoked: the person signs in again (kb/ADR-0008 R2 says
+/// Re-enables sign-in. Tokens revoked by the disable stay revoked: the person signs in again (kb/ADR-0015 R6 says
 /// what disable must do; nothing says enable restores, and restoring would resurrect automation tokens nobody re-approved).
 /// Records `user_enabled` only when the flag actually changed. Refuses an email outside the allowlist, so `set_disabled`'s upsert cannot create a user row for a stranger.
 #[allow(clippy::too_many_arguments)]
@@ -308,14 +313,14 @@ pub async fn enable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    cfg: &IdentityConfig,
+    policy: &AccessPolicy,
     actor: &str,
     via: Via,
     email: &str,
     now: DateTime<Utc>,
 ) -> Result<(), AuthError> {
     let email = normalise_email(email);
-    if !cfg.is_allowed(&email) {
+    if !policy.is_allowed(&email) {
         return Err(AuthError::NotAllowed);
     }
     let mut tx = pool.begin().await?;

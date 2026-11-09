@@ -8,7 +8,7 @@ use reeve_protocol::{CheckResult, ClosureKind, DeliveryState, Key, Reversibility
 /// A reference names a repository and a path inside it: relative, without a `..` component, and not starting with `-`,
 /// so a checker never reads outside the repository or hands git an option. The repository need not be configured yet
 ///: the reference is stored, readiness says the record is in an unchecked repository, and the scheduled check,
-/// which reads only configured repositories (kb/ADR-0009 R2), picks it up once the repository is configured. Its name
+/// which reads only configured repositories (kb/ADR-0016 R2), picks it up once the repository is configured. Its name
 /// is one plain directory name, as a checker uses it. Returns the path in normal form, without empty and `.` components
 /// (`./a//b` is `a/b`): git names tree entries that way, and the checker compares the stored path with that name. A path
 /// that is nothing but such components names no file.

@@ -19,12 +19,13 @@ pub struct AppState {
     pub handlers: Handlers,
     pub tokens: Arc<dyn TokenStore>,
     pub identity: IdentityConfig,
+    pub access: Arc<dyn reeve_identity::AccessStore>,
     pub activity: Arc<dyn reeve_activity::ActivityStore>,
     pub config: Arc<ServerConfig>,
     pub pool: PgPool,
     /// `None` when no `[oidc]` section is configured: browser sign-in is off, CLI tokens still work.
     pub oidc: Option<Arc<dyn OidcClient>>,
-    /// Pending browser sign-ins (state -> login), ten-minute TTL, capped at 1 000 entries (kb/ADR-0009: one instance).
+    /// Pending browser sign-ins (state -> login), ten-minute TTL, capped at 1 000 entries (kb/ADR-0016: one instance).
     pub logins: Arc<tokio::sync::Mutex<HashMap<String, PendingLogin>>>,
     /// Where the client files come from: embedded in the binary, except in debug builds with `REEVE_ASSETS_DIR`.
     pub assets: crate::assets::Assets,
@@ -149,6 +150,7 @@ impl AppState {
             handlers: self.handlers.clone(),
             activity: self.activity.clone(),
             identity: self.identity.clone(),
+            access: self.access.clone(),
         }
     }
 }
@@ -170,6 +172,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         handlers,
         tokens: reeve_identity::make_token_store(pool.clone()),
         identity: config.identity(),
+        access: reeve_identity::make_access_store(pool.clone()),
         activity,
         config: Arc::new(config),
         pool,

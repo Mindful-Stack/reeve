@@ -34,7 +34,7 @@ impl IdentityConfig {
     }
 }
 
-/// Who is calling: resolved from a token on every request (kb/ADR-0008 R2).
+/// Who is calling: resolved from a token on every request (kb/ADR-0015 R5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     pub email: String,

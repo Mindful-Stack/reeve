@@ -2,8 +2,8 @@ mod common;
 use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
 use reeve_identity::{
-    AuthError, IdentityActivity, IdentityConfig, IdentityEvent, Role, TokenKind, Via, authenticate,
-    disable_user, hash_secret, issue_token, revoke_all_for,
+    AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, Role, TokenKind, Via,
+    authenticate, disable_user, hash_secret, issue_token, revoke_all_for,
 };
 use std::sync::Mutex;
 
@@ -39,7 +39,7 @@ async fn issue_then_authenticate_resolves_role_and_kind() {
         &pool,
         &*store,
         &log,
-        &cfg(),
+        &AccessPolicy::floor_only(&cfg()),
         "operator",
         Via::Interactive,
         "dan@example.com",
@@ -55,9 +55,14 @@ async fn issue_then_authenticate_resolves_role_and_kind() {
         issued.secret.starts_with("reeve_"),
         "secrets carry a recognisable prefix"
     );
-    let p = authenticate(&*store, &cfg(), &issued.secret, now)
-        .await
-        .unwrap();
+    let p = authenticate(
+        &*store,
+        &AccessPolicy::floor_only(&cfg()),
+        &issued.secret,
+        now,
+    )
+    .await
+    .unwrap();
     assert_eq!(p.email, "dan@example.com");
     assert_eq!(p.role, Role::Admin);
     assert_eq!(p.token_kind, TokenKind::Automation);
@@ -65,7 +70,7 @@ async fn issue_then_authenticate_resolves_role_and_kind() {
         &pool,
         &*store,
         &log,
-        &cfg(),
+        &AccessPolicy::floor_only(&cfg()),
         "operator",
         Via::Interactive,
         "guest@other.org",
@@ -77,10 +82,15 @@ async fn issue_then_authenticate_resolves_role_and_kind() {
     .await
     .unwrap();
     assert_eq!(
-        authenticate(&*store, &cfg(), &member.secret, now)
-            .await
-            .unwrap()
-            .role,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            &member.secret,
+            now
+        )
+        .await
+        .unwrap()
+        .role,
         Role::Member
     );
 }
@@ -92,14 +102,20 @@ async fn refuses_unknown_secret_expired_revoked_and_disallowed() {
     let log = MemActivity(Mutex::new(vec![]));
     let now = Utc.with_ymd_and_hms(2026, 10, 26, 9, 0, 0).unwrap();
     assert!(matches!(
-        authenticate(&*store, &cfg(), "reeve_nope", now).await,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            "reeve_nope",
+            now
+        )
+        .await,
         Err(AuthError::Unauthenticated)
     ));
     let short = issue_token(
         &pool,
         &*store,
         &log,
-        &cfg(),
+        &AccessPolicy::floor_only(&cfg()),
         "operator",
         Via::Interactive,
         "dan@example.com",
@@ -111,7 +127,13 @@ async fn refuses_unknown_secret_expired_revoked_and_disallowed() {
     .await
     .unwrap();
     assert!(matches!(
-        authenticate(&*store, &cfg(), &short.secret, now + Duration::hours(2)).await,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            &short.secret,
+            now + Duration::hours(2)
+        )
+        .await,
         Err(AuthError::Unauthenticated)
     ));
     revoke_all_for(
@@ -126,7 +148,13 @@ async fn refuses_unknown_secret_expired_revoked_and_disallowed() {
     .await
     .unwrap();
     assert!(matches!(
-        authenticate(&*store, &cfg(), &short.secret, now).await,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            &short.secret,
+            now
+        )
+        .await,
         Err(AuthError::Unauthenticated)
     ));
     assert!(matches!(
@@ -134,7 +162,7 @@ async fn refuses_unknown_secret_expired_revoked_and_disallowed() {
             &pool,
             &*store,
             &log,
-            &cfg(),
+            &AccessPolicy::floor_only(&cfg()),
             "operator",
             Via::Interactive,
             "mallory@evil.example",
@@ -168,7 +196,7 @@ async fn disable_normalises_email_revokes_and_records_events() {
         &pool,
         &*store,
         &log,
-        &cfg(),
+        &AccessPolicy::floor_only(&cfg()),
         "operator",
         Via::Interactive,
         "dan@example.com",
@@ -191,7 +219,7 @@ async fn disable_normalises_email_revokes_and_records_events() {
     .await
     .unwrap();
     assert!(matches!(
-        authenticate(&*store, &cfg(), &t.secret, now).await,
+        authenticate(&*store, &AccessPolicy::floor_only(&cfg()), &t.secret, now).await,
         Err(AuthError::Unauthenticated)
     ));
     let live: i64 = sqlx::query_scalar("SELECT count(*) FROM tokens WHERE revoked_at IS NULL")
@@ -249,7 +277,7 @@ async fn disabling_an_unseen_email_blocks_later_issue() {
             &pool,
             &*store,
             &log,
-            &cfg(),
+            &AccessPolicy::floor_only(&cfg()),
             "operator",
             Via::System,
             "New@example.com",
@@ -273,7 +301,7 @@ async fn expiry_boundary_config_changes_and_validation() {
         &pool,
         &*store,
         &log,
-        &cfg(),
+        &AccessPolicy::floor_only(&cfg()),
         "operator",
         Via::Interactive,
         "guest@other.org",
@@ -285,12 +313,23 @@ async fn expiry_boundary_config_changes_and_validation() {
     .await
     .unwrap();
     assert!(
-        authenticate(&*store, &cfg(), &t.secret, now + Duration::minutes(59))
-            .await
-            .is_ok()
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            &t.secret,
+            now + Duration::minutes(59)
+        )
+        .await
+        .is_ok()
     );
     assert!(matches!(
-        authenticate(&*store, &cfg(), &t.secret, now + Duration::hours(1)).await,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg()),
+            &t.secret,
+            now + Duration::hours(1)
+        )
+        .await,
         Err(AuthError::Unauthenticated)
     ));
     let removed = IdentityConfig {
@@ -298,7 +337,7 @@ async fn expiry_boundary_config_changes_and_validation() {
         ..cfg()
     };
     assert!(matches!(
-        authenticate(&*store, &removed, &t.secret, now).await,
+        authenticate(&*store, &AccessPolicy::floor_only(&removed), &t.secret, now).await,
         Err(AuthError::Unauthenticated)
     ));
     let promoted = IdentityConfig {
@@ -306,17 +345,22 @@ async fn expiry_boundary_config_changes_and_validation() {
         ..cfg()
     };
     assert_eq!(
-        authenticate(&*store, &cfg(), &t.secret, now)
+        authenticate(&*store, &AccessPolicy::floor_only(&cfg()), &t.secret, now)
             .await
             .unwrap()
             .role,
         Role::Member
     );
     assert_eq!(
-        authenticate(&*store, &promoted, &t.secret, now)
-            .await
-            .unwrap()
-            .role,
+        authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&promoted),
+            &t.secret,
+            now
+        )
+        .await
+        .unwrap()
+        .role,
         Role::Admin
     );
     assert!(matches!(
@@ -324,7 +368,7 @@ async fn expiry_boundary_config_changes_and_validation() {
             &pool,
             &*store,
             &log,
-            &cfg(),
+            &AccessPolicy::floor_only(&cfg()),
             "operator",
             Via::Interactive,
             "dan@example.com",
@@ -362,7 +406,7 @@ async fn failed_activity_write_rolls_back_the_issue() {
             &pool,
             &*store,
             &Failing,
-            &cfg(),
+            &AccessPolicy::floor_only(&cfg()),
             "operator",
             Via::Interactive,
             "dan@example.com",
@@ -419,7 +463,7 @@ async fn issue(
         pool,
         store,
         log,
-        cfg,
+        &AccessPolicy::floor_only(cfg),
         "test",
         Via::Interactive,
         email,
@@ -454,7 +498,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
             &pool,
             &*store,
             &*log,
-            &cfg,
+            &AccessPolicy::floor_only(&cfg),
             id("dan@example.com", true),
             0,
             now
@@ -469,7 +513,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
             &pool,
             &*store,
             &*log,
-            &cfg,
+            &AccessPolicy::floor_only(&cfg),
             id("Dan@Example.com", false),
             30,
             now
@@ -483,7 +527,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
             &pool,
             &*store,
             &*log,
-            &cfg,
+            &AccessPolicy::floor_only(&cfg),
             id("x@other.org", true),
             30,
             now
@@ -515,7 +559,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         &pool,
         &*store,
         &*log,
-        &cfg,
+        &AccessPolicy::floor_only(&cfg),
         id("Dan@Example.com", true),
         30,
         now,
@@ -532,7 +576,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         assert!(matches!(signed[0].via, Via::Interactive));
         assert_eq!(signed[0].payload["token_id"], t.id);
     }
-    let p = reeve_identity::authenticate(&*store, &cfg, &t.secret, now)
+    let p = reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &t.secret, now)
         .await
         .unwrap();
     assert_eq!(p.email, "dan@example.com");
@@ -547,9 +591,14 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
     assert_eq!(users[0].display_name, "Dan T");
     // the session is the token: expired by the clock -> unauthenticated
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &t.secret, now + chrono::Duration::days(31))
-            .await
-            .is_err()
+        reeve_identity::authenticate(
+            &*store,
+            &AccessPolicy::floor_only(&cfg),
+            &t.secret,
+            now + chrono::Duration::days(31)
+        )
+        .await
+        .is_err()
     );
     // disabled -> refused on the next sign-in
     reeve_identity::disable_user(
@@ -568,7 +617,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
             &pool,
             &*store,
             &*log,
-            &cfg,
+            &AccessPolicy::floor_only(&cfg),
             id("dan@example.com", true),
             30,
             now
@@ -581,7 +630,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         &pool,
         &*store,
         &*log,
-        &cfg,
+        &AccessPolicy::floor_only(&cfg),
         "admin",
         reeve_protocol::Via::Interactive,
         "dan@example.com",
@@ -604,7 +653,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         &pool,
         &*store,
         &*log,
-        &cfg,
+        &AccessPolicy::floor_only(&cfg),
         "admin",
         reeve_protocol::Via::Interactive,
         "dan@example.com",
@@ -622,7 +671,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         1
     );
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &t.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &t.secret, now)
             .await
             .is_err()
     );
@@ -630,7 +679,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
         &pool,
         &*store,
         &*log,
-        &cfg,
+        &AccessPolicy::floor_only(&cfg),
         id("dan@example.com", true),
         30,
         now,
@@ -638,7 +687,7 @@ async fn sign_in_issues_a_session_token_only_for_verified_allowed_enabled_users(
     .await
     .unwrap();
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &t2.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &t2.secret, now)
             .await
             .is_ok()
     );
@@ -665,7 +714,7 @@ async fn revoke_one_only_touches_the_owners_own_token() {
         .unwrap()
     );
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &a.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &a.secret, now)
             .await
             .is_ok()
     );
@@ -684,12 +733,12 @@ async fn revoke_one_only_touches_the_owners_own_token() {
         .unwrap()
     );
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &a.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &a.secret, now)
             .await
             .is_err()
     );
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &b.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &b.secret, now)
             .await
             .is_ok()
     );
@@ -736,9 +785,17 @@ async fn failed_activity_write_rolls_back_sign_in_revoke_and_enable() {
     };
     // sign_in: no user, no token, no display name persisted
     assert!(
-        reeve_identity::sign_in(&pool, &*store, &Failing, &cfg, who, 30, now)
-            .await
-            .is_err()
+        reeve_identity::sign_in(
+            &pool,
+            &*store,
+            &Failing,
+            &AccessPolicy::floor_only(&cfg),
+            who,
+            30,
+            now
+        )
+        .await
+        .is_err()
     );
     let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
         .fetch_one(&pool)
@@ -766,7 +823,7 @@ async fn failed_activity_write_rolls_back_sign_in_revoke_and_enable() {
         .is_err()
     );
     assert!(
-        reeve_identity::authenticate(&*store, &cfg, &a.secret, now)
+        reeve_identity::authenticate(&*store, &AccessPolicy::floor_only(&cfg), &a.secret, now)
             .await
             .is_ok()
     );
@@ -787,7 +844,7 @@ async fn failed_activity_write_rolls_back_sign_in_revoke_and_enable() {
             &pool,
             &*store,
             &Failing,
-            &cfg,
+            &AccessPolicy::floor_only(&cfg),
             "admin",
             reeve_protocol::Via::Interactive,
             "a@example.com",

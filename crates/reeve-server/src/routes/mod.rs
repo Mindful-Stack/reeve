@@ -2,6 +2,7 @@ use crate::state::AppState;
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
+pub mod access;
 pub mod activity;
 pub mod comments;
 pub mod config;
@@ -157,6 +158,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(events::router())
         .merge(tokens::router())
         .merge(users::router())
+        .merge(access::router())
         .merge(config::router())
         .merge(import::router())
         .merge(export::router())

@@ -1,30 +1,48 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import type { User } from '#lib/api/types.ts';
+	import type { Access, User } from '#lib/api/types.ts';
+	import { allowedBy } from '#lib/access.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
+	import { onLive } from '#lib/events.svelte.ts';
 
 	let users = $state<User[] | null>(null);
+	let access = $state<Access | null>(null);
 	let loadError = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
 
 	async function reload() {
 		try {
-			users = await unwrap(api.GET('/api/v1/users'));
+			[users, access] = await Promise.all([unwrap(api.GET('/api/v1/users')), unwrap(api.GET('/api/v1/access'))]);
 			loadError = null;
 		} catch (e) {
 			loadError = failure(e);
 		}
 	}
 
-	// Only admins ask; the server refuses anyone else regardless.
-	onMount(() => {
-		if (isAdmin()) reload();
+	// Only admins ask; the server refuses anyone else regardless. Loads once the viewer is
+	// admin, including after a promotion while the page is open; a demotion forgets the lists so a
+	// re-promotion loads fresh ones. Live changes reload, so a stale row cannot offer a click that
+	// would act on someone another admin has just changed.
+	let loaded = false;
+	$effect(() => {
+		if (!isAdmin()) {
+			loaded = false;
+			users = access = null;
+		} else if (!loaded) {
+			loaded = true;
+			reload();
+		}
 	});
+	onLive(() => {
+		if (isAdmin()) return reload();
+	});
+
+	const floorAdmin = (email: string) => access?.admins.some((r) => r.source === 'config' && r.value === email) ?? false;
+	const dbAdmin = (email: string) => access?.admins.some((r) => r.source === 'database' && r.value === email) ?? false;
 
 	function failure(e: unknown): string {
 		if (e instanceof Refused) return e.reasons.map((r) => r.reason).join(', ');
@@ -67,7 +85,7 @@
 {#if !isAdmin()}
 	<p class="muted">Admins only.</p>
 {:else}
-	<p class="muted">Roles come from the server configuration (<code>admins</code>) and cannot be changed here.</p>
+	<p class="muted">Who may sign in and who is admin is managed on <a href="/access">Access</a>.</p>
 	{#if notice}
 		<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>
 	{/if}
@@ -88,10 +106,40 @@
 					<span class="act">
 						{#if u.email === session.me?.email}
 							<span class="muted">you</span>
-						{:else if u.disabled}
-							<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => enable(u)}>Enable</button>
+						{:else if floorAdmin(u.email)}
+							<span class="muted">admin (reeve.toml)</span>
+							{#if u.disabled}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => enable(u)}>Enable</button>
+							{/if}
+						{:else if access && allowedBy(access, u.email) === null}
+							<!-- Make admin would silently re-allow them and the server refuses Enable; Disable still revokes their tokens. -->
+							<span class="muted">not allowed (<a href="/access">manage on Access</a>)</span>
+							{#if !u.disabled}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => disable(u)}>Disable</button>
+							{/if}
 						{:else}
-							<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => disable(u)}>Disable</button>
+							{#if dbAdmin(u.email)}
+								<button
+									type="button"
+									disabled={busy}
+									aria-describedby="usr-{u.email}"
+									onclick={() => act(() => unwrap(api.DELETE('/api/v1/access/admins/{email}', { params: { path: { email: u.email } } })))}
+									>Revoke admin</button
+								>
+							{:else}
+								<button
+									type="button"
+									disabled={busy}
+									aria-describedby="usr-{u.email}"
+									onclick={() => act(() => unwrap(api.POST('/api/v1/access/admins', { body: { email: u.email } })))}
+									>Make admin</button
+								>
+							{/if}
+							{#if u.disabled}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => enable(u)}>Enable</button>
+							{:else}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => disable(u)}>Disable</button>
+							{/if}
 						{/if}
 					</span>
 				</li>

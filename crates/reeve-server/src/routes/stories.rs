@@ -10,11 +10,14 @@ use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// A story's owner must be an allowed user (`[identity]` allowed domains and emails): an owner nobody can sign
+/// A story's owner must be an allowed user (allowed by the floor or a database entry): an owner nobody can sign
 /// in as would hold work no one can pick up.
-fn allowed_owner(s: &AppState, owner: Option<String>) -> Result<Option<String>, AppError> {
+fn allowed_owner(
+    policy: &reeve_identity::AccessPolicy,
+    owner: Option<String>,
+) -> Result<Option<String>, AppError> {
     match owner {
-        Some(o) if !s.identity.is_allowed(&o) => Err(reeve_planning::HandlerError::Validation(
+        Some(o) if !policy.is_allowed(&o) => Err(reeve_planning::HandlerError::Validation(
             format!("{} is not an allowed user", normalise_email(&o)),
         )
         .into()),
@@ -97,7 +100,7 @@ async fn create(
             b.criteria,
             b.labels,
             b.external_ref,
-            allowed_owner(&s, b.owner)?,
+            allowed_owner(c.policy(), b.owner)?,
         )
         .await?;
     Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
@@ -139,7 +142,7 @@ async fn edit(
             super::resolve_edit(&s.handlers, b.epic, ItemType::Epic).await?,
             criteria,
             match b.owner {
-                Some(Some(o)) => Some(allowed_owner(&s, Some(o))?),
+                Some(Some(o)) => Some(allowed_owner(c.policy(), Some(o))?),
                 other => other,
             },
             b.labels,

@@ -1,5 +1,5 @@
 //! Who is calling: the bearer header (CLI, automation) or the browser's session cookie, resolved to the same
-//! `Principal` on every request (kb/ADR-0008 R2). The browser sign-in flow lives in `routes`.
+//! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`.
 pub mod routes;
 
 use crate::{error::AppError, state::AppState};
@@ -48,8 +48,13 @@ pub fn has_client_header(headers: &axum::http::HeaderMap) -> bool {
 }
 
 /// The authenticated caller, the instant the request was authenticated (the clock is read once per request, here),
-/// and the secret it presented, kept so a long-lived response can re-authenticate on every tick (kb/ADR-0008 R2).
-pub struct Caller(pub Principal, pub DateTime<Utc>, String);
+/// and the secret it presented, kept so a long-lived response can re-authenticate on every tick (kb/ADR-0015 R5).
+pub struct Caller(
+    pub Principal,
+    pub DateTime<Utc>,
+    String,
+    reeve_identity::AccessPolicy,
+);
 
 impl FromRequestParts<AppState> for Caller {
     type Rejection = AppError;
@@ -98,8 +103,10 @@ impl FromRequestParts<AppState> for Caller {
         };
         // Either way the token's kind, role, expiry and the owner's disabled flag are checked now, on this request.
         let now = Utc::now();
-        match authenticate(&*state.tokens, &state.identity, &secret, now).await {
-            Ok(p) => Ok(Caller(p, now, secret)),
+        // Loaded on every request, never cached (kb/ADR-0015 R5); a load failure is internal, never a fallback to the floor.
+        let policy = state.access.load(&state.identity).await?;
+        match authenticate(&*state.tokens, &policy, &secret, now).await {
+            Ok(p) => Ok(Caller(p, now, secret, policy)),
             Err(AuthError::Db(e)) => Err(AppError::from(e)),
             Err(e) => {
                 tracing::warn!(method = %parts.method, path = %request_path(parts), via, error = %e, "request refused: the credential did not authenticate");
@@ -118,6 +125,10 @@ fn request_path(parts: &Parts) -> &str {
 }
 
 impl Caller {
+    /// The policy this request was authenticated with: handlers reuse it rather than reading the tables again.
+    pub fn policy(&self) -> &reeve_identity::AccessPolicy {
+        &self.3
+    }
     /// The bearer or session-cookie secret this request authenticated with.
     pub fn secret(&self) -> &str {
         &self.2

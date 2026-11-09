@@ -85,7 +85,7 @@ async fn server() -> (reeve_testdb::TestDb, String, String, String) {
             &pool,
             &*tokens,
             &*log,
-            &identity,
+            &reeve_identity::AccessPolicy::floor_only(&identity),
             "test",
             reeve_protocol::Via::Interactive,
             "dan@example.com",

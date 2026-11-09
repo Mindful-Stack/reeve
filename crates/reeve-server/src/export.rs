@@ -45,13 +45,14 @@ impl SnapshotId {
     }
 }
 
-/// What the export reads: the three contexts' export readers and the configuration that decides roles.
+/// What the export reads: the three contexts' export readers and the access policy that decides roles, read inside the export's snapshot.
 #[derive(Clone)]
 pub struct ExportSources {
     pub(crate) pool: PgPool,
     pub(crate) handlers: Handlers,
     pub(crate) activity: Arc<dyn reeve_activity::ActivityStore>,
     pub(crate) identity: IdentityConfig,
+    pub(crate) access: Arc<dyn reeve_identity::AccessStore>,
 }
 
 impl ExportSources {
@@ -64,6 +65,7 @@ impl ExportSources {
             handlers: crate::state::handlers_for(config, pool.clone(), activity.clone()),
             activity,
             identity: config.identity(),
+            access: reeve_identity::make_access_store(pool.clone()),
             pool,
         }
     }
@@ -97,7 +99,9 @@ pub async fn export_document_in(
         )
         .await?;
     }
-    // The first query: without a snapshot, PostgreSQL takes one here, not at BEGIN.
+    // The first query: without a snapshot, PostgreSQL takes one here, not at BEGIN. Roles come from this snapshot's
+    // policy, so they match the users and the dump (kb/ADR-0015 consequences).
+    let policy = src.access.load_in(&mut tx, &src.identity).await?;
     let urgency = src.handlers.urgency_in(&mut tx, exported_at).await?;
     let initiatives = src.handlers.export_initiatives(&mut tx, &urgency).await?;
     let epics = src.handlers.export_epics(&mut tx, &urgency).await?;
@@ -109,7 +113,7 @@ pub async fn export_document_in(
         .await?
         .into_iter()
         .map(|u| UserDto {
-            role: src.identity.role_for(&u.email),
+            role: policy.role_for(&u.email),
             email: u.email,
             display_name: u.display_name,
             disabled: u.disabled,
@@ -231,6 +235,24 @@ pub async fn check_migrations(pool: &PgPool) -> anyhow::Result<()> {
     );
 }
 
+/// A read-only pool for the offline commands: `offline_options`, a short connect timeout, and a context naming the
+/// database, host and port it tried (never the user or the password).
+pub async fn connect_offline(database_url: &str, database: Option<&str>) -> anyhow::Result<PgPool> {
+    let options = offline_options(database_url, database)?;
+    let target = format!(
+        "connecting to database {} on {}:{}",
+        options.get_database().unwrap_or("(default)"),
+        options.get_host(),
+        options.get_port()
+    );
+    crate::state::pool_options()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .connect_with(options)
+        .await
+        .context(target)
+}
+
 /// `reeve-server export`: connect read-only to the configured database (or `database` on the same server), refuse a
 /// database at another migration, and return the document's text. The caller writes it; nothing is written here.
 pub async fn offline_export(
@@ -239,20 +261,7 @@ pub async fn offline_export(
     snapshot: Option<&SnapshotId>,
     exported_at: DateTime<Utc>,
 ) -> anyhow::Result<String> {
-    let options = offline_options(&config.database_url, database)?;
-    // Names the database, host and port it tried; never the user or the password.
-    let target = format!(
-        "connecting to database {} on {}:{}",
-        options.get_database().unwrap_or("(default)"),
-        options.get_host(),
-        options.get_port()
-    );
-    let pool = crate::state::pool_options()
-        .max_connections(2)
-        .acquire_timeout(std::time::Duration::from_secs(10))
-        .connect_with(options)
-        .await
-        .context(target)?;
+    let pool = connect_offline(&config.database_url, database).await?;
     check_migrations(&pool).await?;
     let doc = export_document_in(
         &ExportSources::offline(config, pool.clone()),

@@ -123,7 +123,7 @@ fn refuse(json: bool, code: ErrorCode, message: &str) -> i32 {
 }
 
 /// `reeve auth login`: the token page issues an interactive token, the user pastes it here, and it is stored only after
-/// `GET /me` with that very token says it is a live interactive token (kb/ADR-0008 R3). REEVE_TOKEN plays no part.
+/// `GET /me` with that very token says it is a live interactive token (kb/ADR-0015 R7). REEVE_TOKEN plays no part.
 async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Result<i32> {
     let url = url
         .or_else(|| crate::config::env_nonempty("REEVE_URL"))
@@ -131,7 +131,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
         .ok_or_else(|| anyhow::anyhow!("no server url: pass --url https://reeve.example.com"))?;
     let url = url.trim_end_matches('/').to_string();
     if crate::config::env_nonempty("REEVE_TOKEN").is_some() {
-        // REEVE_TOKEN wins over the stored token (kb/ADR-0008 R3), so the login would otherwise look like it did nothing.
+        // REEVE_TOKEN wins over the stored token (kb/ADR-0015 R7), so the login would otherwise look like it did nothing.
         eprintln!(
             "note: REEVE_TOKEN is set and takes precedence over the token stored here; unset it to use this login"
         );
