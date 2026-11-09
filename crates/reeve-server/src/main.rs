@@ -163,8 +163,8 @@ async fn main() -> anyhow::Result<()> {
                 let flag = if r.allowed { "" } else { "not allowed" };
                 text.push_str(&format!(
                     "{kind}\t{}\t{}\t{flag}\n",
-                    r.value.escape_debug(),
-                    source.escape_debug()
+                    escape_control(&r.value),
+                    escape_control(&source)
                 ));
             }
         }
@@ -247,4 +247,18 @@ async fn main() -> anyhow::Result<()> {
         Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
     }
     Ok(())
+}
+
+/// Escapes only control characters (a tab or newline in a hand-edited row must not break a line); every other
+/// character, quotes included, is left as is.
+fn escape_control(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
