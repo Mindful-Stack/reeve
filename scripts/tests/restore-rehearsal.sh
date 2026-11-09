@@ -49,6 +49,7 @@ expect_calls() {
 expect_output() { grep -q -- "$1" "$tmp/out" || { echo "output lacks '$1':" >&2; cat "$tmp/out" >&2; exit 1; }; }
 all=$'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
 exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
+exec -T server reeve-server export --help
 exec -T server reeve-server export --database reeve_rehearsal --at 2026-10-26T10:00:00Z
 exec -T postgres dropdb -U reeve reeve_rehearsal'
 
@@ -146,6 +147,7 @@ doc 2026-11-20T00:00:00Z ABC >"$tmp/export-output"
 run 0
 expect_calls $'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
 exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
+exec -T server reeve-server export --help
 exec -T server reeve-server export --database reeve_rehearsal --at 2026-11-09T08:30:15.123456+00:00
 exec -T postgres dropdb -U reeve reeve_rehearsal'
 
@@ -160,5 +162,22 @@ run 2
 expect_calls ""
 expect_output "exactly one exported_at"
 doc 2026-10-26T10:00:00Z ABC >"$tmp/live.json"
+
+# 17. a server image from before urgent marks has no `export --at` (and computes no urgency): the export runs without it
+doc 2026-10-26T10:05:00Z ABC >"$tmp/export-output"
+run 0 FAKE_NO_AT=1
+expect_calls $'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
+exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
+exec -T server reeve-server export --help
+exec -T server reeve-server export --database reeve_rehearsal
+exec -T postgres dropdb -U reeve reeve_rehearsal'
+
+# 18. the probe itself fails: 2, no export, the scratch database dropped
+run 2 FAKE_HELP=1
+expect_calls $'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
+exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
+exec -T server reeve-server export --help
+exec -T postgres dropdb -U reeve reeve_rehearsal'
+expect_output "export --help"
 
 echo "restore rehearsal test ok"

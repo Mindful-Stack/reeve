@@ -256,7 +256,7 @@ The restore source is a `pg_dump` archive of the planner's database. It holds ev
 
 ### Releases and rollback
 
-Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost.
+Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 
 ### Back up
 
@@ -294,7 +294,9 @@ Anything written after the dump is lost; the restored activity log's last entry 
 
        restored=$(mktemp)    # a fresh file, mode 0600: the export holds every user's email
        at=$(sed -n 's/^  "exported_at": "\(.*\)",$/\1/p' reeve-<stamp>.json)    # urgency is computed at exported_at
-       docker compose run --rm --no-deps -T server export --at "$at" > "$restored"
+       at_arg=(--at "$at")    # an image from before urgent marks has no --at (and computes no urgency): omit it
+       docker compose run --rm --no-deps -T server export --help | grep -q -- '--at ' || at_arg=()
+       docker compose run --rm --no-deps -T server export "${at_arg[@]}" > "$restored"
        diff <(grep -v '^  "exported_at": ' reeve-<stamp>.json) <(grep -v '^  "exported_at": ' "$restored") && echo restored data matches
        rm -f "$restored"
 
@@ -310,7 +312,7 @@ Without compose (a PostgreSQL 16 client; the password in `~/.pgpass`, and a `<da
 Before cut-over, the operator and then a second named person each run this once on the real host. It restores into a scratch database beside the live one and never touches `reeve`.
 
 1. Stop the scheduled decision check, which writes every ten minutes and would otherwise land between the dump and the export: `sudo systemctl stop reeve-decision-check.timer` (and wait while `systemctl is-active reeve-decision-check.service` says `activating`: a run is under way; `inactive` or `failed` means none is). At a quiet moment, take a backup (`scripts/backup.sh <directory>`), then start the timer again: `sudo systemctl start reeve-decision-check.timer`.
-2. Run `scripts/restore-rehearsal.sh <directory>/reeve-<stamp>.dump <directory>/reeve-<stamp>.json` from the repository directory holding `docker-compose.yml`. It creates `reeve_rehearsal` (it refuses when that database exists, and refuses the name `reeve`; `REEVE_REHEARSAL_DB` picks another name), restores the dump into it, exports it offline, compares it with the backup's export apart from `exported_at`, and drops the scratch database on exit, also after a failure. The offline export runs with `--at` set to the backup export's `exported_at`: urgency is computed at `exported_at` (an urgent mark is active for one cycle after it was set), so the restored document is computed at the same instant and a mark that expired since the backup does not show as a difference. Exit status 0: the documents match and the scratch database is gone. 1: they differ, and the diff is printed; an entry written between the dump and the export is the only acceptable difference, so take the backup again at a quieter moment. 2: refused, or a step failed, the final drop included (the message says which; drop `reeve_rehearsal` by hand if it says so).
+2. Run `scripts/restore-rehearsal.sh <directory>/reeve-<stamp>.dump <directory>/reeve-<stamp>.json` from the repository directory holding `docker-compose.yml`. It creates `reeve_rehearsal` (it refuses when that database exists, and refuses the name `reeve`; `REEVE_REHEARSAL_DB` picks another name), restores the dump into it, exports it offline, compares it with the backup's export apart from `exported_at`, and drops the scratch database on exit, also after a failure. The offline export runs with `--at` set to the backup export's `exported_at`: urgency is computed at `exported_at` (an urgent mark is active for one cycle after it was set), so the restored document is computed at the same instant and a mark that expired since the backup does not show as a difference. A server image from before urgent marks has no `--at`: the script reads `export --help` first and leaves `--at` out when it is not listed (that image computes no urgency). Exit status 0: the documents match and the scratch database is gone. 1: they differ, and the diff is printed; an entry written between the dump and the export is the only acceptable difference, so take the backup again at a quieter moment. 2: refused, or a step failed, the final drop included (the message says which; drop `reeve_rehearsal` by hand if it says so).
 3. Record the date, the dump's file name and who ran it in the team's runbook log.
 
 By hand, the script runs:

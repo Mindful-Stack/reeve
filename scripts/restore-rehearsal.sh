@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scripts/restore-rehearsal.sh — rehearse a restore without touching the live database (deploy/README.md, "Rehearse
 # the restore"): restore a dump into a scratch database, export it at the live export's exported_at (urgency is computed
-# at exported_at), and compare with the export taken with the dump, apart from exported_at.
+# at exported_at), and compare with the export taken with the dump, apart from exported_at. A server image from before
+# urgent marks has no `export --at` (and computes no urgency): the script probes `export --help` and omits it then.
 #
 #   scripts/restore-rehearsal.sh <dump-file> <live-export.json>
 #       the reference compose stack; run from the directory holding docker-compose.yml.
@@ -71,7 +72,11 @@ at=$(sed -n 's/^  "exported_at": "\([^"]*\)",\{0,1\}$/\1/p' "$live")
 created=1
 "${compose[@]}" exec -T postgres pg_restore -U "$user" -d "$db" --no-owner --exit-on-error <"$dump" ||
 	fail "pg_restore into $db failed"
-"${compose[@]}" exec -T server reeve-server export --database "$db" --at "$at" >"$restored" ||
+# Captured whole before matching: grep -q on a pipe could close it early and fail the probe under pipefail.
+help=$("${compose[@]}" exec -T server reeve-server export --help) || fail "reeve-server export --help failed"
+at_arg=()
+if grep -Eq -- '(^|[[:space:]])--at([[:space:]=]|$)' <<<"$help"; then at_arg=(--at "$at"); fi
+"${compose[@]}" exec -T server reeve-server export --database "$db" "${at_arg[@]}" >"$restored" ||
 	fail "the offline export of $db failed"
 
 strip "$restored" "the restored export" "$scratch/restored.stripped"
