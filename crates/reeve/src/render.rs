@@ -1004,6 +1004,10 @@ mod tests {
             }),
             "blocked by ● ABC-4"
         );
+        assert_eq!(
+            reason(&Reason::Untriaged),
+            "untriaged: no epic yet; triage places it"
+        );
     }
 
     #[test]

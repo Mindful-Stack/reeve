@@ -26,6 +26,7 @@ function sw(key: string, over: Partial<Story> = {}, reasons: Reason[] = []): Sto
 describe('reason labels', () => {
 	it('renders untriaged, a proposed decision with its title and a blocker with its key', () => {
 		expect(shortLabel({ reason: 'untriaged' })).toBe('untriaged');
+		expect(fullLabel({ reason: 'untriaged' })).toBe('untriaged: no epic yet; triage places it');
 
 		const proposed: Reason = { reason: 'decision_proposed_pr_open', decision_id: 7, title: 'Use Postgres' };
 		expect(shortLabel(proposed)).toBe('decision: proposed, PR open');
