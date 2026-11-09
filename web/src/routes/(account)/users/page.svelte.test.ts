@@ -3,6 +3,8 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const fail = vi.hoisted(() => ({ next: false }));
+const liveFns = vi.hoisted(() => [] as (() => unknown)[]);
+vi.mock('#lib/events.svelte.ts', () => ({ onLive: (fn: () => unknown) => void liveFns.push(fn) }));
 const calls: { method: string; path: string; init: unknown }[] = [];
 const user = (email: string, role: string, disabled = false) => ({ email, display_name: '', role, disabled });
 const entry = (value: string, source: string) => ({
@@ -62,6 +64,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	calls.length = 0;
+	liveFns.length = 0;
 	fail.next = false;
 	me.setRole('admin');
 	data.users = [...baseUsers];
@@ -178,5 +181,35 @@ describe('Users page', () => {
 		fail.next = true;
 		click('ada@example.com', 'Make admin');
 		await vi.waitFor(() => expect(document.body.textContent).toContain('boom'));
+	});
+
+	it('offers only Enable on a disabled configured admin, and none on an active one', async () => {
+		data.users.push(user('boss@example.com', 'admin', true), user('chief@example.com', 'admin'));
+		data.access.admins.push(entry('boss@example.com', 'config'), entry('chief@example.com', 'config'));
+		await open();
+		expect(buttons('boss@example.com')).toEqual(['Enable']);
+		expect(buttons('chief@example.com')).toEqual([]);
+	});
+
+	it('reloads both lists on a live change', async () => {
+		await open();
+		calls.length = 0;
+		await liveFns[0]();
+		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
+	});
+
+	it('shows Admins only. with no actions after a demotion, and loads fresh after a re-promotion', async () => {
+		await open();
+		me.setRole('member');
+		flushSync();
+		expect(document.body.textContent).toContain('Admins only.');
+		expect(document.querySelectorAll('button')).toHaveLength(0);
+		await liveFns[0]();
+		expect(calls.filter((c) => c.method === 'GET').length).toBe(2); // the initial load only
+		calls.length = 0;
+		me.setRole('admin');
+		flushSync();
+		await vi.waitFor(() => expect(document.querySelector('ul.rows li')).not.toBeNull());
+		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
 	});
 });

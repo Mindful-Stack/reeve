@@ -2,6 +2,8 @@
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const liveFns = vi.hoisted(() => [] as (() => unknown)[]);
+vi.mock('#lib/events.svelte.ts', () => ({ onLive: (fn: () => unknown) => void liveFns.push(fn) }));
 const state = vi.hoisted(() => ({
 	role: 'admin',
 	email: 'dan@example.com',
@@ -41,10 +43,20 @@ vi.mock('#lib/api/client.ts', () => {
 		Refused: class extends Error {}
 	};
 });
-vi.mock('#lib/me.svelte.ts', () => ({
-	isAdmin: () => state.role === 'admin',
-	session: { get me() { return { email: state.email, role: state.role }; } }
-}));
+vi.mock('#lib/me.svelte.ts', async () => {
+	const { SvelteMap } = await import('svelte/reactivity');
+	// Reactive, so a role change while the page is open re-runs it.
+	const role = new SvelteMap<string, string>([['role', 'admin']]);
+	return {
+		setRole: (r: string) => {
+			state.role = r;
+			role.set('role', r);
+		},
+		isAdmin: () => role.get('role') === 'admin',
+		session: { get me() { return { email: state.email, role: role.get('role') }; } }
+	};
+});
+const me = (await import('#lib/me.svelte.ts')) as unknown as { setRole: (r: string) => void };
 const { default: Page } = await import('./+page.svelte');
 
 let app: ReturnType<typeof mount> | null = null;
@@ -52,7 +64,8 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	calls.length = 0;
-	state.role = 'admin';
+	me.setRole('admin');
+	liveFns.length = 0;
 	state.email = 'dan@example.com';
 	state.read = null;
 	state.fail = null;
@@ -77,10 +90,11 @@ const fill = (form: HTMLFormElement, selector: string, value: string) => {
 };
 const formOf = (label: string) => document.querySelector(`form[aria-label="${label}"]`) as HTMLFormElement;
 const write = () => calls.filter((c) => c.method !== 'GET').at(-1);
+const isAdminNow = () => state.role === 'admin';
 async function open() {
 	app = mount(Page, { target: document.body });
 	// wait for the loads to settle rather than counting microtask ticks
-	if (state.role === 'admin') await vi.waitFor(() => expect(document.querySelector('section li')).not.toBeNull());
+	if (isAdminNow()) await vi.waitFor(() => expect(document.querySelector('section li')).not.toBeNull());
 	flushSync();
 }
 /** The row in one section: `example.com` also appears inside the guest row's "added by dan@example.com". */
@@ -330,9 +344,42 @@ describe('Access page', () => {
 	});
 
 	it('shows members the admins-only notice and asks the server nothing', async () => {
-		state.role = 'member';
+		me.setRole('member');
 		await open();
 		expect(document.body.textContent).toContain('Admins only.');
 		expect(calls).toHaveLength(0);
+	});
+
+	it('reloads both lists on a live change', async () => {
+		await open();
+		calls.length = 0;
+		await liveFns[0]();
+		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
+	});
+
+	it('shows Admins only. with no actions after a demotion, and loads fresh after a re-promotion', async () => {
+		await open();
+		me.setRole('member');
+		flushSync();
+		expect(document.body.textContent).toContain('Admins only.');
+		expect(document.querySelectorAll('button')).toHaveLength(0);
+		calls.length = 0;
+		await liveFns[0]();
+		expect(calls).toHaveLength(0);
+		me.setRole('admin');
+		flushSync();
+		await vi.waitFor(() => expect(document.querySelector('section li')).not.toBeNull());
+		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
+	});
+
+	it('loads without a remount when a member is promoted while on the page', async () => {
+		me.setRole('member');
+		app = mount(Page, { target: document.body });
+		flushSync();
+		expect(calls).toHaveLength(0);
+		me.setRole('admin');
+		flushSync();
+		await vi.waitFor(() => expect(document.querySelector('section li')).not.toBeNull());
+		expect(rowOf('Guests', 'guest@other.org')).toBeTruthy();
 	});
 });

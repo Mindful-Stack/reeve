@@ -6,6 +6,7 @@
 	import { tick } from 'svelte';
 	import { errorMessage } from '#lib/format.ts';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
+	import { onLive } from '#lib/events.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
@@ -64,13 +65,22 @@
 		}
 	}
 
-	// Loads once the viewer is admin, including after a promotion while the page is open.
+	// Loads once the viewer is admin, including after a promotion while the page is open; a demotion
+	// forgets the lists so a re-promotion loads fresh ones. Live changes reload, so a stale page
+	// cannot act on an entry another admin has just removed.
 	let loaded = false;
 	$effect(() => {
-		if (isAdmin() && !loaded) {
+		if (!isAdmin()) {
+			loaded = false;
+			access = null;
+			users = [];
+		} else if (!loaded) {
 			loaded = true;
 			reload();
 		}
+	});
+	onLive(() => {
+		if (isAdmin()) return reload();
 	});
 
 	/** Runs a write and shows the result. True when the write succeeded, even if the follow-up reload failed. */

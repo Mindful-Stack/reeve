@@ -6,6 +6,7 @@
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
+	import { onLive } from '#lib/events.svelte.ts';
 
 	let users = $state<User[] | null>(null);
 	let access = $state<Access | null>(null);
@@ -23,13 +24,21 @@
 	}
 
 	// Only admins ask; the server refuses anyone else regardless. Loads once the viewer is
-	// admin, including after a promotion while the page is open.
+	// admin, including after a promotion while the page is open; a demotion forgets the lists so a
+	// re-promotion loads fresh ones. Live changes reload, so a stale row cannot offer a click that
+	// would act on someone another admin has just changed.
 	let loaded = false;
 	$effect(() => {
-		if (isAdmin() && !loaded) {
+		if (!isAdmin()) {
+			loaded = false;
+			users = access = null;
+		} else if (!loaded) {
 			loaded = true;
 			reload();
 		}
+	});
+	onLive(() => {
+		if (isAdmin()) return reload();
 	});
 
 	const floorAdmin = (email: string) => access?.admins.some((r) => r.source === 'config' && r.value === email) ?? false;
@@ -99,6 +108,9 @@
 							<span class="muted">you</span>
 						{:else if floorAdmin(u.email)}
 							<span class="muted">admin (reeve.toml)</span>
+							{#if u.disabled}
+								<button type="button" disabled={busy} aria-describedby="usr-{u.email}" onclick={() => enable(u)}>Enable</button>
+							{/if}
 						{:else if access && allowedBy(access, u.email) === null}
 							<!-- Make admin would silently re-allow them and the server refuses Enable; Disable still revokes their tokens. -->
 							<span class="muted">not allowed (<a href="/access">manage on Access</a>)</span>
