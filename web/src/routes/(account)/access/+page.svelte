@@ -2,7 +2,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { Access, AccessEntry, User } from '#lib/api/types.ts';
 	import { focusIsFree } from '#lib/focus.ts';
-	import { locksOut, removalNote, type Removal } from '#lib/access.ts';
+	import { locksOut, norm, removalNote, type Removal } from '#lib/access.ts';
 	import { tick } from 'svelte';
 	import { errorMessage } from '#lib/format.ts';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
@@ -232,7 +232,7 @@
 						{:else}
 							<span class="muted">{added(r)}{r.also_in_config ? ' · also in reeve.toml' : ''}</span>
 							{#if !r.allowed}<span class="muted">not allowed: grants nothing until their email is allowed again</span>{/if}
-							{#if r.value !== me}
+							{#if r.value !== norm(me)}
 								{@const opener = `Admins|${r.value}`}
 								<button
 									type="button"

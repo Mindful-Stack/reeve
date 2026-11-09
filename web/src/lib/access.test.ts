@@ -39,6 +39,12 @@ describe('mixed case, whitespace and config duplicates', () => {
 		expect(allowedBy(access, '  PAT@Partner.ORG ')).toBe('pat@partner.org');
 		expect(allowedBy(access, 'Kim@PARTNER.org')).toBe('@partner.org');
 		expect(allowedBy(access, 'no-at-sign')).toBeNull();
+		expect(allowedBy(access, 'partner.org')).toBeNull();
+	});
+	it('lowercases ASCII only, so a Kelvin sign is not a k', () => {
+		const a: Access = { domains: [], emails: [row('kim@x.org', 'database')], admins: [] };
+		expect(allowedBy(a, 'Kim@x.org')).toBe('kim@x.org');
+		expect(allowedBy(a, '\u212Aim@x.org')).toBeNull();
 	});
 	it('words a database duplicate of a config entry as still allowed through it', () => {
 		const dup: Access = { ...access, domains: [row('partner.org', 'config'), row('partner.org', 'database')] };

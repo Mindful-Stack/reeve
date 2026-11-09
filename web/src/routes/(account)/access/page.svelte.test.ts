@@ -8,7 +8,9 @@ const state = vi.hoisted(() => ({
 	/** Replaces the data a read returns. */
 	read: null as unknown,
 	/** Makes the next write throw this. */
-	fail: null as Error | null
+	fail: null as Error | null,
+	/** Makes the users read throw. */
+	failUsers: null as Error | null
 }));
 const calls: { method: string; path: string; init: unknown }[] = [];
 const access = {
@@ -22,7 +24,10 @@ const access = {
 vi.mock('#lib/api/client.ts', () => {
 	const respond = (method: string) => async (path: string, init: unknown) => {
 		calls.push({ method, path, init });
-		if (path === '/api/v1/users') return [];
+		if (path === '/api/v1/users') {
+			if (state.failUsers) throw state.failUsers;
+			return [];
+		}
 		if (method === 'GET') return state.read ?? access;
 		if (state.fail) throw state.fail;
 		// A write answers with a different list than a read, so a page that ignores it shows.
@@ -51,6 +56,7 @@ afterEach(() => {
 	state.email = 'dan@example.com';
 	state.read = null;
 	state.fail = null;
+	state.failUsers = null;
 	document.body.innerHTML = '';
 });
 const entry = (value: string, source: 'config' | 'database', extra = {}) => ({
@@ -63,6 +69,13 @@ const entry = (value: string, source: 'config' | 'database', extra = {}) => ({
 	...extra
 });
 const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement;
+const fill = (form: HTMLFormElement, selector: string, value: string) => {
+	const input = form.querySelector(selector) as HTMLInputElement;
+	input.value = value;
+	input.dispatchEvent(new Event('input'));
+	return input;
+};
+const formOf = (label: string) => document.querySelector(`form[aria-label="${label}"]`) as HTMLFormElement;
 const write = () => calls.filter((c) => c.method !== 'GET').at(-1);
 async function open() {
 	app = mount(Page, { target: document.body });
@@ -224,6 +237,96 @@ describe('Access page', () => {
 		form.requestSubmit();
 		await vi.waitFor(() => expect(document.querySelector('[role=alert]')?.textContent).toContain('invalid request: not a valid email address'));
 		expect(input.value).toBe('new@other.org');
+	});
+
+	it('clears the guest input and the also-admin box after a successful Allow, and refocuses the input', async () => {
+		await open();
+		const form = formOf('Allow a guest');
+		const input = fill(form, 'input[type=email]', 'boss@other.org');
+		const box = form.querySelector('input[type=checkbox]') as HTMLInputElement;
+		box.click();
+		expect(box.checked).toBe(true);
+		form.requestSubmit();
+		await vi.waitFor(() => expect(input.value).toBe(''));
+		expect(box.checked).toBe(false);
+		await vi.waitFor(() => expect(document.activeElement).toBe(input));
+	});
+
+	it('clears the domain input after a successful Allow and refocuses it', async () => {
+		await open();
+		const form = formOf('Allow a domain');
+		const input = fill(form, 'input', 'partner.org');
+		form.requestSubmit();
+		await vi.waitFor(() => expect(input.value).toBe(''));
+		await vi.waitFor(() => expect(document.activeElement).toBe(input));
+	});
+
+	it('clears the admin input after a successful Grant and refocuses it', async () => {
+		await open();
+		const form = formOf('Grant admin');
+		const input = fill(form, 'input[type=email]', 'boss@other.org');
+		form.requestSubmit();
+		await vi.waitFor(() => expect(input.value).toBe(''));
+		await vi.waitFor(() => expect(document.activeElement).toBe(input));
+	});
+
+	it('clears the input and says the list could not be reloaded when the write worked but the users read failed', async () => {
+		await open();
+		state.failUsers = new Error('network down');
+		const form = formOf('Allow a domain');
+		const input = fill(form, 'input', 'partner.org');
+		form.requestSubmit();
+		await vi.waitFor(() => expect(document.querySelector('[role=alert]')?.textContent).toContain('could not be reloaded'));
+		expect(input.value).toBe('');
+	});
+
+	it('moves focus to the section first input when Yes removes the row', async () => {
+		await open();
+		(rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		button('Yes, remove').click();
+		await vi.waitFor(() => expect(document.body.textContent).not.toContain('guest@other.org'));
+		await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector('section[aria-label="Guests"] input')));
+	});
+
+	it('returns focus to the opener after Escape', async () => {
+		await open();
+		const remove = rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement;
+		remove.click();
+		await tick();
+		document.querySelector('[role=alertdialog]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await vi.waitFor(() => expect(document.activeElement).toBe(remove));
+	});
+
+	it('does not steal focus the user moved elsewhere before Cancel', async () => {
+		await open();
+		const remove = rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement;
+		remove.click();
+		await tick();
+		const elsewhere = document.querySelector('section[aria-label="Domains"] input') as HTMLInputElement;
+		elsewhere.focus();
+		button('Cancel').click();
+		await tick();
+		await tick();
+		expect(document.querySelector('[role=alertdialog]')).toBeNull();
+		expect(document.activeElement).toBe(elsewhere);
+	});
+
+	it('points aria-describedby at the question text', async () => {
+		await open();
+		(rowOf('Guests', 'guest@other.org').querySelector('button') as HTMLButtonElement).click();
+		await tick();
+		const dlg = document.querySelector('[role=alertdialog]')!;
+		const target = document.getElementById(dlg.getAttribute('aria-describedby')!);
+		expect(target?.textContent).toContain('Remove guest@other.org?');
+	});
+
+	it('has no Revoke on my own row when the session email is mixed case', async () => {
+		state.email = 'Pat@Partner.org';
+		state.read = { domains: [entry('partner.org', 'database')], emails: [], admins: [entry('pat@partner.org', 'database'), entry('ana@partner.org', 'database')] };
+		await open();
+		expect(rowOf('Admins', 'pat@partner.org').querySelector('button')).toBeNull();
+		expect(rowOf('Admins', 'ana@partner.org').querySelector('button')?.textContent).toBe('Revoke');
 	});
 
 	it('shows members the admins-only notice and asks the server nothing', async () => {
