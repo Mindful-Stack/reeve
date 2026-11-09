@@ -133,6 +133,8 @@ async fn hand_inserted_values_must_be_normalised() {
         "INSERT INTO allowed_entries VALUES ('domain','Partner.ORG','x',now())",
         "INSERT INTO allowed_entries VALUES ('email',' g@other.org','x',now())",
         "INSERT INTO allowed_entries VALUES ('email','','x',now())",
+        "INSERT INTO allowed_entries VALUES ('email',E'\\tg@other.org','x',now())",
+        "INSERT INTO allowed_entries VALUES ('email',E'g@other.org\\n','x',now())",
         "INSERT INTO admin_grants VALUES ('Eve@gone.org','x',now())",
     ] {
         let err = sqlx::query(sql).execute(&pool).await.expect_err(sql);

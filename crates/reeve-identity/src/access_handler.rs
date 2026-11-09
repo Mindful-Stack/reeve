@@ -138,7 +138,11 @@ pub async fn remove_entry(
     if !after.is_allowed(&caller.email) || after.role_for(&caller.email) != Role::Admin {
         return Err(AuthError::Validation(SELF_LOCKOUT.into()));
     }
-    store.delete_entry(&mut tx, kind, &value).await?;
+    // Under the lock the row is there (the policy above says so), so false means the stored value and the policy
+    // disagree. Fail closed: roll back rather than log a removal that did not happen.
+    if !store.delete_entry(&mut tx, kind, &value).await? {
+        return Err(AuthError::Db(sqlx::Error::RowNotFound));
+    }
     let mut events = vec![event(
         caller,
         now,
@@ -150,7 +154,10 @@ pub async fn remove_entry(
     // before the removal was orphaned some other way and stays until an admin revokes it.
     for g in policy.admin_grants() {
         if policy.is_allowed(&g.value) && !after.is_allowed(&g.value) {
-            store.delete_admin(&mut tx, &g.value).await?;
+            // As above: a missed delete rolls back instead of logging a revocation that did not happen.
+            if !store.delete_admin(&mut tx, &g.value).await? {
+                return Err(AuthError::Db(sqlx::Error::RowNotFound));
+            }
             events.push(event(
                 caller,
                 now,
@@ -240,7 +247,10 @@ pub async fn revoke_admin(
             AuthError::NotFound
         });
     }
-    store.delete_admin(&mut tx, &email).await?;
+    // The grant exists under the lock; false means it vanished, so fail closed and log nothing.
+    if !store.delete_admin(&mut tx, &email).await? {
+        return Err(AuthError::Db(sqlx::Error::RowNotFound));
+    }
     let e = event(caller, now, &email, "admin_revoked", serde_json::json!({}));
     finish(tx, store, activity, floor, vec![e]).await
 }

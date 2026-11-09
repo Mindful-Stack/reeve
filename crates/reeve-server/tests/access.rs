@@ -809,3 +809,72 @@ async fn path_values_with_plus_and_at_round_trip() {
     .await;
     assert_eq!(s, 200, "{b}");
 }
+
+#[tokio::test]
+async fn removing_an_email_while_its_domain_is_allowed_leaves_access_unchanged() {
+    let h = harness().await;
+    for (kind, value) in [("email", "ada@partner.org"), ("domain", "partner.org")] {
+        let (s, b) = access(
+            &h,
+            &h.admin_token,
+            "POST",
+            "/entries",
+            Some(json!({"kind":kind,"value":value})),
+        )
+        .await;
+        assert_eq!(s, 200, "{b}");
+    }
+    let ada = token_for(&h, "ada@partner.org", TokenKind::Interactive).await;
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "DELETE",
+        "/entries/email/ada@partner.org",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+    assert_eq!(
+        call(&h.app, Some(&ada), "GET", "/api/v1/me", None).await.0,
+        200,
+        "the domain still lets ada in"
+    );
+}
+
+#[tokio::test]
+async fn a_revoked_admin_keeps_member_access() {
+    let h = harness().await;
+    let ada = token_for(&h, "ada@example.com", TokenKind::Interactive).await;
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/admins",
+        Some(json!({"email":"ada@example.com"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+    assert_eq!(
+        call(&h.app, Some(&ada), "GET", "/api/v1/users", None)
+            .await
+            .0,
+        200
+    );
+    let (s, b) = access(
+        &h,
+        &h.admin_token,
+        "DELETE",
+        "/admins/ada@example.com",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+    assert_eq!(
+        call(&h.app, Some(&ada), "GET", "/api/v1/users", None)
+            .await
+            .0,
+        403
+    );
+    let (s, me) = call(&h.app, Some(&ada), "GET", "/api/v1/me", None).await;
+    assert_eq!((s, me["value"]["role"].as_str()), (200, Some("member")));
+}
