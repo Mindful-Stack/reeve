@@ -4,7 +4,7 @@
 	import { levelOfKind } from '#lib/glyphs.ts';
 	import { page } from '$app/state';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import type { ActivityEntry, EditItem, Epic, Initiative, RequiredDecision, Story, StoryWithReadiness, Finding, Comment } from '#lib/api/types.ts';
+	import type { ItemRef, ActivityEntry, EditItem, Epic, Initiative, RequiredDecision, Story, StoryWithReadiness, Finding, Comment } from '#lib/api/types.ts';
 	import Findings from '#lib/components/Findings.svelte';
 	import Comments from '#lib/components/Comments.svelte';
 	import { COLUMN_LABEL, fullLabel, storyStatus } from '#lib/board.ts';
@@ -18,6 +18,8 @@
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
+	import UrgentLine from '#lib/components/UrgentLine.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import StatusStrip from '#lib/ui/StatusStrip.svelte';
@@ -121,8 +123,36 @@
 	);
 	const menuItems = $derived<MenuItem[]>([
 		{ label: 'Edit brief', onselect: startEdit, disabled: editing },
-		...(epic?.discovery_complete ? [{ label: 'Clear discovery', onselect: () => void discovery(false), disabled: busy }] : [])
+		...(epic?.discovery_complete ? [{ label: 'Clear discovery', onselect: () => void discovery(false), disabled: busy }] : []),
+		{ label: 'Mark urgent…', onselect: openMark, disabled: busy },
+		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
 	]);
+
+	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
+	let marking = $state(false);
+	let markError = $state<string | null>(null);
+	/** The source's title, when the page has loaded it; otherwise the line shows its key and type only. */
+	const titleOf = (r: ItemRef): string | undefined => stories.find((s) => s.story.key === r.key)?.story.title;
+
+	function openMark() {
+		markError = null;
+		marking = true;
+	}
+
+	async function markUrgent(reason: string | null) {
+		const k = epic?.key;
+		if (!k) return;
+		if (await write(() => unwrap(api.POST('/api/v1/epics/{key}/urgent', { params: { path: { key: k } }, body: { reason } })))) marking = false;
+		else {
+			markError = notice;
+			notice = null;
+		}
+	}
+
+	async function clearUrgent() {
+		const k = epic?.key;
+		if (k) await write(() => unwrap(api.DELETE('/api/v1/epics/{key}/urgent', { params: { path: { key: k } } })));
+	}
 
 	let latest = 0;
 
@@ -470,6 +500,15 @@
 				<span>{stories.length} {stories.length === 1 ? 'story' : 'stories'}</span>
 				{#if ep.external_ref}<span title="External reference">from {ep.external_ref}</span>{/if}
 			</p>
+			<UrgentLine
+				itemKey={ep.key}
+				mark={ep.urgent_mark}
+				sources={ep.urgent_sources}
+				{titleOf}
+				{busy}
+				onremark={openMark}
+				onclear={() => void clearUrgent()}
+			/>
 			{#if editingDetails}
 				<form bind:this={detailsForm} class="require" aria-label="Epic details" onsubmit={saveDetails}>
 					<label>Title <input bind:value={details.title} required disabled={busy} /></label>
@@ -676,6 +715,19 @@
 				<button type="submit" class="primary" disabled={decisionBusy || !decision.title.trim() || !decision.decider.trim()}>Require decision</button>
 			</form>
 		</Dialog>
+	{/if}
+
+	{#if marking}
+		<MarkUrgentDialog
+			item={ep.key}
+			initial={ep.urgent_mark?.reason ?? null}
+			{busy}
+			error={markError}
+			onsubmit={markUrgent}
+			oncancel={() => {
+				if (!busy) marking = false;
+			}}
+		/>
 	{/if}
 
 	{#if creatingStory !== null}

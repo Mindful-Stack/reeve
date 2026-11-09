@@ -38,6 +38,8 @@ const net = vi.hoisted(() => {
 		ini,
 		epics: [] as Epic[],
 		patches: [] as Patched[],
+		urgentFail: false,
+		urgentWrites: [] as { method: string; path: string; body: unknown }[],
 		epicPosts: [] as { title: string; initiative: string | null; idempotency_key: string }[],
 		patchAnswer: null as null | { status: number; body: unknown },
 		gate: null as null | Promise<void>,
@@ -67,6 +69,13 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	const { decision } = await import('#lib/test/fixtures.ts');
 	const s = net;
 	installFetch(async ({ method, url, path, body }) => {
+		if ((method === 'POST' || method === 'DELETE') && path === '/api/v1/initiatives/ABC-1/urgent') {
+			s.urgentWrites.push({ method, path, body });
+			if (s.urgentFail) return failure('boom');
+			const mark = method === 'POST' ? { at: '2026-11-09T08:00:00Z', by: 'dan@example.com', reason: (body as { reason: string | null }).reason, expires_at: '2099-01-01T00:00:00Z', active: true, done: false } : null;
+			s.ini = { ...s.ini, urgent_mark: mark, urgent_sources: mark ? [{ key: 'ABC-1', item: 'initiative' }] : [] };
+			return s.ini;
+		}
 		if (method === 'GET' && path === '/api/v1/initiatives/ABC-1') return s.ini;
 		// An external reference: the server resolves it and answers with the canonical key.
 		if (method === 'GET' && path === '/api/v1/initiatives/JIRA-7') return s.ini;
@@ -131,6 +140,8 @@ afterEach(() => {
 	net.ini = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 	net.epics = [];
 	net.patches.length = 0;
+	net.urgentWrites.length = 0;
+	net.urgentFail = false;
 	net.epicPosts.length = 0;
 	net.otherReads = 0;
 	net.patchAnswer = null;
@@ -1087,5 +1098,129 @@ describe('initiative page: Add decision across a page change', () => {
 		expect(input('Title').value).toBe('Half typed');
 		expect(input('Title').disabled).toBe(false);
 		expect(closeBtn().disabled).toBe(false);
+	});
+});
+
+describe('initiative page: urgent mark', () => {
+	const mark = (over: Record<string, unknown> = {}) => ({ at: '2026-11-01T08:00:00Z', by: 'dan@example.com', reason: 'Customer down', expires_at: '2099-01-01T00:00:00Z', active: true, done: false, ...over });
+	const menu = async () => {
+		(document.body.querySelector('button[aria-label="Actions for ABC-1"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull();
+		});
+		return [...document.body.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+	};
+	const item = (items: HTMLButtonElement[], name: string) => items.find((b) => b.textContent?.trim() === name);
+
+	it('offers Mark urgent only while there is no mark, and Clear urgent mark with one', async () => {
+		await open();
+		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…']);
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		net.ini = { ...net.ini, urgent_mark: mark(), urgent_sources: [{ key: 'ABC-1', item: 'initiative' }] };
+		await open();
+		const names = (await menu()).map((b) => b.textContent?.trim());
+		expect(names).toContain('Mark urgent…');
+		expect(names).toContain('Clear urgent mark');
+	});
+
+	it('marks with the reason typed and shows the own line', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		const dialog = document.body.querySelector('dialog')!;
+		expect(dialog.querySelector('h2')!.textContent).toBe('Mark ABC-1 urgent');
+		const input = dialog.querySelector('input') as HTMLInputElement;
+		input.value = 'Launch blocked';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		(dialog.querySelector('form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain('marked by dan');
+		});
+		expect(net.urgentWrites).toEqual([{ method: 'POST', path: '/api/v1/initiatives/ABC-1/urgent', body: { reason: 'Launch blocked' } }]);
+		expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain("'Launch blocked'");
+	});
+
+	it('clears the own mark from the menu', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark(), urgent_sources: [{ key: 'ABC-1', item: 'initiative' }] };
+		await open();
+		item(await menu(), 'Clear urgent mark')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')).toBeNull();
+		});
+		expect(net.urgentWrites).toEqual([{ method: 'DELETE', path: '/api/v1/initiatives/ABC-1/urgent', body: null }]);
+	});
+
+	it('shows a derived source as a link with its title', async () => {
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic];
+		net.stories = [withReadiness({ key: 'ABC-9', title: 'Fix it', epic: 'ABC-5' })];
+		net.ini = { ...net.ini, urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] };
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain('via story ABC-9 Fix it');
+		});
+		const a = document.body.querySelector('[data-testid="urgent-line"] a') as HTMLAnchorElement;
+		expect(a.textContent).toBe('ABC-9');
+		expect(a.getAttribute('href')).toContain('story=ABC-9');
+		expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).not.toContain('marked by');
+	});
+
+	it('shows an expired own mark with Re-mark (prefilled) and Clear', async () => {
+		const expires = new Date(Date.now() - 3 * 86_400_000 - 3_600_000).toISOString();
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: expires }), urgent_sources: [] };
+		await open();
+		const line = document.body.querySelector('[data-testid="urgent-expired"]')!;
+		expect(line.textContent).toContain('Urgent mark expired 3 d ago');
+		(line.querySelector('button[aria-label="Re-mark ABC-1"]') as HTMLButtonElement).click();
+		flushSync();
+		expect((document.body.querySelector('dialog input') as HTMLInputElement).value).toBe('Customer down');
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => expect(net.urgentWrites).toHaveLength(1));
+		expect(net.urgentWrites[0]).toMatchObject({ method: 'POST', body: { reason: 'Customer down' } });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-expired"]')).toBeNull();
+		});
+	});
+
+	it('clears an expired mark with its Clear button', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		(document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => expect(net.urgentWrites).toEqual([{ method: 'DELETE', path: '/api/v1/initiatives/ABC-1/urgent', body: null }]));
+	});
+
+	it('keeps the dialog open and shows a failed write inside it', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		net.urgentFail = true;
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+	});
+
+	it('puts the Urgent chip on an epic card that is urgent', async () => {
+		net.epics = [
+			{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] } as Epic,
+			{ key: 'ABC-6', title: 'Quiet', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic
+		];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('Quiet');
+		});
+		const cards = [...document.body.querySelectorAll('li.epic-card')];
+		expect(cards.find((c) => c.textContent?.includes('Login'))!.querySelector('.urgent-chip')?.textContent).toBe('Urgent');
+		expect(cards.find((c) => c.textContent?.includes('Quiet'))!.querySelector('.urgent-chip')).toBeNull();
 	});
 });
