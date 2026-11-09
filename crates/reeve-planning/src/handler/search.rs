@@ -25,7 +25,8 @@ impl Handlers {
             .into_iter()
             .map(|r| {
                 let mut matched = vec![];
-                if key.as_ref() == Some(&r.key) {
+                let by_key = key.as_ref() == Some(&r.key);
+                if by_key {
                     matched.push("key".to_string());
                 }
                 if has(&r.title) {
@@ -40,12 +41,17 @@ impl Handlers {
                 if r.external_ref.as_deref().is_some_and(has) {
                     matched.push("external_ref".to_string());
                 }
+                let exact = by_key
+                    || r.external_ref
+                        .as_deref()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(q));
                 SearchHit {
                     key: r.key,
                     item: r.item,
                     kind: r.kind,
                     title: r.title,
                     matched,
+                    exact,
                 }
             })
             .collect())

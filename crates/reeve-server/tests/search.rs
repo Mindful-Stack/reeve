@@ -50,9 +50,9 @@ async fn search_finds_items_by_title_text_or_reference_newest_first() {
     assert_eq!(
         hits,
         json!([
-            {"key": epic, "item": "epic", "kind": null, "title": "Hosting on NorthCloud", "matched": ["title"]},
-            {"key": story, "item": "story", "kind": "bug", "title": "Move the database", "matched": ["description"]},
-            {"key": ini, "item": "initiative", "kind": null, "title": "Leave the old host", "matched": ["brief"]}
+            {"key": epic, "item": "epic", "kind": null, "title": "Hosting on NorthCloud", "matched": ["title"], "exact": false},
+            {"key": story, "item": "story", "kind": "bug", "title": "Move the database", "matched": ["description"], "exact": false},
+            {"key": ini, "item": "initiative", "kind": null, "title": "Leave the old host", "matched": ["brief"], "exact": false}
         ])
     );
     assert_eq!(
@@ -100,6 +100,13 @@ async fn search_puts_the_key_then_the_exact_reference_then_titles_first() {
         .unwrap();
     h.app = reeve_server::app(state.clone());
     h.state = state;
+    // the exact reference is the oldest, so only its tier can put it above the newer competitors
+    let exact_ref = post(
+        &h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key":"q","title":"Exact","horizon":"Now","external_ref":"JPD-30"}),
+    )
+    .await;
     let target = post(&h, "/api/v1/stories", story("t", "The target", "")).await;
     let n = target.strip_prefix("TST-").unwrap().to_string();
     // newer items whose text, title or reference mentions the number
@@ -121,10 +128,12 @@ async fn search_puts_the_key_then_the_exact_reference_then_titles_first() {
         json!({"idempotency_key":"p","title":"Partial","horizon":"Now","external_ref":"JPD-300"}),
     )
     .await;
-    let exact_ref = post(
+    let ref_in_title = post(&h, "/api/v1/stories", story("z", "Follows up JPD-30", "")).await;
+    // a newer item whose external reference is the earlier prefix's key
+    let old_ref = post(
         &h,
-        "/api/v1/initiatives",
-        json!({"idempotency_key":"q","title":"Exact","horizon":"Now","external_ref":"JPD-30"}),
+        "/api/v1/epics",
+        json!({"idempotency_key":"r","title":"Points at OLD-1","external_ref":"OLD-1"}),
     )
     .await;
 
@@ -154,19 +163,44 @@ async fn search_puts_the_key_then_the_exact_reference_then_titles_first() {
         let hits = search(q.clone()).await;
         assert_eq!(hits[0]["key"], target.as_str(), "{q}: {hits}");
         assert_eq!(hits[0]["matched"], json!(["key"]), "{q}");
+        assert_eq!(hits[0]["exact"], true, "{q}");
+        assert!(
+            hits.as_array().unwrap()[1..]
+                .iter()
+                .all(|x| x["exact"] == false),
+            "{q}: {hits}"
+        );
     }
     // the key first, then title hits, then text hits
     assert_eq!(
         keys(search(n.clone()).await),
         [target.clone(), in_title.clone(), in_text.clone()],
     );
-    // a key issued under an earlier prefix, in any case
-    assert_eq!(search("old-1".into()).await[0]["key"], "OLD-1");
-    assert_eq!(search("OLD-1".into()).await[0]["matched"], json!(["key"]));
-    // an exact external reference before a partial one, whatever their age
+    // a key issued under an earlier prefix, in any case, above a newer item whose reference is that key
     assert_eq!(
-        keys(search("jpd-30".into()).await),
-        [exact_ref.clone(), partial_ref.clone()]
+        keys(search("old-1".into()).await),
+        ["OLD-1", old_ref.as_str()]
+    );
+    let hits = search("OLD-1".into()).await;
+    assert_eq!(hits[0]["matched"], json!(["key"]));
+    assert_eq!(hits[1]["matched"], json!(["title", "external_ref"]));
+    assert_eq!(
+        (hits[0]["exact"].clone(), hits[1]["exact"].clone()),
+        (json!(true), json!(true))
+    );
+    // an exact external reference first, whatever its age; then titles; then a partial reference
+    let hits = search("jpd-30".into()).await;
+    assert_eq!(
+        keys(hits.clone()),
+        [exact_ref.clone(), ref_in_title.clone(), partial_ref.clone()]
+    );
+    assert_eq!(
+        hits.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["exact"].clone())
+            .collect::<Vec<_>>(),
+        [json!(true), json!(false), json!(false)]
     );
     // a key that names no item finds only text
     assert_eq!(keys(search("TST-999".into()).await), Vec::<String>::new());

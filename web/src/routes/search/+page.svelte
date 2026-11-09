@@ -16,14 +16,13 @@
 	let latest = 0;
 	let attempt = $state(0);
 
-	// The item the query names by key (`12`, `ABC-12`) heads the page, above the levels; each level keeps the
-	// server's order (exact reference, then titles, then the rest).
+	// The items the query names exactly (by key, `12` or `ABC-12`, or by a whole external reference) head the page,
+	// above the levels; every section keeps the server's order (titles, then the rest).
 	const groups = $derived.by(() => {
 		const all = hits ?? [];
-		const byKey = all.filter((h) => h.matched.includes('key'));
-		const rest = all.filter((h) => !h.matched.includes('key'));
+		const rest = all.filter((h) => !h.exact);
 		return [
-			{ label: 'Key', hits: byKey },
+			{ label: 'Exact match', hits: all.filter((h) => h.exact) },
 			...(
 				[
 					['initiative', 'Initiatives'],

@@ -13,11 +13,13 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SearchQuery {
-    /// Text to find in titles, briefs, descriptions and external references; case-insensitive and literal.
+    /// Text to find in titles, briefs, descriptions and external references, case-insensitive and literal; or a key
+    /// (`12` and `#12` under the current prefix, `abc-12` in any case).
     pub q: String,
 }
 
-/// Initiatives, epics and stories that contain the text, newest first (at most 50).
+/// Initiatives, epics and stories that contain the text (at most 50), in tiers: the item whose key the query names,
+/// an exact external reference, title matches, the rest; newest first within a tier. Both exact tiers are `exact`.
 #[utoipa::path(get, path = "/search", params(SearchQuery), responses((status = 200, body = Response<Vec<SearchHit>>)))]
 async fn search(
     State(s): State<AppState>,

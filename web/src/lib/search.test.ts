@@ -6,7 +6,8 @@ const hit = (item: 'initiative' | 'epic' | 'story', kind: 'story' | 'bug' | 'cho
 	item,
 	kind,
 	title: 't',
-	matched: ['title']
+	matched: ['title'],
+	exact: false
 });
 
 describe('search hits', () => {

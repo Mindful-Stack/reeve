@@ -176,4 +176,7 @@ pub struct SearchHit {
     pub kind: Option<Kind>,
     pub title: String,
     pub matched: Vec<String>,
+    /// The query is this item's key or, ignoring case, its whole external reference: the item it names, which a
+    /// client shows above the rest.
+    pub exact: bool,
 }
