@@ -305,7 +305,8 @@ impl Handlers {
         Ok(())
     }
 
-    /// Re-marks exactly the listed items, each keeping its reason; an item without a mark is skipped.
+    /// Re-marks exactly the listed items, each keeping the reason its row holds when the renewal writes (never one
+    /// read earlier, so a reason set meanwhile survives); an item without a mark is skipped.
     pub async fn war_room_renew(
         &self,
         c: &Ctx,
@@ -313,25 +314,14 @@ impl Handlers {
     ) -> Result<(), HandlerError> {
         interactive(c)?;
         let (mut tx, items) = self.bulk_begin(items).await?;
-        let reasons: HashMap<Key, Option<String>> = self
-            .repo
-            .urgent_marks_in(&mut tx)
-            .await?
-            .into_iter()
-            .map(|m| (m.key, m.mark.reason))
-            .collect();
         for (t, k) in &items {
-            let Some(reason) = reasons.get(k) else {
-                continue;
-            };
-            let mark = UrgentMark {
-                at: c.now,
-                by: c.actor.clone(),
-                reason: reason.clone(),
-            };
-            // Only a row still marked: a clear that committed since the read is not undone.
-            if self.repo.renew_urgent_mark(&mut tx, *t, k, &mark).await? {
-                self.record_marked(&mut tx, c, *t, k, reason).await?;
+            // Only a row still marked: a clear that committed meanwhile is not undone.
+            if let Some(reason) = self
+                .repo
+                .renew_urgent_mark(&mut tx, *t, k, c.now, &c.actor)
+                .await?
+            {
+                self.record_marked(&mut tx, c, *t, k, &reason).await?;
             }
         }
         tx.commit().await?;

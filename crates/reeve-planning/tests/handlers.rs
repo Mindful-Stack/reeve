@@ -5655,24 +5655,74 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
     );
     h.war_room_clear(&dan, &twice).await.unwrap();
     assert_eq!(count(&sink, "urgent_cleared", &k.to_string()), 1);
-    // the repo variant on an unmarked row: false, and no change
-    let mark = UrgentMark {
-        at: dan.now,
-        by: "dan@example.com".into(),
-        reason: None,
-    };
+    // the repo variant on an unmarked row: None, and no change
     let mut tx = pool.begin().await.unwrap();
-    assert!(
-        !h.repo
-            .renew_urgent_mark(&mut tx, ItemType::Initiative, &k, &mark)
+    assert_eq!(
+        h.repo
+            .renew_urgent_mark(
+                &mut tx,
+                ItemType::Initiative,
+                &k,
+                dan.now,
+                "dan@example.com"
+            )
             .await
-            .unwrap()
+            .unwrap(),
+        None
     );
     assert!(h.repo.urgent_marks_in(&mut tx).await.unwrap().is_empty());
     tx.commit().await.unwrap();
     // and a renewal of an unmarked item through the handler writes nothing
     h.war_room_renew(&dan, &twice[..1]).await.unwrap();
     assert_eq!(count(&sink, "urgent_marked", &k.to_string()), 2);
+}
+
+/// A renewal keeps the reason the row holds when it writes, never one it read earlier: a reason committed while the
+/// renewal waits on the row survives it, and the `urgent_marked` entry carries that reason.
+#[tokio::test]
+async fn renew_keeps_a_reason_it_never_read() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("old".into()))
+        .await
+        .unwrap();
+    // Another writer holds the row with a new reason while the renewal starts.
+    let mut w = pool.begin().await.unwrap();
+    sqlx::query("UPDATE initiatives SET urgent_reason = 'fresh' WHERE key = $1")
+        .bind(k.to_string())
+        .execute(&mut *w)
+        .await
+        .unwrap();
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(20),
+        ..dan.clone()
+    };
+    let renew = tokio::spawn({
+        let (h, k, later) = (h.clone(), k.clone(), later.clone());
+        async move { h.war_room_renew(&later, &[(ItemType::Initiative, k)]).await }
+    });
+    wait_until_blocked(&pool).await;
+    w.commit().await.unwrap();
+    renew.await.unwrap().unwrap();
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room[0].state.mark.at, later.now, "renewed");
+    assert_eq!(room[0].state.mark.reason.as_deref(), Some("fresh"));
+    let entries: Vec<serde_json::Value> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "urgent_marked" && a.entity_key == k.to_string())
+        .map(|a| a.payload.clone())
+        .collect();
+    assert_eq!(entries.len(), 2, "mark + renewal");
+    assert_eq!(entries[1]["reason"], "fresh");
 }
 
 fn source_keys(v: &[reeve_protocol::ItemRefDto]) -> Vec<String> {
