@@ -646,3 +646,47 @@ test("a member's open tab gains and loses the Access link as an admin grants and
 	expect(navigations).toBe(loaded);
 	await member.close();
 });
+
+test('report a bug from the board: it lands in triage, and a similar story can be checked without losing the draft', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const title = `Smoke export PDF is blank ${suffix}`;
+	const existing = await chore(page, title); // an existing item to be found as similar (under SMOKE_EPIC)
+	await page.goto('/board');
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
+	const hit = dialog.locator(`[data-hit="${existing.key}"]`);
+	await expect(hit).toContainText(title); // "Already reported?" found it
+	await hit.click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('complementary')).toContainText(title); // the drawer is usable, not inert
+	await page.getByRole('button', { name: `Close story ${existing.key}` }).click(); // the drawer covers the header's right edge
+	await page.getByRole('button', { name: 'Resume report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
+	await dialog.getByLabel("Something's broken").check();
+	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
+	const notice = page.getByRole('status').filter({ hasText: 'Filed bug' });
+	await expect(notice).toContainText('waiting for the team to place it');
+	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
+	await page.goto('/board?untriaged=1');
+	await page.getByText(/^Not ready · \d+$/).click();
+	await expect(page.getByTestId(`card-${key}`)).toContainText('untriaged');
+});
+
+for (const [width, height, phone] of [[320, 640, true], [1280, 800, false]] as const) {
+	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {
+		await page.setViewportSize({ width, height });
+		await page.goto('/board');
+		const report = page.getByRole('button', { name: 'Report', exact: true });
+		await expect(report).toBeVisible();
+		const search = page.getByRole('searchbox', { name: 'Search' });
+		await expect(search).toBeVisible();
+		const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+		const searchWidth = (await search.boundingBox())!.width;
+		expect(m.scroll).toBeLessThanOrEqual(m.client);
+		expect(searchWidth).toBeGreaterThanOrEqual(80);
+		if (!phone) await expect(report).toContainText('Report');
+		await report.click();
+		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
+	});
+}
