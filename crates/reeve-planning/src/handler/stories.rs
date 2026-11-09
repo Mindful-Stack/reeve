@@ -1,6 +1,8 @@
+use super::epics::epic_dto_of;
 use super::import::{Claim, with_ref};
+use super::urgent::urgent_fields;
 use super::*;
-use crate::domain::{delivery::*, items::*, readiness::compute_readiness};
+use crate::domain::{delivery::*, items::*, readiness::compute_readiness, urgency::Urgency};
 use crate::ports::RepoError;
 use reeve_protocol::{
     DeliveryState, DoneFilter, GoalContextDto, GoalRefDto, ItemType, Key, Kind, Readiness,
@@ -265,9 +267,12 @@ impl Handlers {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let out = self
-            .list_stories_in(&mut tx, &f, ready_only, done_since)
-            .await;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            self.list_stories_in(&mut tx, &f, ready_only, done_since, &urg)
+                .await
+        }
+        .await;
         end_read(tx, out).await
     }
 
@@ -277,6 +282,7 @@ impl Handlers {
         f: &StoryFilter,
         ready_only: bool,
         done_since: Option<DateTime<Utc>>,
+        urg: &Urgency,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
         let stories = self.repo.list_stories(tx, f, done_since).await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
@@ -296,7 +302,7 @@ impl Handlers {
             }
         }
         let mut out: Vec<StoryWithReadiness> = self
-            .story_dtos_in(tx, &kept)
+            .story_dtos_in(tx, &kept, urg)
             .await?
             .into_iter()
             .zip(readiness)
@@ -616,30 +622,34 @@ impl Handlers {
         Ok(())
     }
 
-    /// One story's DTO in its own read-only snapshot (the single-story routes).
-    pub async fn story_dto(
-        &self,
-        s: &Story,
-        _now: DateTime<Utc>,
-    ) -> Result<StoryDto, HandlerError> {
+    /// One story's DTO in its own read-only snapshot (the single-story routes): the row, its assembly and its urgency
+    /// all read there. NotFound when no story has the key.
+    pub async fn story_dto(&self, key: &Key, now: DateTime<Utc>) -> Result<StoryDto, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let dtos = self.story_dtos_in(&mut tx, std::slice::from_ref(s)).await;
-        end_read(tx, dtos)
-            .await?
-            .pop()
-            .ok_or(HandlerError::NotFound)
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            let stories = self
+                .repo
+                .stories_by_keys(&mut tx, std::slice::from_ref(key))
+                .await?;
+            self.story_dtos_in(&mut tx, &stories, &urg).await
+        }
+        .await;
+        end_read(tx, out).await?.pop().ok_or(HandlerError::NotFound)
     }
 
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in
-    /// one statement each, on the caller's transaction, in the order of `stories`. Callers pass distinct stories: a repeated story gets its blockers
-    /// and pull requests only on its first occurrence.
+    /// one statement each, on the caller's transaction, in the order of `stories`, with the urgency the caller read on
+    /// that same transaction. Callers pass distinct stories: a repeated story gets its blockers and pull requests only on
+    /// its first occurrence.
     pub async fn story_dtos_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         stories: &[Story],
+        urg: &Urgency,
     ) -> Result<Vec<StoryDto>, HandlerError> {
         if stories.is_empty() {
             return Ok(Vec::new());
@@ -665,6 +675,7 @@ impl Handlers {
                     .into_iter()
                     .map(|(id, outcome, via)| GoalRefDto { id, outcome, via })
                     .collect();
+                (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, s.key());
                 dto
             })
             .collect())
@@ -676,13 +687,17 @@ impl Handlers {
     pub async fn story_context(
         &self,
         key: &Key,
-        _now: DateTime<Utc>,
+        now: DateTime<Utc>,
     ) -> Result<StoryContextDto, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let out = self.story_context_in(&mut tx, key).await;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            self.story_context_in(&mut tx, key, &urg).await
+        }
+        .await;
         end_read(tx, out).await
     }
 
@@ -690,6 +705,7 @@ impl Handlers {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
+        urg: &Urgency,
     ) -> Result<StoryContextDto, HandlerError> {
         let s = self
             .repo
@@ -702,7 +718,7 @@ impl Handlers {
             None => None,
         };
         let initiative = match epic.as_ref().and_then(|e| e.initiative()) {
-            Some(k) => Some(self.initiative_dto_in(tx, k).await?),
+            Some(k) => Some(self.initiative_dto_in(tx, k, urg).await?),
             None => None,
         };
         let mut required_decisions = Vec::new();
@@ -725,13 +741,13 @@ impl Handlers {
             .unwrap_or_default();
         let mut stories = vec![s];
         stories.extend(self.repo.stories_by_keys(tx, &blocker_keys).await?);
-        let mut dtos = self.story_dtos_in(tx, &stories).await?.into_iter();
+        let mut dtos = self.story_dtos_in(tx, &stories, urg).await?.into_iter();
         let story = dtos.next().ok_or(HandlerError::NotFound)?;
         let blockers = dtos.collect();
         let goals = self.goals_context_in(tx, &story.goals).await?;
         Ok(StoryContextDto {
             story,
-            epic: epic.as_ref().map(reeve_protocol::EpicDto::from),
+            epic: epic.as_ref().map(|e| epic_dto_of(e, urg)),
             initiative,
             required_decisions: required_decisions
                 .iter()

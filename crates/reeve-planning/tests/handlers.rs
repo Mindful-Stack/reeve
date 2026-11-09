@@ -1649,10 +1649,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
             .unwrap(),
         PrChange::Linked
     );
-    let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
-        .await
-        .unwrap();
+    let dto = h.story_dto(story.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs.len(), 1);
     assert_eq!(dto.prs[0].status, PrStatus::Open);
     assert_eq!(dto.prs[0].number, 42);
@@ -1725,7 +1722,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         PrChange::Ignored
     );
     let fresh = h.get_story(story.key()).await.unwrap();
-    let dto = h.story_dto(&fresh, Utc::now()).await.unwrap();
+    let dto = h.story_dto(fresh.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs[0].status, PrStatus::Merged);
     assert_eq!(dto.prs[0].title, "fix (retitled)");
     assert_eq!(dto.prs[0].updated_at, t12);
@@ -1768,14 +1765,14 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         }
     );
     assert!(
-        h.story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
+        h.story_dto(story.key(), Utc::now())
             .await
             .unwrap()
             .prs
             .is_empty()
     );
     assert_eq!(
-        h.story_dto(&h.get_story(other.key()).await.unwrap(), Utc::now())
+        h.story_dto(other.key(), Utc::now())
             .await
             .unwrap()
             .prs
@@ -1883,12 +1880,18 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();
-    let batched = h.story_dtos_in(&mut tx, &fresh).await.unwrap();
-    assert!(h.story_dtos_in(&mut tx, &[]).await.unwrap().is_empty());
+    let urg = Urgency::default();
+    let batched = h.story_dtos_in(&mut tx, &fresh, &urg).await.unwrap();
+    assert!(
+        h.story_dtos_in(&mut tx, &[], &urg)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     tx.rollback().await.unwrap();
     let mut single = Vec::new();
     for s in &fresh {
-        single.push(h.story_dto(s, Utc::now()).await.unwrap());
+        single.push(h.story_dto(s.key(), Utc::now()).await.unwrap());
     }
     assert_eq!(batched, single);
     assert_eq!(
@@ -1965,10 +1968,7 @@ async fn two_first_deliveries_of_the_same_pull_request_do_not_error() {
         got.sort_by_key(|c| format!("{c:?}"));
         assert_eq!(got, vec![PrChange::Ignored, PrChange::Linked], "PR {n}");
     }
-    let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap(), Utc::now())
-        .await
-        .unwrap();
+    let dto = h.story_dto(story.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs.len(), numbers.len(), "one row per pull request");
     assert_eq!(
         count(&sink, "pr_linked", &story.key().to_string()),
@@ -2467,7 +2467,7 @@ async fn import_creates_with_state_once_and_never_logs_an_override() {
         .unwrap();
     let sk = story.key.clone().unwrap();
     let s = h.get_story(&sk).await.unwrap();
-    let dto = h.story_dto(&s, Utc::now()).await.unwrap();
+    let dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.delivery, DeliveryState::InProgress); // created in state: no gate, no override
     assert_eq!(dto.external_ref.as_deref(), Some("SCRUM-11"));
     assert_eq!(dto.owner.as_deref(), Some("bob@example.com"));
@@ -3097,13 +3097,27 @@ async fn seed_board(h: &Handlers, tag: &str, n: usize, first_pr: i64) -> Vec<ree
     keys
 }
 
+/// Marks `story` urgent as of the wall clock, so the mark is active for the statement-count reads (which read at
+/// `Utc::now()`, not at the fixed test clock).
+async fn mark_now(h: &Handlers, story: &Key) {
+    let c = Ctx {
+        now: Utc::now(),
+        ..ctx("dan@example.com", false)
+    };
+    h.mark_urgent(&c, ItemType::Story, story, None)
+        .await
+        .unwrap();
+}
+
 /// The list reads in a fixed number of statements: twelve stories cost what three cost (one transaction and up to
 /// seven statements per story before).
 #[tokio::test]
 async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     let (_c, pool) = common::pg_counted().await;
     let (h, _sink) = mk(pool.clone());
-    seed_board(&h, "a", 3, 1).await;
+    let keys = seed_board(&h, "a", 3, 1).await;
+    // An active mark: urgency costs its fixed statements (marks, then lineage) in both measurements.
+    mark_now(&h, &keys[1]).await;
     let list = || {
         let h = h.clone();
         async move {
@@ -3124,6 +3138,12 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     );
     let twelve = common::statements(&pool, list).await;
     assert_eq!(three, twelve);
+    let board = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .await
+        .unwrap();
+    let marked = board.iter().find(|r| r.story.key == keys[1]).unwrap();
+    assert_eq!(marked.story.urgent_sources.len(), 1, "the mark is active");
 }
 
 /// The context reads its blockers in a fixed number of statements: five blockers cost what one costs, and they come
@@ -3135,6 +3155,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
     let c = ctx("dan@example.com", false);
     let keys = seed_board(&h, "a", 1, 1).await;
     let x = keys[0].clone();
+    mark_now(&h, &x).await;
     h.comment_story(&c, &x, "hello", None).await.unwrap();
     let mut blockers = Vec::new();
     for i in 0..5 {
@@ -3182,6 +3203,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
         blockers
     );
     assert_eq!(ctx_dto.story.blocked_by, blockers);
+    assert_eq!(ctx_dto.story.urgent_sources.len(), 1, "the mark is active");
     assert_eq!(ctx_dto.comments.len(), 1);
     assert_eq!(ctx_dto.required_decisions.len(), 2);
 }
@@ -4347,10 +4369,7 @@ async fn remove_block_deletes_one_edge_and_logs_unblocked_last() {
 
     h.remove_block(&dan, s.key(), b.key()).await.unwrap();
 
-    let dto = h
-        .story_dto(&h.get_story(s.key()).await.unwrap(), Utc::now())
-        .await
-        .unwrap();
+    let dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
     assert_eq!(
         dto.blocked_by,
         vec![c.key().clone()],
@@ -4754,11 +4773,11 @@ async fn list_epics_orders_ties_by_key_number() {
         .await
         .unwrap();
     let keys: Vec<String> = h
-        .list_epics(None)
+        .epic_dtos(None, Utc::now())
         .await
         .unwrap()
         .iter()
-        .map(|e| e.key().to_string())
+        .map(|e| e.key.to_string())
         .collect();
     let want: Vec<String> = (1..=10).map(|n| format!("ABC-{n}")).collect();
     assert_eq!(keys, want, "epics");
@@ -5651,4 +5670,526 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
     // and a renewal of an unmarked item through the handler writes nothing
     h.war_room_renew(&dan, &twice[..1]).await.unwrap();
     assert_eq!(count(&sink, "urgent_marked", &k.to_string()), 2);
+}
+
+fn source_keys(v: &[reeve_protocol::ItemRefDto]) -> Vec<String> {
+    v.iter().map(|r| r.key.to_string()).collect()
+}
+
+/// Every assembler fills urgency the same way (endpoint parity, handler level).
+#[tokio::test]
+async fn every_item_dto_carries_its_urgency() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let sib = h
+        .create_story(
+            &dan,
+            "t",
+            "T",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), Some("why".into()))
+        .await
+        .unwrap();
+    let now = dan.now;
+    let sk = vec![s.key().to_string()];
+    assert_eq!(
+        source_keys(&h.initiative_dto(i.key(), now).await.unwrap().urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.list_initiatives(now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dto(e.key(), now).await.unwrap().urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dtos(None, now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dtos(Some(i.key()), now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    let board = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .await
+        .unwrap();
+    let row = |k: &Key| {
+        board
+            .iter()
+            .find(|r| &r.story.key == k)
+            .unwrap()
+            .story
+            .clone()
+    };
+    assert_eq!(source_keys(&row(s.key()).urgent_sources), sk);
+    assert!(
+        row(sib.key()).urgent_sources.is_empty(),
+        "a sibling stays calm"
+    );
+    assert!(row(sib.key()).urgent_mark.is_none());
+    assert_eq!(
+        row(s.key()).urgent_mark.unwrap().reason.as_deref(),
+        Some("why")
+    );
+    let ctxd = h.story_context(sib.key(), now).await.unwrap();
+    assert_eq!(
+        source_keys(&ctxd.epic.unwrap().urgent_sources),
+        sk,
+        "nested epic in the context"
+    );
+    assert_eq!(
+        source_keys(&ctxd.initiative.unwrap().urgent_sources),
+        sk,
+        "nested initiative in the context"
+    );
+    assert!(
+        ctxd.story.urgent_sources.is_empty(),
+        "the context's own story"
+    );
+    let ctxs = h.story_context(s.key(), now).await.unwrap();
+    assert_eq!(source_keys(&ctxs.story.urgent_sources), sk);
+    let dto = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(source_keys(&dto.urgent_sources), sk);
+    assert_eq!(dto.urgent_mark.unwrap().reason.as_deref(), Some("why"));
+    // The export readers, on one transaction, with the urgency computed once on it.
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let ex_i = h.export_initiatives(&mut tx, &urg).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(source_keys(&ex_i[0].urgent_sources), sk);
+    assert_eq!(source_keys(&ex_e[0].urgent_sources), sk);
+    let ex_row = |k: &Key| ex_s.iter().find(|x| &x.key == k).unwrap().clone();
+    assert_eq!(source_keys(&ex_row(s.key()).urgent_sources), sk);
+    assert!(ex_row(s.key()).urgent_mark.is_some());
+    assert!(ex_row(sib.key()).urgent_sources.is_empty());
+    // An expired mark is still shown on its item but makes nothing urgent.
+    let later = now + chrono::Duration::days(15);
+    let dto = h.story_dto(s.key(), later).await.unwrap();
+    assert!(dto.urgent_sources.is_empty());
+    assert!(!dto.urgent_mark.unwrap().active);
+    assert!(
+        h.initiative_dto(i.key(), later)
+            .await
+            .unwrap()
+            .urgent_sources
+            .is_empty()
+    );
+}
+
+/// A mark made between someone's read and their edit or move does not make the edit fail, and the edit keeps it.
+#[tokio::test]
+async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = dan.now;
+    // A story: read, then marked by someone else, then edited and moved with the version that was read.
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Chore,
+            None,
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let read = h.get_story(s.key()).await.unwrap().version();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), Some("hot".into()))
+        .await
+        .unwrap();
+    let edited = h
+        .edit_story(
+            &dan,
+            s.key(),
+            read,
+            Some("S2".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the version");
+    let moved = h
+        .move_story(
+            &dan,
+            s.key(),
+            edited.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+        .expect("a mark never refuses a move");
+    assert_eq!(moved.delivery(), DeliveryState::InProgress);
+    let dto = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(dto.title, "S2");
+    assert_eq!(dto.urgent_mark.unwrap().reason.as_deref(), Some("hot"));
+    assert_eq!(source_keys(&dto.urgent_sources), [s.key().to_string()]);
+
+    // An initiative and an epic: marked after the read; an edit and a discovery mark keep it.
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), Some("cust".into()))
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Epic, e.key(), None)
+        .await
+        .unwrap();
+    let i2 = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            i.version(),
+            Some("I2".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the initiative's version");
+    h.mark_discovery(&dan, ItemType::Initiative, i.key(), i2.version(), true)
+        .await
+        .unwrap();
+    let e2 = h
+        .edit_epic(
+            &dan,
+            e.key(),
+            e.version(),
+            Some("E2".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the epic's version");
+    h.mark_discovery(&dan, ItemType::Epic, e.key(), e2.version(), true)
+        .await
+        .unwrap();
+    let idto = h.initiative_dto(i.key(), now).await.unwrap();
+    assert_eq!(idto.title, "I2");
+    assert!(idto.discovery_complete.is_some());
+    assert_eq!(idto.urgent_mark.unwrap().reason.as_deref(), Some("cust"));
+    assert_eq!(
+        source_keys(&idto.urgent_sources),
+        [i.key().to_string(), e.key().to_string()]
+    );
+    let edto = h.epic_dto(e.key(), now).await.unwrap();
+    assert_eq!(edto.title, "E2");
+    assert!(edto.discovery_complete.is_some());
+    assert!(edto.urgent_mark.is_some());
+    assert_eq!(
+        source_keys(&edto.urgent_sources),
+        [e.key().to_string(), i.key().to_string()]
+    );
+}
+
+/// Urgency never feeds readiness, delivery or progress (kb/ADR-0017 R5).
+#[tokio::test]
+async fn urgency_changes_no_readiness_delivery_or_progress() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = dan.now;
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&dan, ItemType::Initiative, i.key(), 1, true)
+        .await
+        .unwrap();
+    h.mark_discovery(&dan, ItemType::Epic, e.key(), 1, true)
+        .await
+        .unwrap();
+    let mut keys = Vec::new();
+    for (n, criteria) in [
+        ("ready", vec!["ok".to_string()]),
+        ("bare", vec![]),
+        ("done", vec!["ok".to_string()]),
+    ] {
+        keys.push(
+            h.create_story(
+                &dan,
+                n,
+                n,
+                Kind::Story,
+                Some(e.key().clone()),
+                "",
+                criteria,
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone(),
+        );
+    }
+    let override_reason = Some("ship it".to_string());
+    h.move_story(
+        &dan,
+        &keys[2],
+        1,
+        DeliveryState::InProgress,
+        None,
+        override_reason,
+    )
+    .await
+    .unwrap();
+    h.move_story(
+        &dan,
+        &keys[2],
+        2,
+        DeliveryState::Done,
+        Some(Resolution::Completed),
+        None,
+    )
+    .await
+    .unwrap();
+    type Facts = (
+        Vec<(
+            Key,
+            reeve_protocol::Readiness,
+            DeliveryState,
+            Option<Resolution>,
+        )>,
+        Vec<(Key, Option<f32>)>,
+        Vec<reeve_protocol::Readiness>,
+    );
+    let facts = || async {
+        let board = h
+            .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+            .await
+            .unwrap();
+        let stories = board
+            .into_iter()
+            .map(|r| {
+                (
+                    r.story.key,
+                    r.readiness,
+                    r.story.delivery,
+                    r.story.resolution,
+                )
+            })
+            .collect();
+        let progress = h
+            .list_initiatives(now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.key, i.progress))
+            .collect();
+        let mut one_at_a_time = Vec::new();
+        for k in &keys {
+            one_at_a_time.push(h.readiness(k).await.unwrap());
+        }
+        let f: Facts = (stories, progress, one_at_a_time);
+        f
+    };
+    let before = facts().await;
+    assert!(
+        before.0.iter().any(|(_, r, ..)| r.ready),
+        "one story is ready"
+    );
+    assert!(before.0.iter().any(|(_, r, ..)| !r.ready), "one is not");
+    assert!(before.1[0].1.is_some(), "the initiative has progress");
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), Some("now".into()))
+        .await
+        .unwrap();
+    let marked = h.story_dto(&keys[0], now).await.unwrap();
+    assert_eq!(
+        source_keys(&marked.urgent_sources),
+        [i.key().to_string()],
+        "the mark is active and reaches the stories"
+    );
+    assert_eq!(facts().await, before, "marked");
+    h.clear_urgent(&dan, ItemType::Initiative, i.key())
+        .await
+        .unwrap();
+    assert_eq!(facts().await, before, "cleared");
+}
+
+/// Every item read takes one connection once, for its one `REPEATABLE READ` transaction: its rows and its urgency
+/// are one snapshot. On a one-connection pool, a read through the pool while the snapshot is open could not get a
+/// connection (and fails), and a read through the pool before or after it is a second acquisition.
+#[tokio::test]
+async fn every_item_read_is_one_transaction_on_one_connection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), None)
+        .await
+        .unwrap();
+
+    let acquired = Arc::new(AtomicUsize::new(0));
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .before_acquire({
+            let acquired = acquired.clone();
+            move |_, _| {
+                acquired.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(true) })
+            }
+        })
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    sqlx::query("SELECT 1").execute(&one).await.unwrap(); // the connection exists and is idle
+    let h = Handlers {
+        repo: make_planning_repo(one.clone()),
+        pool: one,
+        ..h
+    };
+    let now = dan.now;
+    let sk = s.key().to_string();
+    let once = || acquired.swap(0, Ordering::SeqCst);
+    once();
+    let urgent = h.initiative_dto(i.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "initiative_dto"
+    );
+    let urgent = h.list_initiatives(now).await.unwrap()[0]
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "list_initiatives"
+    );
+    let urgent = h.epic_dto(e.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "epic_dto"
+    );
+    let urgent = h.epic_dtos(None, now).await.unwrap()[0]
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "epic_dtos"
+    );
+    let urgent = h.story_dto(s.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "story_dto"
+    );
+    let urgent = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .await
+        .unwrap()[0]
+        .story
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "list_stories"
+    );
+    let urgent = h
+        .story_context(s.key(), now)
+        .await
+        .unwrap()
+        .initiative
+        .unwrap()
+        .urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk]),
+        "story_context"
+    );
 }

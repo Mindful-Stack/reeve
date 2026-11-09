@@ -465,11 +465,14 @@ impl PlanningRepo for PgPlanningRepo {
     ) -> Result<Initiative, RepoError> {
         get_initiative_on(&mut **tx, k).await
     }
-    async fn list_initiatives(&self) -> Result<Vec<Initiative>, RepoError> {
+    async fn list_initiatives_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<Initiative>, RepoError> {
         Ok(sqlx::query(&format!(
             "SELECT {INITIATIVE_COLS} FROM initiatives ORDER BY created_at, {BY_KEY_NUMBER}"
         ))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **tx)
         .await?
         .iter()
         .map(initiative_from)
@@ -506,9 +509,12 @@ impl PlanningRepo for PgPlanningRepo {
     ) -> Result<StoryCounts, RepoError> {
         story_counts_on(&mut **tx, k).await
     }
-    async fn story_counts_by_initiative(&self) -> Result<HashMap<Key, StoryCounts>, RepoError> {
+    async fn story_counts_by_initiative_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<HashMap<Key, StoryCounts>, RepoError> {
         let rows = sqlx::query("SELECT e.initiative_key, count(*) FILTER (WHERE s.resolution = 'completed') AS completed, count(*) FILTER (WHERE s.resolution = 'dropped') AS dropped, count(*) AS total FROM stories s JOIN epics e ON e.key = s.epic_key WHERE e.initiative_key IS NOT NULL GROUP BY e.initiative_key")
-            .fetch_all(&self.pool)
+            .fetch_all(&mut **tx)
             .await?;
         let mut out = HashMap::new();
         for r in rows {
@@ -544,8 +550,12 @@ impl PlanningRepo for PgPlanningRepo {
     ) -> Result<Epic, RepoError> {
         get_epic_on(&mut **tx, k).await
     }
-    async fn list_epics(&self, initiative: Option<&Key>) -> Result<Vec<Epic>, RepoError> {
-        Ok(sqlx::query(&format!("SELECT {EPIC_COLS} FROM epics WHERE ($1::text IS NULL OR initiative_key = $1) ORDER BY created_at, {BY_KEY_NUMBER}")).bind(initiative.map(|k| k.to_string())).fetch_all(&self.pool).await?.iter().map(epic_from).collect())
+    async fn list_epics_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        initiative: Option<&Key>,
+    ) -> Result<Vec<Epic>, RepoError> {
+        Ok(sqlx::query(&format!("SELECT {EPIC_COLS} FROM epics WHERE ($1::text IS NULL OR initiative_key = $1) ORDER BY created_at, {BY_KEY_NUMBER}")).bind(initiative.map(|k| k.to_string())).fetch_all(&mut **tx).await?.iter().map(epic_from).collect())
     }
     async fn update_epic(
         &self,

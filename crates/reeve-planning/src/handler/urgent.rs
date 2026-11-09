@@ -26,6 +26,26 @@ pub struct WarRoomEntry {
     pub state: MarkState,
 }
 
+/// The two urgency fields every item DTO carries: the mark stored on `key` (active or expired) and the active marks that
+/// make it urgent.
+pub(crate) fn urgent_fields(
+    u: &Urgency,
+    key: &Key,
+) -> (
+    Option<reeve_protocol::UrgentMarkDto>,
+    Vec<reeve_protocol::ItemRefDto>,
+) {
+    let sources = u
+        .sources(key)
+        .iter()
+        .map(|(k, t)| reeve_protocol::ItemRefDto {
+            key: k.clone(),
+            item: *t,
+        })
+        .collect();
+    (u.mark(key).map(Into::into), sources)
+}
+
 fn clean_reason(r: Option<String>) -> Result<Option<String>, HandlerError> {
     let r = r.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     if r.as_ref().is_some_and(|s| s.chars().count() > MAX_REASON) {
@@ -38,10 +58,9 @@ fn clean_reason(r: Option<String>) -> Result<Option<String>, HandlerError> {
 
 impl Handlers {
     /// The urgency of every item, from the caller's snapshot: three statements when an active mark reaches an epic or
-    /// initiative, one otherwise.
-    // The DTO assemblers are its callers (next task); until they land nothing in the crate reads it.
-    #[allow(dead_code)]
-    pub(crate) async fn urgency_in(
+    /// initiative, one otherwise. Every DTO assembler reads it once per snapshot, on the transaction that reads its
+    /// rows, and passes it down; the export computes it on its own transaction.
+    pub async fn urgency_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,

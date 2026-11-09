@@ -19,7 +19,7 @@ pub struct EpicQuery {
 #[utoipa::path(get, path = "/epics", params(EpicQuery), responses((status = 200, body = Response<Vec<EpicDto>>)))]
 async fn list(
     State(s): State<AppState>,
-    _c: Caller,
+    c: Caller,
     ApiQuery(q): ApiQuery<EpicQuery>,
 ) -> Result<Json<Response<Vec<EpicDto>>>, AppError> {
     let initiative =
@@ -30,8 +30,10 @@ async fn list(
             super::FilterRef::Is(k) => Some(k),
             super::FilterRef::Unset => None,
         };
-    let epics = s.handlers.list_epics(initiative.as_ref()).await?;
-    Ok(ok(epics.iter().map(EpicDto::from).collect()))
+    Ok(ok(s
+        .handlers
+        .epic_dtos(initiative.as_ref(), c.ctx().now)
+        .await?))
 }
 #[utoipa::path(post, path = "/epics", request_body = CreateEpic, responses((status = 200, body = Response<EpicDto>)))]
 async fn create(
@@ -50,16 +52,16 @@ async fn create(
             b.external_ref,
         )
         .await?;
-    Ok(ok(EpicDto::from(&e)))
+    Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))
 }
 #[utoipa::path(get, path = "/epics/{key}", params(("key" = String, Path)), responses((status = 200, body = Response<EpicDto>)))]
 async fn get(
     State(s): State<AppState>,
-    _c: Caller,
+    c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
-    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+    Ok(ok(s.handlers.epic_dto(&key, c.ctx().now).await?))
 }
 #[utoipa::path(patch, path = "/epics/{key}", params(("key" = String, Path)), request_body = EditItem, responses((status = 200, body = Response<EpicDto>)))]
 async fn edit(
@@ -81,7 +83,7 @@ async fn edit(
             b.external_ref,
         )
         .await?;
-    Ok(ok(EpicDto::from(&e)))
+    Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))
 }
 #[utoipa::path(post, path = "/epics/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<EpicDto>)))]
 async fn discovery(
@@ -94,7 +96,7 @@ async fn discovery(
     s.handlers
         .mark_discovery(&c.ctx(), ItemType::Epic, &key, b.version, b.complete)
         .await?;
-    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+    Ok(ok(s.handlers.epic_dto(&key, c.ctx().now).await?))
 }
 
 /// Advisory findings: computed on read, never stored, never consulted by a move.
@@ -120,7 +122,7 @@ async fn mark_urgent(
     s.handlers
         .mark_urgent(&ctx, ItemType::Epic, &key, b.reason)
         .await?;
-    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+    Ok(ok(s.handlers.epic_dto(&key, ctx.now).await?))
 }
 #[utoipa::path(delete, path = "/epics/{key}/urgent", params(("key" = String, Path)), responses((status = 200, body = Response<EpicDto>)))]
 async fn clear_urgent(
@@ -131,7 +133,7 @@ async fn clear_urgent(
     let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
     let ctx = c.ctx();
     s.handlers.clear_urgent(&ctx, ItemType::Epic, &key).await?;
-    Ok(ok(EpicDto::from(&s.handlers.get_epic(&key).await?)))
+    Ok(ok(s.handlers.epic_dto(&key, ctx.now).await?))
 }
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()

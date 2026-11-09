@@ -2,6 +2,7 @@ use super::*;
 use crate::domain::decision::*;
 use crate::domain::queue::{self, QueueEntry, QueueSummary};
 use crate::domain::readiness::satisfies;
+use crate::domain::urgency::Urgency;
 use reeve_protocol::{CheckResult, ClosureKind, DeliveryState, Key, Reversibility, TokenKind, Via};
 
 /// A reference names a repository and a path inside it: relative, without a `..` component, and not starting with `-`,
@@ -486,7 +487,10 @@ impl Handlers {
             delivery: Some(DeliveryState::Todo),
             ..Default::default()
         };
-        let stories = self.list_stories_in(tx, &todo, false, None).await?;
+        // The queue keeps only `BlockedStoryDto`s, which carry no urgency, so it reads none.
+        let stories = self
+            .list_stories_in(tx, &todo, false, None, &Urgency::default())
+            .await?;
         Ok(queue::order(ds, queue::blocks(&stories), now.date_naive()))
     }
 }

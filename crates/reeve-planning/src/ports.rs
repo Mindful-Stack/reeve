@@ -140,7 +140,11 @@ pub trait PlanningRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
     ) -> Result<Initiative, RepoError>;
-    async fn list_initiatives(&self) -> Result<Vec<Initiative>, RepoError>;
+    /// Every initiative, oldest first (ties by key number), on the caller's transaction.
+    async fn list_initiatives_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<Initiative>, RepoError>;
     async fn update_initiative(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -149,8 +153,12 @@ pub trait PlanningRepo: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
     async fn story_counts_under_initiative(&self, key: &Key) -> Result<StoryCounts, RepoError>;
-    /// Story counts for every initiative that has a story, in one statement; an initiative absent from the map has none.
-    async fn story_counts_by_initiative(&self) -> Result<HashMap<Key, StoryCounts>, RepoError>;
+    /// Story counts for every initiative that has a story, in one statement on the caller's transaction; an initiative
+    /// absent from the map has none.
+    async fn story_counts_by_initiative_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<HashMap<Key, StoryCounts>, RepoError>;
     /// `story_counts_under_initiative` on the caller's transaction.
     async fn story_counts_under_initiative_in(
         &self,
@@ -172,7 +180,12 @@ pub trait PlanningRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
     ) -> Result<Epic, RepoError>;
-    async fn list_epics(&self, initiative: Option<&Key>) -> Result<Vec<Epic>, RepoError>;
+    /// Every epic (of one initiative when given), oldest first (ties by key number), on the caller's transaction.
+    async fn list_epics_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        initiative: Option<&Key>,
+    ) -> Result<Vec<Epic>, RepoError>;
     async fn update_epic(
         &self,
         tx: &mut Transaction<'_, Postgres>,

@@ -98,9 +98,10 @@ pub async fn export_document_in(
         .await?;
     }
     // The first query: without a snapshot, PostgreSQL takes one here, not at BEGIN.
-    let initiatives = src.handlers.export_initiatives(&mut tx).await?;
-    let epics = src.handlers.export_epics(&mut tx).await?;
-    let stories = src.handlers.export_stories(&mut tx).await?;
+    let urgency = src.handlers.urgency_in(&mut tx, exported_at).await?;
+    let initiatives = src.handlers.export_initiatives(&mut tx, &urgency).await?;
+    let epics = src.handlers.export_epics(&mut tx, &urgency).await?;
+    let stories = src.handlers.export_stories(&mut tx, &urgency).await?;
     let sprints = src.handlers.export_sprints(&mut tx).await?;
     let decisions = src.handlers.export_decisions(&mut tx).await?;
     let comments = src.handlers.export_comments(&mut tx).await?;

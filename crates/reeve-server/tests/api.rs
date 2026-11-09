@@ -2253,7 +2253,12 @@ async fn urgent_routes_mark_clear_and_list_the_war_room() {
     )
     .await;
     assert_eq!(st, 200, "{b}");
-    // The reply's own `urgent_mark` is filled by the assemblers (next commit); the war room shows the stored mark.
+    assert_eq!(b["value"]["urgent_mark"]["reason"], "Customer X");
+    assert_eq!(b["value"]["urgent_mark"]["active"], true);
+    assert_eq!(
+        b["value"]["urgent_sources"],
+        json!([{"key": key, "item": "initiative"}])
+    );
     let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
     assert_eq!(
         room["value"][0]["item"],
@@ -2292,6 +2297,39 @@ async fn urgent_routes_mark_clear_and_list_the_war_room() {
     )
     .await;
     let sk = sy["value"]["key"].as_str().unwrap().to_string();
+    // A marked story makes its lineage urgent on every read: the initiative, the epic and the story itself.
+    let (st, b) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{sk}/urgent"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let from_story = json!([{"key": sk, "item": "story"}]);
+    assert_eq!(b["value"]["urgent_sources"], from_story);
+    for path in [
+        format!("/api/v1/initiatives/{key}"),
+        format!("/api/v1/epics/{ek}"),
+        format!("/api/v1/stories/{sk}"),
+    ] {
+        let (_, got) = call(&h.app, t, "GET", &path, None).await;
+        assert_eq!(got["value"]["urgent_sources"], from_story, "{path}");
+    }
+    let (_, epics) = call(&h.app, t, "GET", "/api/v1/epics", None).await;
+    assert_eq!(epics["value"][0]["urgent_sources"], from_story);
+    let (st, b) = call(
+        &h.app,
+        t,
+        "DELETE",
+        &format!("/api/v1/stories/{sk}/urgent"),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["urgent_sources"], json!([]));
+    assert_eq!(b["value"]["urgent_mark"], serde_json::Value::Null);
     for (plural, item, k) in [
         ("initiatives", "initiative", &key),
         ("epics", "epic", &ek),
