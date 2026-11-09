@@ -3,7 +3,7 @@
 	import '@fontsource-variable/instrument-sans/index.css';
 	import '@fontsource/jetbrains-mono/400.css';
 	import '@fontsource/jetbrains-mono/500.css';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { goto, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
@@ -11,7 +11,8 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
-	import { hasDraft, openReport, persist, report, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
+	import { isCurrent, links, reportContext } from '#lib/nav.ts';
+	import { discardDraft, hasDraft, openReport, persist, report, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
 	import type { Story } from '#lib/api/types.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import ReportDialog from '#lib/components/ReportDialog.svelte';
@@ -26,13 +27,6 @@
 	// /auth/* renders signed out: loading the session there would 401 and redirect to next=/auth/signin forever.
 	const signedOutPage = $derived(page.url.pathname.startsWith('/auth/'));
 
-	const links = [
-		{ href: '/', label: 'Planning' },
-		{ href: '/backlog', label: 'Backlog' },
-		{ href: '/board', label: 'Board' },
-		{ href: '/sprint', label: 'Sprint' },
-		{ href: '/decisions', label: 'Decisions' }
-	];
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
 		{ label: 'Activity', onselect: () => goto('/activity') },
@@ -68,7 +62,10 @@
 	let opener: HTMLElement | null = null;
 	onNavigate(({ from, to }) => {
 		// A filed-report notice outlives the dialog; only opening its story (a drawer-only change) keeps it.
-		if (notice && !(from && to && sameApartFromStory(from.url, to.url))) notice = null;
+		if (!(from && to && sameApartFromStory(from.url, to.url))) {
+			notice = null;
+			restoredNotice = false;
+		}
 		if (!to?.url.searchParams.has('story') || from?.url.searchParams.has('story')) return;
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
@@ -145,25 +142,31 @@
 		return url.pathname + url.search;
 	});
 
+	let opening = $state(false);
 	async function openFromHere() {
-		const path = page.url.pathname + page.url.search;
-		const epicKey = page.url.pathname.match(/^\/epics\/([^/]+)$/)?.[1];
-		const label = epicKey ? decodeURIComponent(epicKey) : (links.find((l) => current(l.href))?.label ?? page.url.pathname);
+		if (opening) return;
+		const from = page.url.href;
+		const { epicKey, ...ctx } = reportContext(page.url);
 		let epic: EpicRef | null = null;
 		// The chip is for epic pages only, and only a new draft needs it (a kept draft keeps its own context).
 		if (epicKey && !hasDraft()) {
+			opening = true;
 			try {
-				const key = decodeURIComponent(epicKey);
-				const e = await unwrap(api.GET('/api/v1/epics/{key}', { params: { path: { key } } }));
+				const e = await unwrap(api.GET('/api/v1/epics/{key}', { params: { path: { key: epicKey } } }));
 				epic = { key: e.key, title: e.title };
 			} catch {
 				// no chip: the report goes to triage
+			} finally {
+				opening = false;
 			}
+			// The reporter moved on while the epic was read: the context no longer matches the page.
+			if (page.url.href !== from) return;
 		}
-		openReport({ path, label, epic });
+		openReport({ ...ctx, epic });
 	}
 
 	function filed(s: Story, epicTitle: string | null) {
+		restoredNotice = false;
 		notice = { story: s, epicTitle };
 	}
 
@@ -179,7 +182,13 @@
 		const email = session.me?.email;
 		if (!email || restoredFor === email) return;
 		restoredFor = email;
-		if (restoreDraft(email)) restoredNotice = true;
+		untrack(() => {
+			if (restoreDraft(email)) restoredNotice = true;
+		});
+	});
+	// The restored line is about the draft: it goes with it.
+	$effect(() => {
+		if (!report.draft) restoredNotice = false;
 	});
 	$effect(() => {
 		const email = session.me?.email;
@@ -187,11 +196,8 @@
 		if (email && restoredFor === email) persist(email);
 	});
 
-	function current(href: string): boolean {
-		return href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
-	}
-
 	async function signOut() {
+		discardDraft(); // a deliberate sign-out ends the draft; a session expiry (401) keeps it
 		await fetch('/auth/logout', { method: 'POST', headers: { 'X-Reeve-Client': 'web' } });
 		location.href = '/auth/signin';
 	}
@@ -209,12 +215,12 @@
 			<a class="brand" href="/">Reeve</a>
 			<nav aria-label="Main">
 				{#each links as link (link.href)}
-					<a href={link.href} aria-current={current(link.href) ? 'page' : undefined}>{link.label}</a>
+					<a href={link.href} aria-current={isCurrent(page.url, link.href) ? 'page' : undefined}>{link.label}</a>
 				{/each}
 			</nav>
 			<div class="right">
 				<GoalPicker />
-				<button type="button" class="primary report" aria-label={reportLabel} onclick={openFromHere}>
+				<button type="button" class="primary report" aria-label={reportLabel} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{reportLabel}</span>
 				</button>
 				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>

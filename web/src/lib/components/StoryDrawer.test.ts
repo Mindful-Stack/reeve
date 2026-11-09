@@ -74,6 +74,7 @@ afterEach(() => {
 	net.sent.length = 0;
 	net.bodies.length = 0;
 	net.answers.of = answer;
+	discardDraft();
 });
 
 describe('StoryDrawer Report action', () => {
@@ -85,8 +86,7 @@ describe('StoryDrawer Report action', () => {
 		flushSync();
 		expect(report.open).toBe(true);
 		expect(report.draft!.epic).toBeNull();
-		expect(report.draft!.origin.path).toContain('story=SCRUM-11');
-		discardDraft();
+		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
 	});
 });
 

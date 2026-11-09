@@ -33,14 +33,14 @@ vi.mock('#lib/components/ReportDialog.svelte', () => ({
 		dialog.props = props;
 	}
 }));
-const net = vi.hoisted(() => ({ gets: [] as string[] }));
+const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void> }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
 	const { me, epic } = await import('#lib/test/fixtures.ts');
 	installFetch(({ method, path }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
-		if (path === '/api/v1/epics/ABC-30') return epic({ key: 'ABC-30', title: 'Payments' });
+		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
 		return failure('unexpected', 404);
 	});
 	return orig();
@@ -58,6 +58,7 @@ afterEach(() => {
 	discardDraft();
 	dialog.props = null;
 	net.gets.length = 0;
+	net.hold = null;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
 	if (app) unmount(app);
@@ -314,5 +315,106 @@ describe('Report', () => {
 		await open('/board');
 		expect(report.draft).toBeNull();
 		expect(status()).toEqual([]);
+	});
+});
+
+describe('Report review fixes', () => {
+	const btn = () => document.body.querySelector<HTMLButtonElement>('button.report')!;
+	const status = () => [...document.body.querySelectorAll('[role="status"]')].map((n) => n.textContent ?? '').join('|');
+	const nav = (from: string, to: string) => router.onNavigate.forEach((f) => f({ from: { url: new URL(from) }, to: { url: new URL(to) } }));
+	const saveDraft = () => {
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'Checkout fails';
+		sessionStorage.setItem('reeve.report-draft', JSON.stringify({ email: me().email, draft: report.draft }));
+		discardDraft({ keepStorage: true });
+	};
+
+	it('does not open when the page changed while the epic was read, and sends one GET for a double click', async () => {
+		session.me = me();
+		let release!: () => void;
+		net.hold = new Promise((r) => (release = r));
+		await open('/epics/ABC-30');
+		btn().click();
+		flushSync();
+		btn().click();
+		flushSync();
+		expect(btn().getAttribute('aria-busy')).toBe('true');
+		route.path = '/board';
+		release();
+		await vi.waitFor(() => expect(btn().getAttribute('aria-busy')).toBe('false'));
+		expect(net.gets.filter((g) => g === 'GET /api/v1/epics/ABC-30')).toHaveLength(1);
+		expect(report.open).toBe(false);
+	});
+
+	it('opens on a malformed %-sequence in the epic key without throwing', async () => {
+		session.me = me();
+		await open('/epics/ABC-%E0%A4%A');
+		btn().click();
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.origin.label).toBe('ABC-%E0%A4%A');
+	});
+
+	it('the restored line goes when a report is filed, the draft is discarded or the page changes, and never returns', async () => {
+		saveDraft();
+		session.me = me();
+		await open('/board');
+		expect(status()).toContain('Your report draft was restored.');
+		dialog.props!.oncreated(story({ key: 'ABC-612', kind: 'bug' }), null);
+		flushSync();
+		expect(status()).not.toContain('restored');
+		expect(status()).toContain('Filed bug');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		session.me = null;
+		discardDraft();
+		saveDraft();
+		session.me = me();
+		await open('/board');
+		expect(status()).toContain('restored');
+		discardDraft();
+		flushSync();
+		expect(status()).not.toContain('restored');
+		// Once: a later change of the draft does not bring the line back.
+		saveDraft();
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'Another';
+		flushSync();
+		expect(status()).not.toContain('restored');
+		discardDraft();
+	});
+
+	it('the restored line clears on navigation', async () => {
+		saveDraft();
+		session.me = me();
+		await open('/board');
+		nav('http://localhost/board', 'http://localhost/backlog');
+		flushSync();
+		expect(status()).not.toContain('restored');
+	});
+
+	it('closing the drawer keeps the filed notice', async () => {
+		session.me = me();
+		await open('/board?story=ABC-1');
+		dialog.props!.oncreated(story({ key: 'ABC-612', kind: 'bug' }), null);
+		flushSync();
+		nav('http://localhost/board?story=ABC-1', 'http://localhost/board');
+		flushSync();
+		expect(status()).toContain('Filed bug ABC-612');
+	});
+
+	it('signing out discards the draft and its stored copy', async () => {
+		session.me = me();
+		await open('/board');
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'Checkout fails';
+		flushSync();
+		expect(sessionStorage.getItem('reeve.report-draft')).not.toBeNull();
+		const trigger = [...document.body.querySelectorAll('button')].find((b) => /^Account:/.test(b.getAttribute('aria-label') ?? ''))!;
+		trigger.click();
+		flushSync();
+		([...document.body.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === 'Sign out') as HTMLElement).click();
+		await vi.waitFor(() => expect(report.draft).toBeNull());
+		expect(sessionStorage.getItem('reeve.report-draft')).toBeNull();
 	});
 });
