@@ -43,19 +43,18 @@
 	/** A drag lives in one list: a drop on another list is not accepted. */
 	let dragging = $state<{ item: StoryWithReadiness; peers: StoryWithReadiness[] } | null>(null);
 
-	/** Past the run's end a row stays inside its run: before the story that follows the run in the full list. */
+	/** Past the list's end a row stays inside the list: before the story that follows it in the full list. */
 	function target(before: string | null, peers: StoryWithReadiness[]): string | null {
 		return before ?? afterPart(full, peers);
 	}
 
 	function menu(item: StoryWithReadiness): MenuItem[] {
-		const peers = rows;
 		const key = item.story.key;
-		const up = neighbourBefore(peers, key, 'up');
-		const down = neighbourBefore(peers, key, 'down');
+		const up = neighbourBefore(rows, key, 'up');
+		const down = neighbourBefore(rows, key, 'down');
 		return [
-			{ label: 'Move up', onselect: () => up && onrank(key, target(up.before, peers)), disabled: busy || !up },
-			{ label: 'Move down', onselect: () => down && onrank(key, target(down.before, peers)), disabled: busy || !down },
+			{ label: 'Move up', onselect: () => up && onrank(key, target(up.before, rows)), disabled: busy || !up },
+			{ label: 'Move down', onselect: () => down && onrank(key, target(down.before, rows)), disabled: busy || !down },
 			// Every other column, as on a board card.
 			...COLUMNS.filter((c) => c !== item.story.delivery).map((c) => ({
 				label: `Move to ${COLUMN_LABEL[c]}`,

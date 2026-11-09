@@ -173,11 +173,11 @@ describe('backlog page', () => {
 
 	it('groups by epic: No epic in rank order, an empty initiative says "No epics", an unloaded epic still shows its stories', async () => {
 		data.initiatives = [initiative({ key: 'I-1', title: 'Quiet one', horizon: 'Now' })];
-		data.stories = [row('S-3', 3, null, true, 'chore'), row('S-1', 1, 'E-1', false), row('S-2', 2, null, false, 'story', true), row('S-4', 4, 'E-9')];
+		data.stories = [row('S-3', 3, null, false, 'chore', true), row('S-1', 1, 'E-1', false), row('S-2', 2, null, false, 'story', true), row('S-4', 4, 'E-9')];
 		await open('Quiet one');
 		const none = section('No epic');
 		expect(keys(none)).toEqual(['S-2', 'S-3']);
-		expect(none.textContent).toContain('1 untriaged');
+		expect(none.textContent).toContain('2 untriaged');
 		expect(section('Quiet one').textContent).toContain('No epics');
 		expect(keys(section('No initiative'))).toEqual(['S-1']);
 		expect(section('No initiative').textContent).toContain('0 of 1 ready');
@@ -360,7 +360,7 @@ describe('backlog page', () => {
 
 	it('by epic: "No epic" is one rank run; Move down past its end ends before the next story', async () => {
 		data.stories = [
-			row('S-1', 1, null, true, 'bug'),
+			row('S-1', 1, null, false, 'bug', true),
 			row('S-2', 2, null, false, 'story', true),
 			row('S-3', 3, null, false, 'story', true),
 			row('S-4', 4, 'E-1')
