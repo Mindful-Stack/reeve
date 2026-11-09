@@ -1080,3 +1080,24 @@ async fn export_holds_no_secret() {
     sentinels.extend(hashes.iter().map(String::as_str));
     assert_no_secret(&b, &sentinels, "$");
 }
+
+/// The importer has no path to an urgent mark (Urgent mark and the war room design, 2026-11-09): neither its handler
+/// nor its route names urgency, so an import never marks, clears or renews one.
+#[test]
+fn the_importer_has_no_path_to_an_urgent_mark() {
+    for (path, src) in [
+        (
+            "reeve-planning/src/handler/import.rs",
+            include_str!("../../reeve-planning/src/handler/import.rs"),
+        ),
+        (
+            "reeve-server/src/routes/import.rs",
+            include_str!("../src/routes/import.rs"),
+        ),
+    ] {
+        assert!(
+            !src.to_lowercase().contains("urgent"),
+            "{path} names urgency"
+        );
+    }
+}
