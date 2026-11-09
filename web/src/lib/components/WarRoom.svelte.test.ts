@@ -5,6 +5,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WarRoomEntry } from '#lib/api/types.ts';
 import WarRoom from './WarRoom.svelte';
 
+const live = vi.hoisted(() => ({ fns: [] as (() => unknown)[] }));
+vi.mock('#lib/events.svelte.ts', async (orig) => ({
+	...(await orig<typeof import('#lib/events.svelte.ts')>()),
+	onLive: (fn: () => unknown) => {
+		live.fns.push(fn);
+	}
+}));
+vi.mock('$app/state', async () => {
+	const { fakePage } = await import('#lib/test/net.ts');
+	return { page: fakePage({ url: '/' }).page };
+});
+
 const now = new Date('2026-11-10T12:00:00Z');
 const day = 86_400_000;
 const iso = (offset: number) => new Date(now.getTime() + offset).toISOString();
@@ -19,20 +31,28 @@ const expired: WarRoomEntry = {
 	item: { key: 'ABC-311', item: 'story' },
 	title: 'Payments outage',
 	initiative: { key: 'ABC-1', title: 'Payments rebuild', horizon: 'Next' },
-	mark: { at: iso(-9 * day), by: 'dana@example.com', reason: null, expires_at: iso(-2 * day), active: false, done: false }
+	mark: { at: iso(-9 * day), by: 'dana@example.com', reason: 'Still burning', expires_at: iso(-2 * day), active: false, done: false }
 };
 
 const net = vi.hoisted(() => ({
 	entries: [] as WarRoomEntry[],
+	gets: 0,
 	writes: [] as { method: string; path: string; body: unknown }[]
 }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch } = await import('#lib/test/net.ts');
 	installFetch(async ({ method, path, body }) => {
-		if (method === 'GET' && path === '/api/v1/war-room') return net.entries;
+		if (method === 'GET' && path === '/api/v1/war-room') {
+			net.gets++;
+			return net.entries;
+		}
 		if (method !== 'GET') {
 			net.writes.push({ method, path, body });
-			if (path === '/api/v1/war-room/clear') net.entries = [];
+			if (path === '/api/v1/war-room/clear') {
+				const sent = (body as { items: { key: string }[] }).items.map((r) => r.key);
+				net.entries = net.entries.filter((e) => !sent.includes(e.item.key));
+			}
+			if (method === 'DELETE') net.entries = net.entries.filter((e) => !path.includes(`/${e.item.key}/`));
 			return path.startsWith('/api/v1/war-room') ? net.entries : {};
 		}
 		throw new Error(`unexpected ${method} ${path}`);
@@ -46,17 +66,20 @@ afterEach(() => {
 	app = null;
 	document.body.innerHTML = '';
 	net.entries = [];
+	net.gets = 0;
 	net.writes.length = 0;
+	live.fns.length = 0;
 });
 
 async function open(entries: WarRoomEntry[]) {
 	net.entries = entries;
-	app = mount(WarRoom, { target: document.body, props: { now } });
+	app = mount(WarRoom, { target: document.body, props: { clock: () => now } });
 	if (entries.length) await vi.waitFor(() => expect(document.body.querySelector('section[aria-label="War room"]')).not.toBeNull());
 	else await new Promise((r) => setTimeout(r, 20));
 	flushSync();
 }
-const button = (name: string) => [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === name);
+const button = (name: string) =>
+	[...document.body.querySelectorAll('button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === name || b.textContent?.trim() === name);
 const click = (name: string) => {
 	const b = button(name);
 	expect(b, `button ${name}`).toBeDefined();
@@ -87,6 +110,7 @@ describe('WarRoom', () => {
 
 	it('renders nothing when there are no marks', async () => {
 		await open([]);
+		expect(net.gets).toBeGreaterThan(0);
 		expect(document.body.querySelector('section[aria-label="War room"]')).toBeNull();
 	});
 
@@ -127,16 +151,64 @@ describe('WarRoom', () => {
 
 	it('re-marks one row with its reason prefilled', async () => {
 		await open([active, expired]);
-		const row = document.body.querySelectorAll('li')[0];
-		// an active row has no Re-mark; use the expired one, then check the dialog
-		expect(row.textContent).not.toContain('Re-mark');
-		[...document.body.querySelectorAll('li')[1].querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Re-mark')!.click();
+		expect(document.body.querySelectorAll('li')[0].textContent).not.toContain('Re-mark');
+		button('Re-mark ABC-311 Payments outage')!.click();
 		flushSync();
 		const input = document.body.querySelector<HTMLInputElement>('dialog input')!;
-		expect(input).not.toBeNull();
-		expect(input.value).toBe('');
+		expect(input.value).toBe('Still burning');
 		click('Mark urgent');
 		await vi.waitFor(() => expect(net.writes).toHaveLength(1));
-		expect(net.writes[0]).toEqual({ method: 'POST', path: '/api/v1/stories/ABC-311/urgent', body: { reason: null } });
+		expect(net.writes[0]).toEqual({ method: 'POST', path: '/api/v1/stories/ABC-311/urgent', body: { reason: 'Still burning' } });
+	});
+
+	it('links each row to its own page: the drawer for a story', async () => {
+		await open([active, expired]);
+		const hrefs = [...document.body.querySelectorAll('li a')].map((a) => a.getAttribute('href'));
+		expect(hrefs).toEqual(['/initiatives/ABC-1', '/?story=ABC-311']);
+	});
+
+	it('names every row button by its item', async () => {
+		await open([active, expired]);
+		expect(button('Clear urgent mark on ABC-1 Payments rebuild')).toBeDefined();
+		expect(button('Clear urgent mark on ABC-311 Payments outage')).toBeDefined();
+		click('End war room');
+		expect(button('Clear 2 marks')).toBeDefined();
+	});
+
+	it('moves focus into the confirmation and back to the opener on cancel', async () => {
+		await open([active, expired]);
+		click('End war room');
+		await vi.waitFor(() => expect(document.activeElement?.hasAttribute('data-confirm')).toBe(true));
+		click('Cancel');
+		await vi.waitFor(() => expect(document.activeElement).toBe(button('End war room')));
+	});
+
+	it('sends what was confirmed, not a row that arrived after the confirmation opened', async () => {
+		await open([active, expired]);
+		click('End war room');
+		const extra: WarRoomEntry = { ...active, item: { key: 'ABC-2', item: 'epic' }, title: 'Late one' };
+		net.entries = [active, expired, extra];
+		for (const f of live.fns) void f();
+		await vi.waitFor(() => expect(document.body.querySelectorAll('li')).toHaveLength(3));
+		expect(document.body.textContent).toContain('Clear 2 marks?');
+		click('Clear');
+		await vi.waitFor(() => expect(net.writes).toHaveLength(1));
+		expect((net.writes[0].body as { items: unknown[] }).items).toEqual([active.item, expired.item]);
+	});
+
+	it('drops the confirmation when a confirmed row vanishes', async () => {
+		await open([active, expired]);
+		click('End war room');
+		net.entries = [active];
+		for (const f of live.fns) void f();
+		await vi.waitFor(() => expect(button('End war room')).toBeDefined());
+		expect(document.body.textContent).not.toContain('Clear 2 marks?');
+	});
+
+	it('moves focus to the next row after a row clear', async () => {
+		await open([active, expired]);
+		button('Clear urgent mark on ABC-1 Payments rebuild')!.click();
+		await vi.waitFor(() => expect(document.body.querySelectorAll('li')).toHaveLength(1));
+		await vi.waitFor(() => expect(document.activeElement?.closest('li')).toBe(document.body.querySelector('li')));
 	});
 });

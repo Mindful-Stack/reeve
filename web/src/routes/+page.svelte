@@ -91,6 +91,8 @@
 
 	/** The initiative whose "Mark urgent" dialog is open. */
 	let marking = $state<string | null>(null);
+	let strip: { reload: () => Promise<void> } | undefined = $state();
+	const markingReason = $derived(initiatives?.find((i) => i.key === marking)?.urgent_mark?.reason ?? null);
 	let markError = $state<string | null>(null);
 
 	async function markUrgent(reason: string | null) {
@@ -105,7 +107,7 @@
 			markError = show(e);
 		}
 		try {
-			await reload();
+			await Promise.all([reload(), strip?.reload()]);
 		} catch (e) {
 			loadError = show(e);
 		} finally {
@@ -123,7 +125,7 @@
 			notice = show(e);
 		}
 		try {
-			await reload();
+			await Promise.all([reload(), strip?.reload()]);
 		} catch (e) {
 			loadError = show(e);
 		} finally {
@@ -274,11 +276,16 @@
 {/if}
 
 <!-- Outside the Mine filter: it loads its own data and lists every mark. -->
-<WarRoom />
+<WarRoom
+	bind:this={strip}
+	onchange={retry}
+	onempty={() => newButton?.focus()}
+/>
 
 {#if marking}
 	<MarkUrgentDialog
-		busy={busy}
+		initial={markingReason}
+		{busy}
 		error={markError}
 		onsubmit={markUrgent}
 		oncancel={() => {

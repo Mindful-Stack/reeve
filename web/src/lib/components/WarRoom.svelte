@@ -1,25 +1,44 @@
 <!-- The war room strip: every urgent mark on one line each, active first. Loads its own data, so the planning page's
      "Mine" filter does not hide it. Clearing and renewing in bulk ask inline, never through a browser dialog. -->
 <script lang="ts">
+	import { tick } from 'svelte';
+	import { page } from '$app/state';
 	import { api, ApiError, Refused, unwrap } from '#lib/api/client.ts';
 	import type { ItemRef, WarRoomEntry } from '#lib/api/types.ts';
+	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
 	import { expiry } from '#lib/urgency.ts';
 	import MarkUrgentDialog from './MarkUrgentDialog.svelte';
 
-	let { now = new Date() }: { now?: Date } = $props();
+	let {
+		clock = () => new Date(),
+		onchange,
+		onempty
+	}: {
+		/** The time source; tests pass a fixed one. Read whenever a list is applied, so "expires in" stays current. */
+		clock?: () => Date;
+		/** Called after a write of the strip's own landed, so the page can refresh its cards. */
+		onchange?: () => void;
+		/** Called when a write of the strip's own emptied it, so the page can move focus out of the vanished strip. */
+		onempty?: () => void;
+	} = $props();
 
 	let entries = $state<WarRoomEntry[]>([]);
-	let confirming = $state<'clear' | 'renew' | null>(null);
+	// svelte-ignore state_referenced_locally
+	let at = $state(clock());
+	/** The bulk action being confirmed with the refs captured when it opened: what is confirmed is what is sent. */
+	let confirm = $state<{ kind: 'clear' | 'renew'; items: ItemRef[] } | null>(null);
 	let remarking = $state<WarRoomEntry | null>(null);
 	let dialogError = $state<string | null>(null);
-	let error = $state<string | null>(null);
+	let writeError = $state<string | null>(null);
 	let busy = $state(false);
 	let latest = 0;
+	let heading: HTMLElement | undefined = $state();
 
 	const expired = $derived(entries.filter((e) => !e.mark.active));
 	const word = (n: number) => `${n} ${n === 1 ? 'mark' : 'marks'}`;
+	const same = (a: ItemRef, b: ItemRef) => a.item === b.item && a.key === b.key;
 
 	function show(e: unknown): string {
 		if (e instanceof Refused) return `Refused: ${e.reasons.map((r) => r.reason.replaceAll('_', ' ')).join(', ')}`;
@@ -27,36 +46,55 @@
 		return errorMessage(e);
 	}
 
-	async function load() {
+	function apply(list: WarRoomEntry[]) {
+		entries = list;
+		at = clock();
+		if (confirm && !confirm.items.every((r) => list.some((e) => same(e.item, r)))) confirm = null;
+	}
+
+	/** Refetches the list. A failed load keeps what is shown; the page's own notice reports load failures. */
+	export async function reload() {
 		const seq = ++latest;
 		try {
 			const list = await unwrap(api.GET('/api/v1/war-room'));
-			if (seq === latest) {
-				entries = list;
-				error = null;
-			}
-		} catch (e) {
-			if (seq === latest) error = `Could not load the war room: ${show(e)}`;
+			if (seq === latest) apply(list);
+		} catch {
+			/* keep the list on screen */
 		}
 	}
-	void load();
-	onLive(load);
+	void reload();
+	onLive(reload);
 
-	/** A write, then the refreshed list; a failure shows in the strip. */
-	async function run(write: () => Promise<unknown>): Promise<boolean> {
-		if (busy) return false;
+	/** A write that answers with the refreshed list (or nothing). Returns the failure text, or null on success. A failed
+	 *  write reloads too, since the list may have changed under it. */
+	async function run(write: () => Promise<WarRoomEntry[] | unknown>): Promise<string | null> {
+		if (busy) return 'busy';
 		busy = true;
-		error = null;
+		writeError = null;
 		try {
-			await write();
-			await load();
-			return true;
+			const answer = await write();
+			if (Array.isArray(answer)) {
+				latest++;
+				apply(answer as WarRoomEntry[]);
+			} else await reload();
+			onchange?.();
+			return null;
 		} catch (e) {
-			error = show(e);
-			return false;
+			await reload();
+			return show(e);
 		} finally {
 			busy = false;
 		}
+	}
+
+	/** Moves focus after a row write: the same position's row, else the heading, else out of the vanished strip. */
+	async function refocusRow(index: number) {
+		await tick();
+		const rows = [...document.querySelectorAll<HTMLElement>('section[aria-label="War room"] li')];
+		const row = rows[Math.min(index, rows.length - 1)];
+		if (row) row.querySelector<HTMLElement>('button')?.focus();
+		else if (heading) heading.focus();
+		else onempty?.();
 	}
 
 	function del(ref: ItemRef) {
@@ -72,55 +110,90 @@
 		return unwrap(api.POST('/api/v1/stories/{key}/urgent', args));
 	}
 
+	async function ask(kind: 'clear' | 'renew') {
+		confirm = { kind, items: (kind === 'clear' ? entries : expired).map((e) => e.item) };
+		await tick();
+		document.querySelector<HTMLElement>('section[aria-label="War room"] [data-confirm]')?.focus();
+	}
+
+	async function cancel() {
+		const kind = confirm?.kind;
+		confirm = null;
+		await tick();
+		document.querySelector<HTMLElement>(`section[aria-label="War room"] [data-bulk="${kind}"]`)?.focus();
+	}
+
 	async function bulk() {
-		const kind = confirming;
-		confirming = null;
-		if (!kind) return;
-		const items = (kind === 'clear' ? entries : expired).map((e) => e.item);
-		await run(() => unwrap(api.POST(kind === 'clear' ? '/api/v1/war-room/clear' : '/api/v1/war-room/renew', { body: { items } })));
+		const c = confirm;
+		confirm = null;
+		if (!c) return;
+		const err = await run(() =>
+			unwrap(api.POST(c.kind === 'clear' ? '/api/v1/war-room/clear' : '/api/v1/war-room/renew', { body: { items: c.items } }))
+		);
+		if (err) writeError = err;
+		await refocusRow(0);
+	}
+
+	async function clearRow(e: WarRoomEntry, index: number) {
+		const err = await run(() => del(e.item));
+		if (err) writeError = err;
+		await refocusRow(index);
 	}
 
 	async function remark(reason: string | null) {
 		const target = remarking;
 		if (!target) return;
 		dialogError = null;
-		if (await run(() => post(target.item, reason))) remarking = null;
+		const err = await run(() => post(target.item, reason));
+		if (err) dialogError = err;
 		else {
-			dialogError = error;
-			error = null;
+			remarking = null;
+			await refocusRow(0);
 		}
 	}
+
+	const route = (r: ItemRef) =>
+		r.item === 'story'
+			? storyHref(page.url, r.key)
+			: `/${r.item === 'initiative' ? 'initiatives' : 'epics'}/${encodeURIComponent(r.key)}`;
 </script>
 
-{#if entries.length || error}
-	<section aria-label="War room" class="war-room" class:quiet={!entries.length}>
+{#if entries.length}
+	<section aria-label="War room" class="war-room">
 		<div class="head">
-			<h2>
+			<h2 tabindex="-1" bind:this={heading}>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
 					><path d="M5 2h2v20H5zM8 3h12l-3 5 3 5H8z" /></svg
 				>War room
 			</h2>
-			{#if confirming}
+			{#if confirm}
 				<span class="ask">
-					{confirming === 'clear' ? `Clear ${word(entries.length)}?` : `Re-mark ${expired.length} expired?`}
-					<button type="button" class="primary" onclick={bulk} disabled={busy}>{confirming === 'clear' ? 'Clear' : 'Re-mark'}</button>
-					<button type="button" onclick={() => (confirming = null)}>Cancel</button>
+					{confirm.kind === 'clear' ? `Clear ${word(confirm.items.length)}?` : `Re-mark ${confirm.items.length} expired?`}
+					<button
+						type="button"
+						class="primary"
+						data-confirm
+						aria-label={confirm.kind === 'clear' ? `Clear ${word(confirm.items.length)}` : `Re-mark ${confirm.items.length} expired`}
+						onclick={bulk}
+						disabled={busy}>{confirm.kind === 'clear' ? 'Clear' : 'Re-mark'}</button
+					>
+					<button type="button" onclick={cancel}>Cancel</button>
 				</span>
-			{:else if entries.length}
+			{:else}
 				<span class="bulk">
-					{#if expired.length}<button type="button" onclick={() => (confirming = 'renew')} disabled={busy}>Re-mark all expired</button>{/if}
-					<button type="button" onclick={() => (confirming = 'clear')} disabled={busy}>End war room</button>
+					{#if expired.length}<button type="button" data-bulk="renew" onclick={() => ask('renew')} disabled={busy}
+							>Re-mark all expired</button
+						>{/if}
+					<button type="button" data-bulk="clear" onclick={() => ask('clear')} disabled={busy}>End war room</button>
 				</span>
 			{/if}
 		</div>
-		{#if error}<p class="error" role="alert">{error}</p>{/if}
+		{#if writeError}<p class="error" role="alert">{writeError}</p>{/if}
 		<ul>
-			{#each entries as e (e.item.item + e.item.key)}
+			{#each entries as e, i (e.item.item + e.item.key)}
 				<li class:expired={!e.mark.active}>
 					<span class="what">
-						<a href="/{e.item.item === 'initiative' ? 'initiatives' : e.item.item === 'epic' ? 'epics' : 'stories'}/{encodeURIComponent(e.item.key)}"
-							>{e.title}</a
-						>
+						<a href={route(e.item)}>{e.title}</a>
 						<span class="key">{e.item.key}</span>
 					</span>
 					<span class="where">
@@ -129,12 +202,24 @@
 					</span>
 					<span class="why">
 						{#if e.mark.reason}{e.mark.reason} · {/if}marked by {short(e.mark.by)} ·
-						{expiry(e.mark, now)}{#if e.mark.done}
+						{expiry(e.mark, at)}{#if e.mark.done}
 							· done{/if}
 					</span>
 					<span class="row-actions">
-						{#if !e.mark.active}<button type="button" class="ghost" onclick={() => ((dialogError = null), (remarking = e))} disabled={busy}>Re-mark</button>{/if}
-						<button type="button" class="ghost" onclick={() => run(() => del(e.item))} disabled={busy}>Clear</button>
+						{#if !e.mark.active}<button
+								type="button"
+								class="ghost"
+								aria-label="Re-mark {e.item.key} {e.title}"
+								onclick={() => ((dialogError = null), (remarking = e))}
+								disabled={busy}>Re-mark</button
+							>{/if}
+						<button
+							type="button"
+							class="ghost"
+							aria-label="Clear urgent mark on {e.item.key} {e.title}"
+							onclick={() => clearRow(e, i)}
+							disabled={busy}>Clear</button
+						>
 					</span>
 				</li>
 			{/each}
@@ -143,13 +228,7 @@
 {/if}
 
 {#if remarking}
-	<MarkUrgentDialog
-		initial={remarking.mark.reason}
-		{busy}
-		error={dialogError}
-		onsubmit={remark}
-		oncancel={() => (remarking = null)}
-	/>
+	<MarkUrgentDialog initial={remarking.mark.reason} {busy} error={dialogError} onsubmit={remark} oncancel={() => (remarking = null)} />
 {/if}
 
 <style>
