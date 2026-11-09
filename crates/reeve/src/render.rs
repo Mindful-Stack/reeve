@@ -1048,6 +1048,20 @@ mod tests {
         }
     }
 
+    fn epic_dto() -> EpicDto {
+        EpicDto {
+            key: "ABC-2".parse().unwrap(),
+            title: "Hosting".into(),
+            initiative: None,
+            brief: String::new(),
+            discovery_complete: None,
+            external_ref: None,
+            version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
+        }
+    }
+
     fn initiative_dto() -> InitiativeDto {
         InitiativeDto {
             key: "ABC-3".parse().unwrap(),
@@ -1097,15 +1111,8 @@ mod tests {
             initiative(&i)
         );
         let e = EpicDto {
-            key: "ABC-2".parse().unwrap(),
-            title: "Hosting".into(),
-            initiative: None,
-            brief: String::new(),
-            discovery_complete: None,
-            external_ref: None,
-            version: 1,
-            urgent_mark: None,
             urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
+            ..epic_dto()
         };
         let ek: Key = "ABC-2".parse().unwrap();
         assert!(
@@ -1174,15 +1181,8 @@ mod tests {
             format!("{}\nurgent · via epic ABC-40", initiative(&i))
         );
         let e = EpicDto {
-            key: "ABC-2".parse().unwrap(),
-            title: "Hosting".into(),
-            initiative: None,
-            brief: String::new(),
-            discovery_complete: None,
-            external_ref: None,
-            version: 1,
-            urgent_mark: None,
             urgent_sources: vec![ref_("ABC-9", ItemType::Story)],
+            ..epic_dto()
         };
         assert_eq!(
             epic_show(&e, now()),

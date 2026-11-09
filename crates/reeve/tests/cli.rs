@@ -2501,3 +2501,73 @@ fn initiative_ls_marks_an_urgent_initiative_with_a_bang_and_no_urgent_line() {
     assert!(text.contains("ABC-3 ! Leave"), "{text}");
     assert!(!text.contains("urgent ·"), "{text}");
 }
+
+/// `epic show` prints the urgent line right after its first line, ahead of the best-effort findings and comments.
+#[test]
+fn epic_show_prints_the_urgent_line_after_the_first_line() {
+    let e = reeve_protocol::EpicDto {
+        key: "ABC-2".parse().unwrap(),
+        title: "Hosting".into(),
+        initiative: None,
+        brief: String::new(),
+        discovery_complete: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-3".parse().unwrap(),
+            item: reeve_protocol::ItemType::Initiative,
+        }],
+    };
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/epics/ABC-2",
+            200,
+            ok(serde_json::to_value(e).unwrap()),
+        ),
+        (
+            "GET /api/v1/epics/ABC-2/findings",
+            200,
+            ok(serde_json::json!([])),
+        ),
+        (
+            "GET /api/v1/items/ABC-2/comments",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["epic", "show", "ABC-2"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains(" ! Hosting"), "{text}");
+    assert_eq!(lines[1], "urgent · via initiative ABC-3", "{text}");
+    assert_eq!(lines.len(), 2, "{text}");
+}
+
+/// `story context` prints the story's urgent line right after the story's own first line.
+#[test]
+fn story_context_prints_the_urgent_line_after_the_storys_first_line() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-40".parse().unwrap(),
+        item: reeve_protocol::ItemType::Epic,
+    }];
+    let ctx = serde_json::json!({
+        "story": urgent_story(src), "epic": null, "initiative": null,
+        "required_decisions": [], "blockers": [], "comments": [],
+        "readiness": {"ready": true, "reasons": []}, "goals": []
+    });
+    let (url, server) = serve(vec![("GET /api/v1/stories/ABC-1/context", 200, ok(ctx))]);
+    let out = reeve_at(&url, &["story", "context", "ABC-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("[todo] Match"))
+        .unwrap();
+    assert!(lines[at].contains(" !"), "{text}");
+    assert_eq!(lines[at + 1], "urgent · via epic ABC-40", "{text}");
+}
