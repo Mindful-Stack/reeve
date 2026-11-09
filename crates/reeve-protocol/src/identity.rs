@@ -51,3 +51,50 @@ pub struct UserDto {
     pub disabled: bool,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessKind {
+    Domain,
+    Email,
+}
+
+/// Where an entry comes from: the instance configuration (locked) or the database (editable by admins).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessSourceDto {
+    Config,
+    Database,
+}
+
+/// One allowed domain, allowed email or admin, from one source (kb/ADR-0015 R2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AccessEntryDto {
+    pub value: String,
+    pub source: AccessSourceDto,
+    /// A database row that duplicates a configuration entry: listed separately and removable.
+    pub also_in_config: bool,
+    /// False only on an admin grant whose email nothing allows: it grants nothing until the email is allowed again.
+    pub allowed: bool,
+    pub added_by: Option<String>,
+    pub added_at: Option<DateTime<Utc>>,
+}
+
+/// Who may sign in and who is admin: configuration rows first, then database rows, each by value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AccessDto {
+    pub domains: Vec<AccessEntryDto>,
+    pub emails: Vec<AccessEntryDto>,
+    pub admins: Vec<AccessEntryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AllowEntryRequest {
+    pub kind: AccessKind,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GrantAdminRequest {
+    pub email: String,
+}

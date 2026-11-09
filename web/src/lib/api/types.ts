@@ -41,3 +41,6 @@ export type CreatedGoal = S['CreatedGoalDto'];
 export type UrgentMark = S['UrgentMarkDto'];
 export type ItemRef = S['ItemRefDto'];
 export type WarRoomEntry = S['WarRoomEntryDto'];
+export type Access = S['AccessDto'];
+export type AccessEntry = S['AccessEntryDto'];
+export type AccessKind = S['AccessKind'];
