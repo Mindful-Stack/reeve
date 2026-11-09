@@ -491,6 +491,14 @@ impl Handlers {
         let stories = self
             .list_stories_in(tx, &todo, false, None, &Urgency::default())
             .await?;
-        Ok(queue::order(ds, queue::blocks(&stories), now.date_naive()))
+        let todo: Vec<queue::TodoStory> = stories
+            .iter()
+            .map(|s| queue::TodoStory {
+                key: s.story.key.clone(),
+                title: s.story.title.clone(),
+                reasons: s.readiness.reasons.clone(),
+            })
+            .collect();
+        Ok(queue::order(ds, queue::blocks(&todo), now.date_naive()))
     }
 }

@@ -275,8 +275,9 @@ impl Handlers {
             .sprint_view_in(&mut tx, &s, c.now)
             .await?
             .expect("a closed sprint has a window");
+        let counts = reeve_protocol::SprintCountsDto::from(&summary.counts);
         let closed_payload = serde_json::json!({
-            "counts": serde_json::to_value(summary.counts()).expect("counts serialise")
+            "counts": serde_json::to_value(counts).expect("counts serialise")
         });
         let mut entries: Vec<ActivityRecord> = judged
             .iter()

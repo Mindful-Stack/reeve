@@ -1,5 +1,5 @@
+use super::dto::urgent_fields;
 use super::import::{Claim, with_ref};
-use super::urgent::urgent_fields;
 use super::*;
 use crate::domain::{items::*, urgency::Urgency};
 use reeve_protocol::{EpicDto, ItemType, Key};

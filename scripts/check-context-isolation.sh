@@ -12,4 +12,13 @@ if [ -n "$violations" ]; then
   echo "$violations" >&2
   exit 1
 fi
+planning=crates/reeve-planning/src
+if [ -d "$planning/domain" ]; then
+  dto=$(g -rnE '\b[A-Za-z0-9_]*Dto\b|\bStoryWithReadiness\b' "$planning/domain" --include='*.rs')
+  if [ -n "$dto" ]; then
+    echo "planning's domain names a wire DTO: build DTOs in handler/dto.rs" >&2
+    echo "$dto" >&2
+    exit 1
+  fi
+fi
 echo "context isolation ok"

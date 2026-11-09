@@ -26,26 +26,6 @@ pub struct WarRoomEntry {
     pub state: MarkState,
 }
 
-/// The two urgency fields every item DTO carries: the mark stored on `key` (active or expired) and the active marks that
-/// make it urgent.
-pub(crate) fn urgent_fields(
-    u: &Urgency,
-    key: &Key,
-) -> (
-    Option<reeve_protocol::UrgentMarkDto>,
-    Vec<reeve_protocol::ItemRefDto>,
-) {
-    let sources = u
-        .sources(key)
-        .iter()
-        .map(|(k, t)| reeve_protocol::ItemRefDto {
-            key: k.clone(),
-            item: *t,
-        })
-        .collect();
-    (u.mark(key).map(Into::into), sources)
-}
-
 fn clean_reason(r: Option<String>) -> Result<Option<String>, HandlerError> {
     let r = r.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     if r.as_ref().is_some_and(|s| s.chars().count() > MAX_REASON) {
@@ -354,39 +334,5 @@ impl Handlers {
             )));
         }
         Ok((tx, items))
-    }
-}
-
-impl From<&MarkState> for reeve_protocol::UrgentMarkDto {
-    fn from(m: &MarkState) -> Self {
-        Self {
-            at: m.mark.at,
-            by: m.mark.by.clone(),
-            reason: m.mark.reason.clone(),
-            expires_at: m.expires_at,
-            active: m.active,
-            done: m.done,
-        }
-    }
-}
-
-impl From<&WarRoomEntry> for reeve_protocol::WarRoomEntryDto {
-    fn from(e: &WarRoomEntry) -> Self {
-        Self {
-            item: reeve_protocol::ItemRefDto {
-                key: e.key.clone(),
-                item: e.item,
-            },
-            title: e.title.clone(),
-            initiative: e
-                .initiative
-                .as_ref()
-                .map(|i| reeve_protocol::WarRoomInitiativeDto {
-                    key: i.key.clone(),
-                    title: i.title.clone(),
-                    horizon: i.horizon.clone(),
-                }),
-            mark: (&e.state).into(),
-        }
     }
 }

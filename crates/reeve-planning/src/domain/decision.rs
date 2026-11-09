@@ -137,37 +137,6 @@ pub(crate) fn same_outcome(a: &CheckResult, b: &CheckResult) -> bool {
     }
 }
 
-impl From<&RequiredDecision> for reeve_protocol::RequiredDecisionDto {
-    fn from(d: &RequiredDecision) -> Self {
-        Self {
-            id: d.id,
-            on: d.on.clone(),
-            on_type: d.on_type,
-            title: d.title.clone(),
-            decider: d.decider.clone(),
-            due: d.due,
-            reversibility: d.reversibility,
-            record: d.record.as_ref().map(|r| reeve_protocol::RecordRefDto {
-                repo: r.repo.clone(),
-                path: r.path.clone(),
-                record_id: r.record_id.clone(),
-            }),
-            pr_url: d.pr_url.clone(),
-            check: d.check.clone(),
-            checked_at: d.checked_at,
-            closed: d.closed.as_ref().map(|c| reeve_protocol::ClosedDto {
-                at: c.at,
-                by: c.by.clone(),
-                reason: c.reason.clone(),
-                kind: c.kind,
-                via: c.via,
-            }),
-            created_at: d.created_at,
-            version: d.version,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

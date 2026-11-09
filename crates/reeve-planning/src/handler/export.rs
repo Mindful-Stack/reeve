@@ -84,7 +84,7 @@ impl Handlers {
         let links = self.repo.links_of_in(tx, &goal_ids).await?;
         Ok(all
             .iter()
-            .map(|s| crate::domain::sprint::sprint_dto(s, &goals, &links))
+            .map(|s| super::dto::sprint_dto(s, &goals, &links))
             .collect())
     }
 

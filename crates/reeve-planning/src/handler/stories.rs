@@ -1,6 +1,6 @@
+use super::dto::urgent_fields;
 use super::epics::epic_dto_of;
 use super::import::{Claim, with_ref};
-use super::urgent::urgent_fields;
 use super::*;
 use crate::domain::{delivery::*, items::*, readiness::compute_readiness, urgency::Urgency};
 use crate::ports::RepoError;
@@ -786,7 +786,7 @@ impl Handlers {
                     .find(|g| g.id == r.id)
                     .ok_or(HandlerError::NotFound)?;
                 Ok(GoalContextDto {
-                    goal: crate::domain::sprint::goal_dto(g, &links),
+                    goal: super::dto::goal_dto(g, &links),
                     starts_on: sprint.starts_on,
                     ends_on: sprint.ends_on,
                     via: r.via,

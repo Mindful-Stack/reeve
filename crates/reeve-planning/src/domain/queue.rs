@@ -3,10 +3,7 @@
 
 use crate::domain::decision::RequiredDecision;
 use chrono::NaiveDate;
-use reeve_protocol::{
-    BlockedStoryDto, DecisionQueueEntryDto, DecisionQueueSummaryDto, Key, QueueGroup,
-    RequiredDecisionDto, StoryWithReadiness,
-};
+use reeve_protocol::{Key, QueueGroup, Reason};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 
@@ -15,6 +12,14 @@ use std::collections::{BTreeMap, HashSet};
 pub struct BlockedStory {
     pub key: Key,
     pub title: String,
+}
+
+/// What the queue needs of a todo story: its key, title and readiness reasons.
+#[derive(Debug, Clone)]
+pub struct TodoStory {
+    pub key: Key,
+    pub title: String,
+    pub reasons: Vec<Reason>,
 }
 
 /// One decision in the queue, with the todo stories it blocks (empty outside the blocking group).
@@ -34,46 +39,16 @@ pub struct QueueSummary {
     pub overdue: u32,
 }
 
-impl From<&BlockedStory> for BlockedStoryDto {
-    fn from(b: &BlockedStory) -> Self {
-        Self {
-            key: b.key.clone(),
-            title: b.title.clone(),
-        }
-    }
-}
-
-impl From<&QueueEntry> for DecisionQueueEntryDto {
-    fn from(e: &QueueEntry) -> Self {
-        Self {
-            decision: RequiredDecisionDto::from(&e.decision),
-            group: e.group,
-            blocks: e.blocks.iter().map(BlockedStoryDto::from).collect(),
-        }
-    }
-}
-
-impl From<QueueSummary> for DecisionQueueSummaryDto {
-    fn from(s: QueueSummary) -> Self {
-        Self {
-            open: s.open,
-            blocking: s.blocking,
-            blocked_stories: s.blocked_stories,
-            overdue: s.overdue,
-        }
-    }
-}
-
 /// decision id → the todo stories whose readiness reasons name it, in input order.
-pub fn blocks(todo: &[StoryWithReadiness]) -> BTreeMap<i64, Vec<BlockedStory>> {
+pub fn blocks(todo: &[TodoStory]) -> BTreeMap<i64, Vec<BlockedStory>> {
     let mut out: BTreeMap<i64, Vec<BlockedStory>> = BTreeMap::new();
     for s in todo {
         let mut seen = HashSet::new();
-        for id in s.readiness.reasons.iter().filter_map(|r| r.decision_id()) {
+        for id in s.reasons.iter().filter_map(|r| r.decision_id()) {
             if seen.insert(id) {
                 out.entry(id).or_default().push(BlockedStory {
-                    key: s.story.key.clone(),
-                    title: s.story.title.clone(),
+                    key: s.key.clone(),
+                    title: s.title.clone(),
                 });
             }
         }
@@ -176,10 +151,7 @@ mod tests {
     use super::*;
     use crate::domain::decision::{Closed, RequiredDecision};
     use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-    use reeve_protocol::{
-        CheckResult, ClosureKind, DeliveryState, ItemType, Key, Kind, Readiness, Reason, StoryDto,
-        StoryWithReadiness, TokenKind,
-    };
+    use reeve_protocol::{CheckResult, ClosureKind, ItemType, Key, Reason, TokenKind};
     use std::collections::BTreeMap;
 
     fn today() -> NaiveDate {
@@ -252,32 +224,11 @@ mod tests {
     fn ids(es: &[QueueEntry]) -> Vec<(QueueGroup, i64)> {
         es.iter().map(|e| (e.group, e.decision.id)).collect()
     }
-    fn todo(n: u64, reasons: Vec<Reason>) -> StoryWithReadiness {
-        StoryWithReadiness {
-            story: StoryDto {
-                key: key(n),
-                title: format!("s{n}"),
-                kind: Kind::Story,
-                epic: None,
-                description: String::new(),
-                criteria: vec![],
-                owner: None,
-                labels: vec![],
-                rank: 0,
-                blocked_by: vec![],
-                delivery: DeliveryState::Todo,
-                resolution: None,
-                external_ref: None,
-                version: 1,
-                prs: vec![],
-                goals: vec![],
-                urgent_mark: None,
-                urgent_sources: vec![],
-            },
-            readiness: Readiness {
-                ready: reasons.is_empty(),
-                reasons,
-            },
+    fn todo(n: u64, reasons: Vec<Reason>) -> TodoStory {
+        TodoStory {
+            key: key(n),
+            title: format!("s{n}"),
+            reasons,
         }
     }
     fn unchecked(id: i64) -> Reason {

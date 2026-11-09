@@ -14,7 +14,7 @@ pub use domain::{
     queue::{BlockedStory, QueueEntry, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
-        Goal, GoalLink, Sprint, StoryTimes, Summary, goal_dto, sprint_dto, sprint_view_dto,
+        DemoStory, Goal, GoalLink, GoalProgress, Sprint, SprintCounts, StoryTimes, Summary,
         summarise,
     },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},

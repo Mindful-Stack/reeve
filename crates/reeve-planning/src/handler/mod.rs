@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)] // handlers mirror the request shapes; argument structs would only move the count
 mod comments;
 mod decisions;
+mod dto;
 mod epics;
 mod export;
 mod import;
@@ -14,6 +15,7 @@ mod urgent;
 use crate::ports::*;
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
+pub use dto::{goal_dto, sprint_dto, sprint_view_dto};
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use sprints::Sprints;
 use sqlx::{PgPool, Postgres, Transaction};

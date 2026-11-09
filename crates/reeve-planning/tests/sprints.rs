@@ -1965,21 +1965,23 @@ mod views {
             (1, 2),
             "N at close: u completed; s and t in flight"
         );
-        let now_n = h
-            .sprint_view(n.id, at_hm(20, 13, 0))
-            .await
-            .unwrap()
-            .3
-            .unwrap()
-            .counts();
+        let now_n = SprintCountsDto::from(
+            &h.sprint_view(n.id, at_hm(20, 13, 0))
+                .await
+                .unwrap()
+                .3
+                .unwrap()
+                .counts,
+        );
         assert_eq!(now_n, close_n, "nothing moved between parents yet");
-        let now_n1 = h
-            .sprint_view(n1.id, at_hm(20, 13, 0))
-            .await
-            .unwrap()
-            .3
-            .unwrap()
-            .counts();
+        let now_n1 = SprintCountsDto::from(
+            &h.sprint_view(n1.id, at_hm(20, 13, 0))
+                .await
+                .unwrap()
+                .3
+                .unwrap()
+                .counts,
+        );
         assert_eq!(now_n1.completed, 2, "N+1: t (exactly at its opening) and s");
 
         // Reparent s to an epic no goal of N covers: N's derived counts change, its at-close counts do not.
@@ -2000,13 +2002,14 @@ mod views {
         )
         .await
         .unwrap();
-        let after = h
-            .sprint_view(n.id, at_hm(21, 10, 0))
-            .await
-            .unwrap()
-            .3
-            .unwrap()
-            .counts();
+        let after = SprintCountsDto::from(
+            &h.sprint_view(n.id, at_hm(21, 10, 0))
+                .await
+                .unwrap()
+                .3
+                .unwrap()
+                .counts,
+        );
         assert_eq!(after.goals[0].in_flight, 1, "now: only t");
         assert_eq!(
             at_close(&sink, n.id),
@@ -2130,13 +2133,14 @@ mod views {
         .await
         .unwrap();
 
-        let one = h
-            .sprint_view(s1.id, at(21, 9))
-            .await
-            .unwrap()
-            .3
-            .unwrap()
-            .counts();
+        let one = SprintCountsDto::from(
+            &h.sprint_view(s1.id, at(21, 9))
+                .await
+                .unwrap()
+                .3
+                .unwrap()
+                .counts,
+        );
         assert_eq!(
             (one.goals[0].completed, one.goals[0].in_flight),
             (0, 1),
@@ -2147,13 +2151,14 @@ mod views {
             (1, 1),
             "B: completed in sprint 1, unlinked"
         );
-        let two = h
-            .sprint_view(s2.id, at(21, 9))
-            .await
-            .unwrap()
-            .3
-            .unwrap()
-            .counts();
+        let two = SprintCountsDto::from(
+            &h.sprint_view(s2.id, at(21, 9))
+                .await
+                .unwrap()
+                .3
+                .unwrap()
+                .counts,
+        );
         assert_eq!(
             two.goals[0].completed, 1,
             "A counts in sprint 2, where it completed"
@@ -2311,7 +2316,7 @@ mod views {
         let list = h.sprints(at(7, 0)).await.unwrap();
         assert_eq!(list.active.as_ref().map(|x| x.id), Some(a.id));
         let sum = list.active_summary.unwrap();
-        assert_eq!(sum.counts().completed, 1);
+        assert_eq!(sum.counts.completed, 1);
         assert_eq!(
             sum.demo.iter().map(|d| d.key.clone()).collect::<Vec<_>>(),
             vec![s.key().clone()]
@@ -2324,7 +2329,7 @@ mod views {
                 .unwrap()
                 .active_summary
                 .unwrap()
-                .counts()
+                .counts
                 .completed,
             0
         );
@@ -2487,7 +2492,7 @@ mod views {
         assert_eq!(goals.len(), 4);
         assert_eq!(
             sum.unwrap()
-                .counts()
+                .counts
                 .goals
                 .iter()
                 .map(|g| g.in_flight + g.todo)
