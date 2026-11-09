@@ -205,3 +205,15 @@ pub struct SearchHit {
     /// client shows above the rest.
     pub exact: bool,
 }
+
+/// One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SimilarStory {
+    pub key: Key,
+    pub kind: Kind,
+    pub title: String,
+    pub epic: Option<Key>,
+    pub delivery: DeliveryState,
+    /// Set when `delivery` is done: completed or dropped.
+    pub resolution: Option<Resolution>,
+}

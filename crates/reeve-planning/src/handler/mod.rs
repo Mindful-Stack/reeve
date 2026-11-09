@@ -10,6 +10,7 @@ mod moves;
 mod plans;
 mod prs;
 mod search;
+mod similar;
 mod sprints;
 mod stories;
 mod urgent;

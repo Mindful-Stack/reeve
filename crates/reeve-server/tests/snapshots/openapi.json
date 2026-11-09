@@ -6560,6 +6560,130 @@
           }
         ]
       },
+      "Response_Vec_SimilarStory": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only.",
+                  "properties": {
+                    "delivery": {
+                      "$ref": "#/components/schemas/DeliveryState"
+                    },
+                    "epic": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Key"
+                        }
+                      ]
+                    },
+                    "key": {
+                      "$ref": "#/components/schemas/Key"
+                    },
+                    "kind": {
+                      "$ref": "#/components/schemas/Kind"
+                    },
+                    "resolution": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/Resolution",
+                          "description": "Set when `delivery` is done: completed or dropped."
+                        }
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "kind",
+                    "title",
+                    "delivery"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_Vec_StoryWithReadiness": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -7043,6 +7167,51 @@
           "title",
           "matched",
           "exact"
+        ],
+        "type": "object"
+      },
+      "SimilarStory": {
+        "description": "One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only.",
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryState"
+          },
+          "epic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Key"
+              }
+            ]
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "resolution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Resolution",
+                "description": "Set when `delivery` is done: completed or dropped."
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "title",
+          "delivery"
         ],
         "type": "object"
       },
@@ -12486,6 +12655,7 @@
             }
           },
           {
+            "description": "Items of any kind with no epic that are not done (kb/ADR-0018 R4).",
             "in": "query",
             "name": "untriaged",
             "required": false,
@@ -12675,6 +12845,100 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/api/v1/stories/similar": {
+      "get": {
+        "operationId": "similar",
+        "parameters": [
+          {
+            "description": "The title being written, 8 to 200 characters.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1 to 10; default 5.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_SimilarStory"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Open stories, and stories done within `[board] done_window_days`, whose title is similar to `q` (pg_trgm), most\nsimilar first. A duplicate check: advice only."
       }
     },
     "/api/v1/stories/{key}": {

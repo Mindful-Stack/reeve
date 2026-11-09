@@ -22,6 +22,7 @@ export type Readiness = S['Readiness'];
 export type Reason = S['Reason'];
 export type Finding = S['Finding'];
 export type SearchHit = S['SearchHit'];
+export type SimilarStory = S['SimilarStory'];
 export type Token = S['TokenDto'];
 export type User = S['UserDto'];
 export type InstanceConfig = S['InstanceConfigDto'];
