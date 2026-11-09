@@ -461,6 +461,102 @@ async fn flow() {
         .output()
         .unwrap());
 
+    // Urgent marks through the CLI (kb/ADR-0017). The flow's own override is already logged, so every count is
+    // compared before and after.
+    let count = |action: &'static str| {
+        let activity = activity.clone();
+        async move {
+            reeve_activity::ActivityReader::list(
+                &*activity,
+                reeve_activity::ActivityFilter {
+                    action: Some(action.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .len()
+        }
+    };
+    let text = |token: &str, args: &[&str]| {
+        let mut c = Command::cargo_bin("reeve").unwrap();
+        c.env("REEVE_URL", &base)
+            .env("REEVE_CONFIG_DIR", cfg_dir.path())
+            .env("REEVE_TOKEN", token)
+            .args(args)
+            .timeout(std::time::Duration::from_secs(60));
+        c.output().unwrap()
+    };
+    let urgent_line = |out: &std::process::Output| -> Option<String> {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find(|l| l.starts_with("urgent"))
+            .map(str::to_string)
+    };
+    let before_override = count("override").await;
+    let before_marked = count("urgent_marked").await;
+    let before_cleared = count("urgent_cleared").await;
+
+    let marked = text(
+        &human,
+        &["epic", "urgent", &epic_key, "--reason", "acceptance"],
+    );
+    assert!(
+        marked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&marked.stderr)
+    );
+    let shown = text(&human, &["story", "show", &key]);
+    assert!(shown.status.success());
+    let line = urgent_line(&shown).expect("the story is urgent through its epic");
+    assert!(
+        line.starts_with(&format!("urgent · via epic {epic_key}")),
+        "{line}"
+    );
+    let room = ok(reeve(&human).args(["war-room", "ls"]).output().unwrap());
+    assert!(
+        room["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["item"]["key"] == epic_key.as_str()),
+        "{room}"
+    );
+    let emptied = text(&human, &["war-room", "clear", "--yes"]);
+    assert!(
+        emptied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emptied.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&emptied.stdout).trim(),
+        "The war room is empty."
+    );
+    let shown = text(&human, &["story", "show", &key]);
+    assert_eq!(urgent_line(&shown), None);
+    assert_eq!(count("urgent_marked").await, before_marked + 1);
+    assert_eq!(count("urgent_cleared").await, before_cleared + 1);
+    assert_eq!(
+        count("override").await,
+        before_override,
+        "marking and clearing never write an override"
+    );
+    let refused = reeve(&bot)
+        .args(["story", "urgent", &key])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2));
+    let refused: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(refused["outcome"], "refused");
+    assert!(
+        refused["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reason"] == "interactive_only"),
+        "{refused}"
+    );
+
     // 6. The record is accepted. Committed locally but not pushed, the default branch on origin still lacks it, so the
     // check must not see it: the story stays blocked. Pushed, the next check accepts it.
     git(&kb, &["merge", "-q", "adr/0001"]);
