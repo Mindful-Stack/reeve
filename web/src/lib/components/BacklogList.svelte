@@ -3,7 +3,7 @@
      targets come from the rows of this list; the page does the writes. -->
 <script lang="ts">
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
-	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, isUntriaged, neighbourBefore, orderAfterDrop, shortReason } from '#lib/board.ts';
+	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, neighbourBefore, orderAfterDrop, shortReason } from '#lib/board.ts';
 	import { freshNote, live } from '#lib/events.svelte.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
@@ -16,7 +16,6 @@
 		rows,
 		full,
 		showEpic = false,
-		split = false,
 		epicTitle,
 		href,
 		busy = false,
@@ -29,8 +28,6 @@
 		full: StoryWithReadiness[];
 		/** Show each row's epic (the ranked list and the "Epic not loaded" group). */
 		showEpic?: boolean;
-		/** "No epic": untriaged stories (the server's reason) and the rest are two runs that rank separately. */
-		split?: boolean;
 		epicTitle: Map<string, string>;
 		/** The drawer link for a story. */
 		href: (key: string) => string;
@@ -46,18 +43,13 @@
 	/** A drag lives in one list: a drop on another list is not accepted. */
 	let dragging = $state<{ item: StoryWithReadiness; peers: StoryWithReadiness[] } | null>(null);
 
-	function peersOf(item: StoryWithReadiness): StoryWithReadiness[] {
-		if (!split) return rows;
-		return rows.filter((r) => isUntriaged(r) === isUntriaged(item));
-	}
-
 	/** Past the run's end a row stays inside its run: before the story that follows the run in the full list. */
 	function target(before: string | null, peers: StoryWithReadiness[]): string | null {
 		return before ?? afterPart(full, peers);
 	}
 
 	function menu(item: StoryWithReadiness): MenuItem[] {
-		const peers = peersOf(item);
+		const peers = rows;
 		const key = item.story.key;
 		const up = neighbourBefore(peers, key, 'up');
 		const down = neighbourBefore(peers, key, 'down');
@@ -79,7 +71,7 @@
 			e.preventDefault();
 			return;
 		}
-		dragging = { item, peers: peersOf(item) };
+		dragging = { item, peers: rows };
 		e.dataTransfer?.setData('text/plain', item.story.key);
 		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
 	}

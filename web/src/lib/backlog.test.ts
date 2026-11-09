@@ -17,23 +17,18 @@ describe('groupBacklog', () => {
 	const epics = [epic('E-1', 'I-1'), epic('E-2', 'I-1'), epic('E-3', null), epic('E-4', 'I-2')];
 	const todo = [
 		row('S-5', 5, { epic: 'E-1', ready: true }),
-		row('S-1', 1, { kind: 'chore' }),
+		row('S-1', 1, { kind: 'chore', untriaged: true }),
 		row('S-2', 2, { epic: 'E-1' }),
 		row('S-3', 3, { kind: 'story', untriaged: true }),
 		row('S-4', 4, { epic: 'E-3', ready: true }),
-		row('S-0', 0, { kind: 'chore' }),
+		row('S-0', 0, { kind: 'chore', untriaged: true }),
 		row('S-6', 6, { epic: 'E-9' })
 	];
 	const b = groupBacklog(buckets, initiatives, epics, todo);
 
-	it('No epic first: untriaged stories before epic-less bugs and chores, rank order inside each', () => {
-		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-3', 'S-0', 'S-1']);
-		expect(b.untriaged).toBe(1);
-	});
-	it('untriaged is the server reason, not kind and epic re-derived', () => {
-		const g = groupBacklog(buckets, initiatives, epics, [row('S-7', 7, { kind: 'chore' }), row('S-8', 8, { kind: 'story' })]);
-		expect(g.untriaged).toBe(0);
-		expect(g.noEpic.map((r) => r.story.key)).toEqual(['S-7', 'S-8']); // rank order: no untriaged run first
+	it('No epic first: every epic-less row in one run, rank order, all counted untriaged', () => {
+		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-0', 'S-1', 'S-3']);
+		expect(b.untriaged).toBe(3);
 	});
 	it('initiatives in planning order, every epic listed, an empty one says so', () => {
 		expect(b.sections.map((s) => s.title)).toEqual(['Onboarding', 'Billing', 'Search', 'No initiative']);

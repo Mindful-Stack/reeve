@@ -325,13 +325,13 @@
 		{#if shown.length === 0 && (ranked || (epics.length === 0 && backlog.sections.length === 0))}
 			{#if todo.length && filtered}{@render noMatch()}{:else}<p class="muted empty">Nothing waiting</p>{/if}
 		{:else if ranked}
-			{@render list(shown, true, false)}
+			{@render list(shown, true)}
 		{:else}
 			{#if shown.length === 0 && todo.length && filtered}{@render noMatch()}{/if}
 			{#if backlog.noEpic.length}
 				<section aria-label="No epic" class="section">
 					<h2 class="initiative" tabindex="-1">No epic <span class="count">{backlog.untriaged} untriaged</span></h2>
-					{@render list(backlog.noEpic, false, true)}
+					{@render list(backlog.noEpic, false)}
 				</section>
 			{/if}
 			{#each backlog.sections as sec (sec.key ?? '')}
@@ -346,7 +346,7 @@
 								<span class="key">{g.epic.key}</span>
 								<span class="summary"><StatusDot tone={g.tone} label={g.summary} /></span>
 							</h3>
-							{#if g.rows.length}{@render list(g.rows, false, false)}{/if}
+							{#if g.rows.length}{@render list(g.rows, false)}{/if}
 						</div>
 					{:else}
 						<p class="muted">No epics</p>
@@ -356,7 +356,7 @@
 			{#if backlog.orphans.length}
 				<section aria-label="Epic not loaded" class="section">
 					<h2 class="initiative" tabindex="-1">Epic not loaded</h2>
-					{@render list(backlog.orphans, true, false)}
+					{@render list(backlog.orphans, true)}
 				</section>
 			{/if}
 		{/if}
@@ -369,12 +369,11 @@
 	</p>
 {/snippet}
 
-{#snippet list(rows: StoryWithReadiness[], showEpic: boolean, split: boolean)}
+{#snippet list(rows: StoryWithReadiness[], showEpic: boolean)}
 	<BacklogList
 		{rows}
 		full={todo ?? []}
 		{showEpic}
-		{split}
 		{epicTitle}
 		href={(key) => storyHref(page.url, key)}
 		{busy}
