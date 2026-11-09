@@ -2,8 +2,6 @@
 //! `ownMarkText`, `urgentLine`, `via`) and of the expired and done lines in `UrgentLine.svelte` and `StoryDrawer.svelte`,
 //! with the same words and rounding, lowercase as the CLI is. The server decides what is urgent (`urgent_sources`) and
 //! whether a mark is active; this only words its answer.
-// Used from the CLI and TUI tasks that follow.
-#![cfg_attr(not(test), expect(dead_code, reason = "used from Task 3"))]
 use crate::glyphs::Level;
 use chrono::{DateTime, Utc};
 use reeve_protocol::{ItemRefDto, Key, UrgentMarkDto};
@@ -21,6 +19,7 @@ pub fn urgent_marker(sources: &[ItemRefDto]) -> &'static str {
 }
 
 /// "1 mark", "2 marks".
+#[cfg_attr(not(test), expect(dead_code, reason = "used from Task 5"))]
 pub fn marks(n: usize) -> String {
     format!("{n} {}", if n == 1 { "mark" } else { "marks" })
 }

@@ -246,11 +246,14 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::story,
         ),
-        Story::Show { key } => finish(
-            c.get::<StoryDto>(&format!("/stories/{key}")).await?,
-            json,
-            crate::render::story,
-        ),
+        Story::Show { key } => {
+            let now = chrono::Utc::now();
+            finish(
+                c.get::<StoryDto>(&format!("/stories/{key}")).await?,
+                json,
+                |s| crate::render::story_show(s, now),
+            )
+        }
         Story::Ls {
             epic,
             owner,
@@ -411,12 +414,15 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::readiness,
         ),
-        Story::Context { key } => finish(
-            c.get::<StoryContextDto>(&format!("/stories/{key}/context"))
-                .await?,
-            json,
-            crate::render::context_markdown,
-        ),
+        Story::Context { key } => {
+            let now = chrono::Utc::now();
+            finish(
+                c.get::<StoryContextDto>(&format!("/stories/{key}/context"))
+                    .await?,
+                json,
+                |x| crate::render::context_markdown_at(x, now),
+            )
+        }
         Story::Block { key, by } => finish(
             c.post::<reeve_protocol::Empty>(
                 &format!("/stories/{key}/blocks"),

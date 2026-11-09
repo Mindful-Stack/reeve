@@ -2416,3 +2416,88 @@ fn a_conflict_on_open_says_to_run_it_again() {
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(v["current"], 2, "{v}");
 }
+
+fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::StoryDto {
+    reeve_protocol::StoryDto {
+        key: "ABC-1".parse().unwrap(),
+        title: "Match".into(),
+        kind: reeve_protocol::Kind::Story,
+        epic: None,
+        description: String::new(),
+        criteria: vec![reeve_protocol::CriterionDto {
+            text: "It works".into(),
+            done: false,
+        }],
+        owner: None,
+        labels: vec![],
+        rank: 1,
+        blocked_by: vec![],
+        delivery: reeve_protocol::DeliveryState::Todo,
+        resolution: None,
+        external_ref: None,
+        version: 1,
+        prs: vec![],
+        goals: vec![],
+        urgent_mark: None,
+        urgent_sources: sources,
+    }
+}
+
+/// `story show` of a story that is urgent through its epic: the urgent line is right after the first line, and the rest
+/// of the output is the story's usual output.
+#[test]
+fn story_show_prints_the_urgent_line_after_the_first_line() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-40".parse().unwrap(),
+        item: reeve_protocol::ItemType::Epic,
+    }];
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories/ABC-1",
+        200,
+        ok(serde_json::to_value(urgent_story(src)).unwrap()),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "ABC-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains(" ! [todo] Match"), "{text}");
+    assert_eq!(lines[1], "urgent · via epic ABC-40", "{text}");
+    assert!(lines[2].starts_with("  kind: Story"), "{text}");
+    assert_eq!(lines[3], "  [ ] It works", "{text}");
+    assert_eq!(lines.len(), 4, "{text}");
+}
+
+/// `ls` shows the `!` after the key and never the urgent lines.
+#[test]
+fn initiative_ls_marks_an_urgent_initiative_with_a_bang_and_no_urgent_line() {
+    let i = reeve_protocol::InitiativeDto {
+        key: "ABC-3".parse().unwrap(),
+        title: "Leave".into(),
+        brief: String::new(),
+        horizon: "Now".into(),
+        target_month: None,
+        owner: None,
+        discovery_complete: None,
+        progress: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-40".parse().unwrap(),
+            item: reeve_protocol::ItemType::Epic,
+        }],
+    };
+    let (url, server) = serve(vec![(
+        "GET /api/v1/initiatives",
+        200,
+        ok(serde_json::json!([i])),
+    )]);
+    let out = reeve_at(&url, &["initiative", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("ABC-3 ! Leave"), "{text}");
+    assert!(!text.contains("urgent ·"), "{text}");
+}

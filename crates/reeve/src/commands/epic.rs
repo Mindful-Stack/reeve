@@ -112,8 +112,9 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
         ),
         Epic::Show { key } => {
             let out = c.get::<EpicDto>(&format!("/epics/{key}")).await?;
+            let now = chrono::Utc::now();
             if json || !matches!(out, crate::client::Outcome::Ok(_)) {
-                finish(out, json, crate::render::epic)
+                finish(out, json, |v| crate::render::epic_show(v, now))
             } else {
                 // Advisory and best effort: a failed findings read (an older server, a dropped connection) still shows the
                 // epic.
@@ -138,7 +139,7 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
                         .filter(|b| !b.is_empty())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let s = crate::render::epic(v);
+                    let s = crate::render::epic_show(v, now);
                     if f.is_empty() { s } else { format!("{s}\n{f}") }
                 })
             }

@@ -1,5 +1,7 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
+use crate::urgency::{urgent_lines, urgent_marker};
+use chrono::{DateTime, Utc};
 use reeve_protocol::*;
 use std::fmt::Write;
 
@@ -74,10 +76,47 @@ pub fn reasons(rs: &[Reason]) -> String {
         .join("\n")
 }
 
+/// Inserts `lines` right after the first line of `text`, keeping the rest; appends them when `text` is one line.
+pub fn with_urgency(text: String, lines: Vec<String>) -> String {
+    if lines.is_empty() {
+        return text;
+    }
+    let block = lines.join("\n");
+    match text.split_once('\n') {
+        Some((first, rest)) => format!("{first}\n{block}\n{rest}"),
+        None => format!("{text}\n{block}"),
+    }
+}
+
+/// `story` for `story show` and `story context`: with the urgent lines after the first line.
+pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
+    with_urgency(
+        story(s),
+        urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now),
+    )
+}
+
+/// `initiative` for `initiative show`: with the urgent lines after the first line.
+pub fn initiative_show(i: &InitiativeDto, now: DateTime<Utc>) -> String {
+    with_urgency(
+        initiative(i),
+        urgent_lines(i.urgent_mark.as_ref(), &i.urgent_sources, &i.key, now),
+    )
+}
+
+/// `epic` for `epic show`: with the urgent lines after the first line.
+pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
+    with_urgency(
+        epic(e),
+        urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now),
+    )
+}
+
 pub fn story(s: &StoryDto) -> String {
     let mut out = format!(
-        "{} [{}] {}\n  kind: {:?}  version: {}",
+        "{}{} [{}] {}\n  kind: {:?}  version: {}",
         mark(Level::of_kind(s.kind), &s.key),
+        urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         s.title,
         s.kind,
@@ -137,8 +176,9 @@ pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
             .unwrap_or_else(|| "not ready".into())
     };
     format!(
-        "{}\t{}\t{}\t{}",
+        "{}{}\t{}\t{}\t{}",
         mark(Level::of_kind(s.kind), &s.key),
+        urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         ready_word,
         s.title
@@ -246,8 +286,9 @@ pub fn queue(q: &DecisionQueueDto) -> String {
 
 pub fn initiative(i: &InitiativeDto) -> String {
     let mut out = format!(
-        "{} {} (horizon: {}, version: {})",
+        "{}{} {} (horizon: {}, version: {})",
         mark(Level::Initiative, &i.key),
+        urgent_marker(&i.urgent_sources),
         i.title,
         i.horizon,
         i.version
@@ -278,8 +319,9 @@ pub fn initiative(i: &InitiativeDto) -> String {
 
 pub fn epic(e: &EpicDto) -> String {
     let mut out = format!(
-        "{} {} (version: {})",
+        "{}{} {} (version: {})",
         mark(Level::Epic, &e.key),
+        urgent_marker(&e.urgent_sources),
         e.title,
         e.version
     );
@@ -354,10 +396,11 @@ pub fn comment(c: &CommentDto) -> String {
     format!("{} {}: {}", c.at.format("%Y-%m-%d %H:%M"), c.author, c.body)
 }
 
-/// The context bundle as Markdown. Every required decision's record path appears verbatim so an agent can open the file.
-pub fn context_markdown(c: &StoryContextDto) -> String {
+/// The context bundle as Markdown at a given instant. Every required decision's record path appears verbatim so an agent
+/// can open the file; the story's urgent lines follow its title line.
+pub fn context_markdown_at(c: &StoryContextDto, now: DateTime<Utc>) -> String {
     let mut o = String::new();
-    let _ = writeln!(o, "# Story\n\n{}\n", story(&c.story));
+    let _ = writeln!(o, "# Story\n\n{}\n", story_show(&c.story, now));
     if !c.story.description.is_empty() {
         let _ = writeln!(o, "{}\n", c.story.description);
     }
@@ -970,6 +1013,206 @@ mod tests {
             "{}",
             initiative(&i)
         );
+    }
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 11, 10, 12, 0, 0)
+            .unwrap()
+    }
+
+    fn ref_(key: &str, item: ItemType) -> ItemRefDto {
+        ItemRefDto {
+            key: key.parse().unwrap(),
+            item,
+        }
+    }
+
+    fn own_mark(active: bool, done: bool) -> UrgentMarkDto {
+        UrgentMarkDto {
+            at: chrono::Utc.with_ymd_and_hms(2026, 11, 8, 12, 0, 0).unwrap(),
+            by: "dana@example.com".into(),
+            reason: None,
+            expires_at: chrono::Utc
+                .with_ymd_and_hms(2026, 11, 20, 12, 0, 0)
+                .unwrap(),
+            active,
+            done,
+        }
+    }
+
+    fn ready() -> Readiness {
+        Readiness {
+            ready: true,
+            reasons: vec![],
+        }
+    }
+
+    fn initiative_dto() -> InitiativeDto {
+        InitiativeDto {
+            key: "ABC-3".parse().unwrap(),
+            title: "Leave".into(),
+            brief: String::new(),
+            horizon: "Now".into(),
+            target_month: None,
+            owner: None,
+            discovery_complete: None,
+            progress: None,
+            external_ref: None,
+            version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
+        }
+    }
+
+    #[test]
+    fn an_urgent_item_carries_a_bang_after_its_key_in_every_one_line_form() {
+        let key: Key = "ABC-1".parse().unwrap();
+        let s = StoryDto {
+            urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
+            ..dto(vec![])
+        };
+        assert_eq!(
+            story_row(&s, &ready()),
+            format!("{} !\ttodo\tready\tMatch", mark(Level::Story, &key))
+        );
+        assert!(
+            story(&s).starts_with(&format!("{} !", mark(Level::Story, &key))),
+            "{}",
+            story(&s)
+        );
+        // Not urgent: unchanged.
+        assert_eq!(
+            story_row(&dto(vec![]), &ready()),
+            format!("{}\ttodo\tready\tMatch", mark(Level::Story, &key))
+        );
+        let i = InitiativeDto {
+            urgent_sources: vec![ref_("ABC-40", ItemType::Epic)],
+            ..initiative_dto()
+        };
+        let ik: Key = "ABC-3".parse().unwrap();
+        assert!(
+            initiative(&i).starts_with(&format!("{} ! ", mark(Level::Initiative, &ik))),
+            "{}",
+            initiative(&i)
+        );
+        let e = EpicDto {
+            key: "ABC-2".parse().unwrap(),
+            title: "Hosting".into(),
+            initiative: None,
+            brief: String::new(),
+            discovery_complete: None,
+            external_ref: None,
+            version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
+        };
+        let ek: Key = "ABC-2".parse().unwrap();
+        assert!(
+            epic(&e).starts_with(&format!("{} ! ", mark(Level::Epic, &ek))),
+            "{}",
+            epic(&e)
+        );
+    }
+
+    #[test]
+    fn a_done_storys_active_mark_gets_no_bang() {
+        let s = StoryDto {
+            delivery: DeliveryState::Done,
+            urgent_mark: Some(own_mark(true, true)),
+            urgent_sources: vec![],
+            ..dto(vec![])
+        };
+        let key: Key = "ABC-1".parse().unwrap();
+        assert_eq!(
+            story_row(&s, &ready()),
+            format!("{}\tdone\tready\tMatch", mark(Level::Story, &key))
+        );
+        assert!(
+            story(&s).starts_with(&format!("{} [done]", mark(Level::Story, &key))),
+            "{}",
+            story(&s)
+        );
+    }
+
+    #[test]
+    fn story_show_puts_the_urgent_lines_right_after_the_first_line() {
+        let s = StoryDto {
+            criteria: vec![CriterionDto {
+                text: "It works".into(),
+                done: false,
+            }],
+            urgent_mark: Some(own_mark(true, false)),
+            urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
+            ..dto(vec![])
+        };
+        let plain = story(&s);
+        let mut want: Vec<&str> = plain.lines().collect();
+        want.insert(1, "urgent · marked by dana, 2 d ago · expires in 10 d");
+        assert_eq!(story_show(&s, now()), want.join("\n"));
+        assert!(plain.contains("\n  [ ] It works"), "{plain}");
+    }
+
+    #[test]
+    fn with_urgency_appends_when_the_text_is_one_line_and_changes_nothing_without_lines() {
+        assert_eq!(with_urgency("a".into(), vec!["u".into()]), "a\nu");
+        assert_eq!(
+            with_urgency("a\nb".into(), vec!["u".into(), "v".into()]),
+            "a\nu\nv\nb"
+        );
+        assert_eq!(with_urgency("a\nb".into(), vec![]), "a\nb");
+    }
+
+    #[test]
+    fn initiative_and_epic_show_add_their_urgent_lines() {
+        let i = InitiativeDto {
+            urgent_sources: vec![ref_("ABC-40", ItemType::Epic)],
+            ..initiative_dto()
+        };
+        assert_eq!(
+            initiative_show(&i, now()),
+            format!("{}\nurgent · via epic ABC-40", initiative(&i))
+        );
+        let e = EpicDto {
+            key: "ABC-2".parse().unwrap(),
+            title: "Hosting".into(),
+            initiative: None,
+            brief: String::new(),
+            discovery_complete: None,
+            external_ref: None,
+            version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![ref_("ABC-9", ItemType::Story)],
+        };
+        assert_eq!(
+            epic_show(&e, now()),
+            format!("{}\nurgent · via story ABC-9", epic(&e))
+        );
+    }
+
+    #[test]
+    fn context_puts_the_stories_urgent_line_right_after_its_title_line() {
+        let c = StoryContextDto {
+            story: StoryDto {
+                urgent_sources: vec![ref_("ABC-40", ItemType::Epic)],
+                ..dto(vec![])
+            },
+            epic: None,
+            initiative: None,
+            required_decisions: vec![],
+            blockers: vec![],
+            comments: vec![],
+            readiness: ready(),
+            goals: vec![],
+        };
+        let out = context_markdown_at(&c, now());
+        let lines: Vec<&str> = out.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("[todo] Match"))
+            .unwrap();
+        assert_eq!(lines[at + 1], "urgent · via epic ABC-40", "{out}");
+        assert!(lines[at].contains(" !"), "{out}");
     }
 
     fn progress(goal_id: i64, completed: u32, in_flight: u32) -> GoalProgressDto {
