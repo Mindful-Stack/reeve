@@ -20,6 +20,59 @@ operator's own production setup (hosts, users, secrets, a deploy job) lives outs
 
 The container image carries the web client (built in its own Node stage). A server built on the host embeds whatever `web/build` holds when it is compiled: run `mise run web` (Node 22 or later) before `cargo build`, or every page answers `503 client not built`.
 
+## Subscribe to releases
+
+If you deploy the published image from a repository of your own (a pin bumped by a reviewed pull request, say), you
+can have every release start a workflow there within minutes of the image being published. Then nothing has to poll
+on a schedule, which GitHub may start hours late.
+
+**To subscribe:**
+
+1. **Install the [reeve-releases](https://github.com/apps/reeve-releases) GitHub App** on your deploy repository,
+   choosing *Only select repositories* and selecting just that one. The App asks for one permission, **Actions: read
+   and write**, so all it can do there is start, re-run and cancel workflows. It can't read your code or secrets, push,
+   or open pull requests. Uninstalling it unsubscribes you.
+2. **Add `.github/workflows/reeve-release.yml`** on the repository's default branch. It must accept `workflow_dispatch`
+   with two string inputs, `commit` and `digest`. GitHub refuses a dispatch whose inputs the workflow doesn't declare.
+
+```yaml
+name: reeve-release
+on:
+  workflow_dispatch:
+    inputs:
+      commit: { description: "The Reeve commit just published (40 hex characters)", required: false, default: "" }
+      digest: { description: "Its image digest (sha256:…)", required: false, default: "" }
+permissions: { contents: read }
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    steps:
+      # Treat the inputs as claims: pass them through env (never ${{ inputs.* }} inside run:) and check them against
+      # the registry before acting on them.
+      - name: the release is real
+        env: { COMMIT: "${{ inputs.commit }}", DIGEST: "${{ inputs.digest }}" }
+        run: |
+          [[ $COMMIT =~ ^[0-9a-f]{40}$ && $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::malformed inputs"; exit 1; }
+          got=$(docker buildx imagetools inspect "ghcr.io/mindful-stack/reeve:$COMMIT" --format '{{.Manifest.Digest}}')
+          [ "$got" = "$DIGEST" ] || { echo "::error::the published image for $COMMIT is $got, not $DIGEST"; exit 1; }
+      # ...then propose your own change: bump your pin to ghcr.io/mindful-stack/reeve@$DIGEST in a pull request.
+```
+
+The release workflow's `notify` job runs after every successful publish on `main`. It starts `reeve-release.yml` on
+the default branch of every repository where the App is installed. A repository without the file is skipped, and so is
+one that refuses the dispatch. This repository's run logs are public, so they show only counts and HTTP statuses, never
+a repository's name; check delivery in your own repository's Actions tab. The dispatch is best effort: a release
+that fails to reach you is not retried, so keep a daily check of your own as a fallback.
+
+**Running the App (maintainers and forks).** The `notify` job reads two repository secrets: `RELEASE_APP_ID` (the
+App's ID or client ID) and `RELEASE_APP_PRIVATE_KEY` (a private key generated in the App's settings, the whole PEM
+file). With neither set it does nothing, which is how a fork starts. For a fork with subscribers of its own, create a
+GitHub App with no webhook, the single repository permission *Actions: read and write*, and *Any account* allowed to
+install it, then set the two secrets. The job makes a JSON Web Token from the key, asks GitHub for a one-hour,
+Actions-only token per installation, and dispatches to at most 100 repositories per release (`RELEASE_DISPATCH_MAX`),
+so a stranger installing the App on many repositories can't stall a release. Rotate the key in the App's settings:
+generate a new one, update the secret, delete the old one. Subscribers are not involved.
+
 ## Google sign-in
 
 Browser sign-in uses Google as the OpenID Connect provider. Without an `[oidc]` section the web client cannot sign anyone in, and only tokens issued with `reeve-server token-issue` work.

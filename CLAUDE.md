@@ -21,7 +21,7 @@ Tasks are defined once in `mise.toml` and run the same way locally and in CI (`m
 | `mise run isolation`, `mise run isolation-test` | run the context-isolation lint; prove the lint catches every bypass shape |
 | `mise run acceptance` | the CLI end-to-end acceptance test |
 | `mise run import-test` | `reeve import jira` end to end against a real server and an in-test fake Jira (needs Docker) |
-| `mise run script-test` | the backup and restore-rehearsal scripts, the skill smoke's logic against fakes, the release workflow's shell (`scripts/tests/workflows.sh`), the action-pin check's cases, ci.yml's Rust path classifier (`scripts/ci-needs-rust.sh`) and the npm audit gate's tests; no Docker needed; shellcheck is pinned in `mise.toml` |
+| `mise run script-test` | the backup and restore-rehearsal scripts, the skill smoke's logic against fakes, the release workflow's shell (`scripts/tests/workflows.sh`), its release notifications against a fake GitHub API (`scripts/tests/release-dispatch.sh`), the action-pin check's cases, ci.yml's Rust path classifier (`scripts/ci-needs-rust.sh`) and the npm audit gate's tests; no Docker needed; shellcheck is pinned in `mise.toml` |
 | `mise run decision-check-test` | the scheduled decision check script (`deploy/decision-check.sh`) against fake binaries and a real git remote, plus the systemd units and compose file where those tools exist |
 | `mise run tui-test` | the TUI against a scripted server, against a real server and PostgreSQL, and in a real pty (needs Docker); `mise run test` already runs these files |
 | `mise run web` | `npm ci` and build the web client into `web/build` (embedded by the next `reeve-server` build) |
