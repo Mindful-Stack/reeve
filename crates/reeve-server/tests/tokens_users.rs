@@ -506,7 +506,7 @@ async fn expiry_label_and_revoke_edges() {
         .find(|t| t["id"] == id)
         .unwrap();
     assert!(listed["revoked_at"].is_string());
-    // disable of an address outside the allowlist is refused before any write
+    // disable of an address with no user row is refused before any write
     assert_eq!(
         call(
             &h.app,
@@ -517,7 +517,7 @@ async fn expiry_label_and_revoke_edges() {
         )
         .await
         .0,
-        400
+        404
     );
     assert_eq!(
         call(
@@ -529,7 +529,7 @@ async fn expiry_label_and_revoke_edges() {
         )
         .await
         .0,
-        400
+        404
     );
     let (_, u) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/users", None).await;
     assert!(

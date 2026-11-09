@@ -82,6 +82,7 @@ pub trait TokenStore: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<bool, sqlx::Error>;
     async fn list_users(&self) -> Result<Vec<UserRow>, sqlx::Error>;
+    async fn find_user(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error>;
 }
 
 pub(crate) struct PgTokenStore {
@@ -222,6 +223,15 @@ impl TokenStore for PgTokenStore {
     async fn list_users(&self) -> Result<Vec<UserRow>, sqlx::Error> {
         let rows = sqlx::query_as(USERS).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(user_row).collect())
+    }
+    async fn find_user(&self, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
+        let row = sqlx::query_as(
+            "SELECT email, display_name, disabled, created_at FROM users WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(user_row))
     }
 }
 

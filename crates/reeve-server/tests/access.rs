@@ -122,3 +122,66 @@ async fn a_story_owner_may_be_a_guest_allowed_only_by_the_database() {
         Some(json!({"idempotency_key":"o2","title":"Owned","kind":"chore","criteria":[],"labels":[],"owner":"guest@other.org"}))).await;
     assert_eq!(status, 200, "{body}");
 }
+
+#[tokio::test]
+async fn a_configured_admin_cannot_be_disabled_through_the_api() {
+    let h = harness().await;
+    sql(&h, "INSERT INTO admin_grants (email, added_by, added_at) VALUES ('ada@example.com','dan@example.com',now())").await;
+    let ada = token_for(&h, "ada@example.com", TokenKind::Interactive).await;
+    let (status, body) = call(
+        &h.app,
+        Some(&ada),
+        "POST",
+        "/api/v1/users/dan@example.com/disable",
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (400, Some("admin in reeve.toml; change it there"))
+    );
+}
+
+#[tokio::test]
+async fn disable_works_on_a_user_no_longer_allowed_and_refuses_one_never_seen() {
+    let h = harness().await;
+    sql(&h, "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())").await;
+    let guest = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
+    sql(&h, "DELETE FROM allowed_entries").await;
+    let (status, _) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/users/guest@other.org/disable",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+    sql(&h, "INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email','guest@other.org','dan@example.com',now())").await;
+    assert_eq!(
+        call(&h.app, Some(&guest), "GET", "/api/v1/me", None)
+            .await
+            .0,
+        401,
+        "disable revoked the old token"
+    );
+    let (status, _) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/users/ghost@other.org/disable",
+        None,
+    )
+    .await;
+    assert_eq!(status, 404);
+    // a database-only guest can be re-enabled
+    let (status, _) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/users/guest@other.org/enable",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200);
+}
