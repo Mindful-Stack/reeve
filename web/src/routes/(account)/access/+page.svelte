@@ -171,7 +171,7 @@
 						{#if r.source === 'config'}
 							<span class="muted">from reeve.toml</span>
 						{:else}
-							<span class="muted">{added(r)}</span>
+							<span class="muted">{added(r)}{r.also_in_config ? ' · also in reeve.toml' : ''}</span>
 							{#if !r.allowed}<span class="muted">not allowed: grants nothing until their email is allowed again</span>{/if}
 							{#if r.value !== me}
 								<button type="button" disabled={busy} onclick={() => (asking = { what: 'admin', email: r.value })}>Revoke</button>

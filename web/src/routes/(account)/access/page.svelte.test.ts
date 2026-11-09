@@ -89,6 +89,25 @@ describe('Access page', () => {
 		await vi.waitFor(() => expect(write()).toMatchObject({ method: 'DELETE', path: '/api/v1/access/entries/{kind}/{value}', init: { params: { path: { kind: 'email', value: 'guest@other.org' } } } }));
 	});
 
+	it('marks a database admin row that is also in reeve.toml and keeps its Revoke', async () => {
+		const base = { allowed: true, added_by: 'dan@example.com', added_at: '2026-11-09T09:00:00Z' };
+		const extra = [
+			{ value: 'boss@example.com', source: 'config', also_in_config: false, allowed: true, added_by: null, added_at: null },
+			{ value: 'boss@example.com', source: 'database', also_in_config: true, ...base }
+		];
+		access.admins.push(...extra);
+		try {
+			await open();
+			const dbRow = [...document.querySelectorAll('section[aria-label="Admins"] li')].find(
+				(li) => li.textContent?.includes('boss@example.com') && li.textContent.includes('added by')
+			)!;
+			expect(dbRow.textContent).toContain('also in reeve.toml');
+			expect(dbRow.querySelector('button')?.textContent).toBe('Revoke');
+		} finally {
+			access.admins.splice(-extra.length, extra.length);
+		}
+	});
+
 	it('shows members the admins-only notice and asks the server nothing', async () => {
 		state.role = 'member';
 		await open();
