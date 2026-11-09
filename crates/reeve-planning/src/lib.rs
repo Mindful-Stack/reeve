@@ -13,7 +13,10 @@ pub use domain::{
     pull_request::{PrChange, PullRequest},
     queue::{BlockedStory, QueueEntry, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
-    sprint::{Goal, GoalLink, Sprint, StoryTimes, Summary, goal_dto, sprint_dto, sprint_view_dto},
+    sprint::{
+        Goal, GoalLink, Sprint, StoryTimes, Summary, goal_dto, sprint_dto, sprint_view_dto,
+        summarise,
+    },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
 };
 pub use handler::*;
