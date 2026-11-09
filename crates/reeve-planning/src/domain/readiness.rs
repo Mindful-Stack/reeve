@@ -23,6 +23,7 @@ pub struct AncestorFact {
 /// Everything readiness needs, loaded by the repo in one query batch.
 #[derive(Debug, Clone)]
 pub struct ReadinessInput {
+    /// Readiness deliberately ignores the kind: any kind without an epic is untriaged (kb/ADR-0018 R4).
     pub kind: Kind,
     pub has_epic: bool,
     pub criteria_count: usize,
@@ -78,10 +79,10 @@ pub(crate) fn satisfies(check: &CheckResult) -> bool {
     matches!(check, CheckResult::Accepted { .. })
 }
 
-/// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0018 R4); then ancestors in the order given (nearest first,
-/// each with its discovery reason then its decisions); then own decisions; then
-/// no-criteria; then blockers. Duplicates are not removed, so the repo must supply
-/// unique ancestors and blockers.
+/// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0018 R4); then ancestors
+/// in the order given (nearest first, each with its discovery reason then its decisions);
+/// then own decisions; then no-criteria; then blockers. Duplicates are not removed, so the
+/// repo must supply unique ancestors and blockers.
 pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
     let mut reasons = Vec::new();
     if !i.has_epic {
