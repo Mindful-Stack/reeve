@@ -8,6 +8,10 @@ public_url = "https://reeve.example.com"
 session_days = 30
 key_prefix = "ABC"
 horizon_buckets = ["Now", "Next", "Upcoming", "Later", "Won't do"]
+# Who may sign in and who is admin: these three lists are the locked floor (kb/ADR-0015). Admins add guests, domains
+# and further admins on the Access page; those live in the database and are listed there beside these. `admins` must
+# name at least one admin, and every admin here must be allowed by `allowed_domains` or `allowed_emails`, or the server
+# refuses to start. Blank entries are ignored.
 allowed_domains = ["example.com"]
 allowed_emails = []
 admins = ["admin@example.com"]
