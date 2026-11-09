@@ -402,7 +402,7 @@
 	/** The control that opened a write (a dialog, the expired or done line's buttons) is gone: focus goes to the drawer's actions menu, unless the user moved it. */
 	async function refocusActions() {
 		await tick();
-		if (focusIsFree(null)) panel?.querySelector<HTMLElement>('[data-control="story-actions"]')?.focus();
+		if (focusIsFree(null)) (panel?.querySelector<HTMLElement>('[data-control="story-actions"]') ?? heading)?.focus();
 	}
 
 	async function saveCriteria(criteria: Story['criteria']) {
@@ -614,7 +614,9 @@
 			</ActionsMenu>
 			{#if s.delivery === 'done' && s.resolution}<span class="chip">{s.resolution}</span>{/if}
 			<span class="owner"><span class="muted">Owner</span> <Avatar email={s.owner} /> {s.owner ? short(s.owner) : 'unowned'}</span>
-			<ActionsMenu label="More actions for {s.key}" control="story-actions" items={menuItems} />
+			{#if menuItems.length}
+				<ActionsMenu label="More actions for {s.key}" control="story-actions" items={menuItems} />
+			{/if}
 		</div>
 
 		<UrgentLine

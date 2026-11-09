@@ -870,19 +870,25 @@ describe('StoryDrawer urgent mark', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			expect(d.querySelector('[data-testid="urgent-done"]')).toBeNull();
-			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
+			expect(document.activeElement).toBe(d.querySelector('h2'));
 		});
 		expect(d.contains(document.activeElement)).toBe(true);
 	});
 
-	it('after a mark the focus returns to the drawer actions button, not another with the same label', async () => {
-		serve(storyDto({ ...story }));
+	it('after a re-mark the focus returns to the drawer actions button, not another with the same label', async () => {
+		serve(storyDto({ ...story, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] }));
 		const d = await open();
+		const remark = await vi.waitFor(() => {
+			flushSync();
+			const b = d.querySelector<HTMLButtonElement>('button[aria-label="Re-mark RV-5"]');
+			expect(b).not.toBeNull();
+			return b!;
+		});
 		const other = document.createElement('button');
 		other.setAttribute('aria-label', 'More actions for RV-5');
 		document.body.prepend(other);
-		await openMenu(d);
-		items()[0].click();
+		remark.focus();
+		remark.click();
 		flushSync();
 		await tick();
 		[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent === 'Mark urgent')!.click();
@@ -891,13 +897,13 @@ describe('StoryDrawer urgent mark', () => {
 			expect(document.body.querySelector('dialog')).toBeNull();
 			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
 		});
+		expect(document.activeElement).not.toBe(other);
 	});
 
 	it('hides Mark urgent… on a done story', async () => {
 		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed' }));
 		const d = await open();
-		await openMenu(d);
-		expect(items().map((b) => b.textContent)).toEqual([]);
+		expect(d.querySelector('[data-control="story-actions"]')).toBeNull();
 	});
 
 	it('titles an initiative source by the initiatives list', async () => {
@@ -922,6 +928,7 @@ describe('StoryDrawer urgent mark', () => {
 		});
 		clear.focus();
 		clear.click();
+		clear.blur();
 		await vi.waitFor(() => {
 			flushSync();
 			expect(d.textContent).toContain('boom');
