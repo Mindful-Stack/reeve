@@ -160,6 +160,7 @@ fn reeve_at(url: &str, args: &[&str]) -> std::process::Output {
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_ASCII")
         .args(args)
         .timeout(Duration::from_secs(60))
         .output()
@@ -189,6 +190,7 @@ fn capture(args: &[&str]) -> (String, String) {
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_ASCII")
         .args(args)
         .timeout(std::time::Duration::from_secs(30))
         .output()
@@ -2748,4 +2750,221 @@ fn urgent_refused_interactive_only_exits_2() {
         "{err}"
     );
     assert!(out.stdout.is_empty());
+}
+
+// ---- war-room ls | clear | re-mark ----
+
+/// A war-room row. `at_d` and `exp_d` are days from now (half days, so floor and ceiling are unambiguous).
+fn wr_row(
+    key: &str,
+    item: &str,
+    initiative: Option<(&str, &str)>,
+    (at_d, exp_d): (f64, f64),
+    active: bool,
+    done: bool,
+) -> serde_json::Value {
+    let off =
+        |d: f64| chrono::Utc::now() + chrono::Duration::milliseconds((d * 86_400_000.0) as i64);
+    serde_json::json!({
+        "item": {"key": key, "item": item},
+        "title": format!("T {key}"),
+        "initiative": initiative.map(|(k, t)| serde_json::json!({"key": k, "title": t, "horizon": "h"})),
+        "mark": {"at": off(at_d), "by": "dana@example.com", "reason": null,
+                 "expires_at": off(exp_d), "active": active, "done": done}
+    })
+}
+
+fn wr_active(key: &str, item: &str) -> serde_json::Value {
+    wr_row(key, item, None, (-2.5, 9.5), true, false)
+}
+fn wr_expired(key: &str) -> serde_json::Value {
+    wr_row(key, "story", None, (-12.5, -2.5), false, false)
+}
+fn wr_expired_done(key: &str) -> serde_json::Value {
+    wr_row(key, "story", None, (-12.5, -2.5), false, true)
+}
+
+fn glyph(level: reeve::glyphs::Level, key: &str) -> String {
+    reeve::glyphs::mark_with(level, key, false)
+}
+
+fn out_text(out: &std::process::Output) -> String {
+    String::from_utf8(out.stdout.clone()).unwrap()
+}
+
+/// Rows print in the server's order with the initiative named only for epics and stories.
+#[test]
+fn war_room_ls_lists_rows() {
+    let rows = serde_json::json!([
+        wr_row(
+            "ABC-40",
+            "epic",
+            Some(("ABC-2", "Payments")),
+            (-2.5, 9.5),
+            true,
+            false
+        ),
+        wr_row("ABC-1", "story", None, (-12.5, -2.5), false, false),
+    ]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "ls"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-40 · in Payments · marked by dana, 2 d ago · expires in 10 d\n{} T ABC-1 · marked by dana, 12 d ago · expired 2 d ago\n",
+            glyph(reeve::glyphs::Level::Epic, "ABC-40"),
+            glyph(reeve::glyphs::Level::Story, "ABC-1"),
+        )
+    );
+}
+
+#[test]
+fn war_room_ls_empty() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/war-room",
+        200,
+        ok(serde_json::json!([])),
+    )]);
+    let out = reeve_at(&url, &["war-room", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(out_text(&out), "The war room is empty.\n");
+}
+
+#[test]
+fn war_room_clear_without_yes_rehearses() {
+    let rows = serde_json::json!([wr_active("ABC-1", "story"), wr_expired("ABC-2")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "clear"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    let text = out_text(&out);
+    assert_eq!(text.lines().count(), 3, "{text}");
+    assert!(
+        text.lines().next().unwrap().contains("T ABC-1 · marked by"),
+        "{text}"
+    );
+    assert_eq!(
+        text.lines().last().unwrap(),
+        "Would clear 2 marks; run again with --yes."
+    );
+}
+
+#[test]
+fn war_room_re_mark_without_yes_names_what_it_left_out() {
+    let rows = serde_json::json!([
+        wr_active("ABC-1", "story"),
+        wr_expired("ABC-2"),
+        wr_expired_done("ABC-3")
+    ]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "re-mark"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-2 · marked by dana, 12 d ago · expired 2 d ago\nWould re-mark 1 mark for another cycle (1 on a done story left out); run again with --yes.\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-2")
+        )
+    );
+}
+
+/// `--yes` posts exactly the listed items, in order, and prints the server's new war room.
+#[test]
+fn war_room_clear_yes_posts_exactly_the_listed_items() {
+    let rows = serde_json::json!([wr_active("ABC-40", "epic"), wr_expired("ABC-1")]);
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(rows)),
+        (
+            "POST /api/v1/war-room/clear",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    // Parsed: the body's key order is serde_json's (sorted), the array order is the GET's.
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-40","item":"epic"},{"key":"ABC-1","item":"story"}]})
+    );
+    assert_eq!(out_text(&out), "The war room is empty.\n");
+}
+
+/// The `renew` alias posts only the expired, not-done item to the renew route.
+#[test]
+fn war_room_renew_alias_posts_only_expired_not_done() {
+    let rows = serde_json::json!([
+        wr_active("ABC-1", "story"),
+        wr_expired("ABC-2"),
+        wr_expired_done("ABC-3")
+    ]);
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(rows)),
+        (
+            "POST /api/v1/war-room/renew",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["war-room", "renew", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
+    );
+}
+
+/// Nothing selected: the GET only, exit 0, and the note about done stories.
+#[test]
+fn war_room_re_mark_with_only_done_expired_says_so() {
+    let rows = serde_json::json!([wr_expired_done("ABC-3")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        "No expired marks to re-mark (1 on a done story left out).\n"
+    );
+}
+
+#[test]
+fn war_room_clear_json_without_yes_prints_the_get_envelope() {
+    let rows = serde_json::json!([wr_active("ABC-1", "story")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows.clone()))]);
+    let out = reeve_at(&url, &["--json", "war-room", "clear"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
+    assert_eq!(env["outcome"], "ok");
+    assert_eq!(env["value"], rows);
+}
+
+/// The client keeps no copy of the server's 100-item limit: 101 are posted and the refusal is printed.
+#[test]
+fn war_room_clear_101_rows_are_all_posted_and_the_server_refusal_printed() {
+    let rows: Vec<_> = (1..=101)
+        .map(|n| wr_active(&format!("ABC-{n}"), "story"))
+        .collect();
+    let refusal =
+        serde_json::json!({"outcome":"error","code":"validation","message":"at most 100 items"});
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(serde_json::json!(rows))),
+        ("POST /api/v1/war-room/clear", 422, refusal),
+    ]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(sent["items"].as_array().unwrap().len(), 101);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("at most 100 items"));
+    assert_eq!(out_text(&out), "");
 }

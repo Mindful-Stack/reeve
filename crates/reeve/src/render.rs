@@ -1,6 +1,6 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
-use crate::urgency::{urgent_lines, urgent_marker};
+use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
 use std::fmt::Write;
@@ -123,6 +123,35 @@ pub fn urgent_answer(
 ) -> String {
     let first = format!("{}{}", mark(level, key), urgent_marker(sources));
     with_urgency(first, urgent_lines(own, sources, key, now))
+}
+
+/// The war room's rows, one per line, or its empty text.
+/// `<glyph> <KEY> <title> · in <initiative title> · <own mark text>[ · done]`. An initiative row's `initiative` is the
+/// row itself, so only epic and story rows name one.
+pub fn war_room_rows(rows: &[WarRoomEntryDto], now: DateTime<Utc>) -> String {
+    if rows.is_empty() {
+        return "The war room is empty.".into();
+    }
+    rows.iter()
+        .map(|r| {
+            let mut parts = vec![format!(
+                "{} {}",
+                mark(Level::of_item(r.item.item), &r.item.key),
+                r.title
+            )];
+            if r.item.item != ItemType::Initiative
+                && let Some(i) = &r.initiative
+            {
+                parts.push(format!("in {}", i.title));
+            }
+            parts.push(own_mark_text(&r.mark, now));
+            if r.mark.done {
+                parts.push("done".into());
+            }
+            parts.join(" · ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn story(s: &StoryDto) -> String {

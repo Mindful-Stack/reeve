@@ -19,7 +19,6 @@ pub fn urgent_marker(sources: &[ItemRefDto]) -> &'static str {
 }
 
 /// "1 mark", "2 marks".
-#[cfg_attr(not(test), expect(dead_code, reason = "used from Task 5"))]
 pub fn marks(n: usize) -> String {
     format!("{n} {}", if n == 1 { "mark" } else { "marks" })
 }
