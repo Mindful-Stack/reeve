@@ -1144,3 +1144,38 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
         .unwrap();
     assert_eq!((c.reason.as_str(), c.kind, c.via), ("old", None, None));
 }
+
+#[tokio::test]
+async fn urgent_columns_refuse_half_a_mark() {
+    let (_c, pool) = common::pg().await;
+    sqlx::query("INSERT INTO initiatives (key, title, horizon, created_at, updated_at) VALUES ('ABC-1','i','Now',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO epics (key, title, initiative_key, created_at, updated_at) VALUES ('ABC-2','e','ABC-1',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-3','s','story','ABC-2',now(),now())").execute(&pool).await.unwrap();
+    for (table, key) in [
+        ("initiatives", "ABC-1"),
+        ("epics", "ABC-2"),
+        ("stories", "ABC-3"),
+    ] {
+        for set in [
+            "urgent_reason = 'x'",
+            "urgent_at = now()",
+            "urgent_by = 'a@b.c'",
+        ] {
+            let e = sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_err();
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.to_string());
+            assert_eq!(code.as_deref(), Some("23514"), "{table}: {set}");
+        }
+        sqlx::query(&format!("UPDATE {table} SET urgent_at = now(), urgent_by = 'a@b.c', urgent_reason = 'why' WHERE key = $1"))
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
