@@ -35,7 +35,8 @@
 	let latest = 0;
 	let heading: HTMLElement | undefined = $state();
 
-	const renewable = (e: WarRoomEntry) => !e.mark.active;
+	/** An expired mark that can be renewed: never a done story's (the drawer offers no mark on a done story either). */
+	const renewable = (e: WarRoomEntry) => !e.mark.active && !e.mark.done;
 	const renewables = $derived(entries.filter(renewable));
 	const word = (n: number) => `${n} ${n === 1 ? 'mark' : 'marks'}`;
 	const same = (a: ItemRef, b: ItemRef) => a.item === b.item && a.key === b.key;

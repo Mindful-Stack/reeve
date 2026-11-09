@@ -143,6 +143,29 @@ describe('WarRoom', () => {
 		expect(net.writes[0]).toEqual({ method: 'POST', path: '/api/v1/war-room/renew', body: { items: [expired.item] } });
 	});
 
+	it('never offers to re-mark a done story, alone or in bulk', async () => {
+		const done: WarRoomEntry = {
+			item: { key: 'ABC-312', item: 'story' },
+			title: 'Shipped fix',
+			initiative: null,
+			mark: { ...expired.mark, done: true }
+		};
+		await open([active, done]);
+		const row = document.body.querySelectorAll('li')[1];
+		expect(row.querySelector('.why')!.textContent).toContain(' · done');
+		expect([...row.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['Clear']);
+		expect(button('Re-mark all expired'), 'every expired row is done').toBeUndefined();
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		await open([active, expired, done]);
+		click('Re-mark all expired');
+		expect(document.body.textContent).toContain('Re-mark 1 expired for another cycle?');
+		click('Re-mark');
+		await vi.waitFor(() => expect(net.writes).toHaveLength(1));
+		expect(net.writes[0]).toEqual({ method: 'POST', path: '/api/v1/war-room/renew', body: { items: [expired.item] } });
+	});
+
 	it('clears one row through its own route', async () => {
 		await open([active, expired]);
 		const row = document.body.querySelectorAll('li')[1];
