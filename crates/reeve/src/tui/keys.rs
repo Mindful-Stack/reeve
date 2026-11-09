@@ -157,7 +157,7 @@ pub const BINDINGS: &[Binding] = &[
         pats: &[C('f')],
         action: A::Filter,
         keys: "f",
-        help: "filter (mine / all, ready only)",
+        help: "filter (mine / all, ready only, urgent only)",
     },
     Binding {
         pats: &[C('/')],

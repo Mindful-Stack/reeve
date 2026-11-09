@@ -9,6 +9,9 @@ use reeve_protocol::{
 };
 use std::time::Instant;
 
+/// The wall clock `Sim` draws with.
+pub const WALL: &str = "2026-11-10T12:00:00Z";
+
 pub fn key(s: &str) -> Key {
     s.parse().unwrap()
 }
@@ -49,6 +52,38 @@ pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness 
 
 pub fn owned(mut s: StoryWithReadiness, email: &str) -> StoryWithReadiness {
     s.story.owner = Some(email.into());
+    s
+}
+
+/// A mark made by dana two days before `WALL`, with its reason, expiring ten days after `WALL`.
+pub fn own_mark() -> reeve_protocol::UrgentMarkDto {
+    reeve_protocol::UrgentMarkDto {
+        at: "2026-11-08T12:00:00Z".parse().unwrap(),
+        by: "dana@example.com".into(),
+        reason: None,
+        expires_at: "2026-11-20T12:00:00Z".parse().unwrap(),
+        active: true,
+        done: false,
+    }
+}
+
+/// The story as the server sends an urgent one: its own active mark, which makes it its own source.
+pub fn urgent(mut s: StoryWithReadiness) -> StoryWithReadiness {
+    s.story.urgent_mark = Some(own_mark());
+    s.story.urgent_sources = vec![reeve_protocol::ItemRefDto {
+        key: s.story.key.clone(),
+        item: reeve_protocol::ItemType::Story,
+    }];
+    s
+}
+
+/// A done story with an active own mark and no sources: the server's shape, since a done story's mark makes nothing urgent.
+pub fn done_marked(mut s: StoryWithReadiness) -> StoryWithReadiness {
+    s.story.delivery = DeliveryState::Done;
+    s.story.urgent_mark = Some(reeve_protocol::UrgentMarkDto {
+        done: true,
+        ..own_mark()
+    });
     s
 }
 
@@ -147,6 +182,8 @@ pub(crate) struct Sim {
     pub timers: Vec<Msg>,
     pub other: Vec<Effect<Msg>>,
     pub now: Instant,
+    /// The wall clock the view is drawn with: fixed, so dates in the drawer are stable.
+    pub wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub fn me(kind: TokenKind) -> Me {
@@ -178,6 +215,7 @@ impl Sim {
             timers: vec![],
             other: vec![],
             now,
+            wall: WALL.parse().unwrap(),
         };
         sim.absorb(fx);
         sim
@@ -269,7 +307,7 @@ impl Sim {
         self.s.ui.width = w;
         self.s.ui.height = h;
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
-        term.draw(|f| crate::tui::view::draw(f, &self.s, self.now))
+        term.draw(|f| crate::tui::view::draw(f, &self.s, self.now, self.wall))
             .unwrap();
         let buf = term.backend().buffer().clone();
         (crate::tui::view::rows(&buf), buf)

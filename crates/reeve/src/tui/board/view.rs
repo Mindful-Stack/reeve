@@ -4,6 +4,7 @@ use crate::glyphs::{Level, mark};
 use crate::tui::app::State;
 use crate::tui::view::{centred, fit, selected_style};
 use crate::tui::words::{self, STATES};
+use crate::urgency::is_urgent;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -12,6 +13,7 @@ use ratatui::{
     widgets::{Block, BorderType, Clear, Paragraph},
 };
 use std::time::{Duration, Instant};
+use unicode_width::UnicodeWidthStr;
 
 const HIGHLIGHT: Duration = Duration::from_secs(2);
 
@@ -113,11 +115,48 @@ fn empty_text(s: &State, cx: &Ctx, visible: &[&Entry]) -> Option<String> {
     }
     Some(if !s.board.query.is_empty() {
         format!("nothing matches \"{}\"", s.board.query)
+    } else if s.board.filter.urgent_only && !s.board.filter.all {
+        "no urgent stories owned by you — f shows all".into()
+    } else if s.board.filter.urgent_only {
+        "no urgent stories".into()
     } else if !s.board.filter.all {
         "no stories owned by you — f shows all".into()
     } else {
         "no stories".into()
     })
+}
+
+/// The `!` before an urgent story's title: bold red when colour is on and the row is not selected. The selected row
+/// keeps its own style so it never turns into a red background; the symbol carries the meaning without colour.
+fn bang_style(s: &State, e: &Entry, card: Style) -> Style {
+    if s.ui.color && s.board.selected() != Some(&e.item.story.key) {
+        card.patch(Style::new().fg(Color::Red).add_modifier(Modifier::BOLD))
+    } else {
+        card
+    }
+}
+
+/// A card's title line. `lead` comes before the title; `plain_gap` stands in the `!` slot when the story is not urgent
+/// (the columns indent the title by two). Only a story the server calls urgent gets the `!`, as its own span, and the
+/// title then gives up its two columns.
+fn title_line(
+    s: &State,
+    e: &Entry,
+    card: Style,
+    w: usize,
+    lead: &str,
+    plain_gap: &str,
+    title: &str,
+) -> Line<'static> {
+    if !is_urgent(&e.item.story.urgent_sources) {
+        return Line::styled(fit(&format!("{lead}{plain_gap}{title}"), w), card);
+    }
+    let room = w.saturating_sub(lead.width() + 2);
+    Line::from(vec![
+        Span::styled(lead.to_string(), card),
+        Span::styled("! ", bang_style(s, e, card)),
+        Span::styled(fit(title, room), card),
+    ])
 }
 
 /// The first index to draw so that `selected` (an index into `n` items of `per` rows) fits in `rows`.
@@ -183,7 +222,7 @@ fn columns(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now:
                 owner_tag(s, e)
             );
             lines.push(Line::styled(fit(&head, w), st));
-            lines.push(Line::styled(fit(&format!("  {}", story.title), w), st));
+            lines.push(title_line(s, e, st, w, "", "  ", &story.title));
             let third = format!("  {}{}", status_of(s, e), meta(e));
             lines.push(Line::from(Span::styled(
                 fit(&third, w),
@@ -213,15 +252,14 @@ fn list(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now: In
             }
             let st = card_style(s, e, now);
             let story = &e.item.story;
-            let head = format!(
-                "{}{} {}{}  {}",
+            let lead = format!(
+                "{}{} {}{}  ",
                 marker(s, e),
                 mark(Level::of_kind(story.kind), &story.key),
                 words::kind(story.kind),
                 owner_tag(s, e),
-                story.title
             );
-            lines.push(Line::styled(fit(&head, w), st));
+            lines.push(title_line(s, e, st, w, &lead, "", &story.title));
             let second = format!("    {}{}", status_of(s, e), meta(e));
             lines.push(Line::from(Span::styled(
                 fit(&second, w),
@@ -238,6 +276,7 @@ pub fn filter_menu(f: &mut Frame, area: Rect, b: &super::State, row: usize) {
     let items = [
         format!("{} all stories (off: mine)", mark(b.filter.all)),
         format!("{} ready only", mark(b.filter.ready_only)),
+        format!("{} urgent only", mark(b.filter.urgent_only)),
     ];
     let lines: Vec<Line> = items
         .iter()
@@ -250,7 +289,7 @@ pub fn filter_menu(f: &mut Frame, area: Rect, b: &super::State, row: usize) {
             }
         })
         .collect();
-    let r = centred(area, 36, 4);
+    let r = centred(area, 36, 5);
     f.render_widget(Clear, r);
     f.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(" filter ")),

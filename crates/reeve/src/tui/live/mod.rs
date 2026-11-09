@@ -158,6 +158,14 @@ impl State {
                 self.override_for = None;
                 format!("{k} → {to}{tag} · {who}")
             }
+            "urgent_marked" => {
+                self.override_for = None;
+                format!("{k} marked urgent · {who}")
+            }
+            "urgent_cleared" => {
+                self.override_for = None;
+                format!("{k} urgent mark cleared · {who}")
+            }
             other => {
                 self.override_for = None;
                 format!("{k} {} · {who}", other.replace('_', " "))
@@ -875,5 +883,46 @@ mod tests {
         });
         let _ = l.update(Msg::Stream { epoch, ev }, &cx());
         assert!(l.last_changed.is_none());
+    }
+
+    #[test]
+    fn the_ticker_names_urgent_marks_and_clearings_at_every_level() {
+        for (action, entity, key, want) in [
+            (
+                "urgent_marked",
+                "story",
+                "ABC-1",
+                "ABC-1 marked urgent · anna",
+            ),
+            (
+                "urgent_marked",
+                "epic",
+                "ABC-40",
+                "epic ABC-40 marked urgent · anna",
+            ),
+            (
+                "urgent_marked",
+                "initiative",
+                "ABC-2",
+                "initiative ABC-2 marked urgent · anna",
+            ),
+            (
+                "urgent_cleared",
+                "story",
+                "ABC-1",
+                "ABC-1 urgent mark cleared · anna",
+            ),
+            (
+                "urgent_cleared",
+                "epic",
+                "ABC-40",
+                "epic ABC-40 urgent mark cleared · anna",
+            ),
+        ] {
+            assert_eq!(
+                ticker_after(action, entity, key, serde_json::json!({})),
+                want
+            );
+        }
     }
 }
