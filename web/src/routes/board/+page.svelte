@@ -502,8 +502,11 @@
 		overflow-x: auto;
 		scroll-snap-type: x proximity;
 	}
+	/* Every grid here holds one track capped at the column's width: an implicit auto track grows to its widest card's
+	   min-content (a nowrap epic or goal, a long word), and one such card would push the whole column past its edge. */
 	.column {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		align-content: start;
 		gap: 8px;
 		min-height: 12rem;
@@ -542,6 +545,7 @@
 	}
 	ol {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 8px;
 		margin: 0;
 		padding: 0;

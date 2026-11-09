@@ -138,6 +138,7 @@
 <style>
 	.card {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 4px;
 		padding: 8px 10px;
 		border: 1px solid var(--line-control);
@@ -152,6 +153,8 @@
 	}
 	.title {
 		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
 		color: var(--foreground);
 		font-size: 15px;
 		font-weight: 500;
