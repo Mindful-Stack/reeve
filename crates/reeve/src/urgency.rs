@@ -3,7 +3,7 @@
 //! with the same words and rounding, lowercase as the CLI is. The server decides what is urgent (`urgent_sources`) and
 //! whether a mark is active; this only words its answer.
 // Used from the CLI and TUI tasks that follow.
-#![allow(dead_code)]
+#![cfg_attr(not(test), expect(dead_code, reason = "used from Task 3"))]
 use crate::glyphs::Level;
 use chrono::{DateTime, Utc};
 use reeve_protocol::{ItemRefDto, Key, UrgentMarkDto};
@@ -101,13 +101,13 @@ pub fn urgent_lines(
         out.push(parts.join(" · "));
     }
     if let (false, Some(m)) = (own_counts, own) {
-        if !m.active {
+        if m.done {
+            out.push(format!("urgent mark · done · {}", expiry(m, now)));
+        } else if !m.active {
             out.push(format!(
                 "urgent mark expired {}",
                 days_ago(m.expires_at, now)
             ));
-        } else if m.done {
-            out.push(format!("urgent mark · done · {}", expiry(m, now)));
         }
     }
     out
@@ -260,17 +260,32 @@ mod tests {
     fn a_done_storys_active_mark_makes_nothing_urgent() {
         let now = t(10, 12);
         let m = mark(t(8, 12), t(20, 12), true, true, None);
-        assert!(!is_urgent(&[]));
-        assert_eq!(urgent_marker(&[]), "");
         assert_eq!(
             urgent_lines(Some(&m), &[], &k("ABC-1"), now),
             vec!["urgent mark · done · expires in 10 d"]
+        );
+        let m = mark(t(1, 12), t(7, 12), false, true, None);
+        assert_eq!(
+            urgent_lines(Some(&m), &[], &k("ABC-1"), now),
+            vec!["urgent mark · done · expired 3 d ago"]
+        );
+    }
+
+    #[test]
+    fn an_active_own_mark_with_a_past_timestamp_is_still_active() {
+        let now = t(10, 12);
+        let m = mark(t(1, 12), t(10, 10), true, false, None);
+        assert_eq!(
+            urgent_lines(Some(&m), &[r("ABC-1", ItemType::Story)], &k("ABC-1"), now),
+            vec!["urgent · marked by dana, 9 d ago · expires today"]
         );
     }
 
     #[test]
     fn no_mark_and_no_sources_is_no_line_and_marks_pluralises() {
         assert!(urgent_lines(None, &[], &k("ABC-1"), t(10, 12)).is_empty());
+        assert!(!is_urgent(&[]));
+        assert_eq!(urgent_marker(&[]), "");
         assert_eq!(urgent_marker(&[r("ABC-1", ItemType::Story)]), " !");
         assert_eq!(
             (marks(1), marks(2), marks(0)),

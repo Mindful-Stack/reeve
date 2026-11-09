@@ -83,7 +83,9 @@ pub fn index(s: DeliveryState) -> usize {
         .expect("every state is in STATES")
 }
 
+/// The single copy lives in crate::urgency.
 pub(crate) use crate::urgency::local_part;
+
 #[cfg(test)]
 mod tests {
     use super::*;
