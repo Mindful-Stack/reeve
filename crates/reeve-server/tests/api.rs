@@ -130,9 +130,9 @@ async fn auth_envelope_gate_and_automation_rule() {
     assert_eq!(call(&h.app, None, "GET", "/health", None).await.0, 200);
 }
 
-/// kb/ADR-0015 R7, kb/ADR-0003 R2: an item of any kind without an epic is untriaged. Automation never gets past that
-/// (with or without an override reason) and writes nothing; only an interactive caller's override moves it, and it is
-/// logged once with its reason.
+/// An item of any kind without an epic is untriaged (proposed kb/ADR-0018). The override rule: automation never gets
+/// past a refusal, with or without an override reason, and a refusal writes nothing (kb/ADR-0003 R2); only an
+/// interactive caller's override moves it, and it is logged once with its reason (kb/ADR-0015 R7).
 #[tokio::test]
 async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     let h = harness().await;
@@ -149,7 +149,14 @@ async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     let key = s["value"]["key"].as_str().unwrap().to_string();
     let move_path = format!("/api/v1/stories/{key}/move");
     let activity_len = || async {
-        let (st, feed) = call(&h.app, admin, "GET", "/api/v1/activity", None).await;
+        let (st, feed) = call(
+            &h.app,
+            admin,
+            "GET",
+            &format!("/api/v1/activity?entity_key={key}"),
+            None,
+        )
+        .await;
         assert_eq!(st, 200, "{feed}");
         feed["value"].as_array().unwrap().len()
     };
@@ -164,10 +171,7 @@ async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     )
     .await;
     assert_eq!(st, 422, "{body}");
-    assert!(
-        body_reasons(&body).iter().any(|r| r == "untriaged"),
-        "{body}"
-    );
+    assert_eq!(body_reasons(&body), vec!["untriaged"], "{body}");
     let (st, body) = call(
         &h.app,
         Some(&h.bot_token),
@@ -206,7 +210,16 @@ async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     let entries = feed["value"].as_array().unwrap();
     assert_eq!(entries.len(), 1, "{feed}");
     assert_eq!(entries[0]["via"], "interactive");
-    assert!(entries[0].to_string().contains("urgent"), "{feed}");
+    assert_eq!(entries[0]["entity_key"], key.as_str(), "{feed}");
+    assert_eq!(entries[0]["payload"]["reason"], "urgent", "{feed}");
+    assert!(
+        entries[0]["payload"]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reason"] == "untriaged"),
+        "{feed}"
+    );
 }
 
 fn body_reasons(b: &serde_json::Value) -> Vec<String> {

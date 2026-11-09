@@ -427,12 +427,13 @@ fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
 }
 
 /// An epic that is discovery-complete under no initiative: a story placed under it is ready when its own checks pass.
+/// Call once per test (fixed idempotency key).
 async fn ready_epic(h: &Handlers, c: &Ctx) -> reeve_protocol::Key {
     let epic = h
         .create_epic(c, "ready-epic", "E", None, "", None)
         .await
         .unwrap();
-    h.mark_discovery(c, ItemType::Epic, epic.key(), 1, true)
+    h.mark_discovery(c, ItemType::Epic, epic.key(), epic.version(), true)
         .await
         .unwrap();
     epic.key().clone()

@@ -73,8 +73,8 @@ describe('applyFilters', () => {
 		sw('ABC-2', { owner: 'ana@x.se', kind: 'bug' }),
 		sw('ABC-3', { owner: 'bo@x.se', epic: 'ABC-7' }),
 		sw('ABC-4', { epic: null }, [{ reason: 'untriaged' }]),
-		sw('ABC-5', { epic: null, kind: 'chore' }),
-		// No untriaged reason from the server: not untriaged, whatever its kind and epic say.
+		sw('ABC-5', { epic: null, kind: 'chore' }, [{ reason: 'untriaged' }]),
+		// The client must not re-derive it: no epic but no untriaged reason from the server, so not untriaged.
 		sw('ABC-6', { epic: null })
 	];
 	const keys = (f: Parameters<typeof applyFilters>[1]) => applyFilters(all, f).map((s) => s.story.key);
@@ -84,8 +84,8 @@ describe('applyFilters', () => {
 		expect(keys({ mine: 'ana@x.se' })).toEqual(['ABC-2']);
 		expect(keys({ epic: 'ABC-7' })).toEqual(['ABC-3']);
 		expect(keys({ kind: 'bug' })).toEqual(['ABC-2']);
-		// Only the server's untriaged reason counts (a chore without an epic never gets one).
-		expect(keys({ untriaged: true })).toEqual(['ABC-4']);
+		// Only the server's untriaged reason counts, whatever the kind (the client never re-derives it from kind and epic).
+		expect(keys({ untriaged: true })).toEqual(['ABC-4', 'ABC-5']);
 		expect(keys({ mine: 'ana@x.se', kind: 'story' })).toEqual([]);
 	});
 
