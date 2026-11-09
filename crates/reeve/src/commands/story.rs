@@ -259,31 +259,24 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             crate::render::story,
         ),
         Story::Urgent { key, reason, clear } => {
-            let path = format!("/stories/{key}/urgent");
-            if clear {
-                finish(c.delete::<StoryDto>(&path).await?, json, |s| {
-                    format!("urgent mark cleared on {}", s.key)
-                })
-            } else {
-                let now = chrono::Utc::now();
-                let reason = reason
-                    .map(|r| r.trim().to_string())
-                    .filter(|r| !r.is_empty());
-                finish(
-                    c.post::<StoryDto>(&path, serde_json::to_value(MarkUrgent { reason })?)
-                        .await?,
-                    json,
-                    |s| {
-                        crate::render::urgent_answer(
-                            Level::of_kind(s.kind),
-                            &s.key,
-                            s.urgent_mark.as_ref(),
-                            &s.urgent_sources,
-                            now,
-                        )
-                    },
-                )
-            }
+            super::urgent::<StoryDto>(
+                c,
+                format!("/stories/{key}/urgent"),
+                reason,
+                clear,
+                json,
+                |s| &s.key,
+                |s, now| {
+                    crate::render::urgent_answer(
+                        Level::of_kind(s.kind),
+                        &s.key,
+                        s.urgent_mark.as_ref(),
+                        &s.urgent_sources,
+                        now,
+                    )
+                },
+            )
+            .await?
         }
         Story::Show { key } => {
             let now = chrono::Utc::now();

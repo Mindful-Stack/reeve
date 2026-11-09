@@ -2616,26 +2616,54 @@ fn story_urgent_posts_the_trimmed_reason() {
     assert_eq!(out.status.code(), Some(0));
     let text = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = text.lines().collect();
-    assert!(
-        lines[0].ends_with("TST-1 !") && lines[0].len() > "TST-1 !".len(),
+    assert_eq!(
+        lines[0],
+        format!(
+            "{} !",
+            reeve::glyphs::mark_with(reeve::glyphs::Level::Story, "TST-1", false)
+        ),
         "{text}"
     );
     assert!(lines[1].starts_with("urgent · marked by"), "{text}");
 }
 
-/// A blank reason is no reason: `null`, as the web sends it. Epics use their own path.
+/// A blank reason is no reason: `null`, as the web sends it. Epics use their own path, and the answer's first line is
+/// the epic's mark line with the `!` its own source earns.
 #[test]
 fn epic_urgent_with_a_blank_reason_posts_null() {
+    let e = reeve_protocol::EpicDto {
+        key: "ABC-40".parse().unwrap(),
+        title: "Hosting".into(),
+        initiative: None,
+        brief: String::new(),
+        discovery_complete: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-40".parse().unwrap(),
+            item: reeve_protocol::ItemType::Epic,
+        }],
+    };
     let (url, server) = serve(vec![(
         "POST /api/v1/epics/ABC-40/urgent",
-        404,
-        serde_json::json!({"outcome":"error","code":"not_found","message":"not found"}),
+        200,
+        ok(serde_json::to_value(e).unwrap()),
     )]);
     let out = reeve_at(&url, &["epic", "urgent", "ABC-40", "--reason", "   "]);
     let bodies = server.join().unwrap();
     let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
     assert_eq!(sent, serde_json::json!({"reason":null}));
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        text.lines().next().unwrap(),
+        format!(
+            "{} !",
+            reeve::glyphs::mark_with(reeve::glyphs::Level::Epic, "ABC-40", false)
+        ),
+        "{text}"
+    );
 }
 
 /// `--clear` is a bodiless DELETE on the same path and prints one fixed line.
@@ -2658,19 +2686,51 @@ fn initiative_urgent_clear_sends_delete() {
     );
 }
 
-/// `--clear` with `--reason` is a clap error before any request (nothing listens on the port).
+/// `--clear` with `--reason` is a clap conflict at every level, before any request (nothing listens on the port).
 #[test]
 fn urgent_clear_with_reason_is_a_usage_error() {
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
-        .env("REEVE_URL", "http://127.0.0.1:9")
-        .env("REEVE_TOKEN", "reeve_test")
-        .args(["story", "urgent", "TST-1", "--clear", "--reason", "x"])
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("--reason"), "{err}");
+    for (level, key) in [
+        ("initiative", "ABC-2"),
+        ("epic", "ABC-40"),
+        ("story", "TST-1"),
+    ] {
+        let out = Command::cargo_bin("reeve")
+            .unwrap()
+            .env("REEVE_URL", "http://127.0.0.1:9")
+            .env("REEVE_TOKEN", "reeve_test")
+            .args([level, "urgent", key, "--clear", "--reason", "x"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{level}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("cannot be used with"), "{level}: {err}");
+        assert!(err.contains("--reason"), "{level}: {err}");
+    }
+}
+
+/// Each level marks with POST and clears with DELETE on its own plural path; `serve` answers 500 and fails the test on
+/// any other request line.
+#[test]
+fn urgent_uses_post_to_mark_and_delete_to_clear_at_every_level() {
+    for (level, plural, key) in [
+        ("initiative", "initiatives", "ABC-2"),
+        ("epic", "epics", "ABC-40"),
+        ("story", "stories", "TST-1"),
+    ] {
+        for (extra, verb) in [(None, "POST"), (Some("--clear"), "DELETE")] {
+            let want: &'static str =
+                Box::leak(format!("{verb} /api/v1/{plural}/{key}/urgent").into_boxed_str());
+            let (url, server) = serve(vec![(
+                want,
+                404,
+                serde_json::json!({"outcome":"error","code":"not_found","message":"not found"}),
+            )]);
+            let mut args = vec![level, "urgent", key];
+            args.extend(extra);
+            reeve_at(&url, &args);
+            server.join().unwrap();
+        }
+    }
 }
 
 /// An automation token's refusal exits 2 and the human text goes to stderr, none to stdout.

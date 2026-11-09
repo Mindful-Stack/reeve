@@ -1196,6 +1196,13 @@ mod tests {
         let out = urgent_answer(Level::Epic, &key, Some(&m), &[], now());
         assert!(out.starts_with(&mark(Level::Epic, &key)), "{out}");
         assert!(!out.lines().next().unwrap().ends_with('!'), "{out}");
+        // A done story's active mark: urgency comes from the sources (none), never from the mark.
+        let m = own_mark(true, true);
+        let out = urgent_answer(Level::Story, &key, Some(&m), &[], now());
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], mark(Level::Story, &key), "{out}");
+        assert_eq!(lines[1], "urgent mark · done · expires in 10 d", "{out}");
+        assert_eq!(lines.len(), 2, "{out}");
     }
 
     #[test]

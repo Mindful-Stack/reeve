@@ -12,8 +12,9 @@ pub mod sprint;
 pub mod story;
 use crate::client::{Client, Outcome};
 use clap::Subcommand;
-use reeve_protocol::ErrorCode;
+use reeve_protocol::{ErrorCode, Key, MarkUrgent};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A text argument (a brief, a description) given inline, or read from a file whose contents are sent unchanged, so no
 /// shell quoting stands between an agent's Markdown and the server; the path `-` reads stdin. Clap keeps the two
@@ -133,6 +134,31 @@ pub async fn whoami(c: &Client) -> anyhow::Result<Result<String, Outcome<()>>> {
             retry_after,
             current,
         }),
+    })
+}
+
+/// `urgent` for all three levels: `--clear` is a bodiless DELETE of `path` and prints one fixed line; otherwise a POST
+/// with the reason trimmed (blank is `null`, as the web sends it) prints `answer`. No version is sent either way.
+pub async fn urgent<T: Serialize + DeserializeOwned>(
+    c: &Client,
+    path: String,
+    reason: Option<String>,
+    clear: bool,
+    json: bool,
+    key: impl Fn(&T) -> &Key,
+    answer: impl Fn(&T, chrono::DateTime<chrono::Utc>) -> String,
+) -> anyhow::Result<i32> {
+    Ok(if clear {
+        finish(c.delete::<T>(&path).await?, json, |v| {
+            format!("urgent mark cleared on {}", key(v))
+        })
+    } else {
+        let now = chrono::Utc::now();
+        let reason = reason
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty());
+        let body = serde_json::to_value(MarkUrgent { reason })?;
+        finish(c.post::<T>(&path, body).await?, json, |v| answer(v, now))
     })
 }
 

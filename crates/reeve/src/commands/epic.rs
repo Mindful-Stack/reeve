@@ -123,31 +123,24 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
             crate::render::epic,
         ),
         Epic::Urgent { key, reason, clear } => {
-            let path = format!("/epics/{key}/urgent");
-            if clear {
-                finish(c.delete::<EpicDto>(&path).await?, json, |s| {
-                    format!("urgent mark cleared on {}", s.key)
-                })
-            } else {
-                let now = chrono::Utc::now();
-                let reason = reason
-                    .map(|r| r.trim().to_string())
-                    .filter(|r| !r.is_empty());
-                finish(
-                    c.post::<EpicDto>(&path, serde_json::to_value(MarkUrgent { reason })?)
-                        .await?,
-                    json,
-                    |s| {
-                        crate::render::urgent_answer(
-                            Level::Epic,
-                            &s.key,
-                            s.urgent_mark.as_ref(),
-                            &s.urgent_sources,
-                            now,
-                        )
-                    },
-                )
-            }
+            super::urgent::<EpicDto>(
+                c,
+                format!("/epics/{key}/urgent"),
+                reason,
+                clear,
+                json,
+                |s| &s.key,
+                |s, now| {
+                    crate::render::urgent_answer(
+                        Level::Epic,
+                        &s.key,
+                        s.urgent_mark.as_ref(),
+                        &s.urgent_sources,
+                        now,
+                    )
+                },
+            )
+            .await?
         }
         Epic::Show { key } => {
             let out = c.get::<EpicDto>(&format!("/epics/{key}")).await?;
