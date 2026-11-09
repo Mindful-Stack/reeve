@@ -130,6 +130,85 @@ async fn auth_envelope_gate_and_automation_rule() {
     assert_eq!(call(&h.app, None, "GET", "/health", None).await.0, 200);
 }
 
+/// kb/ADR-0015 R7, kb/ADR-0003 R2: an item of any kind without an epic is untriaged. Automation never gets past that
+/// (with or without an override reason) and writes nothing; only an interactive caller's override moves it, and it is
+/// logged once with its reason.
+#[tokio::test]
+async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
+    let h = harness().await;
+    let admin = Some(h.admin_token.as_str());
+    let (st, s) = call(
+        &h.app,
+        admin,
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key":"u","title":"Crash on save","kind":"bug","criteria":["it saves"],"labels":[]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{s}");
+    let key = s["value"]["key"].as_str().unwrap().to_string();
+    let move_path = format!("/api/v1/stories/{key}/move");
+    let activity_len = || async {
+        let (st, feed) = call(&h.app, admin, "GET", "/api/v1/activity", None).await;
+        assert_eq!(st, 200, "{feed}");
+        feed["value"].as_array().unwrap().len()
+    };
+    let before = activity_len().await;
+
+    let (st, body) = call(
+        &h.app,
+        Some(&h.bot_token),
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress"})),
+    )
+    .await;
+    assert_eq!(st, 422, "{body}");
+    assert!(
+        body_reasons(&body).iter().any(|r| r == "untriaged"),
+        "{body}"
+    );
+    let (st, body) = call(
+        &h.app,
+        Some(&h.bot_token),
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress","override_reason":"urgent"})),
+    )
+    .await;
+    assert_eq!(st, 422, "{body}");
+    assert!(
+        body_reasons(&body)
+            .iter()
+            .any(|r| r == "automation_cannot_override"),
+        "{body}"
+    );
+    assert_eq!(activity_len().await, before, "a refusal writes nothing");
+
+    let (st, moved) = call(
+        &h.app,
+        admin,
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress","override_reason":"urgent"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{moved}");
+    assert_eq!(moved["value"]["delivery"], "in_progress");
+    let (_, feed) = call(
+        &h.app,
+        admin,
+        "GET",
+        "/api/v1/activity?action=override",
+        None,
+    )
+    .await;
+    let entries = feed["value"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{feed}");
+    assert_eq!(entries[0]["via"], "interactive");
+    assert!(entries[0].to_string().contains("urgent"), "{feed}");
+}
+
 fn body_reasons(b: &serde_json::Value) -> Vec<String> {
     b["reasons"]
         .as_array()
@@ -1092,12 +1171,13 @@ async fn only_an_admin_stores_an_accepted_check() {
     .await
     .unwrap()
     .secret;
+    let epic = ready_epic(&h, "ready-epic").await;
     let (st, s) = call(
         &h.app,
         admin,
         "POST",
         "/api/v1/stories",
-        Some(json!({"idempotency_key":"s","title":"Wire the queue","kind":"chore","criteria":["messages arrive"],"labels":[]})),
+        Some(json!({"idempotency_key":"s","title":"Wire the queue","kind":"chore","epic":epic,"criteria":["messages arrive"],"labels":[]})),
     )
     .await;
     assert_eq!(st, 200, "{s}");

@@ -792,6 +792,31 @@ async fn flow() {
         "{}",
         status_of(&member)
     );
+    // The chore sits under a discovery-complete epic: an item without an epic is untriaged, and this step is about the
+    // decision's check, so the decision must be the chore's only reason.
+    let broker_epic = ok(reeve(&member)
+        .args([
+            "epic",
+            "create",
+            "--idempotency-key",
+            "m-e",
+            "--title",
+            "Messaging",
+        ])
+        .output()
+        .unwrap());
+    let broker_epic_key = broker_epic["value"]["key"].as_str().unwrap().to_string();
+    ok(reeve(&human)
+        .args([
+            "epic",
+            "discovery",
+            &broker_epic_key,
+            "--version",
+            "1",
+            "--complete",
+        ])
+        .output()
+        .unwrap());
     let chore = ok(reeve(&member)
         .args([
             "story",
@@ -802,6 +827,8 @@ async fn flow() {
             "Wire the broker",
             "--kind",
             "chore",
+            "--epic",
+            &broker_epic_key,
             "--criterion",
             "messages arrive",
         ])

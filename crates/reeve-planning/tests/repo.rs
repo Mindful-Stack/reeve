@@ -871,8 +871,11 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         ]
     );
     assert_eq!(reasons_of(s3.key()), vec![Reason::Untriaged]);
-    assert_eq!(reasons_of(b1.key()), vec![]);
-    assert_eq!(reasons_of(c1.key()), vec![Reason::NoCriteria]);
+    assert_eq!(reasons_of(b1.key()), vec![Reason::Untriaged]);
+    assert_eq!(
+        reasons_of(c1.key()),
+        vec![Reason::Untriaged, Reason::NoCriteria]
+    );
     assert_eq!(
         reasons_of(s4.key()),
         vec![Reason::BlockedBy {

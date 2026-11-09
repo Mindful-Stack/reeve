@@ -11,6 +11,8 @@ function env(name: string): string {
 const STORY = env('SMOKE_STORY');
 const BLOCKED = env('SMOKE_BLOCKED_STORY');
 const DECISION_STORY = env('SMOKE_DECISION_STORY');
+// A discovery-complete epic: a chore under it is ready when its checks pass (an item without an epic is untriaged).
+const EPIC = env('SMOKE_EPIC');
 
 const headers = { 'X-Reeve-Client': 'web' };
 
@@ -27,8 +29,8 @@ async function post<T>(page: Page, path: string, data: unknown): Promise<T> {
 	expect(res.ok() && body.outcome, `POST ${path}: ${res.status()} ${text}`).toBe('ok');
 	return body.value;
 }
-const chore = (page: Page, title: string) =>
-	post<{ key: string }>(page, '/api/v1/stories', { idempotency_key: crypto.randomUUID(), title, kind: 'chore', criteria: [], labels: [] });
+const chore = (page: Page, title: string, epic: string | null = EPIC) =>
+	post<{ key: string }>(page, '/api/v1/stories', { idempotency_key: crypto.randomUUID(), title, kind: 'chore', epic, criteria: [], labels: [] });
 
 // Sign in through the real browser flow against the static provider: /auth/login → provider → /auth/callback sets the
 // cookie.
@@ -51,7 +53,7 @@ test('planning view shows the seeded initiative in Now', async ({ page }) => {
 test('board shows ready and blocked stories and the drawer opens by url', async ({ page }) => {
 	await page.goto('/board');
 	await expect(page.getByTestId(`card-${STORY}`)).toContainText('ready');
-	// Untriaged and blocked cards sit in the collapsed "Not ready" disclosure.
+	// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
 	await page.getByText(/^Not ready · \d+$/).click();
 	await expect(page.getByTestId(`card-${BLOCKED}`)).toContainText('no criteria');
 	await expect(page.getByTestId(`card-${DECISION_STORY}`)).toContainText('decision: no record');
@@ -323,8 +325,8 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 });
 
 test('the backlog lists epic-less work under No epic and moves a row up through its menu', async ({ page }) => {
-	const a = await chore(page, 'Smoke backlog first');
-	const b = await chore(page, 'Smoke backlog second');
+	const a = await chore(page, 'Smoke backlog first', null);
+	const b = await chore(page, 'Smoke backlog second', null);
 	await page.goto('/backlog?group=rank');
 	const order = async () => await page.locator('ol.rows li').evaluateAll((li) => li.map((x) => x.getAttribute('data-key')));
 	// The list loads after the page mounts: wait for both rows before reading the order.
@@ -358,7 +360,7 @@ test('the backlog lists epic-less work under No epic and moves a row up through 
 
 test('the client loads nothing from outside the server', async ({ page }) => {
 	// Its own epic-less chore, so the No epic heading below exists when this test runs alone.
-	const own = await chore(page, 'Smoke foreign chore');
+	const own = await chore(page, 'Smoke foreign chore', null);
 	const origin = new URL(env('REEVE_URL')).origin;
 	const foreign: string[] = [];
 	page.on('request', (r) => {
@@ -401,7 +403,7 @@ for (const view of ['board', 'backlog'] as const) {
 		await page.goto('/' + view);
 		let link: Locator;
 		if (view === 'board') {
-			// Untriaged and blocked cards sit in the collapsed "Not ready" disclosure.
+			// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
 			await page.getByText(/^Not ready · \d+$/).click();
 			link = page.getByTestId(`card-${opener.key}`).getByRole('link', { name: `Smoke ${view} focus opener` });
 		} else {
@@ -448,9 +450,9 @@ for (const view of ['board', 'backlog'] as const) {
 }
 
 test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, close and history', async ({ page }) => {
-	// A ready chore (criteria, no epic needed) that serves no goal yet: moving it into progress asks for its goal.
+	// A ready chore (criteria, under a discovery-complete epic) that serves no goal yet: moving it into progress asks for its goal.
 	const work = await post<{ key: string }>(page, '/api/v1/stories', {
-		idempotency_key: crypto.randomUUID(), title: 'Smoke sprint chore', kind: 'chore', criteria: ['it ships'], labels: []
+		idempotency_key: crypto.randomUUID(), title: 'Smoke sprint chore', kind: 'chore', epic: EPIC, criteria: ['it ships'], labels: []
 	});
 	// Under 40 characters, so the nudge and the card show it whole.
 	const outcome = 'The smoke runs a sprint end to end';

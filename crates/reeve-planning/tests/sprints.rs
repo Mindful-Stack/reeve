@@ -194,13 +194,23 @@ mod started_at {
         let (_c, pool) = super::common::pg().await;
         let h = mk(pool.clone());
         let c = ctx(Via::Interactive, 3);
+        let ready_epic = h.create_epic(&c, "re", "RE", None, "", None).await.unwrap();
+        h.mark_discovery(
+            &c,
+            reeve_planning::ItemType::Epic,
+            ready_epic.key(),
+            ready_epic.version(),
+            true,
+        )
+        .await
+        .unwrap();
         let s = h
             .create_story(
                 &c,
                 "s",
                 "S",
                 Kind::Chore,
-                None,
+                Some(ready_epic.key().clone()),
                 "",
                 vec!["x".into()],
                 vec![],
@@ -323,7 +333,17 @@ mod repository {
         let direct = mkstory("direct", Some(epic.key().clone())).await;
         let third = mkstory("third", Some(epic.key().clone())).await;
         let loose = mkstory("loose", None).await;
-        let done = mkstory("done", None).await;
+        let ready_epic = h.create_epic(&c, "re", "RE", None, "", None).await.unwrap();
+        h.mark_discovery(
+            &c,
+            reeve_planning::ItemType::Epic,
+            ready_epic.key(),
+            ready_epic.version(),
+            true,
+        )
+        .await
+        .unwrap();
+        let done = mkstory("done", Some(ready_epic.key().clone())).await;
 
         let ports = make_planning_ports(pool.clone());
         let mut tx = pool.begin().await.unwrap();
@@ -1613,13 +1633,26 @@ mod views {
         let (h, sink) = mk(pool.clone());
         let c = ctx(Via::Automation, 3);
         let me = ctx(Via::Interactive, 3);
+        let ready_epic = h
+            .create_epic(&me, "re", "RE", None, "", None)
+            .await
+            .unwrap();
+        h.mark_discovery(
+            &me,
+            reeve_planning::ItemType::Epic,
+            ready_epic.key(),
+            ready_epic.version(),
+            true,
+        )
+        .await
+        .unwrap();
         let s = h
             .create_story(
                 &me,
                 "s",
                 "S",
                 Kind::Chore,
-                None,
+                Some(ready_epic.key().clone()),
                 "",
                 vec!["x".into()],
                 vec![],
@@ -1782,8 +1815,22 @@ mod views {
         };
         let a = mk_story("a", Kind::Story, Some(e.key().clone())).await; // serves via the initiative, not ready
         let c = mk_story("c", Kind::Chore, Some(e.key().clone())).await; // serves via the initiative, started below
-        let b = mk_story("b", Kind::Chore, None).await; // serves directly, ready
-        let u = mk_story("u", Kind::Chore, None).await; // upkeep, ready
+        // A discovery-complete epic under no initiative keeps `b` and `u` ready (an epic-less item is untriaged).
+        let ready_epic = h
+            .create_epic(&me, "re", "RE", None, "", None)
+            .await
+            .unwrap();
+        h.mark_discovery(
+            &me,
+            reeve_planning::ItemType::Epic,
+            ready_epic.key(),
+            ready_epic.version(),
+            true,
+        )
+        .await
+        .unwrap();
+        let b = mk_story("b", Kind::Chore, Some(ready_epic.key().clone())).await; // serves directly, ready
+        let u = mk_story("u", Kind::Chore, Some(ready_epic.key().clone())).await; // upkeep, ready
         let g = goal(&h, &me, "g1").await;
         h.link_goal(&me, g.id, &[i.key().clone(), b.key().clone()])
             .await
