@@ -92,8 +92,14 @@ pub trait PlanningRepo: Send + Sync {
     /// The same lookup inside the caller's transaction (the import reads it under `lock_external_ref`).
     /// `find_by_idempotency` on the caller's transaction: a check made while it holds a lock takes no second connection.
     /// Initiatives, epics and stories whose title, brief or description, or external reference contains `text`
-    /// (case-insensitive, taken literally: `%` and `_` are not wildcards), newest first, at most `limit`.
-    async fn search_items(&self, text: &str, limit: i64) -> Result<Vec<SearchRow>, RepoError>;
+    /// (case-insensitive, taken literally: `%` and `_` are not wildcards), or whose key is `exact`; at most `limit`,
+    /// in tiers: that key, an exact external reference, title matches, the rest; newest first within a tier.
+    async fn search_items(
+        &self,
+        text: &str,
+        exact: Option<&Key>,
+        limit: i64,
+    ) -> Result<Vec<SearchRow>, RepoError>;
 
     async fn find_by_idempotency_in(
         &self,

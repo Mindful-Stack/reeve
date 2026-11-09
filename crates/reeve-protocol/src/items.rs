@@ -167,8 +167,8 @@ pub struct CommentDto {
     pub external_ref: Option<String>,
 }
 
-/// One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,
-/// `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.
+/// One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the
+/// query named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SearchHit {
     pub key: Key,
@@ -176,4 +176,7 @@ pub struct SearchHit {
     pub kind: Option<Kind>,
     pub title: String,
     pub matched: Vec<String>,
+    /// The query is this item's key or, ignoring case, its whole external reference: the item it names, which a
+    /// client shows above the rest.
+    pub exact: bool,
 }

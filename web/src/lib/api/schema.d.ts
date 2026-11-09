@@ -540,7 +540,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Initiatives, epics and stories that contain the text, newest first (at most 50). */
+        /**
+         * Initiatives, epics and stories that contain the text (at most 50), in tiers: the item whose key the query names,
+         *     an exact external reference, title matches, the rest; newest first within a tier. Both exact tiers are `exact`.
+         */
         get: operations["search"];
         put?: never;
         post?: never;
@@ -2563,6 +2566,11 @@ export interface components {
             /** @enum {string} */
             outcome: "ok";
             value: {
+                /**
+                 * @description The query is this item's key or, ignoring case, its whole external reference: the item it names, which a
+                 *     client shows above the rest.
+                 */
+                exact: boolean;
                 item: components["schemas"]["ItemType"];
                 key: components["schemas"]["Key"];
                 kind?: null | components["schemas"]["Kind"];
@@ -2693,10 +2701,15 @@ export interface components {
         /** @enum {string} */
         Role: "admin" | "member";
         /**
-         * @description One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,
-         *     `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.
+         * @description One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the
+         *     query named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.
          */
         SearchHit: {
+            /**
+             * @description The query is this item's key or, ignoring case, its whole external reference: the item it names, which a
+             *     client shows above the rest.
+             */
+            exact: boolean;
             item: components["schemas"]["ItemType"];
             key: components["schemas"]["Key"];
             kind?: null | components["schemas"]["Kind"];
@@ -5698,7 +5711,10 @@ export interface operations {
     search: {
         parameters: {
             query: {
-                /** @description Text to find in titles, briefs, descriptions and external references; case-insensitive and literal. */
+                /**
+                 * @description Text to find in titles, briefs, descriptions and external references, case-insensitive and literal; or a key
+                 *     (`12` and `#12` under the current prefix, `abc-12` in any case).
+                 */
                 q: string;
             };
             header?: never;

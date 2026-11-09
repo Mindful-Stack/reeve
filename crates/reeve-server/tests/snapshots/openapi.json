@@ -6070,8 +6070,12 @@
               },
               "value": {
                 "items": {
-                  "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,\n`brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
+                  "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the\nquery named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
                   "properties": {
+                    "exact": {
+                      "description": "The query is this item's key or, ignoring case, its whole external reference: the item it names, which a\nclient shows above the rest.",
+                      "type": "boolean"
+                    },
                     "item": {
                       "$ref": "#/components/schemas/ItemType"
                     },
@@ -6102,7 +6106,8 @@
                     "key",
                     "item",
                     "title",
-                    "matched"
+                    "matched",
+                    "exact"
                   ],
                   "type": "object"
                 },
@@ -6509,8 +6514,12 @@
         "type": "string"
       },
       "SearchHit": {
-        "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `title`,\n`brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
+        "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the\nquery named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
         "properties": {
+          "exact": {
+            "description": "The query is this item's key or, ignoring case, its whole external reference: the item it names, which a\nclient shows above the rest.",
+            "type": "boolean"
+          },
           "item": {
             "$ref": "#/components/schemas/ItemType"
           },
@@ -6541,7 +6550,8 @@
           "key",
           "item",
           "title",
-          "matched"
+          "matched",
+          "exact"
         ],
         "type": "object"
       },
@@ -10643,7 +10653,7 @@
         "operationId": "search",
         "parameters": [
           {
-            "description": "Text to find in titles, briefs, descriptions and external references; case-insensitive and literal.",
+            "description": "Text to find in titles, briefs, descriptions and external references, case-insensitive and literal; or a key\n(`12` and `#12` under the current prefix, `abc-12` in any case).",
             "in": "query",
             "name": "q",
             "required": true,
@@ -10719,7 +10729,7 @@
             "bearer": []
           }
         ],
-        "summary": "Initiatives, epics and stories that contain the text, newest first (at most 50)."
+        "summary": "Initiatives, epics and stories that contain the text (at most 50), in tiers: the item whose key the query names,\nan exact external reference, title matches, the rest; newest first within a tier. Both exact tiers are `exact`."
       }
     },
     "/api/v1/sprints": {

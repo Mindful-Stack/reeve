@@ -1487,8 +1487,8 @@ fn apply_sends_a_yaml_plan_in_one_request_and_lists_the_keys() {
 #[test]
 fn search_lists_hits_with_glyphs() {
     let hits = serde_json::json!([
-        {"key": "TST-3", "item": "story", "kind": "bug", "title": "Move the database", "matched": ["description"]},
-        {"key": "TST-1", "item": "initiative", "kind": null, "title": "Leave the old host", "matched": ["title", "external_ref"]}
+        {"key": "TST-3", "item": "story", "kind": "bug", "title": "Move the database", "matched": ["description"], "exact": false},
+        {"key": "TST-1", "item": "initiative", "kind": null, "title": "Leave the old host", "matched": ["title", "external_ref"], "exact": false}
     ]);
     let (url, server) = serve(vec![(
         "GET /api/v1/search?q=north+cloud",

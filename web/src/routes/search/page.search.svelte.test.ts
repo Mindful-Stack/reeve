@@ -15,7 +15,7 @@ vi.mock('$app/state', async () => {
 });
 vi.mock('$app/navigation', () => ({ goto: vi.fn((to: string | URL) => route.fake!.goto(to)) }));
 
-const net = vi.hoisted(() => ({ asked: [] as string[], mode: { fail: false } }));
+const net = vi.hoisted(() => ({ asked: [] as string[], mode: { fail: false, exactHits: false } }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
@@ -23,9 +23,15 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		net.asked.push(url.pathname + url.search);
 		if (net.mode.fail) return failure('boom');
 		const value: SearchHit[] = [
-			{ key: 'ABC-3', item: 'story', kind: 'bug', title: 'Move the database', matched: ['description'] },
-			{ key: 'ABC-1', item: 'initiative', kind: null, title: 'Leave NorthCloud now', matched: ['title'] }
+			{ key: 'ABC-3', item: 'story', kind: 'bug', title: 'Move the database', matched: ['description'], exact: false },
+			{ key: 'ABC-1', item: 'initiative', kind: null, title: 'Leave NorthCloud now', matched: ['title'], exact: false }
 		];
+		// The server's order: the key, then an exact reference (a story, below the initiative's level), then the rest.
+		if (net.mode.exactHits)
+			value.unshift(
+				{ key: 'ABC-12', item: 'story', kind: 'story', title: 'The one', matched: ['key'], exact: true },
+				{ key: 'ABC-9', item: 'story', kind: 'bug', title: 'Migrated', matched: ['external_ref'], exact: true }
+			);
 		return value;
 	});
 	return orig();
@@ -37,6 +43,7 @@ afterEach(() => {
 	app = null;
 	document.body.innerHTML = '';
 	net.mode.fail = false;
+	net.mode.exactHits = false;
 	route.fake!.reset();
 });
 
@@ -59,6 +66,36 @@ describe('search page', () => {
 		expect(items[0].querySelector('a')!.getAttribute('href')).toBe('/initiatives/ABC-1');
 		expect(items[0].querySelector('mark')!.textContent).toBe('NorthCloud');
 		expect(items[1].querySelector('mark')).toBeNull();
+	});
+
+	it('says what can be searched', () => {
+		app = mount(Page, { target: document.body });
+		flushSync();
+		expect(document.body.querySelector('label[for="search-q"]')!.textContent).toBe(
+			'Title, brief, description, key or external reference'
+		);
+		expect(document.body.querySelector('input[type="search"]')!.getAttribute('placeholder')).toBe('e.g. 12, NorthCloud or JPD-30');
+	});
+
+	it('shows exact hits above every level, in the server order', async () => {
+		net.mode.exactHits = true;
+		app = mount(Page, { target: document.body });
+		const items = await vi.waitFor(() => {
+			flushSync();
+			const li = [...document.body.querySelectorAll('li')];
+			expect(li).toHaveLength(4);
+			return li;
+		});
+		expect(items[0].querySelector('a')!.getAttribute('href')).toBe('/board?story=ABC-12');
+		expect(items[0].textContent).toContain('matched key');
+		expect(items[1].querySelector('a')!.getAttribute('href')).toBe('/board?story=ABC-9');
+		expect(items[1].textContent).toContain('matched external reference');
+		expect(items[2].querySelector('a')!.getAttribute('href')).toBe('/initiatives/ABC-1');
+		expect([...document.body.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual([
+			'Exact match 2',
+			'Initiatives 1',
+			'Stories 1'
+		]);
 	});
 
 	it('keeps the typed text when Retry searches again', async () => {
