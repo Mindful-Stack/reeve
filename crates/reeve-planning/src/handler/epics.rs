@@ -1,7 +1,8 @@
 use super::import::{Claim, with_ref};
+use super::urgent::urgent_fields;
 use super::*;
-use crate::domain::items::*;
-use reeve_protocol::{ItemType, Key};
+use crate::domain::{items::*, urgency::Urgency};
+use reeve_protocol::{EpicDto, ItemType, Key};
 
 impl Handlers {
     pub async fn create_epic(
@@ -128,11 +129,45 @@ impl Handlers {
         Ok(self.repo.get_epic(key).await?)
     }
 
-    pub async fn get_epic(&self, key: &Key) -> Result<Epic, HandlerError> {
-        Ok(self.repo.get_epic(key).await?)
+    /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot.
+    pub async fn epic_dto(&self, key: &Key, now: DateTime<Utc>) -> Result<EpicDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            let e = self.repo.get_epic_in(&mut tx, key).await?;
+            Ok(epic_dto_of(&e, &urg))
+        }
+        .await;
+        end_read(tx, out).await
     }
 
-    pub async fn list_epics(&self, initiative: Option<&Key>) -> Result<Vec<Epic>, HandlerError> {
-        Ok(self.repo.list_epics(initiative).await?)
+    /// Every epic (of one initiative when given) with its urgency, from one `REPEATABLE READ READ ONLY` snapshot in a
+    /// fixed number of statements.
+    pub async fn epic_dtos(
+        &self,
+        initiative: Option<&Key>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<EpicDto>, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            let epics = self.repo.list_epics_in(&mut tx, initiative).await?;
+            Ok(epics.iter().map(|e| epic_dto_of(e, &urg)).collect())
+        }
+        .await;
+        end_read(tx, out).await
     }
+}
+
+/// The one place an `EpicDto` is filled: the epic and its urgency.
+pub(super) fn epic_dto_of(e: &Epic, urg: &Urgency) -> EpicDto {
+    let mut dto = EpicDto::from(e);
+    (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, e.key());
+    dto
 }

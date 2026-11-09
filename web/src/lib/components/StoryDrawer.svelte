@@ -7,9 +7,11 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type {
 		ActivityEntry,
+		ItemRef,
 		Comment,
 		EditItem,
 		Epic,
+		Initiative,
 		Readiness,
 		Reason,
 		RequiredDecision,
@@ -26,14 +28,17 @@
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
 	import { storyHref } from '#lib/drawer.ts';
+	import { expiry } from '#lib/urgency.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import Brief from '#lib/components/Brief.svelte';
 	import Comments from '#lib/components/Comments.svelte';
 	import CriteriaEditor from '#lib/components/CriteriaEditor.svelte';
 	import DecisionList from '#lib/components/DecisionList.svelte';
+	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
+	import UrgentLine from '#lib/components/UrgentLine.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
-	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
+	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -56,6 +61,8 @@
 	let comments = $state<Comment[]>([]);
 	let activity = $state<ActivityEntry[]>([]);
 	let epics = $state<Epic[]>([]);
+	let initiatives = $state<Initiative[]>([]);
+	let panel = $state<HTMLElement>();
 	let sprints = $state<Sprints | null>(null);
 	/** The active sprint's goals: the Goal field's choices. Without an active sprint the field is absent. */
 	const activeGoals = $derived(sprints?.active?.sprint.goals ?? null);
@@ -126,6 +133,7 @@
 			]);
 			if (seq !== latest) return;
 			story = s;
+			loadedAt = new Date();
 			if (editingDescription) descriptionBase = followBase(descriptionBase, { version: s.version, text: s.description });
 			readiness = r;
 			decisions = d;
@@ -143,6 +151,10 @@
 		}
 	}
 
+	async function loadInitiatives() {
+		initiatives = await unwrap(api.GET('/api/v1/initiatives')).catch(() => []);
+	}
+
 	async function loadEpics() {
 		try {
 			epics = await unwrap(api.GET('/api/v1/epics'));
@@ -158,6 +170,7 @@
 			heading?.focus();
 		});
 		loadEpics();
+		loadInitiatives();
 	});
 
 	// Any activity entry, and every (re)connect, refetches: the dependency graph is the whole tree (#lib/events.svelte.ts).
@@ -335,6 +348,63 @@
 		}
 	}
 
+	/** When the drawer last loaded: the urgent line's "N d ago" counts from it. */
+	let loadedAt = $state(new Date());
+	/** Whether the "Mark urgent" dialog is open, and the reason a failed mark left in it. */
+	let marking = $state(false);
+	let markError = $state<string | null>(null);
+	/** A source's title, when the drawer has it (the epics and initiatives lists); otherwise the line shows its key and type only. */
+	const titleOf = (r: ItemRef): string | undefined =>
+		r.item === 'epic'
+			? epics.find((e) => e.key === r.key)?.title
+			: r.item === 'initiative'
+				? initiatives.find((i) => i.key === r.key)?.title
+				: undefined;
+
+	const menuItems = $derived<MenuItem[]>([
+		// A done story cannot be urgent: its mark can only be cleared.
+		...(story?.delivery === 'done' ? [] : [{ label: 'Mark urgent…', onselect: openMark, disabled: busy }]),
+		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
+	]);
+
+	function openMark() {
+		markError = null;
+		marking = true;
+	}
+
+	async function markUrgent(reason: string | null) {
+		const s = story;
+		if (!s) return;
+		const ok = await write(() =>
+			unwrap(api.POST('/api/v1/stories/{key}/urgent', { params: { path: { key: s.key } }, body: { reason } }))
+		);
+		if (ok) {
+			marking = false;
+			await refocusActions();
+		} else {
+			markError = notice;
+			notice = null;
+		}
+	}
+
+	async function clearUrgent() {
+		const s = story;
+		if (!s) return;
+		if (await write(() => unwrap(api.DELETE('/api/v1/stories/{key}/urgent', { params: { path: { key: s.key } } })))) {
+			await refocusActions();
+		} else {
+			// The Clear button that was pressed is still there: keep the keyboard on it.
+			await tick();
+			if (focusIsFree(null)) panel?.querySelector<HTMLElement>(`button[aria-label="Clear urgent mark on ${s.key}"]`)?.focus();
+		}
+	}
+
+	/** The control that opened a write (a dialog, the expired or done line's buttons) is gone: focus goes to the drawer's actions menu, unless the user moved it. */
+	async function refocusActions() {
+		await tick();
+		if (focusIsFree(null)) (panel?.querySelector<HTMLElement>('[data-control="story-actions"]') ?? heading)?.focus();
+	}
+
 	async function saveCriteria(criteria: Story['criteria']) {
 		if (await sending('criteria', () => patch({ criteria }))) close('criteria');
 		else focusEditor('criteria');
@@ -456,7 +526,7 @@
 	}
 
 	function keydown(e: KeyboardEvent) {
-		// The override prompt and the resolution dialog render outside the aside, so their Escape never reaches this handler;
+		// The override prompt, the resolution dialog and the mark dialog render outside the aside, so their Escape never reaches this handler;
 		// the `!override` check is defensive only.
 		// Escape in a form field is the field's own (cancel an edit); it never closes the drawer over an unsaved draft.
 		const t = e.target;
@@ -477,7 +547,7 @@
 <!-- The explicit role is kept for selectors and tests that look the drawer up by it. -->
 <!-- Escape anywhere inside closes it, so the listener sits on the panel. -->
 <!-- svelte-ignore a11y_no_redundant_roles, a11y_no_noninteractive_element_interactions -->
-<aside class="drawer" role="complementary" aria-label="Story {storyKey}" data-testid="story-drawer" onkeydown={keydown}>
+<aside class="drawer" role="complementary" aria-label="Story {storyKey}" data-testid="story-drawer" bind:this={panel} onkeydown={keydown}>
 	<header class="top">
 		<h2 tabindex="-1" bind:this={heading}>
 			<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
@@ -544,7 +614,28 @@
 			</ActionsMenu>
 			{#if s.delivery === 'done' && s.resolution}<span class="chip">{s.resolution}</span>{/if}
 			<span class="owner"><span class="muted">Owner</span> <Avatar email={s.owner} /> {s.owner ? short(s.owner) : 'unowned'}</span>
+			{#if menuItems.length}
+				<ActionsMenu label="More actions for {s.key}" control="story-actions" items={menuItems} />
+			{/if}
 		</div>
+
+		<UrgentLine
+			itemKey={s.key}
+			mark={s.urgent_mark?.done ? null : s.urgent_mark}
+			sources={s.urgent_sources}
+			{titleOf}
+			now={loadedAt}
+			{busy}
+			onremark={openMark}
+			onclear={() => void clearUrgent()}
+		/>
+		{#if s.urgent_mark?.done}
+			<p class="urgent-done muted" data-testid="urgent-done">
+				<span>Urgent mark · done · {expiry(s.urgent_mark, loadedAt)}</span>
+				<span aria-hidden="true">·</span>
+				<button type="button" class="ghost" aria-label="Clear urgent mark on {s.key}" onclick={() => void clearUrgent()} disabled={busy}>Clear</button>
+			</p>
+		{/if}
 
 		<section class="readiness {r.ready ? 'ready' : 'blocked'}" aria-labelledby="drawer-readiness">
 			<h3 id="drawer-readiness">{r.ready ? 'Ready to start' : 'Not ready'}</h3>
@@ -849,6 +940,19 @@
 	</Dialog>
 {/if}
 
+{#if marking && story}
+	<MarkUrgentDialog
+		item={story.key}
+		initial={story.urgent_mark?.reason ?? null}
+		{busy}
+		error={markError}
+		onsubmit={markUrgent}
+		oncancel={() => {
+			if (!busy) marking = false;
+		}}
+	/>
+{/if}
+
 {#if override && story}
 	{@const o = override}
 	<OverridePrompt
@@ -862,6 +966,14 @@
 {/if}
 
 <style>
+	.urgent-done {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 10px;
+		margin: 0;
+		font-size: 14px;
+	}
 	.drawer {
 		position: fixed;
 		top: 0;

@@ -152,6 +152,8 @@ pub fn story(
             version,
             prs: vec![],
             goals: vec![],
+            urgent_mark: None,
+            urgent_sources: vec![],
         },
         readiness: Readiness {
             ready: true,

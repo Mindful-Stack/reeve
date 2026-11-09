@@ -7,3 +7,4 @@ pub mod pull_request;
 pub mod queue;
 pub mod readiness;
 pub mod sprint;
+pub mod urgency;

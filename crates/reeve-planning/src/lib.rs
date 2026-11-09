@@ -4,6 +4,7 @@ mod handler;
 mod ports;
 mod repo;
 mod repo_sprint;
+mod repo_urgent;
 pub use domain::{
     decision::{CloseError, Closed, RecordRef, RequiredDecision},
     delivery::{MoveEffect, MoveRefused, MoveRequest, validate_move},
@@ -13,6 +14,7 @@ pub use domain::{
     queue::{BlockedStory, QueueEntry, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{Goal, GoalLink, Sprint, StoryTimes, Summary, goal_dto, sprint_dto, sprint_view_dto},
+    urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
 };
 pub use handler::*;
 pub use ports::{

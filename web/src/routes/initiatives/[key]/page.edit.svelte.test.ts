@@ -33,11 +33,13 @@ vi.mock('$app/state', async () => {
 type Patched = { version: number; title?: string; target_month?: string | null; owner?: string | null };
 
 const net = vi.hoisted(() => {
-	const ini: Initiative = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null };
+	const ini: Initiative = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 	const s = {
 		ini,
 		epics: [] as Epic[],
 		patches: [] as Patched[],
+		urgentFail: false,
+		urgentWrites: [] as { method: string; path: string; body: unknown }[],
 		epicPosts: [] as { title: string; initiative: string | null; idempotency_key: string }[],
 		patchAnswer: null as null | { status: number; body: unknown },
 		gate: null as null | Promise<void>,
@@ -67,6 +69,13 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	const { decision } = await import('#lib/test/fixtures.ts');
 	const s = net;
 	installFetch(async ({ method, url, path, body }) => {
+		if ((method === 'POST' || method === 'DELETE') && path === '/api/v1/initiatives/ABC-1/urgent') {
+			s.urgentWrites.push({ method, path, body });
+			if (s.urgentFail) return failure('boom');
+			const mark = method === 'POST' ? { at: '2026-11-09T08:00:00Z', by: 'dan@example.com', reason: (body as { reason: string | null }).reason, expires_at: '2099-01-01T00:00:00Z', active: true, done: false } : null;
+			s.ini = { ...s.ini, urgent_mark: mark, urgent_sources: mark ? [{ key: 'ABC-1', item: 'initiative' }] : [] };
+			return s.ini;
+		}
 		if (method === 'GET' && path === '/api/v1/initiatives/ABC-1') return s.ini;
 		// An external reference: the server resolves it and answers with the canonical key.
 		if (method === 'GET' && path === '/api/v1/initiatives/JIRA-7') return s.ini;
@@ -112,7 +121,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 				const ok = await new Promise<boolean>((r) => s.createQueue.push(r));
 				if (!ok) return failure('boom');
 			}
-			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative };
+			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative, urgent_mark: null, urgent_sources: [] };
 			s.epics = [...s.epics, e];
 			return e;
 		}
@@ -128,9 +137,11 @@ afterEach(() => {
 	live.fns.length = 0;
 	live.polls.length = 0;
 	document.body.innerHTML = '';
-	net.ini = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null };
+	net.ini = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 	net.epics = [];
 	net.patches.length = 0;
+	net.urgentWrites.length = 0;
+	net.urgentFail = false;
 	net.epicPosts.length = 0;
 	net.otherReads = 0;
 	net.patchAnswer = null;
@@ -1088,4 +1099,197 @@ describe('initiative page: Add decision across a page change', () => {
 		expect(input('Title').disabled).toBe(false);
 		expect(closeBtn().disabled).toBe(false);
 	});
+});
+
+describe('initiative page: urgent mark', () => {
+	const mark = (over: Record<string, unknown> = {}) => ({ at: '2026-11-01T08:00:00Z', by: 'dan@example.com', reason: 'Customer down', expires_at: '2099-01-01T00:00:00Z', active: true, done: false, ...over });
+	const menu = async () => {
+		(document.body.querySelector('button[aria-label="Actions for ABC-1"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull();
+		});
+		return [...document.body.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+	};
+	const item = (items: HTMLButtonElement[], name: string) => items.find((b) => b.textContent?.trim() === name);
+
+	it('always offers Mark urgent…, and Clear urgent mark only with a mark', async () => {
+		await open();
+		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…']);
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		net.ini = { ...net.ini, urgent_mark: mark(), urgent_sources: [{ key: 'ABC-1', item: 'initiative' }] };
+		await open();
+		const names = (await menu()).map((b) => b.textContent?.trim());
+		expect(names).toContain('Mark urgent…');
+		expect(names).toContain('Clear urgent mark');
+	});
+
+	it('marks with the reason typed and shows the own line', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		const dialog = document.body.querySelector('dialog')!;
+		expect(dialog.querySelector('h2')!.textContent).toBe('Mark ABC-1 urgent');
+		const input = dialog.querySelector('input') as HTMLInputElement;
+		input.value = 'Launch blocked';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		(dialog.querySelector('form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain('marked by dan');
+		});
+		expect(net.urgentWrites).toEqual([{ method: 'POST', path: '/api/v1/initiatives/ABC-1/urgent', body: { reason: 'Launch blocked' } }]);
+		expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain("'Launch blocked'");
+	});
+
+	it('clears the own mark from the menu', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark(), urgent_sources: [{ key: 'ABC-1', item: 'initiative' }] };
+		await open();
+		item(await menu(), 'Clear urgent mark')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')).toBeNull();
+		});
+		expect(net.urgentWrites).toEqual([{ method: 'DELETE', path: '/api/v1/initiatives/ABC-1/urgent', body: null }]);
+	});
+
+	it('shows a derived source as a link with its title', async () => {
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic];
+		net.stories = [withReadiness({ key: 'ABC-9', title: 'Fix it', epic: 'ABC-5' })];
+		net.ini = { ...net.ini, urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] };
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).toContain('via story ABC-9 Fix it');
+		});
+		const a = document.body.querySelector('[data-testid="urgent-line"] a') as HTMLAnchorElement;
+		expect(a.textContent).toBe('ABC-9');
+		expect(a.getAttribute('href')).toContain('story=ABC-9');
+		expect(document.body.querySelector('[data-testid="urgent-line"]')!.textContent).not.toContain('marked by');
+	});
+
+	it('shows an expired own mark with Re-mark (prefilled) and Clear', async () => {
+		const expires = new Date(Date.now() - 3 * 86_400_000 - 3_600_000).toISOString();
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: expires }), urgent_sources: [] };
+		await open();
+		const line = document.body.querySelector('[data-testid="urgent-expired"]')!;
+		expect(line.textContent).toContain('Urgent mark expired 3 d ago');
+		(line.querySelector('button[aria-label="Re-mark ABC-1"]') as HTMLButtonElement).click();
+		flushSync();
+		expect((document.body.querySelector('dialog input') as HTMLInputElement).value).toBe('Customer down');
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => expect(net.urgentWrites).toHaveLength(1));
+		expect(net.urgentWrites[0]).toMatchObject({ method: 'POST', body: { reason: 'Customer down' } });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-expired"]')).toBeNull();
+		});
+	});
+
+	it('clears an expired mark with its Clear button', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		(document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => expect(net.urgentWrites).toEqual([{ method: 'DELETE', path: '/api/v1/initiatives/ABC-1/urgent', body: null }]));
+	});
+
+	it('keeps the dialog open and shows a failed write inside it', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		net.urgentFail = true;
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+	});
+
+	it('puts the Urgent chip on an epic card that is urgent', async () => {
+		net.epics = [
+			{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] } as Epic,
+			{ key: 'ABC-6', title: 'Quiet', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic
+		];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('Quiet');
+		});
+		const cards = [...document.body.querySelectorAll('li.epic-card')];
+		expect(cards.find((c) => c.textContent?.includes('Login'))!.querySelector('.urgent-chip')?.textContent).toBe('Urgent');
+		expect(cards.find((c) => c.textContent?.includes('Quiet'))!.querySelector('.urgent-chip')).toBeNull();
+	});
+
+	it('says Urgent mark expired on an epic card whose own mark ran out', async () => {
+		const m = { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: null, expires_at: '2026-11-02T00:00:00Z', active: false, done: false };
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: m, urgent_sources: [] } as Epic];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li.epic-card')?.textContent).toContain('Urgent mark expired');
+		});
+		expect(document.body.querySelector('li.epic-card .urgent-chip')).toBeNull();
+	});
+	it('moves focus to the Actions menu after the expired line is cleared', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		const clear = document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]') as HTMLButtonElement;
+		clear.focus();
+		clear.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="urgent-expired"]')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-1"]'));
+		});
+	});
+
+	it('keeps the focus on the expired line\'s Clear button after a failed clear', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		net.urgentFail = true;
+		const clear = document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]') as HTMLButtonElement;
+		clear.focus();
+		clear.click();
+		// A browser drops focus from a control that becomes disabled; jsdom keeps it, so give it up by hand.
+		clear.blur();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('boom');
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]'));
+		});
+	});
+
+	it('moves focus to the Actions menu after a successful Re-mark', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		const re = document.body.querySelector('button[aria-label="Re-mark ABC-1"]') as HTMLButtonElement;
+		re.focus();
+		re.click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-1"]'));
+		});
+	});
+
+	it('returns focus to the reason input after a failed mark', async () => {
+		await open();
+		item(await menu(), 'Mark urgent…')!.click();
+		flushSync();
+		net.urgentFail = true;
+		(document.body.querySelector('dialog button[type="submit"]') as HTMLButtonElement).focus();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')).not.toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('dialog input'));
+		});
+	});
+
 });

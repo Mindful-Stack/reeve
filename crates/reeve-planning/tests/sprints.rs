@@ -1667,14 +1667,20 @@ mod views {
         assert!(list(f(GoalFilter::Id(g.id + 100))).await.is_empty());
         let none = list(f(GoalFilter::None)).await;
         assert_eq!(keys(&none), vec![b.key().clone()]);
-        let ctx_dto = h.story_context(a.key()).await.unwrap();
+        let ctx_dto = h.story_context(a.key(), chrono::Utc::now()).await.unwrap();
         assert_eq!(ctx_dto.goals.len(), 1);
         assert_eq!(ctx_dto.goals[0].goal.id, g.id);
         assert_eq!(ctx_dto.goals[0].goal.check, "a customer booked one");
         assert_eq!(ctx_dto.goals[0].goal.links, vec![i.key().clone()]);
         assert_eq!(ctx_dto.goals[0].via, reeve_protocol::GoalVia::Initiative);
         assert_eq!(ctx_dto.goals[0].starts_on, at(3, 18).date_naive());
-        assert!(h.story_context(b.key()).await.unwrap().goals.is_empty());
+        assert!(
+            h.story_context(b.key(), chrono::Utc::now())
+                .await
+                .unwrap()
+                .goals
+                .is_empty()
+        );
     }
 
     /// The goal filter before any sprint is open (no story serves a goal), and combined with `ready`, `delivery` and

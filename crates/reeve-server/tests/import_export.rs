@@ -584,10 +584,27 @@ async fn seed(h: &Harness) -> String {
 async fn export_holds_every_item_created_before_it() {
     let h = harness().await;
     let key = seed(&h).await;
+    post(
+        &h,
+        &format!("/api/v1/stories/{key}/urgent"),
+        json!({"reason":"hot"}),
+    )
+    .await;
     let (st, b) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/export", None).await;
     assert_eq!(st, 200, "{b}");
     let e = &b["value"];
     assert_eq!(e["key_prefix"], "TST");
+    // The export carries the mark on its item and the urgency it spreads, computed at the export time.
+    let from_story = json!([{"key": key, "item": "story"}]);
+    assert_eq!(e["stories"][0]["urgent_mark"]["reason"], "hot");
+    assert_eq!(e["stories"][0]["urgent_sources"], from_story);
+    assert_eq!(
+        e["stories"][1]["urgent_sources"],
+        json!([]),
+        "a sibling stays calm"
+    );
+    assert_eq!(e["epics"][0]["urgent_sources"], from_story);
+    assert_eq!(e["initiatives"][0]["urgent_sources"], from_story);
     assert_eq!(e["initiatives"].as_array().unwrap().len(), 1);
     assert_eq!(e["epics"].as_array().unwrap().len(), 1);
     let stories = e["stories"].as_array().unwrap();
@@ -704,8 +721,18 @@ async fn export_is_one_snapshot_across_readers() {
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();
-    // the first statement on `tx`: the snapshot is taken here
-    h.state.handlers.export_initiatives(&mut tx).await.unwrap();
+    // the first statement on `tx`, as in the export: the snapshot is taken here
+    let urgency = h
+        .state
+        .handlers
+        .urgency_in(&mut tx, chrono::Utc::now())
+        .await
+        .unwrap();
+    h.state
+        .handlers
+        .export_initiatives(&mut tx, &urgency)
+        .await
+        .unwrap();
 
     // committed on another pooled connection while `tx` is open
     let late = h
@@ -730,6 +757,8 @@ async fn export_is_one_snapshot_across_readers() {
         .await
         .unwrap();
     let l = late.key().to_string();
+    // a late urgent mark on P: the exported P carries no mark (the urgency and the rows are one snapshot)
+    post(&h, &format!("/api/v1/stories/{p}/urgent"), json!({})).await;
 
     // more late writes through the normal handlers: an epic, a required decision on P, a comment on P and a new user
     let late_epic = post(
@@ -815,8 +844,18 @@ async fn export_is_one_snapshot_across_readers() {
     .await;
 
     let sprints = h.state.handlers.export_sprints(&mut tx).await.unwrap();
-    let epics = h.state.handlers.export_epics(&mut tx).await.unwrap();
-    let stories = h.state.handlers.export_stories(&mut tx).await.unwrap();
+    let epics = h
+        .state
+        .handlers
+        .export_epics(&mut tx, &urgency)
+        .await
+        .unwrap();
+    let stories = h
+        .state
+        .handlers
+        .export_stories(&mut tx, &urgency)
+        .await
+        .unwrap();
     let decisions = h.state.handlers.export_decisions(&mut tx).await.unwrap();
     let comments = h.state.handlers.export_comments(&mut tx).await.unwrap();
     let users = reeve_identity::list_users_in(&mut tx).await.unwrap();
@@ -825,6 +864,11 @@ async fn export_is_one_snapshot_across_readers() {
 
     let keys: Vec<String> = stories.iter().map(|s| s.key.to_string()).collect();
     assert_eq!(keys, vec![p.clone()], "P is in the snapshot and L is not");
+    assert!(
+        urgency.mark(&stories[0].key).is_none(),
+        "the late mark is not in"
+    );
+    assert!(stories[0].urgent_mark.is_none() && stories[0].urgent_sources.is_empty());
     assert!(epics.is_empty(), "the late epic is after the snapshot");
     let states: Vec<_> = sprints.iter().map(|s| s.state).collect();
     assert_eq!(
@@ -878,6 +922,16 @@ async fn export_is_one_snapshot_across_readers() {
     let (_, b) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/export", None).await;
     let e = &b["value"];
     assert_eq!(e["stories"].as_array().unwrap().len(), 3);
+    let late_p = e["stories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == p.as_str())
+        .unwrap();
+    assert_eq!(
+        late_p["urgent_sources"],
+        json!([{"key": p, "item": "story"}])
+    );
     let later: Vec<&serde_json::Value> = e["sprints"]
         .as_array()
         .unwrap()
@@ -1025,4 +1079,25 @@ async fn export_holds_no_secret() {
     let mut sentinels = vec![h.admin_token.as_str(), WEBHOOK];
     sentinels.extend(hashes.iter().map(String::as_str));
     assert_no_secret(&b, &sentinels, "$");
+}
+
+/// The importer has no path to an urgent mark (Urgent mark and the war room design, 2026-11-09): neither its handler
+/// nor its route names urgency, so an import never marks, clears or renews one.
+#[test]
+fn the_importer_has_no_path_to_an_urgent_mark() {
+    for (path, src) in [
+        (
+            "reeve-planning/src/handler/import.rs",
+            include_str!("../../reeve-planning/src/handler/import.rs"),
+        ),
+        (
+            "reeve-server/src/routes/import.rs",
+            include_str!("../src/routes/import.rs"),
+        ),
+    ] {
+        assert!(
+            !src.to_lowercase().contains("urgent"),
+            "{path} names urgency"
+        );
+    }
 }

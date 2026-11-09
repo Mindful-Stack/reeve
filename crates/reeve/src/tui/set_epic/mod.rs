@@ -248,6 +248,8 @@ mod tests {
             discovery_complete: None,
             external_ref: None,
             version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
         }
     }
     fn press(code: KeyCode) -> KeyEvent {

@@ -1,12 +1,19 @@
 use super::import::{Claim, with_ref};
+use super::urgent::urgent_fields;
 use super::*;
-use crate::domain::{items::*, progress::progress};
+use crate::domain::{items::*, progress::progress, urgency::Urgency};
 use reeve_protocol::{InitiativeDto, ItemType, Key};
 use sqlx::{Postgres, Transaction};
 
-fn with_progress(i: &Initiative, counts: &StoryCounts) -> InitiativeDto {
+/// The one place an `InitiativeDto` is filled: its progress and its urgency.
+pub(super) fn initiative_dto_of(
+    i: &Initiative,
+    counts: &StoryCounts,
+    urg: &Urgency,
+) -> InitiativeDto {
     let mut dto = InitiativeDto::from(i);
     dto.progress = progress(counts.completed, counts.dropped, counts.total);
+    (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, i.key());
     dto
 }
 
@@ -173,35 +180,61 @@ impl Handlers {
         Ok(self.repo.get_initiative(key).await?)
     }
 
-    pub async fn initiative_dto(&self, key: &Key) -> Result<InitiativeDto, HandlerError> {
-        let i = self.repo.get_initiative(key).await?;
-        let counts = self.repo.story_counts_under_initiative(key).await?;
-        Ok(with_progress(&i, &counts))
+    /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot.
+    pub async fn initiative_dto(
+        &self,
+        key: &Key,
+        now: DateTime<Utc>,
+    ) -> Result<InitiativeDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            self.initiative_dto_in(&mut tx, key, &urg).await
+        }
+        .await;
+        end_read(tx, out).await
     }
 
-    /// `initiative_dto` on the caller's transaction: the initiative and its story counts from one snapshot.
+    /// `initiative_dto` on the caller's transaction: the initiative and its story counts from its snapshot, with the
+    /// urgency read on that same snapshot.
     pub(crate) async fn initiative_dto_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
+        urg: &Urgency,
     ) -> Result<InitiativeDto, HandlerError> {
         let i = self.repo.get_initiative_in(tx, key).await?;
         let counts = self.repo.story_counts_under_initiative_in(tx, key).await?;
-        Ok(with_progress(&i, &counts))
+        Ok(initiative_dto_of(&i, &counts, urg))
     }
 
-    pub async fn list_initiatives(&self) -> Result<Vec<InitiativeDto>, HandlerError> {
-        let initiatives = self.repo.list_initiatives().await?;
-        let counts = self.repo.story_counts_by_initiative().await?;
-        let none = StoryCounts {
-            completed: 0,
-            dropped: 0,
-            total: 0,
-        };
-        Ok(initiatives
-            .iter()
-            .map(|i| with_progress(i, counts.get(i.key()).unwrap_or(&none)))
-            .collect())
+    /// Every initiative with its progress and urgency, from one `REPEATABLE READ READ ONLY` snapshot in a fixed number
+    /// of statements.
+    pub async fn list_initiatives(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<InitiativeDto>, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            let initiatives = self.repo.list_initiatives_in(&mut tx).await?;
+            let counts = self.repo.story_counts_by_initiative_in(&mut tx).await?;
+            Ok(initiatives
+                .iter()
+                .map(|i| {
+                    let c = counts.get(i.key()).copied().unwrap_or_default();
+                    initiative_dto_of(i, &c, &urg)
+                })
+                .collect())
+        }
+        .await;
+        end_read(tx, out).await
     }
 
     /// Advisory findings on an initiative or an epic (`domain::findings`), from one read-only snapshot: the item, the

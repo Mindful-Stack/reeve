@@ -43,6 +43,11 @@ enum Cmd {
         /// keeps open), so the document matches a `pg_dump --snapshot` of the same id (scripts/backup.sh).
         #[arg(long)]
         snapshot: Option<String>,
+        /// The document's `exported_at` (RFC 3339), and the instant urgency is computed at (an urgent mark is active
+        /// until one cycle after it was set). Default: now. A restore rehearsal passes the live export's `exported_at`,
+        /// so a mark expiring between the backup and the rehearsal does not differ.
+        #[arg(long)]
+        at: Option<chrono::DateTime<chrono::Utc>>,
     },
     /// Disable a user and revoke their tokens.
     UserDisable {
@@ -101,16 +106,17 @@ async fn main() -> anyhow::Result<()> {
         out,
         database,
         snapshot,
+        at,
     } = &cli.cmd
     {
         // Validated before connecting: the id is spliced into SET TRANSACTION SNAPSHOT.
         let snapshot = snapshot.as_deref().map(SnapshotId::parse).transpose()?;
-        // One timestamp, taken before the snapshot's first statement (kb/ADR-0010 R4).
+        // One timestamp, taken before the snapshot's first statement (kb/ADR-0010 R4), unless the caller names it.
         let text = offline_export(
             &config,
             database.as_deref(),
             snapshot.as_ref(),
-            chrono::Utc::now(),
+            at.unwrap_or_else(chrono::Utc::now),
         )
         .await?;
         match out {

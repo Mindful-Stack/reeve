@@ -37,6 +37,8 @@ pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness 
             version,
             prs: vec![],
             goals: vec![],
+            urgent_mark: None,
+            urgent_sources: vec![],
         },
         readiness: Readiness {
             ready: true,
@@ -90,6 +92,8 @@ pub fn epic(k: &str, title: &str) -> reeve_protocol::EpicDto {
         discovery_complete: None,
         external_ref: None,
         version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![],
     }
 }
 

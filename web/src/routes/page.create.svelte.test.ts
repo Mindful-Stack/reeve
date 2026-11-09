@@ -29,16 +29,30 @@ type Posted = {
 
 const net = vi.hoisted(() => ({
 	posts: [] as Posted[],
-	state: { failNext: 0, rejectNext: 0, initiatives: [] as Initiative[], hold: null as Promise<void> | null }
+	urgent: [] as { method: string; path: string; body: unknown }[],
+	state: { failNext: 0, rejectNext: 0, initiatives: [] as Initiative[], hold: null as Promise<void> | null, refuse: false }
 }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
-	const { installFetch, failure } = await import('#lib/test/net.ts');
+	const { installFetch, failure, json } = await import('#lib/test/net.ts');
 	const { initiative } = await import('#lib/test/fixtures.ts');
 	const state = net.state;
 	installFetch(async ({ method, path, body }) => {
 		if (method === 'GET' && path === '/api/v1/initiatives') return state.initiatives;
 		if (method === 'GET' && path === '/api/v1/decisions') return [];
+		if (method === 'GET' && path === '/api/v1/war-room') return [];
+		const urgent = path.match(/^\/api\/v1\/initiatives\/([^/]+)\/urgent$/);
+		if (urgent) {
+			net.urgent.push({ method, path, body });
+			if (state.refuse) return json({ outcome: 'refused', reasons: [{ reason: 'interactive_only' }], overridable: false }, 403);
+			const i = state.initiatives.find((x) => x.key === urgent[1])!;
+			const marked = method === 'POST';
+			i.urgent_mark = marked
+				? { at: '2026-11-09T09:00:00Z', by: 'dana@example.com', reason: (body as { reason: string | null }).reason, expires_at: '2026-11-23T09:00:00Z', active: true, done: false }
+				: null;
+			i.urgent_sources = marked ? [{ key: i.key, item: 'initiative' }] : [];
+			return {};
+		}
 		const patch = path.match(/^\/api\/v1\/initiatives\/([^/]+)$/);
 		if (method === 'PATCH' && patch) {
 			const i = state.initiatives.find((x) => x.key === patch[1])!;
@@ -71,10 +85,12 @@ afterEach(() => {
 	app = null;
 	document.body.innerHTML = '';
 	net.posts.length = 0;
+	net.urgent.length = 0;
 	net.state.failNext = 0;
 	net.state.rejectNext = 0;
 	net.state.initiatives = [];
 	net.state.hold = null;
+	net.state.refuse = false;
 	route.fake!.reset();
 	session.me = null;
 	goto.mockClear();
@@ -337,3 +353,82 @@ describe('planning page: moves', () => {
 	});
 });
 
+
+describe('planning page: urgent marks', () => {
+	const mark = { at: '2026-11-09T09:00:00Z', by: 'dana@example.com', reason: null, expires_at: '2026-11-23T09:00:00Z', active: true, done: false };
+	async function loaded() {
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('Hot one');
+		});
+	}
+	const item = (label: string) =>
+		[...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent === label)!;
+
+	it('keeps an urgent initiative in its column with a chip reading Urgent', async () => {
+		session.config = config({ horizon_buckets: ['Now', 'Next'] });
+		net.state.initiatives = [
+			initiative({ key: 'U-1', title: 'Hot one', horizon: 'Now', urgent_mark: mark, urgent_sources: [{ key: 'U-1', item: 'initiative' }] })
+		];
+		app = mount(Page, { target: document.body });
+		await loaded();
+		const card = q('section[aria-label="Now"] [data-testid="card-U-1"]');
+		expect(card.querySelector('.urgent-chip')!.textContent).toBe('Urgent');
+		expect(q('section[aria-label="Now"] h2').textContent).toContain('1');
+	});
+
+	it('marks from the card menu with a reason, shows the chip, and clears through the same menu', async () => {
+		session.config = config({ horizon_buckets: ['Now', 'Next'] });
+		net.state.initiatives = [initiative({ key: 'U-1', title: 'Hot one', horizon: 'Now' })];
+		app = mount(Page, { target: document.body });
+		await loaded();
+		expect(document.body.querySelector('.urgent-chip')).toBeNull();
+		q<HTMLButtonElement>('button[aria-label="Actions for U-1"]').click();
+		flushSync();
+		expect([...document.body.querySelectorAll('[role="menuitem"]')].some((b) => b.textContent === 'Clear urgent mark')).toBe(false);
+		item('Mark urgent…').click();
+		flushSync();
+		type(q<HTMLInputElement>('dialog input'), 'Outage');
+		q<HTMLFormElement>('form[aria-label="Mark urgent"]').requestSubmit();
+		await vi.waitFor(() => expect(net.urgent).toHaveLength(1));
+		expect(net.urgent[0]).toEqual({ method: 'POST', path: '/api/v1/initiatives/U-1/urgent', body: { reason: 'Outage' } });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('.urgent-chip')!.textContent).toBe('Urgent');
+		});
+		expect(document.body.querySelector('dialog')).toBeNull();
+		q<HTMLButtonElement>('button[aria-label="Actions for U-1"]').click();
+		flushSync();
+		item('Mark urgent…').click();
+		flushSync();
+		expect(q<HTMLInputElement>('dialog input').value).toBe('Outage'); // the existing reason is prefilled
+		q<HTMLButtonElement>('dialog button[type="button"]').click();
+		flushSync();
+		q<HTMLButtonElement>('button[aria-label="Actions for U-1"]').click();
+		flushSync();
+		item('Clear urgent mark').click();
+		await vi.waitFor(() => expect(net.urgent).toHaveLength(2));
+		expect(net.urgent[1]).toMatchObject({ method: 'DELETE', path: '/api/v1/initiatives/U-1/urgent' });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('.urgent-chip')).toBeNull();
+		});
+	});
+
+	it('shows a refusal in the dialog and keeps it open', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.state.initiatives = [initiative({ key: 'U-1', title: 'Hot one', horizon: 'Now' })];
+		net.state.refuse = true;
+		app = mount(Page, { target: document.body });
+		await loaded();
+		q<HTMLButtonElement>('button[aria-label="Actions for U-1"]').click();
+		flushSync();
+		item('Mark urgent…').click();
+		flushSync();
+		q<HTMLFormElement>('form[aria-label="Mark urgent"]').requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(q('dialog [role="alert"]').textContent).toContain('interactive only');
+		});
+	});
+});

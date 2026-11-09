@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, Epic, Handlers, Initiative, ItemType, RepoError,
-    Settings, Story, StoryFilter, compute_readiness, make_planning_repo,
+    Settings, Story, StoryFilter, UrgentMark, compute_readiness, make_planning_repo,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -203,7 +203,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert_eq!(done.owner(), Some("dan@example.com"));
     assert_eq!(done.delivery(), DeliveryState::Done);
     assert_eq!(done.resolution(), Some(Resolution::Completed));
-    let counts = repo.story_counts_under_initiative(&k1).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let counts = repo
+        .story_counts_under_initiative_in(&mut tx, &k1)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
     assert_eq!((counts.completed, counts.dropped, counts.total), (1, 0, 1));
 
     // Reopening to todo with no resolution clears the resolution.
@@ -216,7 +221,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert_eq!(reopened.delivery(), DeliveryState::Todo);
     assert_eq!(reopened.resolution(), None);
     assert_eq!(reopened.version(), 4);
-    let counts = repo.story_counts_under_initiative(&k1).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let counts = repo
+        .story_counts_under_initiative_in(&mut tx, &k1)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
     assert_eq!((counts.completed, counts.dropped, counts.total), (0, 0, 1));
 
     // update_story, update_epic and update_initiative: success, stale write, missing row.
@@ -1143,4 +1153,148 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
         .closed
         .unwrap();
     assert_eq!((c.reason.as_str(), c.kind, c.via), ("old", None, None));
+}
+
+#[tokio::test]
+async fn urgent_columns_refuse_half_a_mark() {
+    let (_c, pool) = common::pg().await;
+    sqlx::query("INSERT INTO initiatives (key, title, horizon, created_at, updated_at) VALUES ('ABC-1','i','Now',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO epics (key, title, initiative_key, created_at, updated_at) VALUES ('ABC-2','e','ABC-1',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-3','s','story','ABC-2',now(),now())").execute(&pool).await.unwrap();
+    for (table, key) in [
+        ("initiatives", "ABC-1"),
+        ("epics", "ABC-2"),
+        ("stories", "ABC-3"),
+    ] {
+        for set in [
+            "urgent_reason = 'x'",
+            "urgent_at = now()",
+            "urgent_by = 'a@b.c'",
+        ] {
+            let e = sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_err();
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.to_string());
+            assert_eq!(code.as_deref(), Some("23514"), "{table}: {set}");
+        }
+        sqlx::query(&format!("UPDATE {table} SET urgent_at = now(), urgent_by = 'a@b.c', urgent_reason = 'why' WHERE key = $1"))
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// Inserts I ABC-1, its epic ABC-2 (stories ABC-3 done, ABC-4 todo) and an unrelated epic ABC-5.
+async fn seed_urgent_tree(pool: &sqlx::PgPool) {
+    let t = "2026-11-01T00:00:00Z";
+    for sql in [
+        "INSERT INTO initiatives (key, title, horizon, created_at, updated_at) VALUES ('ABC-1','I','Now',$1::timestamptz,$1::timestamptz)",
+        "INSERT INTO epics (key, title, initiative_key, created_at, updated_at) VALUES ('ABC-2','E','ABC-1',$1::timestamptz,$1::timestamptz)",
+        "INSERT INTO stories (key, title, kind, epic_key, delivery, resolution, done_at, created_at, updated_at) VALUES ('ABC-3','S3','story','ABC-2','done','completed',$1::timestamptz,$1::timestamptz,$1::timestamptz)",
+        "INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-4','S4','story','ABC-2',$1::timestamptz,$1::timestamptz)",
+        "INSERT INTO epics (key, title, created_at, updated_at) VALUES ('ABC-5','E5',$1::timestamptz,$1::timestamptz)",
+    ] {
+        sqlx::query(sql).bind(t).execute(pool).await.unwrap();
+    }
+}
+
+/// A mark is written and cleared without touching version or updated_at, and is read back with its lineage facts.
+#[tokio::test]
+async fn urgent_marks_round_trip_without_touching_the_item() {
+    let (_c, pool) = common::pg().await;
+    let repo = make_planning_repo(pool.clone());
+    seed_urgent_tree(&pool).await;
+    let before: (i64, chrono::DateTime<Utc>) =
+        sqlx::query_as("SELECT version, updated_at FROM stories WHERE key='ABC-4'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let at = Utc.with_ymd_and_hms(2026, 11, 9, 9, 0, 0).unwrap();
+    let m = UrgentMark {
+        at,
+        by: "dan@example.com".into(),
+        reason: Some("why".into()),
+    };
+    let k = |s: &str| s.parse::<Key>().unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        repo.set_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"), &m)
+            .await
+            .unwrap()
+    );
+    assert!(
+        repo.set_urgent_mark(&mut tx, ItemType::Initiative, &k("ABC-1"), &m)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !repo
+            .set_urgent_mark(&mut tx, ItemType::Epic, &k("ABC-4"), &m)
+            .await
+            .unwrap(),
+        "ABC-4 is not an epic"
+    );
+    let marks = repo.urgent_marks_in(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(marks.len(), 2);
+    let story = marks.iter().find(|f| f.key.to_string() == "ABC-4").unwrap();
+    assert_eq!(
+        (
+            story.item,
+            story.parent.as_ref().map(ToString::to_string),
+            story.done
+        ),
+        (ItemType::Story, Some("ABC-2".into()), false)
+    );
+    assert_eq!(story.mark, m);
+    let after: (i64, chrono::DateTime<Utc>) =
+        sqlx::query_as("SELECT version, updated_at FROM stories WHERE key='ABC-4'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after, "a mark is not item content (kb/ADR-0017 R5)");
+
+    let mut tx = pool.begin().await.unwrap();
+    let lineage = repo
+        .urgency_lineage_in(&mut tx, &[k("ABC-2")], &[k("ABC-1")])
+        .await
+        .unwrap();
+    assert!(
+        lineage
+            .stories
+            .iter()
+            .any(|(s, _, d)| s.to_string() == "ABC-3" && *d),
+        "done fact comes from delivery"
+    );
+    assert!(
+        lineage.epics.iter().all(|(e, _)| e.to_string() != "ABC-5"),
+        "an unrelated epic is not loaded"
+    );
+    let none = repo.urgency_lineage_in(&mut tx, &[], &[]).await.unwrap();
+    assert!(none.epics.is_empty() && none.stories.is_empty());
+    assert!(
+        repo.clear_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !repo
+            .clear_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"))
+            .await
+            .unwrap(),
+        "second clear is a no-op"
+    );
+    tx.commit().await.unwrap();
+    let after: (i64, chrono::DateTime<Utc>) =
+        sqlx::query_as("SELECT version, updated_at FROM stories WHERE key='ABC-4'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after, "clearing leaves the item alone too");
 }

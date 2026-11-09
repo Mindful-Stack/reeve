@@ -852,6 +852,8 @@ mod tests {
             version: 1,
             prs,
             goals: vec![],
+            urgent_mark: None,
+            urgent_sources: vec![],
         }
     }
 
@@ -893,6 +895,8 @@ mod tests {
             discovery_complete: None,
             external_ref: None,
             version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
         };
         let out = epic(&e);
         assert!(
@@ -943,6 +947,8 @@ mod tests {
             discovery_complete: None,
             external_ref: Some("SCRUM-480".into()),
             version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
         };
         assert!(epic(&e).contains(" from: SCRUM-480"), "{}", epic(&e));
         let i = InitiativeDto {
@@ -956,6 +962,8 @@ mod tests {
             progress: None,
             external_ref: Some("JPD-30".into()),
             version: 1,
+            urgent_mark: None,
+            urgent_sources: vec![],
         };
         assert!(
             initiative(&i).contains(" from: JPD-30"),

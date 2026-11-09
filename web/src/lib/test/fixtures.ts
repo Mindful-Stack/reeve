@@ -31,6 +31,8 @@ export function story(over: Partial<Story> = {}): Story {
 		blocked_by: [],
 		prs: [],
 		goals: [],
+		urgent_mark: null,
+		urgent_sources: [],
 		criteria: [],
 		description: '',
 		delivery: 'todo',
@@ -56,6 +58,8 @@ export function epic(over: Partial<Epic> = {}): Epic {
 		discovery_complete: null,
 		external_ref: null,
 		version: 1,
+		urgent_mark: null,
+		urgent_sources: [],
 		...over
 	};
 }
@@ -73,6 +77,8 @@ export function initiative(over: Partial<Initiative> = {}): Initiative {
 		discovery_complete: null,
 		external_ref: null,
 		version: 1,
+		urgent_mark: null,
+		urgent_sources: [],
 		...over
 	};
 }

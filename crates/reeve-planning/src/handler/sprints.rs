@@ -20,16 +20,6 @@ pub struct Sprints {
     pub active_summary: Option<sprint::Summary>,
 }
 
-/// kb/ADR-0014 R5: only an interactive user opens or closes a sprint, adds, edits or removes a goal, or records a
-/// confidence. Automation and the system are both refused.
-fn interactive(c: &Ctx) -> Result<(), HandlerError> {
-    if c.via == Via::Interactive {
-        Ok(())
-    } else {
-        Err(HandlerError::Refused(vec![Reason::InteractiveOnly]))
-    }
-}
-
 fn allowed(s: &Sprint, op: Op) -> Result<(), HandlerError> {
     sprint::allow(s.state, op).map_err(|r| HandlerError::Refused(vec![r]))
 }

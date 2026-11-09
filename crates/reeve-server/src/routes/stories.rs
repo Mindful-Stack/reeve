@@ -100,17 +100,16 @@ async fn create(
             allowed_owner(&s, b.owner)?,
         )
         .await?;
-    Ok(ok(s.handlers.story_dto(&st).await?))
+    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
 }
 #[utoipa::path(get, path = "/stories/{key}", params(("key" = String, Path)), responses((status = 200, body = Response<StoryDto>)))]
 async fn get(
     State(s): State<AppState>,
-    _c: Caller,
+    c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    let st = s.handlers.get_story(&key).await?;
-    Ok(ok(s.handlers.story_dto(&st).await?))
+    Ok(ok(s.handlers.story_dto(&key, c.ctx().now).await?))
 }
 #[utoipa::path(patch, path = "/stories/{key}", params(("key" = String, Path)), request_body = EditItem, responses((status = 200, body = Response<StoryDto>)))]
 async fn edit(
@@ -148,7 +147,7 @@ async fn edit(
             b.external_ref,
         )
         .await?;
-    Ok(ok(s.handlers.story_dto(&st).await?))
+    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
 }
 #[utoipa::path(post, path = "/stories/{key}/move", params(("key" = String, Path)), request_body = MoveStory, responses((status = 200, body = Response<StoryDto>), (status = 422, body = Response<StoryDto>)))]
 async fn mv(
@@ -169,7 +168,7 @@ async fn mv(
             b.override_reason,
         )
         .await?;
-    Ok(ok(s.handlers.story_dto(&st).await?))
+    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
 }
 /// Places a todo story before another todo story, or at the end of todo when `before` is absent: one write, one
 /// `reranked` entry, and only this story's version changes.
@@ -192,7 +191,7 @@ async fn rank(
                 .as_ref(),
         )
         .await?;
-    Ok(ok(s.handlers.story_dto(&st).await?))
+    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
 }
 #[utoipa::path(get, path = "/stories/{key}/ready", params(("key" = String, Path)), responses((status = 200, body = Response<Readiness>)))]
 async fn ready(
@@ -206,11 +205,11 @@ async fn ready(
 #[utoipa::path(get, path = "/stories/{key}/context", params(("key" = String, Path)), responses((status = 200, body = Response<StoryContextDto>)))]
 async fn context(
     State(s): State<AppState>,
-    _c: Caller,
+    c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<StoryContextDto>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    Ok(ok(s.handlers.story_context(&key).await?))
+    Ok(ok(s.handlers.story_context(&key, c.ctx().now).await?))
 }
 #[utoipa::path(post, path = "/stories/{key}/blocks", params(("key" = String, Path)), request_body = BlockEdge, responses((status = 200, body = Response<Empty>)))]
 async fn block(
@@ -242,8 +241,34 @@ async fn unblock(
     Ok(ok(Empty {}))
 }
 
+#[utoipa::path(post, path = "/stories/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<StoryDto>)))]
+async fn mark_urgent(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(b): ApiJson<MarkUrgent>,
+) -> Result<Json<Response<StoryDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
+    let ctx = c.ctx();
+    s.handlers
+        .mark_urgent(&ctx, ItemType::Story, &key, b.reason)
+        .await?;
+    Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
+}
+#[utoipa::path(delete, path = "/stories/{key}/urgent", params(("key" = String, Path)), responses((status = 200, body = Response<StoryDto>)))]
+async fn clear_urgent(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+) -> Result<Json<Response<StoryDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
+    let ctx = c.ctx();
+    s.handlers.clear_urgent(&ctx, ItemType::Story, &key).await?;
+    Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
+}
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
+        .routes(routes!(mark_urgent, clear_urgent))
         .routes(routes!(list, create))
         .routes(routes!(get, edit))
         .routes(routes!(mv))

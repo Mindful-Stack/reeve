@@ -17,6 +17,7 @@ pub mod sprints;
 pub mod stories;
 pub mod tokens;
 pub mod users;
+pub mod war_room;
 pub mod webhooks;
 
 /// An optional key input (a parent, a filter, `before`) resolved through `Handlers::resolve_ref`.
@@ -161,7 +162,8 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(export::router())
         .merge(plans::router())
         .merge(search::router())
-        .merge(sprints::router());
+        .merge(sprints::router())
+        .merge(war_room::router());
     OpenApiRouter::with_openapi(ApiDoc::openapi()).nest("/api/v1", v1)
 }
 /// The served document: split from the merged routers, then the bearer scheme and shared responses are applied to every operation.

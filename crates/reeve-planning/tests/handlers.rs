@@ -326,7 +326,7 @@ async fn the_acceptance_flow_at_handler_level() {
         .unwrap();
 
     // Context bundle carries the decision and the readiness.
-    let bundle = h.story_context(story.key()).await.unwrap();
+    let bundle = h.story_context(story.key(), Utc::now()).await.unwrap();
     assert_eq!(bundle.required_decisions.len(), 1);
     assert!(bundle.readiness.ready);
     assert_eq!(bundle.initiative.as_ref().unwrap().key, *ini.key());
@@ -407,7 +407,7 @@ async fn the_acceptance_flow_at_handler_level() {
     )
     .await
     .unwrap();
-    let dto = h.initiative_dto(ini.key()).await.unwrap();
+    let dto = h.initiative_dto(ini.key(), Utc::now()).await.unwrap();
     assert_eq!(
         dto.progress,
         Some(1.0),
@@ -849,7 +849,11 @@ async fn smaller_use_cases() {
     h.mark_discovery(&dan, ItemType::Initiative, ini.key(), 1, true)
         .await
         .unwrap();
-    let v = h.initiative_dto(ini.key()).await.unwrap().version;
+    let v = h
+        .initiative_dto(ini.key(), Utc::now())
+        .await
+        .unwrap()
+        .version;
     h.mark_discovery(&dan, ItemType::Initiative, ini.key(), v, true)
         .await
         .unwrap();
@@ -869,7 +873,7 @@ async fn smaller_use_cases() {
         1
     );
     assert!(
-        h.initiative_dto(ini.key())
+        h.initiative_dto(ini.key(), Utc::now())
             .await
             .unwrap()
             .discovery_complete
@@ -939,7 +943,7 @@ async fn item_scoped_decision_list_honours_open_with_record() {
     assert_eq!(open_linked, vec![ids[0]]);
     // The context bundle leaves the closed decision out.
     let bundle: Vec<i64> = h
-        .story_context(s.key())
+        .story_context(s.key(), Utc::now())
         .await
         .unwrap()
         .required_decisions
@@ -1645,10 +1649,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
             .unwrap(),
         PrChange::Linked
     );
-    let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap())
-        .await
-        .unwrap();
+    let dto = h.story_dto(story.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs.len(), 1);
     assert_eq!(dto.prs[0].status, PrStatus::Open);
     assert_eq!(dto.prs[0].number, 42);
@@ -1721,7 +1722,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         PrChange::Ignored
     );
     let fresh = h.get_story(story.key()).await.unwrap();
-    let dto = h.story_dto(&fresh).await.unwrap();
+    let dto = h.story_dto(fresh.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs[0].status, PrStatus::Merged);
     assert_eq!(dto.prs[0].title, "fix (retitled)");
     assert_eq!(dto.prs[0].updated_at, t12);
@@ -1764,14 +1765,14 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
         }
     );
     assert!(
-        h.story_dto(&h.get_story(story.key()).await.unwrap())
+        h.story_dto(story.key(), Utc::now())
             .await
             .unwrap()
             .prs
             .is_empty()
     );
     assert_eq!(
-        h.story_dto(&h.get_story(other.key()).await.unwrap())
+        h.story_dto(other.key(), Utc::now())
             .await
             .unwrap()
             .prs
@@ -1879,12 +1880,18 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();
-    let batched = h.story_dtos_in(&mut tx, &fresh).await.unwrap();
-    assert!(h.story_dtos_in(&mut tx, &[]).await.unwrap().is_empty());
+    let urg = h.urgency_in(&mut tx, Utc::now()).await.unwrap();
+    let batched = h.story_dtos_in(&mut tx, &fresh, &urg).await.unwrap();
+    assert!(
+        h.story_dtos_in(&mut tx, &[], &urg)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     tx.rollback().await.unwrap();
     let mut single = Vec::new();
     for s in &fresh {
-        single.push(h.story_dto(s).await.unwrap());
+        single.push(h.story_dto(s.key(), Utc::now()).await.unwrap());
     }
     assert_eq!(batched, single);
     assert_eq!(
@@ -1961,10 +1968,7 @@ async fn two_first_deliveries_of_the_same_pull_request_do_not_error() {
         got.sort_by_key(|c| format!("{c:?}"));
         assert_eq!(got, vec![PrChange::Ignored, PrChange::Linked], "PR {n}");
     }
-    let dto = h
-        .story_dto(&h.get_story(story.key()).await.unwrap())
-        .await
-        .unwrap();
+    let dto = h.story_dto(story.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.prs.len(), numbers.len(), "one row per pull request");
     assert_eq!(
         count(&sink, "pr_linked", &story.key().to_string()),
@@ -2463,19 +2467,25 @@ async fn import_creates_with_state_once_and_never_logs_an_override() {
         .unwrap();
     let sk = story.key.clone().unwrap();
     let s = h.get_story(&sk).await.unwrap();
-    let dto = h.story_dto(&s).await.unwrap();
+    let dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
     assert_eq!(dto.delivery, DeliveryState::InProgress); // created in state: no gate, no override
     assert_eq!(dto.external_ref.as_deref(), Some("SCRUM-11"));
     assert_eq!(dto.owner.as_deref(), Some("bob@example.com"));
     assert_eq!(dto.labels, vec!["legacy-import".to_string()]);
-    let ini_dto = h.initiative_dto(ini.key.as_ref().unwrap()).await.unwrap();
+    let ini_dto = h
+        .initiative_dto(ini.key.as_ref().unwrap(), Utc::now())
+        .await
+        .unwrap();
     assert_eq!(ini_dto.owner.as_deref(), Some("dan@example.com"));
     assert_eq!(ini_dto.external_ref.as_deref(), Some("JPD-5"));
     assert_eq!(ini_dto.discovery_complete.as_ref().unwrap().by, c.actor);
     assert_eq!(ini_dto.discovery_complete.as_ref().unwrap().at, c.now);
-    let e = h.get_epic(epic.key.as_ref().unwrap()).await.unwrap();
-    assert_eq!(e.discovery().unwrap().by, c.actor);
-    assert_eq!(e.external_ref(), Some("SCRUM-10"));
+    let e = h
+        .epic_dto(epic.key.as_ref().unwrap(), Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(e.discovery_complete.unwrap().by, c.actor);
+    assert_eq!(e.external_ref.as_deref(), Some("SCRUM-10"));
     assert!(!h.readiness(&sk).await.unwrap().ready); // still computed: no criteria
     assert_eq!(count(&sink, "imported", &sk.to_string()), 1);
     assert_eq!(
@@ -3090,13 +3100,27 @@ async fn seed_board(h: &Handlers, tag: &str, n: usize, first_pr: i64) -> Vec<ree
     keys
 }
 
+/// Marks `story` urgent as of the wall clock, so the mark is active for the statement-count reads (which read at
+/// `Utc::now()`, not at the fixed test clock).
+async fn mark_now(h: &Handlers, story: &Key) {
+    let c = Ctx {
+        now: Utc::now(),
+        ..ctx("dan@example.com", false)
+    };
+    h.mark_urgent(&c, ItemType::Story, story, None)
+        .await
+        .unwrap();
+}
+
 /// The list reads in a fixed number of statements: twelve stories cost what three cost (one transaction and up to
 /// seven statements per story before).
 #[tokio::test]
 async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     let (_c, pool) = common::pg_counted().await;
     let (h, _sink) = mk(pool.clone());
-    seed_board(&h, "a", 3, 1).await;
+    let keys = seed_board(&h, "a", 3, 1).await;
+    // An active mark: urgency costs its fixed statements (marks, then lineage) in both measurements.
+    mark_now(&h, &keys[1]).await;
     let list = || {
         let h = h.clone();
         async move {
@@ -3117,6 +3141,12 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     );
     let twelve = common::statements(&pool, list).await;
     assert_eq!(three, twelve);
+    let board = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .await
+        .unwrap();
+    let marked = board.iter().find(|r| r.story.key == keys[1]).unwrap();
+    assert_eq!(marked.story.urgent_sources.len(), 1, "the mark is active");
 }
 
 /// The context reads its blockers in a fixed number of statements: five blockers cost what one costs, and they come
@@ -3128,6 +3158,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
     let c = ctx("dan@example.com", false);
     let keys = seed_board(&h, "a", 1, 1).await;
     let x = keys[0].clone();
+    mark_now(&h, &x).await;
     h.comment_story(&c, &x, "hello", None).await.unwrap();
     let mut blockers = Vec::new();
     for i in 0..5 {
@@ -3155,7 +3186,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
         let h = h.clone();
         let x = x.clone();
         async move {
-            h.story_context(&x).await.unwrap();
+            h.story_context(&x, Utc::now()).await.unwrap();
         }
     };
     context().await; // warm up
@@ -3165,7 +3196,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
     }
     let five = common::statements(&pool, context).await;
     assert_eq!(one, five);
-    let ctx_dto = h.story_context(&x).await.unwrap();
+    let ctx_dto = h.story_context(&x, Utc::now()).await.unwrap();
     assert_eq!(
         ctx_dto
             .blockers
@@ -3175,6 +3206,7 @@ async fn story_context_costs_the_same_for_one_and_five_blockers() {
         blockers
     );
     assert_eq!(ctx_dto.story.blocked_by, blockers);
+    assert_eq!(ctx_dto.story.urgent_sources.len(), 1, "the mark is active");
     assert_eq!(ctx_dto.comments.len(), 1);
     assert_eq!(ctx_dto.required_decisions.len(), 2);
 }
@@ -3441,7 +3473,7 @@ async fn story_context_reads_one_snapshot() {
     let call = tokio::spawn({
         let h = h.clone();
         let s = s.clone();
-        async move { h.story_context(&s).await }
+        async move { h.story_context(&s, Utc::now()).await }
     });
     wait_until_blocked(&pool).await;
     commit_during_the_pause(&pool, &s, &b, &t, Some(comment)).await;
@@ -3465,7 +3497,7 @@ async fn story_context_reads_one_snapshot() {
     assert_eq!(got.blockers[0].key, b);
     assert_eq!(got.blockers[0].delivery, DeliveryState::Todo);
 
-    let after = h.story_context(&s).await.unwrap();
+    let after = h.story_context(&s, Utc::now()).await.unwrap();
     assert!(after.readiness.ready);
     assert_eq!(after.story.prs.len(), 1);
     assert!(after.comments.is_empty());
@@ -3766,7 +3798,7 @@ async fn list_initiatives_costs_the_same_for_two_and_six_initiatives() {
     let list = || {
         let h = h.clone();
         async move {
-            h.list_initiatives().await.unwrap();
+            h.list_initiatives(Utc::now()).await.unwrap();
         }
     };
     list().await; // warm up
@@ -3784,7 +3816,7 @@ async fn list_initiatives_costs_the_same_for_two_and_six_initiatives() {
     h.create_epic(&dan, "f-e", "E", Some(f.key().clone()), "", None)
         .await
         .unwrap();
-    assert_eq!(h.list_initiatives().await.unwrap().len(), 6);
+    assert_eq!(h.list_initiatives(Utc::now()).await.unwrap().len(), 6);
     let six = common::statements(&pool, list).await;
     assert_eq!(two, six);
 }
@@ -3806,11 +3838,11 @@ async fn list_initiatives_progress_matches_one_at_a_time() {
     h.create_epic(&dan, "f-e", "E", Some(f.key().clone()), "", None)
         .await
         .unwrap();
-    let listed = h.list_initiatives().await.unwrap();
+    let listed = h.list_initiatives(Utc::now()).await.unwrap();
     assert_eq!(listed.len(), 3);
     for dto in &listed {
         let key = dto.key.clone();
-        assert_eq!(dto, &h.initiative_dto(&key).await.unwrap());
+        assert_eq!(dto, &h.initiative_dto(&key, Utc::now()).await.unwrap());
     }
     assert_eq!(listed.iter().filter(|d| d.progress.is_none()).count(), 2);
     assert_eq!(
@@ -4340,10 +4372,7 @@ async fn remove_block_deletes_one_edge_and_logs_unblocked_last() {
 
     h.remove_block(&dan, s.key(), b.key()).await.unwrap();
 
-    let dto = h
-        .story_dto(&h.get_story(s.key()).await.unwrap())
-        .await
-        .unwrap();
+    let dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
     assert_eq!(
         dto.blocked_by,
         vec![c.key().clone()],
@@ -4721,7 +4750,7 @@ async fn list_initiatives_orders_ties_by_key_number() {
         .await
         .unwrap();
     let keys: Vec<String> = h
-        .list_initiatives()
+        .list_initiatives(Utc::now())
         .await
         .unwrap()
         .iter()
@@ -4747,11 +4776,11 @@ async fn list_epics_orders_ties_by_key_number() {
         .await
         .unwrap();
     let keys: Vec<String> = h
-        .list_epics(None)
+        .epic_dtos(None, Utc::now())
         .await
         .unwrap()
         .iter()
-        .map(|e| e.key().to_string())
+        .map(|e| e.key.to_string())
         .collect();
     let want: Vec<String> = (1..=10).map(|n| format!("ABC-{n}")).collect();
     assert_eq!(keys, want, "epics");
@@ -5238,5 +5267,982 @@ async fn decision_queue_over_real_readiness() {
     assert_eq!(
         (summary.open, summary.blocking, summary.blocked_stories),
         (2, 1, 1)
+    );
+}
+
+/// Marking and clearing: interactive only, logged under their own actions, renew replaces, clear is idempotent.
+#[tokio::test]
+async fn urgent_marks_are_set_renewed_and_cleared_by_people_only() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("dan@example.com", true);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    assert!(matches!(
+        h.mark_urgent(&bot, ItemType::Initiative, &k, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Initiative, &k, Some("x".repeat(201)))
+            .await
+            .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Epic, &k, None)
+            .await
+            .unwrap_err(),
+        HandlerError::NotFound
+    ));
+    h.mark_urgent(
+        &dan,
+        ItemType::Initiative,
+        &k,
+        Some("  Customer X  ".into()),
+    )
+    .await
+    .unwrap();
+    let payload = |sink: &MemSink, n: usize| {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.action == "urgent_marked")
+            .nth(n)
+            .unwrap()
+            .payload
+            .clone()
+    };
+    assert_eq!(
+        payload(&sink, 0),
+        serde_json::json!({"item_type": "initiative", "reason": "Customer X"})
+    );
+    // characters, not bytes; and a blank reason is no reason
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("é".repeat(200)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        h.mark_urgent(&dan, ItemType::Initiative, &k, Some("é".repeat(201)))
+            .await
+            .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("   ".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.war_room(dan.now).await.unwrap()[0].state.mark.reason,
+        None
+    );
+    h.mark_urgent(
+        &dan,
+        ItemType::Initiative,
+        &k,
+        Some("  Customer X  ".into()),
+    )
+    .await
+    .unwrap();
+    // wrong type and unknown key on clear
+    assert!(matches!(
+        h.clear_urgent(&dan, ItemType::Epic, &k).await.unwrap_err(),
+        HandlerError::NotFound
+    ));
+    let ghost: Key = "ABC-9999".parse().unwrap();
+    assert!(matches!(
+        h.clear_urgent(&dan, ItemType::Initiative, &ghost)
+            .await
+            .unwrap_err(),
+        HandlerError::NotFound
+    ));
+    let first = h.war_room(dan.now).await.unwrap();
+    assert_eq!(first[0].state.mark.reason.as_deref(), Some("Customer X"));
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(3),
+        ..dan.clone()
+    };
+    h.mark_urgent(&later, ItemType::Initiative, &k, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&sink, "urgent_marked", &k.to_string()),
+        5,
+        "every mark and renewal logs"
+    );
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 1);
+    assert_eq!(room[0].state.mark.at, later.now, "renew replaces the time");
+    assert_eq!(room[0].state.mark.reason, None, "and the reason");
+    assert!(matches!(
+        h.clear_urgent(&bot, ItemType::Initiative, &k)
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    h.clear_urgent(&dan, ItemType::Initiative, &k)
+        .await
+        .unwrap();
+    h.clear_urgent(&dan, ItemType::Initiative, &k)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&sink, "urgent_cleared", &k.to_string()),
+        1,
+        "a second clear logs nothing"
+    );
+    assert!(h.war_room(later.now).await.unwrap().is_empty());
+    assert_eq!(
+        h.initiative_dto(&k, Utc::now()).await.unwrap().version,
+        ini.version(),
+        "no version bump"
+    );
+}
+
+/// The war room lists active marks first, expired ones after, with the marked item's initiative.
+#[tokio::test]
+async fn the_war_room_lists_active_then_expired_marks() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i1", "Orion", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let epic = h
+        .create_epic(&dan, "e1", "Orion v2", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    let story = h
+        .create_story(
+            &dan,
+            "s1",
+            "Booking flow",
+            Kind::Story,
+            Some(epic.key().clone()),
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(h.war_room(dan.now).await.unwrap().is_empty());
+    h.mark_urgent(&dan, ItemType::Story, story.key(), Some("blocker".into()))
+        .await
+        .unwrap();
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(15),
+        ..dan.clone()
+    };
+    h.mark_urgent(&later, ItemType::Initiative, ini.key(), None)
+        .await
+        .unwrap();
+    // sprint length is 14 days: the story's mark is 15 days old, the initiative's is fresh.
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 2);
+    assert_eq!(
+        (room[0].item, &room[0].key),
+        (ItemType::Initiative, ini.key())
+    );
+    assert!(room[0].state.active);
+    assert_eq!(room[0].title, "Orion");
+    assert_eq!(
+        room[0].initiative,
+        Some(WarRoomInitiative {
+            key: ini.key().clone(),
+            title: "Orion".into(),
+            horizon: "Now".into()
+        }),
+        "an initiative is its own initiative"
+    );
+    assert_eq!((room[1].item, &room[1].key), (ItemType::Story, story.key()));
+    assert!(!room[1].state.active, "expired sorts after active");
+    assert_eq!(room[1].title, "Booking flow");
+    assert_eq!(room[1].state.mark.reason.as_deref(), Some("blocker"));
+    assert_eq!(
+        room[1].initiative,
+        Some(WarRoomInitiative {
+            key: ini.key().clone(),
+            title: "Orion".into(),
+            horizon: "Now".into()
+        }),
+        "a nested item carries its initiative"
+    );
+    // at the mark's own time both are active, oldest first
+    let early = h.war_room(dan.now).await.unwrap();
+    assert!(early.iter().all(|e| e.state.active));
+    assert_eq!(early[0].key, *story.key());
+}
+
+/// Bulk clear and renew touch exactly the listed items and roll back as a whole.
+#[tokio::test]
+async fn bulk_clear_and_renew_touch_exactly_the_listed_items() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("dan@example.com", true);
+    let mut keys = vec![];
+    for n in 0..3 {
+        let i = h
+            .create_initiative(&dan, &format!("i{n}"), "Init", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        h.mark_urgent(
+            &dan,
+            ItemType::Initiative,
+            i.key(),
+            Some(format!("why {n}")),
+        )
+        .await
+        .unwrap();
+        keys.push(i.key().clone());
+    }
+    let (a, b, c) = (keys[0].clone(), keys[1].clone(), keys[2].clone());
+    h.war_room_clear(
+        &dan,
+        &[
+            (ItemType::Initiative, a.clone()),
+            (ItemType::Initiative, b.clone()),
+        ],
+    )
+    .await
+    .unwrap();
+    let room = h.war_room(dan.now).await.unwrap();
+    assert_eq!(room.len(), 1, "only the listed marks are cleared");
+    assert_eq!(room[0].key, c);
+    assert_eq!(count(&sink, "urgent_cleared", &a.to_string()), 1);
+    assert_eq!(count(&sink, "urgent_cleared", &b.to_string()), 1);
+    assert_eq!(count(&sink, "urgent_cleared", &c.to_string()), 0);
+    // a wrong type fails the whole request: nothing is cleared, nothing is logged
+    assert!(matches!(
+        h.war_room_clear(
+            &dan,
+            &[
+                (ItemType::Initiative, c.clone()),
+                (ItemType::Epic, c.clone())
+            ]
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    // an unknown key fails it too
+    let ghost: Key = "ABC-9999".parse().unwrap();
+    assert!(matches!(
+        h.war_room_clear(
+            &dan,
+            &[
+                (ItemType::Initiative, c.clone()),
+                (ItemType::Initiative, ghost)
+            ]
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    assert_eq!(h.war_room(dan.now).await.unwrap().len(), 1, "rolled back");
+    assert_eq!(count(&sink, "urgent_cleared", &c.to_string()), 0);
+    // renew keeps the reason and replaces the time; an unmarked listed item is skipped
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(20),
+        ..dan.clone()
+    };
+    h.war_room_renew(
+        &later,
+        &[
+            (ItemType::Initiative, c.clone()),
+            (ItemType::Initiative, a.clone()),
+        ],
+    )
+    .await
+    .unwrap();
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room.len(), 1, "the unmarked item stays unmarked");
+    assert_eq!(room[0].state.mark.at, later.now);
+    assert_eq!(room[0].state.mark.reason.as_deref(), Some("why 2"));
+    assert!(room[0].state.active);
+    assert_eq!(count(&sink, "urgent_marked", &c.to_string()), 2);
+    assert_eq!(
+        count(&sink, "urgent_marked", &a.to_string()),
+        1,
+        "a was not renewed"
+    );
+    // limits and roles
+    let many: Vec<(ItemType, Key)> = (0..101)
+        .map(|_| (ItemType::Initiative, c.clone()))
+        .collect();
+    assert!(matches!(
+        h.war_room_clear(&dan, &many).await.unwrap_err(),
+        HandlerError::Validation(_)
+    ));
+    for r in [
+        h.war_room_clear(&bot, &[(ItemType::Initiative, c.clone())])
+            .await,
+        h.war_room_renew(&bot, &[(ItemType::Initiative, c.clone())])
+            .await,
+    ] {
+        assert!(matches!(
+            r.unwrap_err(),
+            HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+        ));
+    }
+    assert_eq!(h.war_room(later.now).await.unwrap().len(), 1);
+}
+
+/// The entry is written last and inside the mark's transaction (kb/ADR-0010 R5).
+#[tokio::test]
+async fn an_urgent_entry_sees_the_mark_inside_and_not_outside() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_probe(
+        pool,
+        "SELECT (SELECT urgent_by FROM initiatives WHERE key = $1)",
+    );
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Initiative, ini.key(), None)
+        .await
+        .unwrap();
+    let seen = sink.entries("urgent_marked");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].1.as_deref(), seen[0].2.as_deref()),
+        (Some("dan@example.com"), None)
+    );
+    h.clear_urgent(&dan, ItemType::Initiative, ini.key())
+        .await
+        .unwrap();
+    let seen = sink.entries("urgent_cleared");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].1.as_deref(), seen[0].2.as_deref()),
+        (None, Some("dan@example.com")),
+        "the clear is made before the entry and visible outside only after commit"
+    );
+}
+
+/// A repeated item in a bulk request writes one entry; the renewing write skips a row that is no longer marked.
+#[tokio::test]
+async fn renew_dedupes_and_never_revives_a_cleared_mark() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    h.mark_urgent(&dan, ItemType::Initiative, &k, None)
+        .await
+        .unwrap();
+    let twice = [
+        (ItemType::Initiative, k.clone()),
+        (ItemType::Initiative, k.clone()),
+    ];
+    h.war_room_renew(&dan, &twice).await.unwrap();
+    assert_eq!(
+        count(&sink, "urgent_marked", &k.to_string()),
+        2,
+        "mark + one renewal"
+    );
+    h.war_room_clear(&dan, &twice).await.unwrap();
+    assert_eq!(count(&sink, "urgent_cleared", &k.to_string()), 1);
+    // the repo variant on an unmarked row: None, and no change
+    let mut tx = pool.begin().await.unwrap();
+    assert_eq!(
+        h.repo
+            .renew_urgent_mark(
+                &mut tx,
+                ItemType::Initiative,
+                &k,
+                dan.now,
+                "dan@example.com"
+            )
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(h.repo.urgent_marks_in(&mut tx).await.unwrap().is_empty());
+    tx.commit().await.unwrap();
+    // and a renewal of an unmarked item through the handler writes nothing
+    h.war_room_renew(&dan, &twice[..1]).await.unwrap();
+    assert_eq!(count(&sink, "urgent_marked", &k.to_string()), 2);
+}
+
+/// A renewal keeps the reason the row holds when it writes, never one it read earlier: a reason committed while the
+/// renewal waits on the row survives it, and the `urgent_marked` entry carries that reason.
+#[tokio::test]
+async fn renew_keeps_a_reason_it_never_read() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let ini = h
+        .create_initiative(&dan, "i", "Init", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let k = ini.key().clone();
+    h.mark_urgent(&dan, ItemType::Initiative, &k, Some("old".into()))
+        .await
+        .unwrap();
+    // Another writer holds the row with a new reason while the renewal starts.
+    let mut w = pool.begin().await.unwrap();
+    sqlx::query("UPDATE initiatives SET urgent_reason = 'fresh' WHERE key = $1")
+        .bind(k.to_string())
+        .execute(&mut *w)
+        .await
+        .unwrap();
+    let later = Ctx {
+        now: dan.now + chrono::Duration::days(20),
+        ..dan.clone()
+    };
+    let renew = tokio::spawn({
+        let (h, k, later) = (h.clone(), k.clone(), later.clone());
+        async move { h.war_room_renew(&later, &[(ItemType::Initiative, k)]).await }
+    });
+    wait_until_blocked(&pool).await;
+    w.commit().await.unwrap();
+    renew.await.unwrap().unwrap();
+    let room = h.war_room(later.now).await.unwrap();
+    assert_eq!(room[0].state.mark.at, later.now, "renewed");
+    assert_eq!(room[0].state.mark.reason.as_deref(), Some("fresh"));
+    let entries: Vec<serde_json::Value> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "urgent_marked" && a.entity_key == k.to_string())
+        .map(|a| a.payload.clone())
+        .collect();
+    assert_eq!(entries.len(), 2, "mark + renewal");
+    assert_eq!(entries[1]["reason"], "fresh");
+}
+
+fn source_keys(v: &[reeve_protocol::ItemRefDto]) -> Vec<String> {
+    v.iter().map(|r| r.key.to_string()).collect()
+}
+
+/// Every assembler fills urgency the same way (endpoint parity, handler level).
+#[tokio::test]
+async fn every_item_dto_carries_its_urgency() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let sib = h
+        .create_story(
+            &dan,
+            "t",
+            "T",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), Some("why".into()))
+        .await
+        .unwrap();
+    let now = dan.now;
+    let sk = vec![s.key().to_string()];
+    assert_eq!(
+        source_keys(&h.initiative_dto(i.key(), now).await.unwrap().urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.list_initiatives(now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dto(e.key(), now).await.unwrap().urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dtos(None, now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    assert_eq!(
+        source_keys(&h.epic_dtos(Some(i.key()), now).await.unwrap()[0].urgent_sources),
+        sk
+    );
+    let board = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .await
+        .unwrap();
+    let row = |k: &Key| {
+        board
+            .iter()
+            .find(|r| &r.story.key == k)
+            .unwrap()
+            .story
+            .clone()
+    };
+    assert_eq!(source_keys(&row(s.key()).urgent_sources), sk);
+    assert!(
+        row(sib.key()).urgent_sources.is_empty(),
+        "a sibling stays calm"
+    );
+    assert!(row(sib.key()).urgent_mark.is_none());
+    assert_eq!(
+        row(s.key()).urgent_mark.unwrap().reason.as_deref(),
+        Some("why")
+    );
+    let ctxd = h.story_context(sib.key(), now).await.unwrap();
+    assert_eq!(
+        source_keys(&ctxd.epic.unwrap().urgent_sources),
+        sk,
+        "nested epic in the context"
+    );
+    assert_eq!(
+        source_keys(&ctxd.initiative.unwrap().urgent_sources),
+        sk,
+        "nested initiative in the context"
+    );
+    assert!(
+        ctxd.story.urgent_sources.is_empty(),
+        "the context's own story"
+    );
+    let ctxs = h.story_context(s.key(), now).await.unwrap();
+    assert_eq!(source_keys(&ctxs.story.urgent_sources), sk);
+    let dto = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(source_keys(&dto.urgent_sources), sk);
+    assert_eq!(dto.urgent_mark.unwrap().reason.as_deref(), Some("why"));
+    // The export readers, on one transaction, with the urgency computed once on it.
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let ex_i = h.export_initiatives(&mut tx, &urg).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(source_keys(&ex_i[0].urgent_sources), sk);
+    assert_eq!(source_keys(&ex_e[0].urgent_sources), sk);
+    let ex_row = |k: &Key| ex_s.iter().find(|x| &x.key == k).unwrap().clone();
+    assert_eq!(source_keys(&ex_row(s.key()).urgent_sources), sk);
+    assert!(ex_row(s.key()).urgent_mark.is_some());
+    assert!(ex_row(sib.key()).urgent_sources.is_empty());
+    // An expired mark is still shown on its item but makes nothing urgent.
+    let later = now + chrono::Duration::days(15);
+    let dto = h.story_dto(s.key(), later).await.unwrap();
+    assert!(dto.urgent_sources.is_empty());
+    assert!(!dto.urgent_mark.unwrap().active);
+    assert!(
+        h.initiative_dto(i.key(), later)
+            .await
+            .unwrap()
+            .urgent_sources
+            .is_empty()
+    );
+}
+
+/// A mark made between someone's read and their edit or move does not make the edit fail, and the edit keeps it.
+#[tokio::test]
+async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = dan.now;
+    // A story: read, then marked by someone else, then edited and moved with the version that was read.
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Chore,
+            None,
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let read = h.get_story(s.key()).await.unwrap().version();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), Some("hot".into()))
+        .await
+        .unwrap();
+    let edited = h
+        .edit_story(
+            &dan,
+            s.key(),
+            read,
+            Some("S2".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the version");
+    let moved = h
+        .move_story(
+            &dan,
+            s.key(),
+            edited.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+        .expect("a mark never refuses a move");
+    assert_eq!(moved.delivery(), DeliveryState::InProgress);
+    let dto = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(dto.title, "S2");
+    assert_eq!(dto.urgent_mark.unwrap().reason.as_deref(), Some("hot"));
+    assert_eq!(source_keys(&dto.urgent_sources), [s.key().to_string()]);
+
+    // An initiative and an epic: marked after the read; an edit and a discovery mark keep it.
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), Some("cust".into()))
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Epic, e.key(), None)
+        .await
+        .unwrap();
+    let i2 = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            i.version(),
+            Some("I2".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the initiative's version");
+    h.mark_discovery(&dan, ItemType::Initiative, i.key(), i2.version(), true)
+        .await
+        .unwrap();
+    let e2 = h
+        .edit_epic(
+            &dan,
+            e.key(),
+            e.version(),
+            Some("E2".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the mark did not bump the epic's version");
+    h.mark_discovery(&dan, ItemType::Epic, e.key(), e2.version(), true)
+        .await
+        .unwrap();
+    let idto = h.initiative_dto(i.key(), now).await.unwrap();
+    assert_eq!(idto.title, "I2");
+    assert!(idto.discovery_complete.is_some());
+    assert_eq!(idto.urgent_mark.unwrap().reason.as_deref(), Some("cust"));
+    assert_eq!(
+        source_keys(&idto.urgent_sources),
+        [i.key().to_string(), e.key().to_string()]
+    );
+    let edto = h.epic_dto(e.key(), now).await.unwrap();
+    assert_eq!(edto.title, "E2");
+    assert!(edto.discovery_complete.is_some());
+    assert!(edto.urgent_mark.is_some());
+    assert_eq!(
+        source_keys(&edto.urgent_sources),
+        [e.key().to_string(), i.key().to_string()]
+    );
+}
+
+/// Urgency never feeds readiness, delivery or progress (kb/ADR-0017 R5).
+#[tokio::test]
+async fn urgency_changes_no_readiness_delivery_or_progress() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = dan.now;
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&dan, ItemType::Initiative, i.key(), 1, true)
+        .await
+        .unwrap();
+    h.mark_discovery(&dan, ItemType::Epic, e.key(), 1, true)
+        .await
+        .unwrap();
+    let mut keys = Vec::new();
+    for (n, criteria) in [
+        ("ready", vec!["ok".to_string()]),
+        ("bare", vec![]),
+        ("done", vec!["ok".to_string()]),
+    ] {
+        keys.push(
+            h.create_story(
+                &dan,
+                n,
+                n,
+                Kind::Story,
+                Some(e.key().clone()),
+                "",
+                criteria,
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone(),
+        );
+    }
+    let override_reason = Some("ship it".to_string());
+    h.move_story(
+        &dan,
+        &keys[2],
+        1,
+        DeliveryState::InProgress,
+        None,
+        override_reason,
+    )
+    .await
+    .unwrap();
+    h.move_story(
+        &dan,
+        &keys[2],
+        2,
+        DeliveryState::Done,
+        Some(Resolution::Completed),
+        None,
+    )
+    .await
+    .unwrap();
+    type Facts = (
+        Vec<(
+            Key,
+            reeve_protocol::Readiness,
+            DeliveryState,
+            Option<Resolution>,
+        )>,
+        Vec<(Key, Option<f32>)>,
+        Vec<reeve_protocol::Readiness>,
+    );
+    let facts = || async {
+        let board = h
+            .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+            .await
+            .unwrap();
+        let stories = board
+            .into_iter()
+            .map(|r| {
+                (
+                    r.story.key,
+                    r.readiness,
+                    r.story.delivery,
+                    r.story.resolution,
+                )
+            })
+            .collect();
+        let progress = h
+            .list_initiatives(now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.key, i.progress))
+            .collect();
+        let mut one_at_a_time = Vec::new();
+        for k in &keys {
+            one_at_a_time.push(h.readiness(k).await.unwrap());
+        }
+        let f: Facts = (stories, progress, one_at_a_time);
+        f
+    };
+    let before = facts().await;
+    assert!(
+        before.0.iter().any(|(_, r, ..)| r.ready),
+        "one story is ready"
+    );
+    assert!(before.0.iter().any(|(_, r, ..)| !r.ready), "one is not");
+    assert!(before.1[0].1.is_some(), "the initiative has progress");
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), Some("now".into()))
+        .await
+        .unwrap();
+    let marked = h.story_dto(&keys[0], now).await.unwrap();
+    assert_eq!(
+        source_keys(&marked.urgent_sources),
+        [i.key().to_string()],
+        "the mark is active and reaches the stories"
+    );
+    assert_eq!(facts().await, before, "marked");
+    h.clear_urgent(&dan, ItemType::Initiative, i.key())
+        .await
+        .unwrap();
+    assert_eq!(facts().await, before, "cleared");
+}
+
+/// Every item read takes one connection once, for its one `REPEATABLE READ` transaction: its rows and its urgency
+/// are one snapshot. On a one-connection pool, a read through the pool while the snapshot is open could not get a
+/// connection (and fails), and a read through the pool before or after it is a second acquisition.
+#[tokio::test]
+async fn every_item_read_is_one_transaction_on_one_connection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.mark_urgent(&dan, ItemType::Story, s.key(), None)
+        .await
+        .unwrap();
+
+    let acquired = Arc::new(AtomicUsize::new(0));
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .before_acquire({
+            let acquired = acquired.clone();
+            move |_, _| {
+                acquired.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(true) })
+            }
+        })
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    sqlx::query("SELECT 1").execute(&one).await.unwrap(); // the connection exists and is idle
+    let h = Handlers {
+        repo: make_planning_repo(one.clone()),
+        pool: one,
+        ..h
+    };
+    let now = dan.now;
+    let sk = s.key().to_string();
+    let once = || acquired.swap(0, Ordering::SeqCst);
+    once();
+    let urgent = h.initiative_dto(i.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "initiative_dto"
+    );
+    let urgent = h.list_initiatives(now).await.unwrap()[0]
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "list_initiatives"
+    );
+    let urgent = h.epic_dto(e.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "epic_dto"
+    );
+    let urgent = h.epic_dtos(None, now).await.unwrap()[0]
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "epic_dtos"
+    );
+    let urgent = h.story_dto(s.key(), now).await.unwrap().urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "story_dto"
+    );
+    let urgent = h
+        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .await
+        .unwrap()[0]
+        .story
+        .urgent_sources
+        .clone();
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk.clone()]),
+        "list_stories"
+    );
+    let urgent = h
+        .story_context(s.key(), now)
+        .await
+        .unwrap()
+        .initiative
+        .unwrap()
+        .urgent_sources;
+    assert_eq!(
+        (once(), source_keys(&urgent)),
+        (1, vec![sk]),
+        "story_context"
     );
 }

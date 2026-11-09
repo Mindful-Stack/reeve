@@ -6,7 +6,8 @@
 # `SELECT pg_export_snapshot();` after a `BEGIN ISOLATION LEVEL REPEATABLE READ;`, keeps $FAKE_DIR/snapshot-open until
 # COMMIT; or ROLLBACK; or the end of its input, and records its input in $FAKE_DIR/session-input; `pg_dump --snapshot=` and `export --snapshot`
 # fail unless that session is open with that id. FAKE_SESSION_END ends the session after the export, before COMMIT
-# (or after FAKE_SESSION_WAIT × 0.05 s when no export comes).
+# (or after FAKE_SESSION_WAIT × 0.05 s when no export comes). `reeve-server export --help` prints a help text that lists
+# `--at` unless FAKE_NO_AT is set (an image from before urgent marks), and exits ${FAKE_HELP:-0}.
 set -euo pipefail
 : "${FAKE_DIR:?FAKE_DIR must be set}"
 echo "$*" >>"$FAKE_DIR/calls"
@@ -76,6 +77,13 @@ case "$service $1" in
 	exit 0
 	;;
 "server reeve-server")
+	if [ "${2:-}" = export ] && [ "${3:-}" = --help ]; then
+		printf 'Usage: reeve-server export [OPTIONS]\n\nOptions:\n      --out <OUT>\n      --database <DATABASE>\n'
+		printf '      --snapshot <SNAPSHOT>\n'
+		[ -n "${FAKE_NO_AT:-}" ] || printf '      --at <AT>\n          The document exported_at\n'
+		printf '  -h, --help\n'
+		exit "${FAKE_HELP:-0}"
+	fi
 	snap_check "$@"
 	# FAKE_MKDIR: a directory that appears at this moment (after a script's pre-checks, before it publishes)
 	[ -z "${FAKE_MKDIR:-}" ] || mkdir -p "$FAKE_MKDIR"

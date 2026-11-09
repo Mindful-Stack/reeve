@@ -5,9 +5,15 @@
 	import GoalLinkButton from './GoalLinkButton.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
+	import UrgentChip from './UrgentChip.svelte';
+	import { urgentLine } from '#lib/urgency.ts';
 	import { epicStatus, type EpicCounts } from '#lib/initiative.ts';
 
-	let { epic, counts: c, waiting }: { epic: Pick<Epic, 'key' | 'title'>; counts: EpicCounts; waiting: string | null } = $props();
+	let {
+		epic,
+		counts: c,
+		waiting
+	}: { epic: Pick<Epic, 'key' | 'title' | 'urgent_mark' | 'urgent_sources'>; counts: EpicCounts; waiting: string | null } = $props();
 
 	const pct = $derived(c.total ? Math.round((c.done / c.total) * 100) : 0);
 </script>
@@ -23,6 +29,11 @@
 			<span class="bar" aria-hidden="true"><span style:width="{pct}%"></span></span>
 			<span>{c.done} of {c.total} done</span>
 		</span>
+	{/if}
+	{#if epic.urgent_sources.length > 0}
+		<span class="line"><UrgentChip line={urgentLine(epic.urgent_mark, epic.urgent_sources, epic.key, new Date(), () => undefined)} /></span>
+	{:else if epic.urgent_mark && !epic.urgent_mark.active}
+		<span class="muted line">Urgent mark expired</span>
 	{/if}
 	<GoalLinkButton key={epic.key} />
 </li>

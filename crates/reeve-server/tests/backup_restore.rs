@@ -75,6 +75,14 @@ async fn seed(h: &Harness) -> Seeded {
         json!({"version":epic["version"],"complete":true}),
     )
     .await;
+    // An urgent mark: its columns travel in the dump, and the export carries it.
+    post(
+        app,
+        t,
+        &format!("/api/v1/epics/{ek}/urgent"),
+        json!({"reason":"restore me"}),
+    )
+    .await;
     let story = |idem: &str, title: &str| json!({"idempotency_key":idem,"title":title,"kind":"story","epic":ek,"criteria":["works"],"labels":["backup"]});
     let todo = key(&post(app, t, "/api/v1/stories", story("s-todo", "Todo")).await);
     let active = key(&post(app, t, "/api/v1/stories", story("s-active", "Active")).await);
@@ -427,6 +435,13 @@ async fn a_dump_restores_into_a_fresh_database_with_everything_an_export_lacks()
         !before.decisions.is_empty() && !before.comments.is_empty() && !before.activity.is_empty()
     );
     assert!(before.users.len() >= 2);
+    assert!(
+        before
+            .epics
+            .iter()
+            .any(|e| e.urgent_mark.as_ref().and_then(|m| m.reason.as_deref()) == Some("restore me"))
+    );
+    assert!(before.stories.iter().any(|s| !s.urgent_sources.is_empty()));
 
     // 3. the README's commands; pg_dump writes to a pipe and pg_restore reads one, as through `docker compose exec -T`
     let c = &c;

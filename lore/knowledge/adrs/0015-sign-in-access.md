@@ -77,6 +77,7 @@ We decided that sign-in access is the union of the instance configuration, as a 
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-09 (kb/ADR-0017): R7's interactive-only actions grow by marking an item urgent and clearing the mark (kb/ADR-0017 R4). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0008 (superseded by this record).

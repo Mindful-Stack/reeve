@@ -657,6 +657,55 @@ fn the_webhook_has_no_path_to_moving_a_story() {
     assert!(!src.contains("move_story"));
 }
 
+/// The webhook never touches an urgent mark (Urgent mark and the war room design, 2026-11-09): a linked pull request
+/// opening and merging leaves the story's mark (at, by, reason) as it was and writes no `urgent_*` activity entry.
+#[tokio::test]
+async fn webhook_never_touches_an_urgent_mark() {
+    let h = harness().await;
+    let key = seed_story(&h, "s1").await;
+    let (st, v) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/stories/{key}/urgent"),
+        Some(json!({"reason": "customer outage"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    let mark = get_story(&h, &key).await["urgent_mark"].clone();
+    assert_eq!(mark["reason"], "customer outage", "{mark}");
+    let urgent_entries = |entries: Vec<Value>| {
+        entries
+            .into_iter()
+            .filter(|e| {
+                e["action"]
+                    .as_str()
+                    .is_some_and(|a| a.starts_with("urgent"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = urgent_entries(activity(&h, &format!("entity_key={key}")).await);
+    assert_eq!(before.len(), 1, "{before:?}");
+
+    let branch = format!("{key}-fix-login");
+    for (fixture, at, result) in [
+        ("pr_opened", "2026-10-26T10:00:00Z", "linked"),
+        ("pr_closed_merged", "2026-10-26T11:00:00Z", "updated"),
+    ] {
+        let (st, v) =
+            post_signed(&h, "pull_request", &payload(fixture, &branch, REPO, 42, at)).await;
+        assert_eq!((st, v["result"].as_str()), (202, Some(result)), "{v}");
+    }
+    let s = get_story(&h, &key).await;
+    assert_eq!(s["prs"][0]["status"], "merged");
+    assert_eq!(s["urgent_mark"], mark);
+    assert_eq!(s["urgent_sources"], json!([{"item": "story", "key": key}]));
+    assert_eq!(
+        urgent_entries(activity(&h, &format!("entity_key={key}")).await),
+        before
+    );
+}
+
 #[tokio::test]
 async fn webhook_resolves_a_story_key_of_an_earlier_prefix_before_external_refs() {
     // Stories and an epic issued under OLD, then the instance switches to TST (with OLD also a legacy prefix, so the

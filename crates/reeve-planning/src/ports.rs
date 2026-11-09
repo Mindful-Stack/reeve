@@ -4,6 +4,7 @@ use crate::domain::{
     pull_request::*,
     readiness::ReadinessInput,
     sprint::{Goal, GoalLink, Sprint, StoryTimes},
+    urgency::{Lineage, MarkFact, UrgentMark},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -51,6 +52,7 @@ pub enum GoalFilter {
     None,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct StoryCounts {
     pub completed: u32,
     pub dropped: u32,
@@ -139,7 +141,11 @@ pub trait PlanningRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
     ) -> Result<Initiative, RepoError>;
-    async fn list_initiatives(&self) -> Result<Vec<Initiative>, RepoError>;
+    /// Every initiative, oldest first (ties by key number), on the caller's transaction.
+    async fn list_initiatives_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<Initiative>, RepoError>;
     async fn update_initiative(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -147,10 +153,13 @@ pub trait PlanningRepo: Send + Sync {
         expected_version: i64,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
-    async fn story_counts_under_initiative(&self, key: &Key) -> Result<StoryCounts, RepoError>;
-    /// Story counts for every initiative that has a story, in one statement; an initiative absent from the map has none.
-    async fn story_counts_by_initiative(&self) -> Result<HashMap<Key, StoryCounts>, RepoError>;
-    /// `story_counts_under_initiative` on the caller's transaction.
+    /// Story counts for every initiative that has a story, in one statement on the caller's transaction; an initiative
+    /// absent from the map has none.
+    async fn story_counts_by_initiative_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<HashMap<Key, StoryCounts>, RepoError>;
+    /// The story counts under one initiative (through its epics), on the caller's transaction.
     async fn story_counts_under_initiative_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -171,7 +180,12 @@ pub trait PlanningRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
     ) -> Result<Epic, RepoError>;
-    async fn list_epics(&self, initiative: Option<&Key>) -> Result<Vec<Epic>, RepoError>;
+    /// Every epic (of one initiative when given), oldest first (ties by key number), on the caller's transaction.
+    async fn list_epics_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        initiative: Option<&Key>,
+    ) -> Result<Vec<Epic>, RepoError>;
     async fn update_epic(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -550,6 +564,46 @@ pub trait PlanningRepo: Send + Sync {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<StoryTimes>, RepoError>;
+    /// Every stored urgent mark (active or expired) with its item's parent and done fact (kb/ADR-0017). One statement.
+    async fn urgent_marks_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<MarkFact>, RepoError>;
+    /// The lineage `urgency` needs: epics whose key is in `epics` or whose initiative is in `initiatives`, and the
+    /// stories under `epics` or under those initiatives' epics. Two statements; none when both inputs are empty.
+    async fn urgency_lineage_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        epics: &[Key],
+        initiatives: &[Key],
+    ) -> Result<Lineage, RepoError>;
+    /// Writes the mark on one item, replacing any; touches no other column (not `version`, not `updated_at`).
+    /// Ok(false) when no item of that type has the key.
+    async fn set_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        mark: &UrgentMark,
+    ) -> Result<bool, RepoError>;
+    /// Renews the mark a row still carries: sets its time and author only, keeping the reason the row holds when the
+    /// write lands, and returns that reason. Ok(None) when the row carries no mark (or does not exist), so a renewal
+    /// never revives a mark cleared meanwhile. Touches no other column.
+    async fn renew_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+        at: DateTime<Utc>,
+        by: &str,
+    ) -> Result<Option<Option<String>>, RepoError>;
+    /// Clears the mark; Ok(false) when the item carried none (or does not exist). Touches no other column.
+    async fn clear_urgent_mark(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        key: &Key,
+    ) -> Result<bool, RepoError>;
 }
 
 /// What the planning context needs from the activity log: defined here, implemented by reeve-activity.

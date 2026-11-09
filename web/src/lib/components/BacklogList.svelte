@@ -9,6 +9,8 @@
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
+	import UrgentChip from './UrgentChip.svelte';
+	import { urgentLine } from '#lib/urgency.ts';
 
 	let {
 		rows,
@@ -112,7 +114,7 @@
 	{#each rows as r (r.story.key)}
 		{@const s = r.story}
 		{@const note = freshNote(live.recent, s.key, session.me?.email)}
-		<li data-key={s.key} class:fresh={note}>
+		<li data-key={s.key} class:fresh={note} class:urgent={s.urgent_sources.length > 0}>
 			<!-- The pointer path; the actions menu is the keyboard path, so the handle is out of the tab order. -->
 			<button
 				type="button"
@@ -125,6 +127,11 @@
 			>
 			<span class="rank"><span class="visually-hidden">{'rank '}</span>{s.rank}</span>
 			<span class="key">{s.key}</span>
+			{#if s.urgent_sources.length > 0}
+				<UrgentChip
+					line={urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), (x) => (x.item === 'epic' && x.key === s.epic && s.epic ? epicTitle.get(s.epic) : undefined))}
+				/>
+			{/if}
 			<a class="title" href={href(s.key)}>{s.title}</a>
 			{#if showEpic}<span class="epic">{s.epic ? (epicTitle.get(s.epic) ?? s.epic) : 'No epic'}</span>{/if}
 			<span class="end">
@@ -143,6 +150,13 @@
 	.rows > li {
 		gap: 6px 12px;
 		padding: 7px 10px;
+	}
+	.rows > li.urgent {
+		box-shadow: inset 0 0 0 2px var(--danger);
+	}
+	/* Both rings at once: the urgent ring at the edge, app.css's live-change accent ring just inside it. */
+	.rows > li.urgent.fresh {
+		box-shadow: inset 0 0 0 2px var(--danger), inset 0 0 0 4px var(--accent);
 	}
 	.handle {
 		cursor: grab;

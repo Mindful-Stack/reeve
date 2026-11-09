@@ -2225,3 +2225,217 @@ async fn every_versioned_write_reports_current_on_conflict() {
         );
     }
 }
+
+#[tokio::test]
+async fn urgent_routes_mark_clear_and_list_the_war_room() {
+    let h = harness().await;
+    let t = Some(h.victim_token.as_str());
+    let (_, i) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key":"u1","title":"War","horizon":"Now"})),
+    )
+    .await;
+    let key = i["value"]["key"].as_str().unwrap().to_string();
+    assert_eq!(i["value"]["urgent_sources"], json!([]));
+    assert_eq!(
+        i["value"].get("urgent_mark"),
+        Some(&serde_json::Value::Null)
+    );
+    let (st, b) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/initiatives/{key}/urgent"),
+        Some(json!({"reason":"Customer X"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["urgent_mark"]["reason"], "Customer X");
+    assert_eq!(b["value"]["urgent_mark"]["active"], true);
+    assert_eq!(
+        b["value"]["urgent_sources"],
+        json!([{"key": key, "item": "initiative"}])
+    );
+    let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
+    assert_eq!(
+        room["value"][0]["item"],
+        json!({"key": key, "item": "initiative"})
+    );
+    assert_eq!(room["value"][0]["mark"]["active"], true);
+    assert_eq!(room["value"][0]["mark"]["reason"], "Customer X");
+    let (st, _) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/war-room/clear",
+        Some(json!({"items":[{"key": key, "item":"initiative"}]})),
+    )
+    .await;
+    assert_eq!(st, 200);
+    let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
+    assert_eq!(room["value"], json!([]));
+
+    // The same round trip for an epic and a story, in a chain under the initiative.
+    let (_, e) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/epics",
+        Some(json!({"idempotency_key":"u1e","title":"E","initiative":key})),
+    )
+    .await;
+    let ek = e["value"]["key"].as_str().unwrap().to_string();
+    let (_, sy) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key":"u1s","title":"S","kind":"story","epic":ek,"criteria":["ok"],"labels":[]})),
+    )
+    .await;
+    let sk = sy["value"]["key"].as_str().unwrap().to_string();
+    // A marked story makes its lineage urgent on every read: the initiative, the epic and the story itself.
+    let (st, b) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{sk}/urgent"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let from_story = json!([{"key": sk, "item": "story"}]);
+    assert_eq!(b["value"]["urgent_sources"], from_story);
+    for path in [
+        format!("/api/v1/initiatives/{key}"),
+        format!("/api/v1/epics/{ek}"),
+        format!("/api/v1/stories/{sk}"),
+    ] {
+        let (_, got) = call(&h.app, t, "GET", &path, None).await;
+        assert_eq!(got["value"]["urgent_sources"], from_story, "{path}");
+    }
+    let (_, epics) = call(&h.app, t, "GET", "/api/v1/epics", None).await;
+    assert_eq!(epics["value"][0]["urgent_sources"], from_story);
+    let (st, b) = call(
+        &h.app,
+        t,
+        "DELETE",
+        &format!("/api/v1/stories/{sk}/urgent"),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["urgent_sources"], json!([]));
+    assert_eq!(b["value"]["urgent_mark"], serde_json::Value::Null);
+    for (plural, item, k) in [
+        ("initiatives", "initiative", &key),
+        ("epics", "epic", &ek),
+        ("stories", "story", &sk),
+    ] {
+        let path = format!("/api/v1/{plural}/{k}/urgent");
+        let (st, b) = call(&h.app, t, "POST", &path, Some(json!({}))).await;
+        assert_eq!(st, 200, "{item}: {b}");
+        let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
+        let row = json!({"key": k, "item": item});
+        assert!(
+            room["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["item"] == row),
+            "{item} listed: {room}"
+        );
+        let (st, b) = call(&h.app, t, "DELETE", &path, None).await;
+        assert_eq!(st, 200, "{item}: {b}");
+        let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
+        assert!(
+            !room["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["item"] == row),
+            "{item} gone: {room}"
+        );
+    }
+
+    // Renew: mark, then renew the row; the returned list has it, active.
+    let (st, _) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/epics/{ek}/urgent"),
+        Some(json!({"reason":"again"})),
+    )
+    .await;
+    assert_eq!(st, 200);
+    let (st, room) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/war-room/renew",
+        Some(json!({"items":[{"key": ek, "item":"epic"}]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{room}");
+    let row = room["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["item"] == json!({"key": ek, "item": "epic"}))
+        .expect("renewed row listed");
+    assert_eq!(row["mark"]["active"], true);
+}
+
+#[tokio::test]
+async fn urgent_writes_refuse_automation_and_a_wrong_typed_item_fails() {
+    let h = harness().await;
+    let t = Some(h.victim_token.as_str());
+    let bot = Some(h.bot_token.as_str());
+    let (_, i) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key":"u2","title":"War","horizon":"Now"})),
+    )
+    .await;
+    let key = i["value"]["key"].as_str().unwrap().to_string();
+    let items = json!({"items":[{"key": key, "item":"initiative"}]});
+    let calls = [
+        (
+            "POST",
+            format!("/api/v1/initiatives/{key}/urgent"),
+            Some(json!({})),
+        ),
+        ("DELETE", format!("/api/v1/initiatives/{key}/urgent"), None),
+        (
+            "POST",
+            "/api/v1/war-room/clear".to_string(),
+            Some(items.clone()),
+        ),
+        ("POST", "/api/v1/war-room/renew".to_string(), Some(items)),
+    ];
+    for (m, p, b) in calls {
+        let (st, body) = call(&h.app, bot, m, &p, b).await;
+        assert_eq!(st, 422, "{m} {p}: {body}");
+        assert_eq!(body["outcome"], "refused", "{m} {p}");
+        assert_eq!(body["reasons"], json!([{"reason": "interactive_only"}]));
+    }
+    // The refused writes wrote nothing.
+    let (_, room) = call(&h.app, t, "GET", "/api/v1/war-room", None).await;
+    assert_eq!(room["value"], json!([]));
+    // The key names an initiative, not an epic: the whole request fails.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/war-room/clear",
+        Some(json!({"items":[{"key": key, "item":"epic"}]})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(body["code"], "validation");
+}

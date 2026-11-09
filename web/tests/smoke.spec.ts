@@ -581,3 +581,28 @@ test('the header goal picker links an initiative and, after navigating by click,
 	// The full load ended linking mode.
 	await expect(page.getByRole('button', { name: 'Goals ▾' })).toBeVisible();
 });
+
+test('an initiative marked urgent from its card shows in the War room with its reason, and End war room clears it', async ({ page }) => {
+	const title = `Urgent smoke ${crypto.randomUUID().slice(0, 8)}`;
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title, horizon: 'Now' });
+	await page.goto('/');
+	const warRoom = page.locator('section[aria-label="War room"]');
+	await expect(warRoom).toHaveCount(0); // nothing is marked yet
+
+	await page.getByRole('button', { name: `Actions for ${ini.key}`, exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Mark urgent…' }).click();
+	const dialog = page.getByRole('dialog', { name: `Mark ${ini.key} urgent` });
+	await dialog.getByLabel('Reason (optional)').fill('the customer is waiting');
+	await dialog.getByRole('button', { name: 'Mark urgent', exact: true }).click();
+	await expect(dialog).toBeHidden();
+
+	await expect(warRoom).toBeVisible();
+	await expect(warRoom).toContainText('the customer is waiting');
+	await expect(warRoom).toContainText(title);
+	await expect(warRoom.getByRole('button', { name: `Clear urgent mark on ${ini.key} ${title}` })).toBeVisible();
+
+	await warRoom.getByRole('button', { name: 'End war room' }).click();
+	await expect(warRoom).toContainText('Clear 1 mark');
+	await warRoom.locator('[data-confirm]').click();
+	await expect(warRoom).toHaveCount(0);
+});

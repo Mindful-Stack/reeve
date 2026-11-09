@@ -271,6 +271,8 @@ mod tests {
                 version: 1,
                 prs: vec![],
                 goals: vec![],
+                urgent_mark: None,
+                urgent_sources: vec![],
             },
             readiness: Readiness {
                 ready: reasons.is_empty(),

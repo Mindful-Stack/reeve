@@ -549,3 +549,73 @@ async fn export_snapshot_refuses_a_malformed_id_before_connecting() {
         );
     }
 }
+
+/// `--at` is the document's `exported_at` and the instant urgency is computed at: before a mark's expiry it is active
+/// and spreads, after it the mark is still shown but inactive and makes nothing urgent. A time that is not RFC 3339 is
+/// refused before anything is read.
+#[tokio::test]
+async fn export_at_computes_urgency_at_that_instant() {
+    let h = harness().await;
+    let (st, b) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key":"s1","title":"Booking","kind":"story","criteria":["works"],"labels":[]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let key = b["value"]["key"].as_str().unwrap().to_string();
+    let (st, b) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/stories/{key}/urgent"),
+        Some(json!({"reason":"hot"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let expires: chrono::DateTime<chrono::Utc> = b["value"]["urgent_mark"]["expires_at"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config_file(dir.path(), &h.url);
+    let export_at = |at: chrono::DateTime<chrono::Utc>| {
+        let cfg = cfg.clone();
+        async move {
+            let at = at.to_rfc3339();
+            let out = reeve_server(&cfg, &["export", "--at", &at]).await;
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let got: chrono::DateTime<chrono::Utc> =
+                doc["exported_at"].as_str().unwrap().parse().unwrap();
+            assert_eq!(got.to_rfc3339(), at, "exported_at is --at");
+            doc["stories"][0].clone()
+        }
+    };
+    let before = export_at(expires - chrono::Duration::seconds(1)).await;
+    assert_eq!(before["urgent_mark"]["active"], true);
+    assert_eq!(before["urgent_mark"]["reason"], "hot");
+    assert_eq!(
+        before["urgent_sources"],
+        json!([{"key": key, "item": "story"}])
+    );
+    let after = export_at(expires).await;
+    assert_eq!(after["urgent_mark"]["active"], false);
+    assert_eq!(
+        after["urgent_mark"]["reason"], "hot",
+        "an expired mark still shows"
+    );
+    assert_eq!(after["urgent_sources"], json!([]));
+
+    let out = reeve_server(&cfg, &["export", "--at", "yesterday"]).await;
+    assert_eq!(out.status.code(), Some(2), "clap refuses the value");
+    assert!(out.stdout.is_empty());
+}

@@ -12,6 +12,7 @@ pub mod plan;
 pub mod readiness;
 pub mod requests;
 pub mod sprints;
+pub mod urgency;
 pub use activity::*;
 pub use context::*;
 pub use enums::*;
@@ -25,6 +26,7 @@ pub use plan::*;
 pub use readiness::*;
 pub use requests::*;
 pub use sprints::*;
+pub use urgency::*;
 
 /// The one rule for comparing people by email across every crate: trimmed and ASCII-lowercased. Identity, planning
 /// (owners stored and filtered) and the CLI (`--mine`, decider matching) all call this.
