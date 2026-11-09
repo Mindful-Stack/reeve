@@ -653,7 +653,13 @@ async fn an_open_event_stream_ends_at_its_next_batch_after_the_owner_is_removed(
     let _cursor = tokio::time::timeout(std::time::Duration::from_secs(5), body.next())
         .await
         .expect("cursor");
-    access(
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), body.next())
+            .await
+            .is_err(),
+        "the stream must stay open while the guest is still allowed"
+    );
+    let (s, b) = access(
         &h,
         &h.admin_token,
         "DELETE",
@@ -661,6 +667,7 @@ async fn an_open_event_stream_ends_at_its_next_batch_after_the_owner_is_removed(
         None,
     )
     .await;
+    assert_eq!(s, 200, "{b}");
     let end = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while body.next().await.is_some() {}
     })
@@ -677,7 +684,7 @@ async fn remove_then_disable_then_re_add_leaves_the_old_tokens_revoked() {
     let entry = json!({"kind":"email","value":"guest@other.org"});
     access(&h, &h.admin_token, "POST", "/entries", Some(entry.clone())).await;
     let guest = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
-    access(
+    let (s, b) = access(
         &h,
         &h.admin_token,
         "DELETE",
@@ -685,20 +692,19 @@ async fn remove_then_disable_then_re_add_leaves_the_old_tokens_revoked() {
         None,
     )
     .await;
-    assert_eq!(
-        call(
-            &h.app,
-            Some(&h.admin_token),
-            "POST",
-            "/api/v1/users/guest@other.org/disable",
-            None
-        )
-        .await
-        .0,
-        200
-    );
-    access(&h, &h.admin_token, "POST", "/entries", Some(entry)).await;
-    call(
+    assert_eq!(s, 200, "{b}");
+    let (s, b) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/users/guest@other.org/disable",
+        None,
+    )
+    .await;
+    assert_eq!(s, 200, "{b}");
+    let (s, b) = access(&h, &h.admin_token, "POST", "/entries", Some(entry)).await;
+    assert_eq!(s, 200, "{b}");
+    let (s, b) = call(
         &h.app,
         Some(&h.admin_token),
         "POST",
@@ -706,6 +712,15 @@ async fn remove_then_disable_then_re_add_leaves_the_old_tokens_revoked() {
         None,
     )
     .await;
+    assert_eq!(s, 200, "{b}");
+    // the guest is allowed again: a new token works, so the old one's 401 is a revocation, not a refusal
+    let fresh = token_for(&h, "guest@other.org", TokenKind::Interactive).await;
+    assert_eq!(
+        call(&h.app, Some(&fresh), "GET", "/api/v1/me", None)
+            .await
+            .0,
+        200
+    );
     assert_eq!(
         call(&h.app, Some(&guest), "GET", "/api/v1/me", None)
             .await
