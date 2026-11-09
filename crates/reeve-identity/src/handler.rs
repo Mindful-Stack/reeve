@@ -18,6 +18,10 @@ pub enum AuthError {
     Disabled,
     #[error("invalid request: {0}")]
     Validation(String),
+    #[error("forbidden")]
+    Forbidden,
+    #[error("not found")]
+    NotFound,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }

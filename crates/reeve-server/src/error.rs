@@ -48,7 +48,8 @@ impl From<reeve_identity::AuthError> for AppError {
         match e {
             A::NotAllowed | A::Validation(_) => Self::Validation(e.to_string()),
             A::Unauthenticated => Self::Unauthenticated,
-            A::Disabled => Self::Forbidden,
+            A::Disabled | A::Forbidden => Self::Forbidden,
+            A::NotFound => Self::NotFound,
             A::Db(e) => AppError::from(e),
         }
     }
