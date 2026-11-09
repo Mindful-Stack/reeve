@@ -1,5 +1,6 @@
 //! Users, tokens and the principal every request runs as.
 mod access;
+mod access_repo;
 mod domain;
 #[cfg(feature = "static-oidc")]
 mod fake_issuer;
@@ -11,6 +12,7 @@ pub use access::{
     AccessGrant, AccessKind, AccessPolicy, AccessRow, AccessSource, AccessView, parse_domain,
     parse_email,
 };
+pub use access_repo::{AccessStore, make_access_store};
 pub use domain::{IdentityConfig, Principal, Role, TokenKind, hash_secret, normalise_email};
 #[cfg(feature = "static-oidc")]
 pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
