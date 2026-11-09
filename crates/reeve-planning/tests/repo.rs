@@ -1592,6 +1592,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let (_c, pool) = common::pg().await;
     let h = handlers(&pool);
     let mut c = dan();
+    c.now = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
     let mk = |idem: &'static str, title: &'static str| {
         let (h, c, e) = (&h, &c, e.key().clone());
@@ -1612,11 +1613,14 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
             .unwrap()
         }
     };
-    let blank = mk("1", "The export PDF is blank").await;
-    let other = mk("2", "Login redirects twice").await;
-    let old = mk("3", "PDF export blank page").await;
-    let recent = mk("4", "Export to PDF shows a blank page").await;
-    // `old` is dropped 30 days before `now`; `recent` 2 days before. The window starts 14 days before `now`.
+    // Created in this order, so neither creation order nor its reverse is the similarity order (0.72, 0.91, 0.47).
+    let second = mk("1", "PDF export blank page").await;
+    let first = mk("2", "Export to PDF shows a blank page").await;
+    let third = mk("3", "The export PDF is blank").await;
+    let other = mk("4", "Login redirects twice").await;
+    let old = mk("5", "Export PDF shows blank page").await;
+    let imported = mk("6", "PDF export shows a blank page").await;
+    // `old` is dropped 30 days before the window's end, `first` 2 days before `now` (the window starts 14 days before).
     c.now = Utc.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
     h.move_story(
         &c,
@@ -1628,58 +1632,93 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     )
     .await
     .unwrap();
-    c.now = Utc.with_ymd_and_hms(2026, 10, 24, 9, 0, 0).unwrap();
+    let done_in_window = Utc.with_ymd_and_hms(2026, 10, 24, 9, 0, 0).unwrap();
+    c.now = done_in_window;
     h.move_story(
         &c,
-        recent.key(),
-        recent.version(),
+        first.key(),
+        first.version(),
         DeliveryState::Done,
         Some(Resolution::Dropped),
         None,
     )
     .await
     .unwrap();
+    // An imported done story keeps no done_at; it never counts as recent.
+    sqlx::query("UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = NULL WHERE key = $1")
+        .bind(imported.key().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
     let since = Utc.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap();
 
     let text = "PDF export shows a blank page";
-    let got: Vec<String> = h
-        .ports
-        .stories
-        .similar_stories(text, 0.3, since, 5)
-        .await
-        .unwrap()
+    let keys = |v: Vec<Story>| v.iter().map(|s| s.key().to_string()).collect::<Vec<_>>();
+    let got = keys(
+        h.ports
+            .stories
+            .similar_stories(text, 0.3, since, 5)
+            .await
+            .unwrap(),
+    );
+    let want: Vec<String> = [&first, &second, &third]
         .iter()
         .map(|s| s.key().to_string())
         .collect();
-    assert!(
-        got.contains(&blank.key().to_string()),
-        "a reworded title is found: {got:?}"
-    );
-    assert!(
-        got.contains(&recent.key().to_string()),
-        "done inside the window is found: {got:?}"
-    );
-    assert!(
-        !got.contains(&old.key().to_string()),
-        "done before the window is not: {got:?}"
-    );
-    assert!(
-        !got.contains(&other.key().to_string()),
-        "an unrelated title is below the threshold: {got:?}"
-    );
     assert_eq!(
-        got.first(),
-        Some(&recent.key().to_string()),
-        "most similar first"
+        got, want,
+        "similar titles, most similar first; not the old done, the imported done or the unrelated"
     );
-    assert_eq!(
+    // The exclusions are not vacuous: the old story and the unrelated one differ only by the window and the threshold.
+    let wide = keys(
         h.ports
             .stories
-            .similar_stories(text, 0.3, since, 1)
+            .similar_stories(
+                text,
+                0.3,
+                Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                9,
+            )
             .await
-            .unwrap()
-            .len(),
-        1
+            .unwrap(),
+    );
+    assert!(
+        wide.contains(&old.key().to_string()),
+        "old is similar enough: {wide:?}"
+    );
+    assert!(
+        !wide.contains(&other.key().to_string()),
+        "an unrelated title is below the threshold: {wide:?}"
+    );
+    // The window is inclusive at its start.
+    let edge = keys(
+        h.ports
+            .stories
+            .similar_stories(text, 0.3, done_in_window, 5)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(edge, want, "done exactly at `done_since` is kept");
+    let after = keys(
+        h.ports
+            .stories
+            .similar_stories(text, 0.3, done_in_window + chrono::Duration::seconds(1), 5)
+            .await
+            .unwrap(),
+    );
+    assert!(
+        !after.contains(&first.key().to_string()),
+        "done just before `done_since` is not: {after:?}"
+    );
+    assert_eq!(
+        keys(
+            h.ports
+                .stories
+                .similar_stories(text, 0.3, since, 1)
+                .await
+                .unwrap()
+        ),
+        vec![first.key().to_string()]
     );
     assert!(
         h.ports
