@@ -84,6 +84,8 @@ held.reply = (path, query, mark) => {
 		case '/api/v1/decisions':
 			// The item pages and the drawer read the plain list.
 			return [decision({ on: 'K-1', title: `${mark} decision`, decider: me().email })];
+		case '/api/v1/war-room':
+			return []; // the planning page's strip
 		case '/api/v1/sprints':
 			return { active: null, closed: [], draft: null };
 		case '/api/v1/decisions/queue':

@@ -6,6 +6,8 @@
 	import { errorMessage } from '#lib/format.ts';
 	import type { Initiative, RequiredDecision } from '#lib/api/types.ts';
 	import InitiativeCard from '#lib/components/InitiativeCard.svelte';
+	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
+	import WarRoom from '#lib/components/WarRoom.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { sameEmail } from '#lib/decisions.ts';
 	import { initiativeCreate, type InitiativeDraft } from '#lib/forms.ts';
@@ -85,6 +87,49 @@
 		if (v === 'mine') url.searchParams.set('mine', '1');
 		else url.searchParams.delete('mine');
 		return goto(url, { replace: true, reset: false });
+	}
+
+	/** The initiative whose "Mark urgent" dialog is open. */
+	let marking = $state<string | null>(null);
+	let markError = $state<string | null>(null);
+
+	async function markUrgent(reason: string | null) {
+		const key = marking;
+		if (!key || busy) return;
+		busy = true;
+		markError = null;
+		try {
+			await unwrap(api.POST('/api/v1/initiatives/{key}/urgent', { params: { path: { key } }, body: { reason } }));
+			marking = null;
+		} catch (e) {
+			markError = show(e);
+		}
+		try {
+			await reload();
+		} catch (e) {
+			loadError = show(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function clearUrgent(key: string) {
+		if (busy) return;
+		busy = true;
+		notice = null;
+		try {
+			await unwrap(api.DELETE('/api/v1/initiatives/{key}/urgent', { params: { path: { key } } }));
+		} catch (e) {
+			notice = show(e);
+		}
+		try {
+			await reload();
+		} catch (e) {
+			loadError = show(e);
+		} finally {
+			busy = false;
+		}
+		await refocus(key);
 	}
 
 	async function move(key: string, horizon: string) {
@@ -228,6 +273,20 @@
 	>
 {/if}
 
+<!-- Outside the Mine filter: it loads its own data and lists every mark. -->
+<WarRoom />
+
+{#if marking}
+	<MarkUrgentDialog
+		busy={busy}
+		error={markError}
+		onsubmit={markUrgent}
+		oncancel={() => {
+			if (!busy) marking = null;
+		}}
+	/>
+{/if}
+
 {#if !initiatives}
 	{#if !loadError}
 		<!-- The first load keeps the column frames, each saying it is loading. -->
@@ -264,6 +323,8 @@
 						buckets={configured}
 						{busy}
 						onmove={move}
+						onmark={(key) => ((markError = null), (marking = key))}
+						onclear={clearUrgent}
 					/>
 				{:else}
 					<p class="muted">No initiatives</p>

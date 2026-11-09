@@ -1,19 +1,23 @@
 <script lang="ts">
 	import type { Initiative } from '#lib/api/types.ts';
 	import GoalLinkButton from './GoalLinkButton.svelte';
+	import UrgentChip from './UrgentChip.svelte';
 	import { freshNote, live } from '#lib/events.svelte.ts';
 	import { age, month, short } from '#lib/format.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import type { OpenDecisions } from '#lib/planning.ts';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
+	import { urgentLine } from '#lib/urgency.ts';
 
 	let {
 		initiative,
 		decisions,
 		buckets = [],
 		busy = false,
-		onmove
+		onmove,
+		onmark,
+		onclear
 	}: {
 		initiative: Initiative;
 		/** The initiative's blocking decisions (`blockingByItem`), or undefined when none blocks it. */
@@ -23,6 +27,10 @@
 		/** Disables the "Move to" items while a write is in flight. */
 		busy?: boolean;
 		onmove?: (key: string, horizon: string) => void;
+		/** Opens the page's "Mark urgent" dialog for this key. */
+		onmark?: (key: string) => void;
+		/** Clears this initiative's own urgent mark. */
+		onclear?: (key: string) => void;
 	} = $props();
 
 	const id = $props.id();
@@ -30,13 +38,17 @@
 	const progress = $derived(initiative.progress ?? null);
 	const pct = $derived(progress === null ? 0 : Math.round(progress * 100));
 	const note = $derived(freshNote(live.recent, initiative.key, session.me?.email));
-	const items = $derived<MenuItem[]>(
-		onmove
+	const items = $derived<MenuItem[]>([
+		...(onmove
 			? buckets
 					.filter((b) => b !== initiative.horizon)
 					.map((b) => ({ label: `Move to ${b}`, onselect: () => onmove(initiative.key, b), disabled: busy }))
-			: []
-	);
+			: []),
+		...(onmark ? [{ label: 'Mark urgent…', onselect: () => onmark(initiative.key), disabled: busy }] : []),
+		...(onclear && initiative.urgent_mark
+			? [{ label: 'Clear urgent mark', onselect: () => onclear(initiative.key), disabled: busy }]
+			: [])
+	]);
 
 	function ondragstart(e: DragEvent) {
 		if (!e.dataTransfer) return;
@@ -56,6 +68,13 @@
 >
 	<div class="head">
 		<a class="title" href="/initiatives/{encodeURIComponent(initiative.key)}">{initiative.title}</a>
+		{#if initiative.urgent_sources.length > 0}
+			<UrgentChip
+				line={urgentLine(initiative.urgent_mark, initiative.urgent_sources, initiative.key, new Date(), () => undefined)}
+			/>
+		{:else if initiative.urgent_mark && !initiative.urgent_mark.active}
+			<span class="expired-mark">Urgent mark expired</span>
+		{/if}
 		{#if items.length}<ActionsMenu label="Actions for {initiative.key}" {items} control="menu" />{/if}
 	</div>
 	<div class="meta">
@@ -127,6 +146,11 @@
 	}
 	.title:hover {
 		text-decoration: underline;
+	}
+	.expired-mark {
+		color: var(--muted);
+		font-size: 12px;
+		white-space: nowrap;
 	}
 	.meta {
 		display: flex;
