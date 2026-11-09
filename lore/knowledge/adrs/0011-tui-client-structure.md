@@ -79,6 +79,7 @@ An example, with the owner of each step: `L` on a story that is not ready makes 
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-09 (kb/ADR-0015): kb/ADR-0008 is superseded by kb/ADR-0015; the token-kind rule R7 narrows is now kb/ADR-0015 R7, unchanged in substance. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0001 (public API only; R6 restates its R2 for the TUI)

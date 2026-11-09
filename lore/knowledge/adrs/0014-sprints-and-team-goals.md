@@ -95,6 +95,7 @@ and invites goals written to describe tickets (A1), and a goal gate would be a t
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (public copy, one-time edit): F1's source, the context, A1 and See also named internal planning documents. The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No fact, rule or decision changed; the decision holds.
+- 2026-11-09 (kb/ADR-0015, kb/ADR-0016): kb/ADR-0008 R3 is now kb/ADR-0015 R7; kb/ADR-0009's rules are now kb/ADR-0016 R1–R3, and the allowlist and admins kb/ADR-0015 R2. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0002, kb/ADR-0003, kb/ADR-0008, kb/ADR-0009, kb/ADR-0010, kb/ADR-0013.
