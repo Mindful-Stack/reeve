@@ -759,7 +759,7 @@ describe('StoryDrawer urgent mark', () => {
 		await tick();
 	}
 
-	it('offers Mark urgent… only while unmarked, and posts the reason', async () => {
+	it('offers Mark urgent… on an unmarked story and posts the reason from its dialog', async () => {
 		serve(storyDto({ ...story }));
 		const d = await open();
 		await openMenu(d);
