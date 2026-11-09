@@ -20,6 +20,23 @@ operator's own production setup (hosts, users, secrets, a deploy job) lives outs
 
 The container image carries the web client (built in its own Node stage). A server built on the host embeds whatever `web/build` holds when it is compiled: run `mise run web` (Node 22 or later) before `cargo build`, or every page answers `503 client not built`.
 
+## Tell your deployment about a release
+
+If your production deploy lives in a repository of its own (a pin bumped by a reviewed pull request, say), the release
+workflow can start one of its workflows as soon as an image is published, so it doesn't have to poll on a schedule.
+GitHub may start a scheduled workflow hours late. In a fork, set two repository secrets (Settings → Secrets and
+variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `RELEASE_DISPATCH_TARGET` | `owner/repo/workflow-file.yml`, optionally `@ref` (default: that repository's default branch). The workflow must accept `workflow_dispatch` with no required inputs. |
+| `RELEASE_DISPATCH_TOKEN` | A fine-grained personal access token (or a GitHub App's token) whose only repository is the target, with **Actions: read and write** and nothing else. It can start workflows there but not push code or open pull requests. |
+
+Both are secrets, not variables, because a public repository's run logs are public, and Actions masks secrets in them.
+The `notify` job (`scripts/release-dispatch.sh`) runs only after a successful publish on `main`. It does nothing while
+either secret is unset, and a refused dispatch, such as an expired token, is a warning that gives the HTTP status but
+never fails the release. Keep the downstream schedule as a fallback for those cases.
+
 ## Google sign-in
 
 Browser sign-in uses Google as the OpenID Connect provider. Without an `[oidc]` section the web client cannot sign anyone in, and only tokens issued with `reeve-server token-issue` work.

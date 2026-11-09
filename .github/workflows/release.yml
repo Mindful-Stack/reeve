@@ -1,6 +1,8 @@
 name: release
 # Every push to main publishes ghcr.io/mindful-stack/reeve:<sha>, tagged by commit and never `latest`. Deploying an
 # image is the operator's business, outside this repository (deploy/README.md covers the reference stack).
+# Once it is published, `notify` can tell one downstream workflow about it (scripts/release-dispatch.sh; inert unless
+# its two secrets are set).
 on:
   push:
     branches: [main]
@@ -49,3 +51,22 @@ jobs:
           docker run --rm "$ref" migrations >/dev/null
           docker run --rm --entrypoint bash "$ref" -euc \
             'bash -n /usr/local/bin/reeve-decision-check; for t in git ssh flock timeout realpath readlink age age-keygen; do command -v "$t"; done'
+
+  # Starts the operator's own workflow (a pin bump, say) minutes after the image exists, instead of leaving it to a
+  # schedule GitHub may start hours late. The target and the token are secrets, so this public repository's run logs
+  # mask them; the script never prints the target and never fails the release (deploy/README.md, "Tell your
+  # deployment about a release").
+  notify:
+    needs: publish
+    if: needs.publish.result == 'success'
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - name: dispatch the downstream workflow (inert unless configured)
+        env:
+          RELEASE_DISPATCH_TARGET: ${{ secrets.RELEASE_DISPATCH_TARGET }}
+          RELEASE_DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+        run: scripts/release-dispatch.sh
