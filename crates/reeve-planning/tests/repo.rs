@@ -1498,3 +1498,62 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
             .unwrap();
     assert_eq!(before, after, "clearing leaves the item alone too");
 }
+
+#[tokio::test]
+async fn untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readiness() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let s = story(&h, "S", Kind::Story, None, &["c"]).await;
+    let b = story(&h, "B", Kind::Bug, None, &["c"]).await;
+    let ch = story(&h, "C", Kind::Chore, None, &["c"]).await;
+    let placed = story(&h, "P", Kind::Bug, Some(e.key()), &["c"]).await;
+    let dropped = story(&h, "D", Kind::Bug, None, &["c"]).await;
+    h.move_story(
+        &c,
+        dropped.key(),
+        dropped.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    let listed: Vec<String> = h
+        .ports
+        .stories
+        .list_stories(
+            &mut tx,
+            &StoryFilter {
+                untriaged: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.key().to_string())
+        .collect();
+    tx.rollback().await.unwrap();
+    assert_eq!(listed, [s.key(), b.key(), ch.key()].map(|k| k.to_string()));
+
+    let all = [&s, &b, &ch, &placed].map(|x| x.key().clone());
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let inputs = h.ports.reads.readiness_inputs(&mut tx, &all).await.unwrap();
+    tx.rollback().await.unwrap();
+    for k in &all {
+        let untriaged = compute_readiness(&inputs[k]).reasons.first() == Some(&Reason::Untriaged);
+        assert_eq!(
+            untriaged,
+            listed.contains(&k.to_string()),
+            "filter and readiness disagree on {k}"
+        );
+    }
+}

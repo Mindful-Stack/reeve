@@ -39,6 +39,7 @@ pub struct StoryFilter {
     pub epic: Option<Key>,
     pub owner: Option<String>,
     pub delivery: Option<DeliveryState>,
+    /// Items of any kind without an epic that are not done (kb/ADR-0018 R4).
     pub untriaged: bool,
     pub label: Option<String>,
     /// Goal membership, applied after the stories are read (`goal=<id>|any|none`); combines with every other filter.
