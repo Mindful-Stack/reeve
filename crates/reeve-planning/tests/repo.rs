@@ -1657,7 +1657,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let got = keys(
         h.ports
             .stories
-            .similar_stories(text, 0.3, since, 5)
+            .similar_stories(text, reeve_planning::SIMILAR_MIN, since, 5)
             .await
             .unwrap(),
     );
@@ -1675,7 +1675,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
             .stories
             .similar_stories(
                 text,
-                0.3,
+                reeve_planning::SIMILAR_MIN,
                 Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
                 9,
             )
@@ -1694,7 +1694,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let edge = keys(
         h.ports
             .stories
-            .similar_stories(text, 0.3, done_in_window, 5)
+            .similar_stories(text, reeve_planning::SIMILAR_MIN, done_in_window, 5)
             .await
             .unwrap(),
     );
@@ -1702,7 +1702,12 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let after = keys(
         h.ports
             .stories
-            .similar_stories(text, 0.3, done_in_window + chrono::Duration::seconds(1), 5)
+            .similar_stories(
+                text,
+                reeve_planning::SIMILAR_MIN,
+                done_in_window + chrono::Duration::seconds(1),
+                5,
+            )
             .await
             .unwrap(),
     );
@@ -1714,7 +1719,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
         keys(
             h.ports
                 .stories
-                .similar_stories(text, 0.3, since, 1)
+                .similar_stories(text, reeve_planning::SIMILAR_MIN, since, 1)
                 .await
                 .unwrap()
         ),

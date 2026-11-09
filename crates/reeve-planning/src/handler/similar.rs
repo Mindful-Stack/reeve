@@ -24,9 +24,11 @@ impl Handlers {
         if !(1..=10).contains(&limit) {
             return Err(HandlerError::Validation("limit must be 1..=10".into()));
         }
+        // An absurd window (unreachable while config bounds `done_window_days`) reaches back to the epoch, which
+        // Postgres can store, rather than before the oldest representable timestamp.
         let since = chrono::Duration::try_days(self.settings.done_window_days.into())
             .and_then(|w| now.checked_sub_signed(w))
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+            .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
         Ok(self
             .ports
             .stories

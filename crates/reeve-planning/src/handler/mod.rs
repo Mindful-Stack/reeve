@@ -11,6 +11,7 @@ mod plans;
 mod prs;
 mod search;
 mod similar;
+pub use similar::SIMILAR_MIN;
 mod sprints;
 mod stories;
 mod urgent;
