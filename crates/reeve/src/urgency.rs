@@ -172,8 +172,17 @@ mod tests {
             "expires in 2 d"
         );
         assert_eq!(
-            expiry(&mark(at, t(7, 12), false, false, None), now),
-            "expired 3 d ago"
+            expiry(&mark(at, t(7, 13), false, false, None), now),
+            "expired 2 d ago"
+        );
+        // `active` is the server's answer: the timestamps never override it.
+        assert_eq!(
+            expiry(&mark(at, t(10, 10), true, false, None), now),
+            "expires today"
+        );
+        assert_eq!(
+            expiry(&mark(at, t(11, 12), false, false, None), now),
+            "expired today"
         );
     }
 
