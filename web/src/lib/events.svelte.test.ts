@@ -2,7 +2,7 @@
 // With the browser condition in vite.config.ts, jsdom gives the browser build of Svelte its DOM; `$effect` runs.
 import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { connect, everyVisible, freshNote, live, onLive, RECENT_MAX, RECENT_MS } from './events.svelte.ts';
+import { connect, everyVisible, freshNote, live, onLive, onStream, resetStreamForTests, RECENT_MAX, RECENT_MS } from './events.svelte.ts';
 
 /** Just enough of EventSource: listeners by name, the three handlers and the ready state. */
 class FakeEventSource {
@@ -36,6 +36,7 @@ beforeEach(() => {
 	vi.stubGlobal('EventSource', FakeEventSource);
 	vi.useFakeTimers();
 	live.recent = [];
+	resetStreamForTests();
 });
 afterEach(() => {
 	delete (document as unknown as Record<string, unknown>).visibilityState;
@@ -362,5 +363,30 @@ describe('everyVisible', () => {
 		show('visible');
 		vi.advanceTimersByTime(10_000);
 		expect(run).not.toHaveBeenCalled();
+	});
+});
+
+describe('onStream', () => {
+	it('passes every entry in order and reports only a reopen, not the first open', () => {
+		const seen: string[] = [];
+		let reopened = 0;
+		const stop = onStream({ entry: (e) => seen.push(e.action), reopened: () => reopened++ });
+		const dispose = connect();
+		const es = FakeEventSource.last;
+		es.onopen?.();
+		es.emit('activity', JSON.stringify({ ...entry, action: 'access_removed' }), '8');
+		es.emit('activity', JSON.stringify({ ...entry, action: 'moved' }), '9');
+		expect(seen).toEqual(['access_removed', 'moved']);
+		expect(reopened).toBe(0);
+		es.onerror?.();
+		es.onopen?.(); // the browser reconnected
+		expect(reopened).toBe(1);
+		dispose();
+		connect(); // a new EventSource after the browser gave up is a reopen too
+		FakeEventSource.last.onopen?.();
+		expect(reopened).toBe(2);
+		stop();
+		FakeEventSource.last.emit('activity', JSON.stringify(entry), '10');
+		expect(seen).toHaveLength(2);
 	});
 });

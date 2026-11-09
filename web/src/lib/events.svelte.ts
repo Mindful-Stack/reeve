@@ -22,6 +22,24 @@ export const live = $state<{
 	recent: Arrival[];
 }>({ connected: false, lastId: 0, version: 0, latest: null, recent: [] });
 
+type StreamHooks = { entry?: (e: ActivityEntry) => void; reopened?: () => void };
+const hooks = new Set<StreamHooks>();
+let everOpened = false;
+
+/** Runs `entry` for every activity entry this tab receives, in order, and `reopened` on every open of the stream after
+ *  the first (an outage may have hidden entries). For state that must see each entry, which `onLive`'s debounced
+ *  refetch does not promise. Returns the unsubscribe. */
+export function onStream(h: StreamHooks): () => void {
+	hooks.add(h);
+	return () => hooks.delete(h);
+}
+
+/** Test-only: forget the first open and every hook. */
+export function resetStreamForTests(): void {
+	hooks.clear();
+	everOpened = false;
+}
+
 let expiry: ReturnType<typeof setTimeout> | undefined;
 
 /** One timer, set for the oldest arrival's end of window: prunes, then schedules again while the window is non-empty. */
@@ -68,6 +86,7 @@ export function connect(onclosed?: () => void): () => void {
 		const entry = JSON.parse(m.data) as ActivityEntry;
 		live.latest = entry;
 		live.version++;
+		for (const h of hooks) h.entry?.(entry);
 		const arrived = Date.now();
 		live.recent = [
 			...live.recent.filter((r) => arrived - r.arrived < RECENT_MS && !(r.entry.entity_key === entry.entity_key && r.entry.actor === entry.actor)),
@@ -78,6 +97,9 @@ export function connect(onclosed?: () => void): () => void {
 	es.onopen = () => {
 		live.connected = true;
 		live.version++;
+		const again = everOpened;
+		everOpened = true;
+		if (again) for (const h of hooks) h.reopened?.();
 	};
 	es.onerror = () => {
 		live.connected = false;
