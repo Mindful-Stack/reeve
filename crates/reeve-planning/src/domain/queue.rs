@@ -57,7 +57,7 @@ pub fn blocks(todo: &[TodoStory]) -> BTreeMap<i64, Vec<BlockedStory>> {
 }
 
 fn overdue(d: &RequiredDecision, today: NaiveDate) -> bool {
-    d.due.is_some_and(|due| due < today)
+    d.due().is_some_and(|due| due < today)
 }
 
 /// Urgency order inside the blocking and open groups.
@@ -67,18 +67,18 @@ fn urgency(a: &QueueEntry, b: &QueueEntry, today: NaiveDate) -> Ordering {
     ob.cmp(&oa) // overdue first
         .then_with(|| {
             if oa && ob {
-                da.due.cmp(&db.due)
+                da.due().cmp(&db.due())
             } else {
                 Ordering::Equal
             }
         })
         .then_with(|| b.blocks.len().cmp(&a.blocks.len()))
-        .then_with(|| da.due.is_some().cmp(&db.due.is_some())) // undated first
-        .then_with(|| match (da.due, db.due) {
+        .then_with(|| da.due().is_some().cmp(&db.due().is_some())) // undated first
+        .then_with(|| match (da.due(), db.due()) {
             (Some(x), Some(y)) => x.cmp(&y),
-            _ => da.created_at.cmp(&db.created_at),
+            _ => da.created_at().cmp(&db.created_at()),
         })
-        .then_with(|| da.id.cmp(&db.id))
+        .then_with(|| da.id().cmp(&db.id()))
 }
 
 /// Groups, orders and counts `ds`; takes each decision's blocks out of `held`.
@@ -90,8 +90,8 @@ pub fn order(
     let mut entries: Vec<QueueEntry> = ds
         .into_iter()
         .map(|decision| {
-            let stuck = held.remove(&decision.id).unwrap_or_default();
-            let (group, blocks) = if decision.closed.is_some() {
+            let stuck = held.remove(&decision.id()).unwrap_or_default();
+            let (group, blocks) = if decision.closed().is_some() {
                 (QueueGroup::Closed, vec![])
             } else if decision.is_satisfied() {
                 (QueueGroup::Satisfied, vec![])
@@ -112,16 +112,15 @@ pub fn order(
             QueueGroup::Blocking | QueueGroup::Open => urgency(a, b, today),
             QueueGroup::Satisfied => b
                 .decision
-                .checked_at
-                .cmp(&a.decision.checked_at)
-                .then_with(|| a.decision.id.cmp(&b.decision.id)),
+                .checked_at()
+                .cmp(&a.decision.checked_at())
+                .then_with(|| a.decision.id().cmp(&b.decision.id())),
             QueueGroup::Closed => b
                 .decision
-                .closed
-                .as_ref()
+                .closed()
                 .map(|c| c.at)
-                .cmp(&a.decision.closed.as_ref().map(|c| c.at))
-                .then_with(|| a.decision.id.cmp(&b.decision.id)),
+                .cmp(&a.decision.closed().map(|c| c.at))
+                .then_with(|| a.decision.id().cmp(&b.decision.id())),
         })
     });
     let live = |e: &&QueueEntry| matches!(e.group, QueueGroup::Blocking | QueueGroup::Open);
@@ -149,7 +148,7 @@ pub fn order(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::decision::{Closed, RequiredDecision};
+    use crate::domain::decision::RequiredDecision;
     use chrono::{DateTime, NaiveDate, TimeZone, Utc};
     use reeve_protocol::{CheckResult, ClosureKind, ItemType, Key, Reason, TokenKind};
     use std::collections::BTreeMap;
@@ -169,39 +168,42 @@ mod tests {
 
     /// An open, unchecked decision due `due`, created on `created`.
     fn dec(id: i64, due: Option<NaiveDate>, created: DateTime<Utc>) -> RequiredDecision {
-        RequiredDecision {
+        RequiredDecision::from_persisted(
             id,
-            on: key(1),
-            on_type: ItemType::Epic,
-            title: format!("d{id}"),
-            decider: "dan".into(),
+            key(1),
+            ItemType::Epic,
+            format!("d{id}"),
+            "dan".into(),
             due,
-            reversibility: None,
-            record: None,
-            pr_url: None,
-            check: CheckResult::Unchecked,
-            checked_at: None,
-            closed: None,
-            created_at: created,
-            version: 1,
-        }
+            None,
+            None,
+            None,
+            CheckResult::Unchecked,
+            None,
+            None,
+            created,
+            1,
+        )
     }
     fn accepted(mut d: RequiredDecision, checked: DateTime<Utc>) -> RequiredDecision {
-        d.check = CheckResult::Accepted {
-            commit: "c".into(),
-            reversibility: None,
-        };
-        d.checked_at = Some(checked);
+        d.set_check_for_test(
+            CheckResult::Accepted {
+                commit: "c".into(),
+                reversibility: None,
+            },
+            Some(checked),
+        );
         d
     }
     fn closed(mut d: RequiredDecision, at: DateTime<Utc>) -> RequiredDecision {
-        d.closed = Some(Closed {
+        d.close(
+            ClosureKind::Withdrawn,
+            "done",
+            "dan",
+            TokenKind::Interactive,
             at,
-            by: "dan".into(),
-            reason: "done".into(),
-            kind: Some(ClosureKind::Withdrawn),
-            via: Some(TokenKind::Interactive),
-        });
+        )
+        .unwrap();
         d
     }
     /// decision id → the stories (by number) it blocks.
@@ -222,7 +224,7 @@ mod tests {
             .collect()
     }
     fn ids(es: &[QueueEntry]) -> Vec<(QueueGroup, i64)> {
-        es.iter().map(|e| (e.group, e.decision.id)).collect()
+        es.iter().map(|e| (e.group, e.decision.id())).collect()
     }
     fn todo(n: u64, reasons: Vec<Reason>) -> TodoStory {
         TodoStory {

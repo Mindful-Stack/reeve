@@ -82,14 +82,14 @@ impl DecisionRepo for PgPlanningRepo {
         d: &RequiredDecision,
     ) -> Result<(), RepoError> {
         let res = sqlx::query("UPDATE required_decisions SET title=$2, decider=$3, due=$4, record_repo=$5, record_path=$6, record_id=$7, pr_url=$8, check_result=$9, checked_at=$10, closed_at=$11, closed_by=$12, closed_reason=$13, reversibility=$15, closed_kind=$16, closed_via=$17, version=version+1 WHERE id=$1 AND version=$14")
-            .bind(d.id).bind(&d.title).bind(&d.decider).bind(d.due).bind(d.record.as_ref().map(|r| &r.repo)).bind(d.record.as_ref().map(|r| &r.path)).bind(d.record.as_ref().map(|r| &r.record_id)).bind(&d.pr_url)
-            .bind(serde_json::to_value(&d.check).unwrap()).bind(d.checked_at).bind(d.closed.as_ref().map(|c| c.at)).bind(d.closed.as_ref().map(|c| &c.by)).bind(d.closed.as_ref().map(|c| &c.reason)).bind(d.version).bind(d.reversibility.map(reversibility_str)).bind(d.closed.as_ref().and_then(|c| c.kind).map(closure_kind_str)).bind(d.closed.as_ref().and_then(|c| c.via).map(token_kind_str)).execute(&mut **tx).await?;
+            .bind(d.id()).bind(d.title()).bind(d.decider()).bind(d.due()).bind(d.record().map(|r| r.repo())).bind(d.record().map(|r| r.path())).bind(d.record().map(|r| r.record_id())).bind(d.pr_url())
+            .bind(serde_json::to_value(d.check()).unwrap()).bind(d.checked_at()).bind(d.closed().map(|c| c.at)).bind(d.closed().map(|c| &c.by)).bind(d.closed().map(|c| &c.reason)).bind(d.version()).bind(d.reversibility().map(reversibility_str)).bind(d.closed().and_then(|c| c.kind).map(closure_kind_str)).bind(d.closed().and_then(|c| c.via).map(token_kind_str)).execute(&mut **tx).await?;
         if res.rows_affected() == 1 {
             return Ok(());
         }
         let current: Option<i64> =
             sqlx::query_scalar("SELECT version FROM required_decisions WHERE id = $1")
-                .bind(d.id)
+                .bind(d.id())
                 .fetch_optional(&mut **tx)
                 .await?;
         Err(current

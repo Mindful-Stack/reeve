@@ -654,7 +654,7 @@ impl Handlers {
         }
         required_decisions.extend(self.ports.decisions.list_decisions_on_in(tx, key).await?);
         // A closed decision no longer gates anything; it stays out of the bundle so an agent never reads it as pending.
-        required_decisions.retain(|d| d.closed.is_none());
+        required_decisions.retain(|d| d.closed().is_none());
         // Blockers in three statements whatever their number: the edges (in key-number order), the blocker rows (in
         // that order), and one assembly for the story and its blockers together.
         let blocker_keys = self

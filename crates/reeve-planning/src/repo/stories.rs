@@ -72,15 +72,13 @@ impl StoryRepo for PgPlanningRepo {
     async fn set_delivery(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        k: &Key,
+        story: &Story,
         expected: i64,
-        to: DeliveryState,
-        resolution: Option<Resolution>,
-        owner_if_none: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError> {
+        let k = story.key();
         let res = sqlx::query("UPDATE stories SET delivery=$2, resolution=$3, owner=COALESCE(owner, $4), version=version+1, updated_at=$5, done_at = CASE WHEN $2 <> 'done' THEN NULL WHEN delivery = 'done' THEN done_at ELSE $5 END, started_at = CASE WHEN $2 IN ('in_progress', 'in_review', 'testing') AND delivery IN ('todo', 'done') THEN $5 ELSE started_at END WHERE key=$1 AND version=$6")
-            .bind(k.to_string()).bind(delivery_str(to)).bind(resolution.map(resolution_str)).bind(owner_if_none).bind(now).bind(expected).execute(&mut **tx).await?;
+            .bind(k.to_string()).bind(delivery_str(story.delivery())).bind(story.resolution().map(resolution_str)).bind(story.owner()).bind(now).bind(expected).execute(&mut **tx).await?;
         if res.rows_affected() == 1 {
             return Ok(());
         }

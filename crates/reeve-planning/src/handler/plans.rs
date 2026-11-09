@@ -132,7 +132,7 @@ impl Handlers {
                 .await?;
             decisions.push(PlannedDecision {
                 name: d.name.clone(),
-                id: made.id,
+                id: made.id(),
                 created,
             });
         }

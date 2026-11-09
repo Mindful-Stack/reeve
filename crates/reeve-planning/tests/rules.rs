@@ -423,16 +423,16 @@ async fn record_check_refuses_in_order_and_writes_nothing() {
         .require_decision(&d, "l", s.key(), "Linked", "dan@example.com", None, None)
         .await
         .unwrap();
-    h.link_record(&d, open.id, "kb", "adrs/0001.md", "kb/ADR-0001", None)
+    h.link_record(&d, open.id(), "kb", "adrs/0001.md", "kb/ADR-0001", None)
         .await
         .unwrap();
-    h.link_record(&d, linked.id, "kb", "adrs/0002.md", "kb/ADR-0002", None)
+    h.link_record(&d, linked.id(), "kb", "adrs/0002.md", "kb/ADR-0002", None)
         .await
         .unwrap();
-    h.close_decision(&d, unlinked.id, ClosureKind::Withdrawn, "gone")
+    h.close_decision(&d, unlinked.id(), ClosureKind::Withdrawn, "gone")
         .await
         .unwrap();
-    h.close_decision(&d, linked.id, ClosureKind::Withdrawn, "gone")
+    h.close_decision(&d, linked.id(), ClosureKind::Withdrawn, "gone")
         .await
         .unwrap();
 
@@ -442,17 +442,22 @@ async fn record_check_refuses_in_order_and_writes_nothing() {
         Conflict,
     }
     let cases = [
-        (open.id, "kb/ADR-0001", 1, Want::Conflict), // stale version first
-        (unlinked.id, "kb/ADR-0001", 1, Want::Conflict), // version before no-record
+        (open.id(), "kb/ADR-0001", 1, Want::Conflict), // stale version first
+        (unlinked.id(), "kb/ADR-0001", 1, Want::Conflict), // version before no-record
         (
-            unlinked.id,
+            unlinked.id(),
             "kb/ADR-0001",
             0,
             Want::Msg("decision has no record reference"),
         ), // no record before closed
-        (open.id, "kb/ADR-0009", 0, Want::Conflict), // stale reference
-        (linked.id, "kb/ADR-0009", 0, Want::Conflict), // stale reference before closed
-        (linked.id, "kb/ADR-0002", 0, Want::Msg("decision is closed")),
+        (open.id(), "kb/ADR-0009", 0, Want::Conflict), // stale reference
+        (linked.id(), "kb/ADR-0009", 0, Want::Conflict), // stale reference before closed
+        (
+            linked.id(),
+            "kb/ADR-0002",
+            0,
+            Want::Msg("decision is closed"),
+        ),
     ];
     for (id, rec, offset, want) in cases {
         let before = h.get_decision(id).await.unwrap();
@@ -462,7 +467,7 @@ async fn record_check_refuses_in_order_and_writes_nothing() {
                 &d,
                 id,
                 rec,
-                before.version + offset,
+                before.version() + offset,
                 CheckResult::NotFound,
                 true,
             )
@@ -471,7 +476,7 @@ async fn record_check_refuses_in_order_and_writes_nothing() {
         match (want, err) {
             (Want::Msg(m), HandlerError::Validation(got)) => assert_eq!(got, m, "{id} {rec}"),
             (Want::Conflict, HandlerError::Conflict { current }) => {
-                assert_eq!(current, before.version, "{id} {rec}")
+                assert_eq!(current, before.version(), "{id} {rec}")
             }
             (_, other) => panic!("{id} {rec} {offset}: {other:?}"),
         }
@@ -587,19 +592,19 @@ async fn link_record_validates_first_with_todays_messages() {
         .require_decision(&d, "d", s.key(), "Pick", "dan@example.com", None, None)
         .await
         .unwrap();
-    h.close_decision(&d, dec.id, ClosureKind::Withdrawn, "gone")
+    h.close_decision(&d, dec.id(), ClosureKind::Withdrawn, "gone")
         .await
         .unwrap();
-    let before = h.get_decision(dec.id).await.unwrap();
-    let log_before = sink.on(&dec.id.to_string());
+    let before = h.get_decision(dec.id()).await.unwrap();
+    let log_before = sink.on(&dec.id().to_string());
     assert_eq!(
         validation(
-            link(dec.id, "kb", "a.md", "kb/ADR-1", None)
+            link(dec.id(), "kb", "a.md", "kb/ADR-1", None)
                 .await
                 .unwrap_err()
         ),
         "decision is closed"
     );
-    assert_eq!(h.get_decision(dec.id).await.unwrap(), before);
-    assert_eq!(sink.on(&dec.id.to_string()), log_before, "no entry");
+    assert_eq!(h.get_decision(dec.id()).await.unwrap(), before);
+    assert_eq!(sink.on(&dec.id().to_string()), log_before, "no entry");
 }

@@ -29,8 +29,8 @@ pub fn compute_findings(i: &FindingsInput) -> Vec<Finding> {
         for d in i.own_decisions {
             if d.is_open() && !d.is_satisfied() {
                 out.push(Finding::DiscoveryCompleteWithOpenDecision {
-                    decision_id: d.id,
-                    title: d.title.clone(),
+                    decision_id: d.id(),
+                    title: d.title().to_string(),
                 });
             }
         }
@@ -67,28 +67,28 @@ mod tests {
     use reeve_protocol::{CheckResult, Key};
 
     fn decision(id: i64, check: CheckResult, closed: bool) -> RequiredDecision {
-        RequiredDecision {
+        RequiredDecision::from_persisted(
             id,
-            on: "ABC-1".parse::<Key>().unwrap(),
-            on_type: reeve_protocol::ItemType::Initiative,
-            title: format!("Pick {id}"),
-            decider: "dan@example.com".into(),
-            due: None,
-            reversibility: None,
-            record: None,
-            pr_url: None,
+            "ABC-1".parse::<Key>().unwrap(),
+            reeve_protocol::ItemType::Initiative,
+            format!("Pick {id}"),
+            "dan@example.com".into(),
+            None,
+            None,
+            None,
+            None,
             check,
-            checked_at: None,
-            closed: closed.then(|| super::super::decision::Closed {
+            None,
+            closed.then(|| super::super::decision::Closed {
                 at: Utc::now(),
                 by: "dan@example.com".into(),
                 reason: "moot".into(),
                 kind: None,
                 via: None,
             }),
-            created_at: Utc::now(),
-            version: 1,
-        }
+            Utc::now(),
+            1,
+        )
     }
 
     fn input<'a>(brief: &'a str, own: &'a [RequiredDecision]) -> FindingsInput<'a> {

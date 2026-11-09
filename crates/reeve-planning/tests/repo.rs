@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, Epic, Handlers, Initiative, ItemType, RepoError,
-    Settings, Story, StoryFilter, UrgentMark, compute_readiness, make_planning_ports,
+    RequiredDecision, Settings, Story, StoryFilter, UrgentMark, compute_readiness,
+    make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -112,7 +113,8 @@ async fn keys_items_versions_and_readiness_inputs() {
         .unwrap();
     assert!(!inserted_again);
     assert_eq!(
-        again.id, d.id,
+        again.id(),
+        d.id(),
         "a repeated idempotency key returns the existing decision"
     );
     tx.commit().await.unwrap();
@@ -153,7 +155,7 @@ async fn keys_items_versions_and_readiness_inputs() {
         ["ABC-2", "ABC-1"]
     );
     assert!(!input.ancestors[0].discovery_complete);
-    assert_eq!(input.ancestors[0].decisions[0].id, d.id);
+    assert_eq!(input.ancestors[0].decisions[0].id, d.id());
     assert_eq!(input.criteria_count, 1);
     tx.rollback().await.unwrap();
 
@@ -164,11 +166,13 @@ async fn keys_items_versions_and_readiness_inputs() {
         .stories
         .set_delivery(
             &mut tx,
-            &k3,
+            &target(
+                &k3,
+                DeliveryState::InProgress,
+                None,
+                Some("dan@example.com"),
+            ),
             fresh.version(),
-            DeliveryState::InProgress,
-            None,
-            Some("dan@example.com"),
             now,
         )
         .await
@@ -179,11 +183,8 @@ async fn keys_items_versions_and_readiness_inputs() {
         .stories
         .set_delivery(
             &mut tx,
-            &k3,
+            &target(&k3, DeliveryState::InReview, None, None),
             fresh.version(),
-            DeliveryState::InReview,
-            None,
-            None,
             now,
         )
         .await
@@ -208,11 +209,13 @@ async fn keys_items_versions_and_readiness_inputs() {
         .stories
         .set_delivery(
             &mut tx,
-            &k3,
+            &target(
+                &k3,
+                DeliveryState::Done,
+                Some(Resolution::Completed),
+                Some("other@example.com"),
+            ),
             2,
-            DeliveryState::Done,
-            Some(Resolution::Completed),
-            Some("other@example.com"),
             now,
         )
         .await
@@ -235,7 +238,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     let mut tx = pool.begin().await.unwrap();
     ports
         .stories
-        .set_delivery(&mut tx, &k3, 3, DeliveryState::Todo, None, None, now)
+        .set_delivery(
+            &mut tx,
+            &target(&k3, DeliveryState::Todo, None, None),
+            3,
+            now,
+        )
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -364,7 +372,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert!(matches!(
         ports
             .stories
-            .set_delivery(&mut tx, &ghost, 1, DeliveryState::Done, None, None, now)
+            .set_delivery(
+                &mut tx,
+                &target(&ghost, DeliveryState::Done, None, None),
+                1,
+                now,
+            )
             .await
             .unwrap_err(),
         reeve_planning::RepoError::NotFound
@@ -377,23 +390,27 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // Saving a decision's check result round-trips through JSONB.
     let mut tx = pool.begin().await.unwrap();
-    let mut d2 = ports.decisions.get_decision(d.id).await.unwrap();
-    d2.check = CheckResult::Accepted {
-        commit: "abc123".into(),
-        reversibility: None,
-    };
-    d2.checked_at = Some(now);
+    let d2 = ports.decisions.get_decision(d.id()).await.unwrap();
+    let d2 = written(
+        &d2,
+        CheckResult::Accepted {
+            commit: "abc123".into(),
+            reversibility: None,
+        },
+        Some(now),
+        d2.closed().cloned(),
+    );
     ports.decisions.save_decision(&mut tx, &d2).await.unwrap();
     tx.commit().await.unwrap();
-    let after_d = ports.decisions.get_decision(d.id).await.unwrap();
+    let after_d = ports.decisions.get_decision(d.id()).await.unwrap();
     assert_eq!(
-        after_d.check,
-        CheckResult::Accepted {
+        after_d.check(),
+        &CheckResult::Accepted {
             commit: "abc123".into(),
             reversibility: None,
         }
     );
-    assert_eq!(after_d.version, 2);
+    assert_eq!(after_d.version(), 2);
     let mut tx = pool.begin().await.unwrap();
     assert!(
         matches!(
@@ -734,9 +751,14 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         .require_decision(&c, "d-closed", e1.key(), "Closed on E1", "dan", None, None)
         .await
         .unwrap();
-    h.close_decision(&c, d_closed.id, ClosureKind::Withdrawn, "no longer needed")
-        .await
-        .unwrap();
+    h.close_decision(
+        &c,
+        d_closed.id(),
+        ClosureKind::Withdrawn,
+        "no longer needed",
+    )
+    .await
+    .unwrap();
     let d_acc = h
         .require_decision(&c, "d-acc", e1.key(), "Accepted on E1", "dan", None, None)
         .await
@@ -757,10 +779,10 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         (&d_s1, "kb/ADR-0002", CheckResult::NotFound),
     ] {
         let linked = h
-            .link_record(&c, d.id, "kb", "knowledge/adrs/x.md", rid, None)
+            .link_record(&c, d.id(), "kb", "knowledge/adrs/x.md", rid, None)
             .await
             .unwrap();
-        h.record_check(&c, d.id, rid, linked.version, check, true)
+        h.record_check(&c, d.id(), rid, linked.version(), check, true)
             .await
             .unwrap();
     }
@@ -828,7 +850,7 @@ async fn batched_readiness_equals_one_key_at_a_time() {
     assert_eq!(
         reasons_of(s1.key()),
         vec![Reason::DecisionRecordNotFound {
-            decision_id: d_s1.id,
+            decision_id: d_s1.id(),
             title: "On S1".into()
         }]
     );
@@ -842,7 +864,7 @@ async fn batched_readiness_equals_one_key_at_a_time() {
                 item: i2.key().clone()
             },
             Reason::DecisionNoRecord {
-                decision_id: d_i2.id,
+                decision_id: d_i2.id(),
                 title: "On I2".into()
             },
             Reason::NoCriteria,
@@ -952,6 +974,57 @@ async fn done_at_of(pool: &sqlx::PgPool, key: &Key) -> Option<chrono::DateTime<U
         .unwrap()
 }
 
+/// `d` as stored, with the check, `checked_at` and closure an adapter test writes (built directly, not through the
+/// aggregate's methods, since these are adapter tests).
+fn written(
+    d: &RequiredDecision,
+    check: CheckResult,
+    checked_at: Option<chrono::DateTime<Utc>>,
+    closed: Option<Closed>,
+) -> RequiredDecision {
+    RequiredDecision::from_persisted(
+        d.id(),
+        d.on().clone(),
+        d.on_type(),
+        d.title().into(),
+        d.decider().into(),
+        d.due(),
+        d.reversibility(),
+        d.record().cloned(),
+        d.pr_url().map(Into::into),
+        check,
+        checked_at,
+        closed,
+        d.created_at(),
+        d.version(),
+    )
+}
+
+/// The input `set_delivery` writes, carrying exactly the fields its SQL binds (key, delivery, resolution, owner); built
+/// directly rather than through `Story::move_to`, since these are adapter tests.
+fn target(
+    key: &Key,
+    delivery: DeliveryState,
+    resolution: Option<Resolution>,
+    owner: Option<&str>,
+) -> Story {
+    Story::from_persisted(
+        key.clone(),
+        "t".into(),
+        Kind::Story,
+        None,
+        String::new(),
+        vec![],
+        owner.map(Into::into),
+        vec![],
+        0,
+        delivery,
+        resolution,
+        None,
+        0,
+    )
+}
+
 fn day(d: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, d, 9, 0, 0).unwrap()
 }
@@ -974,7 +1047,7 @@ async fn move_to(
         .version();
     ports
         .stories
-        .set_delivery(&mut tx, key, v, to, resolution, None, now)
+        .set_delivery(&mut tx, &target(key, to, resolution, None), v, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -1177,30 +1250,36 @@ async fn decision_reversibility_and_closure_round_trip() {
     assert_eq!(
         ports
             .decisions
-            .get_decision(d.id)
+            .get_decision(d.id())
             .await
             .unwrap()
-            .reversibility,
+            .reversibility(),
         Some(Reversibility::OneWay)
     );
 
-    let mut d = ports.decisions.get_decision(d.id).await.unwrap();
-    d.closed = Some(Closed {
-        at: dan().now,
-        by: "dan@example.com".into(),
-        reason: "not needed".into(),
-        kind: Some(ClosureKind::Withdrawn),
-        via: Some(TokenKind::Automation),
-    });
+    let d = ports.decisions.get_decision(d.id()).await.unwrap();
+    let d = written(
+        &d,
+        d.check().clone(),
+        d.checked_at(),
+        Some(Closed {
+            at: dan().now,
+            by: "dan@example.com".into(),
+            reason: "not needed".into(),
+            kind: Some(ClosureKind::Withdrawn),
+            via: Some(TokenKind::Automation),
+        }),
+    );
     let mut tx = pool.begin().await.unwrap();
     ports.decisions.save_decision(&mut tx, &d).await.unwrap();
     tx.commit().await.unwrap();
     let c = ports
         .decisions
-        .get_decision(d.id)
+        .get_decision(d.id())
         .await
         .unwrap()
-        .closed
+        .closed()
+        .cloned()
         .unwrap();
     assert_eq!(
         (c.kind, c.via),
@@ -1236,7 +1315,7 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
             "UPDATE required_decisions SET {col} = $1 WHERE id = $2"
         ))
         .bind(v)
-        .bind(d.id)
+        .bind(d.id())
         .execute(&pool)
         .await;
         assert!(
@@ -1248,16 +1327,17 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
         "UPDATE required_decisions SET closed_at = now(), closed_by = 'dan@example.com', \
          closed_reason = 'old' WHERE id = $1",
     )
-    .bind(d.id)
+    .bind(d.id())
     .execute(&pool)
     .await
     .unwrap();
     let c = make_planning_ports(pool.clone())
         .decisions
-        .get_decision(d.id)
+        .get_decision(d.id())
         .await
         .unwrap()
-        .closed
+        .closed()
+        .cloned()
         .unwrap();
     assert_eq!((c.reason.as_str(), c.kind, c.via), ("old", None, None));
 }

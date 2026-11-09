@@ -8,7 +8,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use reeve_protocol::{DeliveryState, ItemType, Key, Kind, Resolution};
+use reeve_protocol::{DeliveryState, ItemType, Key, Kind};
 use sqlx::{Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
 

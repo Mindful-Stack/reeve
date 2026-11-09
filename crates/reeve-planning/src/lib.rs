@@ -4,9 +4,13 @@ mod handler;
 mod ports;
 mod repo;
 pub use domain::{
-    decision::{CloseError, Closed, RecordRef, RequiredDecision},
-    delivery::{MoveEffect, MoveRefused, MoveRequest, validate_move},
-    items::{Criterion, DiscoveryMark, Epic, Initiative, ItemError, Story},
+    decision::{
+        CheckOutcome, Closed, DecisionEdit, DecisionError, FieldChange, PrUrl, RecordRef,
+        RequiredDecision,
+    },
+    items::{
+        Criterion, DiscoveryMark, Epic, Initiative, ItemError, Move, MoveRefused, Moved, Story,
+    },
     progress::progress,
     pull_request::{PrChange, PullRequest},
     queue::{BlockedStory, QueueEntry, QueueSummary},

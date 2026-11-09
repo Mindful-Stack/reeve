@@ -32,6 +32,9 @@ if [ -d "$planning/handler" ]; then
     if [ "$f" != "$moves" ]; then
       x=$(flat "$f" | g -oE "${lb}set_delivery\(")
       if [ -n "$x" ]; then bad+="$f: set_delivery outside handler/moves.rs"$'\n'; fi
+      # The delivery rule (Story::move_to) runs only inside move_story's transaction.
+      x=$(flat "$f" | g -oE "${lb}move_to\(")
+      if [ -n "$x" ]; then bad+="$f: move_to outside handler/moves.rs"$'\n'; fi
     fi
   done < <(find "$planning/handler" -name '*.rs' | sort)
   # kb/ADR-0014 R4, kb/ADR-0017 R5: moving a story never reads sprints, goals or urgency.

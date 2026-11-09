@@ -1,7 +1,7 @@
 use super::*;
-use crate::domain::{delivery::*, items::*};
+use crate::domain::items::*;
 use crate::ports::RepoError;
-use reeve_protocol::{DeliveryState, Key, Resolution, TokenKind};
+use reeve_protocol::{DeliveryState, Key, Reason, Resolution, TokenKind};
 
 impl Handlers {
     /// The gate. Readiness, the two rules, the state change and the activity entry all happen inside one transaction.
@@ -39,63 +39,55 @@ impl Handlers {
             });
         }
         let readiness = self.readiness_in(&mut tx, key).await?;
-        let req = MoveRequest {
-            from: cur.delivery(),
-            current_resolution: cur.resolution(),
-            to,
-            ready: readiness.ready,
-            resolution,
-            override_reason,
-            token_kind: if c.via != reeve_protocol::Via::Interactive {
-                TokenKind::Automation
-            } else {
-                TokenKind::Interactive
-            },
-        };
-        let refused = match validate_move(&req) {
-            Ok(e) => Ok(e),
-            Err(MoveRefused::NotReady) => Err(readiness.reasons.clone()),
-            Err(MoveRefused::AutomationCannotOverride) => {
-                let mut r = readiness.reasons.clone();
-                r.push(reeve_protocol::Reason::AutomationCannotOverride);
-                Err(r)
-            }
-            Err(MoveRefused::OverrideNeedsReason) => {
-                Err(vec![reeve_protocol::Reason::OverrideNeedsReason])
-            }
-            Err(MoveRefused::ResolutionRequired) => {
-                Err(vec![reeve_protocol::Reason::ResolutionRequired])
-            }
-            Err(MoveRefused::CompletedNeedsActiveOrigin) => {
-                Err(vec![reeve_protocol::Reason::CompletedNeedsActiveOrigin])
-            }
-        };
-        let effect = match refused {
-            Ok(e) => e,
-            Err(reasons) => {
-                tx.rollback().await?;
-                return Err(HandlerError::Refused(reasons));
-            }
-        };
-        if effect == MoveEffect::NoOp {
-            tx.rollback().await?;
-            return Ok(cur);
-        }
-        let resolution = match effect {
-            MoveEffect::Resolve(r) => Some(r),
-            _ => None,
-        };
-        let owner_email = reeve_protocol::normalise_email(&c.actor);
-        let owner_if_none = if to == DeliveryState::InProgress {
-            Some(owner_email.as_str())
+        let mut story = cur;
+        let token = if c.via != reeve_protocol::Via::Interactive {
+            TokenKind::Automation
         } else {
-            None
+            TokenKind::Interactive
+        };
+        let actor = reeve_protocol::normalise_email(&c.actor);
+        let outcome = story.move_to(
+            Move {
+                to,
+                resolution,
+                override_reason,
+            },
+            readiness.ready,
+            token,
+            &actor,
+        );
+        let (from, override_reason) = match outcome {
+            Ok(Moved::Unchanged) => {
+                tx.rollback().await?;
+                return Ok(story);
+            }
+            Ok(Moved::Moved {
+                from,
+                override_reason,
+            }) => (from, override_reason),
+            Err(e) => {
+                tx.rollback().await?;
+                return Err(HandlerError::Refused(match e {
+                    MoveRefused::NotReady => readiness.reasons.clone(),
+                    MoveRefused::AutomationCannotOverride => [
+                        readiness.reasons.clone(),
+                        vec![Reason::AutomationCannotOverride],
+                    ]
+                    .concat(),
+                    MoveRefused::OverrideNeedsReason => vec![Reason::OverrideNeedsReason],
+                    MoveRefused::ResolutionRequired => vec![Reason::ResolutionRequired],
+                    MoveRefused::CompletedNeedsActiveOrigin => {
+                        vec![Reason::CompletedNeedsActiveOrigin]
+                    }
+                }));
+            }
         };
         self.ports
             .stories
-            .set_delivery(&mut tx, key, version, to, resolution, owner_if_none, c.now)
+            .set_delivery(&mut tx, &story, version, c.now)
             .await?;
-        if let MoveEffect::Override { reason } = &effect {
+        // "from" is the state before the move (from Moved), never the story's state after it.
+        if let Some(reason) = &override_reason {
             self.activity
                 .record(
                     &mut tx,
@@ -104,7 +96,7 @@ impl Handlers {
                         "story",
                         &key.to_string(),
                         "override",
-                        serde_json::json!({"from": cur.delivery(), "to": to, "reason": reason, "reasons": readiness.reasons}),
+                        serde_json::json!({"from": from, "to": story.delivery(), "reason": reason, "reasons": readiness.reasons}),
                     ),
                 )
                 .await?;
@@ -117,7 +109,7 @@ impl Handlers {
                     "story",
                     &key.to_string(),
                     "moved",
-                    serde_json::json!({"from": cur.delivery(), "to": to, "resolution": resolution}),
+                    serde_json::json!({"from": from, "to": story.delivery(), "resolution": story.resolution()}),
                 ),
             )
             .await?;

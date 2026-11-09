@@ -223,11 +223,9 @@ fn decision_from(r: &sqlx::postgres::PgRow) -> Result<RequiredDecision, sqlx::Er
         r.get::<Option<String>, _>("record_path"),
         r.get::<Option<String>, _>("record_id"),
     ) {
-        (Some(repo), Some(path), Some(record_id)) => Some(RecordRef {
-            repo,
-            path,
-            record_id,
-        }),
+        (Some(repo), Some(path), Some(record_id)) => {
+            Some(RecordRef::from_persisted(repo, path, record_id))
+        }
         _ => None,
     };
     let closed = match (
@@ -252,23 +250,23 @@ fn decision_from(r: &sqlx::postgres::PgRow) -> Result<RequiredDecision, sqlx::Er
         "initiative" => ItemType::Initiative,
         other => return Err(bad("item type", other)),
     };
-    Ok(RequiredDecision {
-        id: r.get("id"),
-        on: key(r.get("on_key")),
+    Ok(RequiredDecision::from_persisted(
+        r.get("id"),
+        key(r.get("on_key")),
         on_type,
-        title: r.get("title"),
-        decider: r.get("decider"),
-        due: r.get("due"),
+        r.get("title"),
+        r.get("decider"),
+        r.get("due"),
         reversibility,
         record,
-        pr_url: r.get("pr_url"),
-        check: serde_json::from_value(r.get::<serde_json::Value, _>("check_result"))
+        r.get("pr_url"),
+        serde_json::from_value(r.get::<serde_json::Value, _>("check_result"))
             .map_err(|e| sqlx::Error::Decode(e.into()))?,
-        checked_at: r.get("checked_at"),
+        r.get("checked_at"),
         closed,
-        created_at: r.get("created_at"),
-        version: r.get("version"),
-    })
+        r.get("created_at"),
+        r.get("version"),
+    ))
 }
 fn criteria_json(c: &[Criterion]) -> serde_json::Value {
     serde_json::to_value(

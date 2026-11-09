@@ -89,9 +89,13 @@ impl From<crate::domain::items::ItemError> for HandlerError {
         Self::Validation(e.to_string())
     }
 }
-impl From<crate::domain::decision::CloseError> for HandlerError {
-    fn from(e: crate::domain::decision::CloseError) -> Self {
-        Self::Validation(e.to_string())
+impl From<crate::domain::decision::DecisionError> for HandlerError {
+    fn from(e: crate::domain::decision::DecisionError) -> Self {
+        use crate::domain::decision::DecisionError;
+        match e {
+            DecisionError::StaleReference { current } => HandlerError::Conflict { current },
+            other => HandlerError::Validation(other.to_string()),
+        }
     }
 }
 

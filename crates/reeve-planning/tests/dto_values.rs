@@ -109,35 +109,35 @@ fn epic_dto_carries_every_field() {
 }
 
 fn decision() -> RequiredDecision {
-    RequiredDecision {
-        id: 11,
-        on: k("ABC-3"),
-        on_type: ItemType::Story,
-        title: "Pick".into(),
-        decider: "dec@x".into(),
-        due: Some(ymd(2026, 11, 20)),
-        reversibility: Some(Reversibility::TwoWay),
-        record: Some(RecordRef {
-            repo: "kb".into(),
-            path: "adrs/0001.md".into(),
-            record_id: "kb/ADR-0001".into(),
-        }),
-        pr_url: Some("https://example.com/pr/1".into()),
-        check: CheckResult::Accepted {
+    RequiredDecision::from_persisted(
+        11,
+        k("ABC-3"),
+        ItemType::Story,
+        "Pick".into(),
+        "dec@x".into(),
+        Some(ymd(2026, 11, 20)),
+        Some(Reversibility::TwoWay),
+        Some(RecordRef::from_persisted(
+            "kb",
+            "adrs/0001.md",
+            "kb/ADR-0001",
+        )),
+        Some("https://example.com/pr/1".into()),
+        CheckResult::Accepted {
             commit: "abc123".into(),
             reversibility: Some(Reversibility::OneWay),
         },
-        checked_at: Some(t(6)),
-        closed: Some(Closed {
+        Some(t(6)),
+        Some(Closed {
             at: t(7),
             by: "closer@x".into(),
             reason: "gone".into(),
             kind: Some(ClosureKind::Withdrawn),
             via: Some(TokenKind::Automation),
         }),
-        created_at: t(5),
-        version: 9,
-    }
+        t(5),
+        9,
+    )
 }
 fn decision_json() -> Value {
     json!({

@@ -89,30 +89,30 @@ impl From<&Story> for StoryDto {
 impl From<&RequiredDecision> for RequiredDecisionDto {
     fn from(d: &RequiredDecision) -> Self {
         Self {
-            id: d.id,
-            on: d.on.clone(),
-            on_type: d.on_type,
-            title: d.title.clone(),
-            decider: d.decider.clone(),
-            due: d.due,
-            reversibility: d.reversibility,
-            record: d.record.as_ref().map(|r| RecordRefDto {
-                repo: r.repo.clone(),
-                path: r.path.clone(),
-                record_id: r.record_id.clone(),
+            id: d.id(),
+            on: d.on().clone(),
+            on_type: d.on_type(),
+            title: d.title().to_string(),
+            decider: d.decider().to_string(),
+            due: d.due(),
+            reversibility: d.reversibility(),
+            record: d.record().map(|r| RecordRefDto {
+                repo: r.repo().to_string(),
+                path: r.path().to_string(),
+                record_id: r.record_id().to_string(),
             }),
-            pr_url: d.pr_url.clone(),
-            check: d.check.clone(),
-            checked_at: d.checked_at,
-            closed: d.closed.as_ref().map(|c| ClosedDto {
+            pr_url: d.pr_url().map(str::to_string),
+            check: d.check().clone(),
+            checked_at: d.checked_at(),
+            closed: d.closed().map(|c| ClosedDto {
                 at: c.at,
                 by: c.by.clone(),
                 reason: c.reason.clone(),
                 kind: c.kind,
                 via: c.via,
             }),
-            created_at: d.created_at,
-            version: d.version,
+            created_at: d.created_at(),
+            version: d.version(),
         }
     }
 }

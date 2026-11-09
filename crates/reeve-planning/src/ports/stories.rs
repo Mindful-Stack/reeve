@@ -34,14 +34,15 @@ pub trait StoryRepo: Send + Sync {
         expected_version: i64,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
+    /// Writes a story's delivery, resolution and owner after `Story::move_to` (the stored owner wins if one is set),
+    /// stamping `started_at`/`done_at` from the locked row's state, guarded by `expected_version`. The version is a
+    /// separate argument, not `story.version()`: it is the version the caller observed and checked, and the UPDATE
+    /// matches the row only at that version, so a write that raced the caller is a conflict rather than overwritten.
     async fn set_delivery(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        key: &Key,
+        story: &Story,
         expected_version: i64,
-        to: DeliveryState,
-        resolution: Option<Resolution>,
-        owner_if_none: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
     /// The todo column in rank order (rank, then shorter key, then key), every row locked FOR UPDATE in key order so
