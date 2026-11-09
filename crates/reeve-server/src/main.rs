@@ -54,6 +54,10 @@ enum Cmd {
         #[arg(long)]
         email: String,
     },
+    /// Operator command: print who may sign in and who is admin, merged from the configuration and the database, one
+    /// `kind<TAB>value<TAB>source` per line. Read-only: the floor in reeve.toml is the break-glass path, so there is no
+    /// add or remove here.
+    AccessList,
     /// Print `name<TAB>url` for every `[[repos]]` entry that has a url: what the scheduled decision check clones. Reads
     /// the configuration only; never connects to the database.
     Repos,
@@ -202,6 +206,28 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
+        }
+        Cmd::AccessList => {
+            let policy = reeve_identity::make_access_store(pool.clone())
+                .load(&config.identity())
+                .await?;
+            let v = policy.view();
+            let source = |r: &reeve_identity::AccessRow| match &r.source {
+                reeve_identity::AccessSource::Config => "reeve.toml".to_string(),
+                reeve_identity::AccessSource::Database { added_by, added_at } => {
+                    format!("added by {added_by} {}", added_at.format("%Y-%m-%d"))
+                }
+            };
+            for (kind, rows) in [
+                ("domain", &v.domains),
+                ("email", &v.emails),
+                ("admin", &v.admins),
+            ] {
+                for r in rows {
+                    let flag = if r.allowed { "" } else { "\tnot allowed" };
+                    println!("{kind}\t{}\t{}{flag}", r.value, source(r));
+                }
+            }
         }
     }
     Ok(())
