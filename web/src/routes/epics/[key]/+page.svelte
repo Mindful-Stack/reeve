@@ -159,7 +159,14 @@
 
 	async function clearUrgent() {
 		const k = epic?.key;
-		if (k && (await write(() => unwrap(api.DELETE('/api/v1/epics/{key}/urgent', { params: { path: { key: k } } }))))) await refocusActions();
+		if (!k) return;
+		if (await write(() => unwrap(api.DELETE('/api/v1/epics/{key}/urgent', { params: { path: { key: k } } })))) {
+			await refocusActions();
+		} else {
+			// The Clear button that was pressed is still there: keep the keyboard on it, unless the user moved it.
+			await tick();
+			if (focusIsFree(null)) document.body.querySelector<HTMLElement>(`button[aria-label="Clear urgent mark on ${k}"]`)?.focus();
+		}
 	}
 
 	/** The control that opened a write (the expired line's buttons, a dialog) is gone: focus goes to the Actions menu, unless the user moved it. */

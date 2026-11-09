@@ -1247,6 +1247,22 @@ describe('initiative page: urgent mark', () => {
 		});
 	});
 
+	it('keeps the focus on the expired line\'s Clear button after a failed clear', async () => {
+		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
+		await open();
+		net.urgentFail = true;
+		const clear = document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]') as HTMLButtonElement;
+		clear.focus();
+		clear.click();
+		// A browser drops focus from a control that becomes disabled; jsdom keeps it, so give it up by hand.
+		clear.blur();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('boom');
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Clear urgent mark on ABC-1"]'));
+		});
+	});
+
 	it('moves focus to the Actions menu after a successful Re-mark', async () => {
 		net.ini = { ...net.ini, urgent_mark: mark({ active: false, expires_at: '2026-11-01T00:00:00Z' }), urgent_sources: [] };
 		await open();
