@@ -31,11 +31,7 @@ impl Handlers {
             let Some(i) = s.epic().and_then(|e| initiative_of.get(e)) else {
                 continue;
             };
-            let c = counts.entry(i).or_insert(StoryCounts {
-                completed: 0,
-                dropped: 0,
-                total: 0,
-            });
+            let c = counts.entry(i).or_default();
             match s.resolution() {
                 Some(Resolution::Completed) => c.completed += 1,
                 Some(Resolution::Dropped) => c.dropped += 1,
@@ -43,14 +39,9 @@ impl Handlers {
             }
             c.total += 1;
         }
-        let none = StoryCounts {
-            completed: 0,
-            dropped: 0,
-            total: 0,
-        };
         Ok(initiatives
             .iter()
-            .map(|i| initiative_dto_of(i, counts.get(i.key()).unwrap_or(&none), urg))
+            .map(|i| initiative_dto_of(i, &counts.get(i.key()).copied().unwrap_or_default(), urg))
             .collect())
     }
 

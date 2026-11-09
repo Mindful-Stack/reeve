@@ -1880,7 +1880,7 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();
-    let urg = Urgency::default();
+    let urg = h.urgency_in(&mut tx, Utc::now()).await.unwrap();
     let batched = h.story_dtos_in(&mut tx, &fresh, &urg).await.unwrap();
     assert!(
         h.story_dtos_in(&mut tx, &[], &urg)
@@ -2480,9 +2480,12 @@ async fn import_creates_with_state_once_and_never_logs_an_override() {
     assert_eq!(ini_dto.external_ref.as_deref(), Some("JPD-5"));
     assert_eq!(ini_dto.discovery_complete.as_ref().unwrap().by, c.actor);
     assert_eq!(ini_dto.discovery_complete.as_ref().unwrap().at, c.now);
-    let e = h.get_epic(epic.key.as_ref().unwrap()).await.unwrap();
-    assert_eq!(e.discovery().unwrap().by, c.actor);
-    assert_eq!(e.external_ref(), Some("SCRUM-10"));
+    let e = h
+        .epic_dto(epic.key.as_ref().unwrap(), Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(e.discovery_complete.unwrap().by, c.actor);
+    assert_eq!(e.external_ref.as_deref(), Some("SCRUM-10"));
     assert!(!h.readiness(&sk).await.unwrap().ready); // still computed: no criteria
     assert_eq!(count(&sink, "imported", &sk.to_string()), 1);
     assert_eq!(

@@ -221,27 +221,20 @@ impl Handlers {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let out = self.list_initiatives_in(&mut tx, now).await;
+        let out = async {
+            let urg = self.urgency_in(&mut tx, now).await?;
+            let initiatives = self.repo.list_initiatives_in(&mut tx).await?;
+            let counts = self.repo.story_counts_by_initiative_in(&mut tx).await?;
+            Ok(initiatives
+                .iter()
+                .map(|i| {
+                    let c = counts.get(i.key()).copied().unwrap_or_default();
+                    initiative_dto_of(i, &c, &urg)
+                })
+                .collect())
+        }
+        .await;
         end_read(tx, out).await
-    }
-
-    async fn list_initiatives_in(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        now: DateTime<Utc>,
-    ) -> Result<Vec<InitiativeDto>, HandlerError> {
-        let urg = self.urgency_in(tx, now).await?;
-        let initiatives = self.repo.list_initiatives_in(tx).await?;
-        let counts = self.repo.story_counts_by_initiative_in(tx).await?;
-        let none = StoryCounts {
-            completed: 0,
-            dropped: 0,
-            total: 0,
-        };
-        Ok(initiatives
-            .iter()
-            .map(|i| initiative_dto_of(i, counts.get(i.key()).unwrap_or(&none), &urg))
-            .collect())
     }
 
     /// Advisory findings on an initiative or an epic (`domain::findings`), from one read-only snapshot: the item, the

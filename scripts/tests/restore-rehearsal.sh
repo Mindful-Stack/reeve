@@ -49,7 +49,7 @@ expect_calls() {
 expect_output() { grep -q -- "$1" "$tmp/out" || { echo "output lacks '$1':" >&2; cat "$tmp/out" >&2; exit 1; }; }
 all=$'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
 exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
-exec -T server reeve-server export --database reeve_rehearsal
+exec -T server reeve-server export --database reeve_rehearsal --at 2026-10-26T10:00:00Z
 exec -T postgres dropdb -U reeve reeve_rehearsal'
 
 # 1. documents equal apart from exported_at: 0, the README's commands in order, the dump on pg_restore's stdin
@@ -138,5 +138,27 @@ cp "$tmp/live.dump" "$tmp/live copy.dump"
 rm -f "$tmp/calls" "$tmp/restore-stdin"
 REEVE_COMPOSE="$fake" bash "$script" "$tmp/live copy.dump" "$tmp/live.json" >"$tmp/out" 2>&1
 cmp -s "$tmp/live.dump" "$tmp/restore-stdin" || { echo "a dump path with a space was not streamed" >&2; exit 1; }
+
+# 15. the restored document is exported at the live export's exported_at (urgency is computed at exported_at), whatever
+# that instant is, a fractional one with an offset included
+doc 2026-11-09T08:30:15.123456+00:00 ABC >"$tmp/live.json"
+doc 2026-11-20T00:00:00Z ABC >"$tmp/export-output"
+run 0
+expect_calls $'exec -T postgres createdb -U reeve -O reeve reeve_rehearsal
+exec -T postgres pg_restore -U reeve -d reeve_rehearsal --no-owner --exit-on-error
+exec -T server reeve-server export --database reeve_rehearsal --at 2026-11-09T08:30:15.123456+00:00
+exec -T postgres dropdb -U reeve reeve_rehearsal'
+
+# 16. a live export whose exported_at is not a time (or is missing): 2, refused before anything runs
+for bad in 'yesterday' '2026-11-09T08:30:15Z; rm -rf /'; do
+	doc "$bad" ABC >"$tmp/live.json"
+	run 2
+	expect_calls ""
+done
+printf '{\n  "key_prefix": "ABC"\n}\n' >"$tmp/live.json"
+run 2
+expect_calls ""
+expect_output "exactly one exported_at"
+doc 2026-10-26T10:00:00Z ABC >"$tmp/live.json"
 
 echo "restore rehearsal test ok"

@@ -499,9 +499,6 @@ impl PlanningRepo for PgPlanningRepo {
             .map(|c| RepoError::Conflict { current: c })
             .unwrap_or(RepoError::NotFound))
     }
-    async fn story_counts_under_initiative(&self, k: &Key) -> Result<StoryCounts, RepoError> {
-        story_counts_on(&self.pool, k).await
-    }
     async fn story_counts_under_initiative_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

@@ -52,6 +52,7 @@ pub enum GoalFilter {
     None,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct StoryCounts {
     pub completed: u32,
     pub dropped: u32,
@@ -152,14 +153,13 @@ pub trait PlanningRepo: Send + Sync {
         expected_version: i64,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
-    async fn story_counts_under_initiative(&self, key: &Key) -> Result<StoryCounts, RepoError>;
     /// Story counts for every initiative that has a story, in one statement on the caller's transaction; an initiative
     /// absent from the map has none.
     async fn story_counts_by_initiative_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<HashMap<Key, StoryCounts>, RepoError>;
-    /// `story_counts_under_initiative` on the caller's transaction.
+    /// The story counts under one initiative (through its epics), on the caller's transaction.
     async fn story_counts_under_initiative_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

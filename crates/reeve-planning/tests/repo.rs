@@ -203,7 +203,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert_eq!(done.owner(), Some("dan@example.com"));
     assert_eq!(done.delivery(), DeliveryState::Done);
     assert_eq!(done.resolution(), Some(Resolution::Completed));
-    let counts = repo.story_counts_under_initiative(&k1).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let counts = repo
+        .story_counts_under_initiative_in(&mut tx, &k1)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
     assert_eq!((counts.completed, counts.dropped, counts.total), (1, 0, 1));
 
     // Reopening to todo with no resolution clears the resolution.
@@ -216,7 +221,12 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert_eq!(reopened.delivery(), DeliveryState::Todo);
     assert_eq!(reopened.resolution(), None);
     assert_eq!(reopened.version(), 4);
-    let counts = repo.story_counts_under_initiative(&k1).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let counts = repo
+        .story_counts_under_initiative_in(&mut tx, &k1)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
     assert_eq!((counts.completed, counts.dropped, counts.total), (0, 0, 1));
 
     // update_story, update_epic and update_initiative: success, stale write, missing row.

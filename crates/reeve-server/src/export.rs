@@ -146,7 +146,9 @@ pub async fn export_document_in(
 }
 
 /// The document as `reeve export` writes it: through `serde_json::Value` (sorted keys), pretty-printed, one trailing
-/// newline. An offline export and a CLI export of one snapshot therefore differ only on the `exported_at` line.
+/// newline. Urgency is computed at `exported_at` (a mark is active until one cycle after it was set), so two exports of
+/// one snapshot differ only on the `exported_at` line when no mark expires between their instants; an offline export
+/// that must match an earlier document passes that document's `exported_at` (`reeve-server export --at`).
 pub fn export_text(doc: &ExportDto) -> String {
     let value = serde_json::to_value(doc).expect("an ExportDto always serialises");
     format!(

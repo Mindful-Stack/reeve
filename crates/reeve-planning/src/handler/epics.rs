@@ -129,10 +129,6 @@ impl Handlers {
         Ok(self.repo.get_epic(key).await?)
     }
 
-    pub async fn get_epic(&self, key: &Key) -> Result<Epic, HandlerError> {
-        Ok(self.repo.get_epic(key).await?)
-    }
-
     /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot.
     pub async fn epic_dto(&self, key: &Key, now: DateTime<Utc>) -> Result<EpicDto, HandlerError> {
         let mut tx = self

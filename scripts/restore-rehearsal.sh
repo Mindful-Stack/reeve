@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/restore-rehearsal.sh — rehearse a restore without touching the live database (deploy/README.md, "Rehearse
-# the restore"): restore a dump into a scratch database, export it, and compare with the export taken with the dump,
-# apart from exported_at.
+# the restore"): restore a dump into a scratch database, export it at the live export's exported_at (urgency is computed
+# at exported_at), and compare with the export taken with the dump, apart from exported_at.
 #
 #   scripts/restore-rehearsal.sh <dump-file> <live-export.json>
 #       the reference compose stack; run from the directory holding docker-compose.yml.
@@ -48,15 +48,6 @@ if [ ! -f "$dump" ] || [ ! -r "$dump" ]; then fail "cannot read the dump $dump";
 if [ ! -f "$live" ] || [ ! -r "$live" ]; then fail "cannot read the live export $live"; fi
 [ -s "$live" ] || fail "the live export $live is empty"
 
-# createdb fails when the database exists, so this run only ever drops a database it created itself.
-"${compose[@]}" exec -T postgres createdb -U "$user" -O "$user" "$db" ||
-	fail "could not create $db (does it exist already?)"
-created=1
-"${compose[@]}" exec -T postgres pg_restore -U "$user" -d "$db" --no-owner --exit-on-error <"$dump" ||
-	fail "pg_restore into $db failed"
-"${compose[@]}" exec -T server reeve-server export --database "$db" >"$restored" ||
-	fail "the offline export of $db failed"
-
 # Both documents must be non-empty and carry exactly one exported_at line, or the comparison could pass vacuously.
 strip() {
 	[ -s "$1" ] || fail "$2 is empty"
@@ -68,6 +59,21 @@ strip() {
 	[ -s "$3" ] || fail "$2 holds nothing but its exported_at line"
 }
 strip "$live" "the live export" "$scratch/live.stripped"
+# The restored document is exported at the live one's instant: urgency (an urgent mark is active for one cycle) is
+# computed at exported_at, so a mark that expired since the backup must not read as a difference.
+at=$(sed -n 's/^  "exported_at": "\([^"]*\)",\{0,1\}$/\1/p' "$live")
+[[ $at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9]{2}:[0-9]{2})$ ]] ||
+	fail "the live export's exported_at is not an RFC 3339 time: '$at'"
+
+# createdb fails when the database exists, so this run only ever drops a database it created itself.
+"${compose[@]}" exec -T postgres createdb -U "$user" -O "$user" "$db" ||
+	fail "could not create $db (does it exist already?)"
+created=1
+"${compose[@]}" exec -T postgres pg_restore -U "$user" -d "$db" --no-owner --exit-on-error <"$dump" ||
+	fail "pg_restore into $db failed"
+"${compose[@]}" exec -T server reeve-server export --database "$db" --at "$at" >"$restored" ||
+	fail "the offline export of $db failed"
+
 strip "$restored" "the restored export" "$scratch/restored.stripped"
 status=0
 diff "$scratch/live.stripped" "$scratch/restored.stripped" || status=$?
