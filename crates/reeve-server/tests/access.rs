@@ -542,6 +542,37 @@ async fn revoking_an_inert_grant_deletes_it_and_granting_its_email_revives_it() 
         .expect("an inert grant is listed")
         .clone();
     assert_eq!(eve["allowed"], false);
+    // granting admin to an inert grant's email inserts the email entry and does not refuse
+    let (s, dto) = access(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/admins",
+        Some(json!({"email":"eve@gone.org"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{dto}");
+    let eve = dto["value"]["admins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["value"] == "eve@gone.org")
+        .unwrap()
+        .clone();
+    assert_eq!(eve["allowed"], true);
+    assert!(
+        dto["value"]["emails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["value"] == "eve@gone.org" && r["source"] == "database"),
+        "{dto}"
+    );
+    sql(
+        &h,
+        "DELETE FROM allowed_entries WHERE value = 'eve@gone.org'",
+    )
+    .await;
     // granting the email's access revives the grant
     access(
         &h,
