@@ -17,8 +17,7 @@ fn repos(text: &str) -> Output {
 }
 
 /// Nothing listens on port 9 on loopback: a subcommand that connected to the database would fail.
-const BASE: &str =
-    "database_url = \"postgres://reeve:reeve@127.0.0.1:9/reeve\"\nkey_prefix = \"TST\"\n";
+const BASE: &str = "database_url = \"postgres://reeve:reeve@127.0.0.1:9/reeve\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\n";
 
 #[test]
 fn prints_repositories_with_a_url_without_touching_the_database() {
