@@ -87,10 +87,27 @@
 		});
 	}
 
+	/** Trims the title to 200 code points from the text just typed (before the caret), keeping what follows it. */
+	function fit(el: HTMLInputElement) {
+		const cps = [...el.value];
+		if (cps.length <= MAX) return;
+		const caret = [...el.value.slice(0, el.selectionStart ?? el.value.length)].length;
+		const keep = Math.max(0, caret - (cps.length - MAX));
+		el.value = [...cps.slice(0, keep), ...cps.slice(caret)].join('');
+		const pos = cps.slice(0, keep).join('').length;
+		el.setSelectionRange(pos, pos);
+	}
+
 	function titleInput(e: Event) {
 		const el = e.currentTarget as HTMLInputElement;
-		const cps = [...el.value];
-		if (cps.length > MAX) el.value = cps.slice(0, MAX).join('');
+		if (!(e as InputEvent).isComposing) fit(el);
+		d.title = el.value;
+		titleChanged();
+	}
+
+	function titleComposed(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		fit(el);
 		d.title = el.value;
 		titleChanged();
 	}
@@ -202,6 +219,7 @@
 					bind:this={titleEl}
 					value={d.title}
 					oninput={titleInput}
+					oncompositionend={titleComposed}
 					aria-describedby={points(d.title) >= COUNT_FROM ? `${id}-count` : undefined}
 					required
 					disabled={busy}
@@ -225,8 +243,7 @@
 				</div>
 			{/if}
 
-			<!-- svelte-ignore a11y_role_supports_aria_props_implicit -->
-			<fieldset aria-invalid={kindError ? 'true' : undefined} aria-describedby={kindError ? `${id}-error` : undefined}>
+			<fieldset role="radiogroup" aria-required="true" aria-invalid={kindError ? 'true' : undefined} aria-describedby={kindError ? `${id}-error` : undefined}>
 				<legend>What kind of thing is it?</legend>
 				{#each TYPES as t (t.kind)}
 					<label class="type"
@@ -235,7 +252,7 @@
 							name="kind"
 							checked={d.kind === t.kind}
 							onchange={() => chooseKind(t.kind)}
-							aria-describedby="{id}-help-{t.kind}"
+							aria-describedby={kindError ? `${id}-help-${t.kind} ${id}-error` : `${id}-help-${t.kind}`}
 							disabled={busy}
 						/>
 						{t.label} <span class="help" id="{id}-help-{t.kind}">{t.help}</span></label

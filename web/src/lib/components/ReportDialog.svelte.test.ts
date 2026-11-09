@@ -570,4 +570,30 @@ describe('ReportDialog', () => {
 		expect(set.getAttribute('aria-invalid')).toBe('true');
 		expect(document.getElementById(set.getAttribute('aria-describedby')!)!.textContent).toContain('Choose what kind');
 	});
+
+	it('trims an over-long title at the caret, keeping the text after it', () => {
+		mountDialog();
+		type(title(), 'a'.repeat(199) + 'Z');
+		title().value = 'x' + title().value;
+		title().setSelectionRange(1, 1);
+		title().dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		expect([...title().value]).toHaveLength(200);
+		expect(title().value.endsWith('Z')).toBe(true);
+		expect(title().value.startsWith('x')).toBe(false);
+		expect(title().selectionStart).toBe(0);
+	});
+
+	it('links the kind error to each radio as well as the fieldset', () => {
+		mountDialog();
+		const fieldset = form().querySelector('fieldset')!;
+		expect(fieldset.getAttribute('role')).toBe('radiogroup');
+		expect(fieldset.getAttribute('aria-required')).toBe('true');
+		type(title(), 'Needs a kind');
+		form().requestSubmit();
+		flushSync();
+		const err = form().querySelector('[role=alert]')!.id;
+		expect(radio('Idea or change').getAttribute('aria-describedby')).toContain(err);
+		expect(radio('Idea or change').getAttribute('aria-describedby')).toMatch(/help-story/);
+	});
 });
