@@ -56,7 +56,7 @@ We decided to use PostgreSQL accessed through sqlx as the planner's only datasto
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (public copy, one-time edit): F2's source was a local path, and the context and first assumption named the hosting provider. The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No fact, rule or decision changed; the decision holds.
-- 2026-11-10 (https://github.com/Mindful-Stack/reeve/pull/15): the planning context's adapter moved from `crates/reeve-planning/src/repo.rs` to `crates/reeve-planning/src/repo/*.rs`, which the `scope` pattern `reeve:crates/*/src/repo.rs` no longer matches; it is still PostgreSQL through sqlx (R1). No trigger fired; the decision holds.
+- 2026-11-10 (https://github.com/Mindful-Stack/reeve/pull/15): the planning context's adapter moved from `crates/reeve-planning/src/repo.rs` to `crates/reeve-planning/src/repo/*.rs`, which the `scope` pattern `reeve:crates/*/src/repo.rs` does not match, so a change to the planning adapter is not bound to this record by `scope`. `scope` is locked on a classified record (the ADR validator refuses the change), so the pattern `reeve:crates/*/src/repo/**` waits for the record that next replaces or restates this one. It is still PostgreSQL through sqlx (R1). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0006, kb/ADR-0010.
