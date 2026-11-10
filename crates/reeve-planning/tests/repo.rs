@@ -1832,6 +1832,15 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
         .unwrap();
     let lone = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
     let s = story(&h, "s", Kind::Story, Some(epic.key()), &["c"]).await;
+    // A second tree with another horizon, so a wrong join would pick up the wrong row.
+    let ini2 = h
+        .create_initiative(&c, "i2", "I2", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let epic2 = h
+        .create_epic(&c, "e3", "E3", Some(ini2.key().clone()), "", None)
+        .await
+        .unwrap();
     h.mark_discovery(&c, ItemType::Epic, epic.key(), epic.version(), true)
         .await
         .unwrap();
@@ -1844,6 +1853,7 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
         ini.key().clone(),
         lone.key().clone(),
         missing.clone(),
+        epic2.key().clone(),
     ];
     let mut tx = pool.begin().await.unwrap();
     let got = ports
@@ -1877,6 +1887,23 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
         }]
     );
     assert!(!got.contains_key(&missing));
+    assert_eq!(
+        got[epic2.key()],
+        vec![
+            LineageItem {
+                key: epic2.key().clone(),
+                level: ItemType::Epic,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            },
+            LineageItem {
+                key: ini2.key().clone(),
+                level: ItemType::Initiative,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            }
+        ]
+    );
 }
 
 /// One statement whatever the number of keys. Catches a read per key.
@@ -1924,6 +1951,17 @@ async fn unfinished_filter_excludes_done_and_keeps_started() {
     let todo = story(&h, "t", Kind::Story, Some(e.key()), &["c"]).await;
     let loose = story(&h, "l", Kind::Story, None, &[]).await;
     let done = insert_imported_done(&pool).await;
+    let started = story(&h, "p", Kind::Chore, None, &[]).await;
+    h.move_story(
+        &dan(),
+        started.key(),
+        started.version(),
+        DeliveryState::InProgress,
+        None,
+        Some("started".into()),
+    )
+    .await
+    .unwrap();
     let ports = h.ports.clone();
     let list = |f: StoryFilter| {
         let (ports, pool) = (ports.clone(), pool.clone());
@@ -1944,8 +1982,13 @@ async fn unfinished_filter_excludes_done_and_keeps_started() {
         ..Default::default()
     })
     .await;
-    assert_eq!(un.len(), 2);
-    assert!(un.contains(todo.key()) && un.contains(loose.key()) && !un.contains(&done));
+    assert_eq!(un.len(), 3);
+    assert!(
+        un.contains(todo.key()) && un.contains(loose.key()) && un.contains(started.key()),
+        "a started story is unfinished"
+    );
+    assert!(!un.contains(&done));
+    assert!(all.contains(started.key()));
     let in_epic = list(StoryFilter {
         unfinished: true,
         epic: Some(e.key().clone()),

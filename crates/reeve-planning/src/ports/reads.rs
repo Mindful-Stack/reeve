@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::queue::LineageItem;
 
 /// Reads that join other aggregates' tables, and the export readers.
 #[async_trait]
@@ -77,12 +78,12 @@ pub trait PlanningReads: Send + Sync {
         stories: &[Key],
     ) -> Result<HashMap<Key, Vec<(i64, String, reeve_protocol::GoalVia)>>, RepoError>;
     /// Each item's lineage for the decision queue, nearest first (a story starts at its epic), in one statement. An
-    /// item that does not exist is absent from the map.
+    /// item that does not exist is absent from the map, and so is a story without an epic.
     async fn decision_lineage_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         items: &[Key],
-    ) -> Result<HashMap<Key, Vec<crate::domain::queue::LineageItem>>, RepoError>;
+    ) -> Result<HashMap<Key, Vec<LineageItem>>, RepoError>;
     /// The stories a sprint's numbers need, in one statement: covered by `linked` keys (as story, epic or initiative),
     /// or completed in `[from, to)` (the upkeep share's denominator); `started_at` comes along for "in flight".
     async fn sprint_story_times(

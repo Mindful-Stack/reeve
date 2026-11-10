@@ -442,7 +442,7 @@ impl Handlers {
             .list_stories_in(tx, &unfinished, false, None, &urg)
             .await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.story.key.clone()).collect();
-        let draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;
+        let mut draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;
         // `Key` is not `Ord`, so dedupe with a set; `unnest($1)` does not care about order.
         let items: Vec<Key> = ds
             .iter()
@@ -456,8 +456,8 @@ impl Handlers {
             .filter(|s| s.story.delivery != DeliveryState::Done)
             .map(|s| queue::AffectedStory {
                 draft_goals: draft
-                    .get(&s.story.key)
-                    .map(|g| g.iter().map(|(id, o, _)| (*id, o.clone())).collect())
+                    .remove(&s.story.key)
+                    .map(|g| g.into_iter().map(|(id, o, _)| (id, o)).collect())
                     .unwrap_or_default(),
                 active_goals: s
                     .story

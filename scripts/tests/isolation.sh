@@ -36,6 +36,7 @@ fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.urgency_lineage_in
 fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.draft_goals_of_stories(tx, ks)'
 fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.decision_lineage_in(tx, ks)'
 fail_at reeve-planning/src/handler/moves.rs 'self.decision_queue_in(tx, &s, now)'
+fail_at reeve-planning/src/handler/moves.rs 'self.decision_queue(&s, now)'
 fail_at reeve-planning/src/handler/moves.rs $'self\n    .decision_context(id, now)'
 fail_at reeve-planning/src/handler/moves.rs $'self\n    .urgency_in(&mut tx, c.now)'
 fail_at reeve-planning/src/handler/prs.rs 'self.ports.decisions.get_decision(1)'

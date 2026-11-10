@@ -3345,7 +3345,7 @@ async fn snapshot_fixture(
 const PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Polls `pg_stat_activity` until exactly one backend of this database waits on a lock: the call, which took its
-/// snapshot on its first `stories` read and now waits on the `required_decisions` lock the test took before spawning
+/// snapshot on its first `stories` read and now waits on the table lock the test took before spawning
 /// it. A 10 s deadline fails the test.
 async fn wait_until_blocked(pool: &sqlx::PgPool) {
     tokio::time::timeout(PAUSE, async {
@@ -3363,7 +3363,7 @@ async fn wait_until_blocked(pool: &sqlx::PgPool) {
         }
     })
     .await
-    .expect("the call never blocked on the required_decisions lock");
+    .expect("the call never blocked on the table lock the test took");
 }
 
 /// Commits, while the call waits, changes to tables the lock does not cover: B done, a new edge T -> S, a pull request
@@ -5678,6 +5678,7 @@ async fn decision_queue_costs_the_same_with_goals() {
     assert!(few > 5, "the counter measured {few} statements");
     let b = seed_board(&h, "b", 9, 100).await;
     let c = seed_board(&h, "c", 4, 200).await;
+    // Grow the ACTIVE sprint's goals (even i, to_active) and the draft's (odd i), each linked to seeded stories.
     for (i, k) in b.iter().chain(c.iter()).enumerate() {
         let (g, _) = h
             .add_goal(&dan, &format!("more-{i}"), "o", "c", None, "", i % 2 == 0)

@@ -270,12 +270,17 @@ pub fn order(
             } else {
                 QueueGroup::Open
             };
-            let discovery = discovery_item(
-                inp.lineage
-                    .get(decision.on())
-                    .map_or(&[][..], Vec::as_slice),
-                inp.first_bucket,
-            );
+            // Closed and satisfied decisions are classified `none` whatever their lineage.
+            let discovery = live
+                .then(|| {
+                    discovery_item(
+                        inp.lineage
+                            .get(decision.on())
+                            .map_or(&[][..], Vec::as_slice),
+                        inp.first_bucket,
+                    )
+                })
+                .flatten();
             let (needed, needed_in_reason) = needed_in(&decision, &all, discovery.as_ref());
             let step = next_step(&decision, inp.repos);
             QueueEntry {
