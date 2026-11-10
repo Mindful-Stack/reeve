@@ -23,6 +23,37 @@ impl Handlers {
         external_ref: Option<String>,
         owner: Option<String>,
     ) -> Result<Story, HandlerError> {
+        self.create_story_attaching(
+            c,
+            idem,
+            title,
+            kind,
+            epic,
+            description,
+            criteria,
+            labels,
+            external_ref,
+            owner,
+            &[],
+        )
+        .await
+    }
+
+    /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2).
+    pub async fn create_story_attaching(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        kind: Kind,
+        epic: Option<Key>,
+        description: &str,
+        criteria: Vec<String>,
+        labels: Vec<String>,
+        external_ref: Option<String>,
+        owner: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Story, HandlerError> {
         self.create_story_reporting(
             c,
             idem,
@@ -35,6 +66,7 @@ impl Handlers {
             external_ref,
             owner,
             DeliveryState::Todo,
+            attachments,
         )
         .await
         .map(|(x, _)| x)
@@ -56,7 +88,9 @@ impl Handlers {
         external_ref: Option<String>,
         owner: Option<String>,
         delivery: DeliveryState,
+        attachments: &[Uuid],
     ) -> Result<(Story, bool), HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         if delivery != DeliveryState::Todo
             && (external_ref.is_none() || delivery == DeliveryState::Done)
         {
@@ -118,6 +152,8 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.stories.get_story(&k).await?, false));
         }
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Story, s.key())
+            .await?;
         let (action, payload) = match s.external_ref() {
             Some(r) if delivery != DeliveryState::Todo => {
                 ("imported", serde_json::json!({"external_ref": r}))
@@ -152,6 +188,42 @@ impl Handlers {
         rank: Option<i32>,
         external_ref: Option<String>,
     ) -> Result<Story, HandlerError> {
+        self.edit_story_attaching(
+            c,
+            key,
+            version,
+            title,
+            description,
+            kind,
+            epic,
+            criteria,
+            owner,
+            labels,
+            rank,
+            external_ref,
+            &[],
+        )
+        .await
+    }
+
+    /// `edit_story`, claiming `attachments` for the story in its transaction (kb/ADR-0022 R2).
+    pub async fn edit_story_attaching(
+        &self,
+        c: &Ctx,
+        key: &Key,
+        version: i64,
+        title: Option<String>,
+        description: Option<String>,
+        kind: Option<Kind>,
+        epic: Option<Option<Key>>,
+        criteria: Option<Vec<Criterion>>,
+        owner: Option<Option<String>>,
+        labels: Option<Vec<String>>,
+        rank: Option<i32>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Story, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         let cur = self.ports.stories.get_story(key).await?;
         let title = title.unwrap_or_else(|| cur.title().into());
         check_title(&title)?;
@@ -193,6 +265,8 @@ impl Handlers {
         self.ports
             .stories
             .update_story(&mut tx, &next, rank, version, c.now)
+            .await?;
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Story, key)
             .await?;
         self.activity
             .record(

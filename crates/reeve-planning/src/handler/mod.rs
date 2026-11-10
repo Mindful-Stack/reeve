@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)] // handlers mirror the request shapes; argument structs would only move the count
+mod attachments;
 mod comments;
 mod decisions;
 mod dto;
@@ -15,6 +16,8 @@ mod sprints;
 mod stories;
 mod urgent;
 use crate::ports::*;
+pub use attachments::MAX_CLAIM;
+use attachments::attachment_ids;
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
 pub use dto::{goal_dto, sprint_dto, sprint_view_dto};
@@ -24,6 +27,7 @@ pub use sprints::Sprints;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 pub use urgent::{WarRoomEntry, WarRoomInitiative};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct Ctx {

@@ -31,6 +31,34 @@ impl Handlers {
         owner: Option<String>,
         external_ref: Option<String>,
     ) -> Result<Initiative, HandlerError> {
+        self.create_initiative_attaching(
+            c,
+            idem,
+            title,
+            brief,
+            horizon,
+            target_month,
+            owner,
+            external_ref,
+            &[],
+        )
+        .await
+    }
+
+    /// `create_initiative`, claiming `attachments` for the new initiative in its transaction (kb/ADR-0022 R2).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_initiative_attaching(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        brief: &str,
+        horizon: &str,
+        target_month: Option<String>,
+        owner: Option<String>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Initiative, HandlerError> {
         self.create_initiative_reporting(
             c,
             idem,
@@ -40,6 +68,7 @@ impl Handlers {
             target_month,
             owner,
             external_ref,
+            attachments,
         )
         .await
         .map(|(x, _)| x)
@@ -56,7 +85,9 @@ impl Handlers {
         target_month: Option<String>,
         owner: Option<String>,
         external_ref: Option<String>,
+        attachments: &[Uuid],
     ) -> Result<(Initiative, bool), HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         if let Some(k) = self
             .ports
             .keys
@@ -106,6 +137,8 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Initiative, i.key())
+            .await?;
         self.activity
             .record(
                 &mut tx,
@@ -134,6 +167,37 @@ impl Handlers {
         owner: Option<Option<String>>,
         external_ref: Option<String>,
     ) -> Result<Initiative, HandlerError> {
+        self.edit_initiative_attaching(
+            c,
+            key,
+            version,
+            title,
+            brief,
+            horizon,
+            target_month,
+            owner,
+            external_ref,
+            &[],
+        )
+        .await
+    }
+
+    /// `edit_initiative`, claiming `attachments` for the initiative in its transaction (kb/ADR-0022 R2).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn edit_initiative_attaching(
+        &self,
+        c: &Ctx,
+        key: &Key,
+        version: i64,
+        title: Option<String>,
+        brief: Option<String>,
+        horizon: Option<String>,
+        target_month: Option<Option<String>>,
+        owner: Option<Option<String>>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Initiative, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         let cur = self.ports.initiatives.get_initiative(key).await?;
         let new_horizon = horizon.as_deref().unwrap_or(cur.horizon());
         check_horizon_change(cur.horizon(), new_horizon, &self.settings.horizon_buckets)?;
@@ -168,6 +232,8 @@ impl Handlers {
         self.ports
             .initiatives
             .update_initiative(&mut tx, &next, version, c.now)
+            .await?;
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Initiative, key)
             .await?;
         self.activity
             .record(
