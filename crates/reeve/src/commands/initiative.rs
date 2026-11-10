@@ -144,16 +144,11 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
                 reason,
                 clear,
                 json,
-                |s| &s.key,
-                |s| s.urgent_mark.as_ref().and_then(|m| m.reason.clone()),
-                |s, now| {
-                    crate::render::urgent_answer(
-                        Level::Initiative,
-                        &s.key,
-                        s.urgent_mark.as_ref(),
-                        &s.urgent_sources,
-                        now,
-                    )
+                |s| super::UrgentView {
+                    level: Level::Initiative,
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
                 },
             )
             .await?

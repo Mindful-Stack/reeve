@@ -259,24 +259,14 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             crate::render::story,
         ),
         Story::Urgent { key, reason, clear } => {
-            super::urgent::<StoryDto>(
-                c,
-                format!("/stories/{key}"),
-                reason,
-                clear,
-                json,
-                |s| &s.key,
-                |s| s.urgent_mark.as_ref().and_then(|m| m.reason.clone()),
-                |s, now| {
-                    crate::render::urgent_answer(
-                        Level::of_kind(s.kind),
-                        &s.key,
-                        s.urgent_mark.as_ref(),
-                        &s.urgent_sources,
-                        now,
-                    )
-                },
-            )
+            super::urgent::<StoryDto>(c, format!("/stories/{key}"), reason, clear, json, |s| {
+                super::UrgentView {
+                    level: Level::of_kind(s.kind),
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
+                }
+            })
             .await?
         }
         Story::Show { key } => {

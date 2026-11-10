@@ -123,24 +123,14 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
             crate::render::epic,
         ),
         Epic::Urgent { key, reason, clear } => {
-            super::urgent::<EpicDto>(
-                c,
-                format!("/epics/{key}"),
-                reason,
-                clear,
-                json,
-                |s| &s.key,
-                |s| s.urgent_mark.as_ref().and_then(|m| m.reason.clone()),
-                |s, now| {
-                    crate::render::urgent_answer(
-                        Level::Epic,
-                        &s.key,
-                        s.urgent_mark.as_ref(),
-                        &s.urgent_sources,
-                        now,
-                    )
-                },
-            )
+            super::urgent::<EpicDto>(c, format!("/epics/{key}"), reason, clear, json, |s| {
+                super::UrgentView {
+                    level: Level::Epic,
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
+                }
+            })
             .await?
         }
         Epic::Show { key } => {

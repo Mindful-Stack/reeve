@@ -12,8 +12,9 @@ pub mod sprint;
 pub mod story;
 pub mod war_room;
 use crate::client::{Client, Outcome};
+use crate::glyphs::Level;
 use clap::Subcommand;
-use reeve_protocol::{ErrorCode, Key, MarkUrgent};
+use reeve_protocol::{ErrorCode, ItemRefDto, Key, MarkUrgent, UrgentMarkDto};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -142,32 +143,38 @@ pub async fn whoami(c: &Client) -> anyhow::Result<Result<String, Outcome<()>>> {
     })
 }
 
-/// `urgent` for all three levels, on the item at `item` (`/{initiatives|epics|stories}/{key}`): `--clear` is a bodiless
-/// DELETE of its `/urgent` route and prints one fixed line; otherwise a POST prints `answer`. The reason is trimmed and a
-/// blank one is `null`, as the web sends it; with no `--reason` at all the item is read first and its current reason
-/// (`reason_of`) resent, so marking again keeps it, as the TUI and the web do. A read that is not Ok is the outcome and
-/// nothing is posted. No version is sent either way.
-#[allow(clippy::too_many_arguments)]
+/// What `urgent` reads of an initiative, epic or story: its level and key, its own mark and its urgent sources.
+pub struct UrgentView<'a> {
+    pub level: Level,
+    pub key: &'a Key,
+    pub own: Option<&'a UrgentMarkDto>,
+    pub sources: &'a [ItemRefDto],
+}
+
+/// `urgent` for all three levels, on the item at `item` (`/{initiatives|epics|stories}/{key}`), read through `view`:
+/// `--clear` is a bodiless DELETE of its `/urgent` route and prints one fixed line; otherwise a POST prints the mark
+/// line then the urgent lines (`render::urgent_answer`). The reason is trimmed and a blank one is `null`, as the web
+/// sends it; with no `--reason` at all the item is read first and its own mark's reason resent, so marking again keeps
+/// it, as the TUI and the web do. A read that is not Ok is the outcome and nothing is posted. No version is sent either
+/// way.
 pub async fn urgent<T: Serialize + DeserializeOwned>(
     c: &Client,
     item: String,
     reason: Option<String>,
     clear: bool,
     json: bool,
-    key: impl Fn(&T) -> &Key,
-    reason_of: impl Fn(&T) -> Option<String>,
-    answer: impl Fn(&T, chrono::DateTime<chrono::Utc>) -> String,
+    view: impl Fn(&T) -> UrgentView<'_>,
 ) -> anyhow::Result<i32> {
     let path = format!("{item}/urgent");
     if clear {
         return Ok(finish(c.delete::<T>(&path).await?, json, |v| {
-            format!("urgent mark cleared on {}", key(v))
+            format!("urgent mark cleared on {}", view(v).key)
         }));
     }
     let reason = match reason {
         Some(r) => Some(r),
         None => match c.get::<T>(&item).await? {
-            Outcome::Ok(v) => reason_of(&v),
+            Outcome::Ok(v) => view(&v).own.and_then(|m| m.reason.clone()),
             other => return Ok(finish(other, json, |_| String::new())),
         },
     };
@@ -179,7 +186,10 @@ pub async fn urgent<T: Serialize + DeserializeOwned>(
     // Read the clock after the answer: the server stamps the mark when it handles the POST, so a clock read before it
     // would measure a fresh 14-day mark as just over 14 days and say "expires in 15 d".
     let now = chrono::Utc::now();
-    Ok(finish(out, json, |v| answer(v, now)))
+    Ok(finish(out, json, |v| {
+        let u = view(v);
+        crate::render::urgent_answer(u.level, u.key, u.own, u.sources, now)
+    }))
 }
 
 /// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.
