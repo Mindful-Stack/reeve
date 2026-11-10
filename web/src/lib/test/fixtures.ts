@@ -224,11 +224,11 @@ export function blockedStory(over: Partial<AffectedStory> = {}): AffectedStory {
 	};
 }
 
-/** A queue entry in the blocking group with no stories held and no next step. */
+/** A queue entry in the open group with no stories held and no next step (the server sends `blocking` only with held stories). */
 export function queueEntry(over: Partial<DecisionQueueEntry> = {}): DecisionQueueEntry {
 	return {
 		decision: decision(),
-		group: 'blocking',
+		group: 'open',
 		lane: 'open',
 		needed_in: 'none',
 		needed_in_reason: null,

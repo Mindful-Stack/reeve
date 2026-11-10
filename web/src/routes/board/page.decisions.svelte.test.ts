@@ -5,7 +5,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionQueue, Reason, StoryWithReadiness } from '#lib/api/types.ts';
 import { queueSummary, withReadiness } from '#lib/test/fixtures.ts';
-import { failure, type Call } from '#lib/test/net.ts';
+import { failure, settle, type Call } from '#lib/test/net.ts';
 import Page from './+page.svelte';
 
 vi.mock('$app/state', async () => {
@@ -119,13 +119,17 @@ describe('board decisions', () => {
 
 	it('does not say the counts are stale when the last good summary has no parts', async () => {
 		queue = { entries: [], summary: queueSummary() };
+		const queueReads = () => net.paths.filter((p) => p === '/api/v1/decisions/queue').length;
 		await mounted();
-		await new Promise((r) => setTimeout(r, 30));
+		// The first answer has landed once its request was sent and the microtasks behind it ran.
+		await vi.waitFor(() => expect(queueReads()).toBe(1));
+		await settle();
 		queue = null;
 		live.fns.forEach((f) => f());
-		await vi.waitFor(() => expect(net.paths.filter((p) => p === '/api/v1/decisions/queue')).toHaveLength(2));
-		await new Promise((r) => setTimeout(r, 30));
+		await vi.waitFor(() => expect(queueReads()).toBe(2));
+		await settle();
 		flushSync();
+		expect(queueReads()).toBe(2);
 		expect(q('.queue-note')).toBeNull();
 		expect(q('nav.decision-banner')).toBeNull();
 	});

@@ -7,7 +7,7 @@ import type { DecisionQueueEntry } from '#lib/api/types.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import { today } from '#lib/decisions.ts';
 import { blockedStory, decision, queueEntry } from '#lib/test/fixtures.ts';
-import { failure } from '#lib/test/net.ts';
+import { failure, settle } from '#lib/test/net.ts';
 import DecisionDrawer from './DecisionDrawer.svelte';
 
 vi.mock('$app/state', async () => ({
@@ -368,7 +368,8 @@ describe('DecisionDrawer refresh', () => {
 		// No record: no poll.
 		await open();
 		poll();
-		await new Promise((r) => setTimeout(r, 20));
+		await settle();
+		flushSync();
 		expect(contexts()).toBe(1);
 		unmount(app!);
 		app = null;
@@ -391,7 +392,8 @@ describe('DecisionDrawer refresh', () => {
 			entry({ decision: decision({ id: 7, record: RECORD, closed: { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'withdrawn' } }) })
 		);
 		poll();
-		await new Promise((r) => setTimeout(r, 20));
+		await settle();
+		flushSync();
 		expect(contexts()).toBe(1);
 	});
 
