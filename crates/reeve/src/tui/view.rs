@@ -92,6 +92,9 @@ fn header(s: &State, w: usize) -> String {
     if s.board.filter().ready_only {
         filter.push_str(" · ready");
     }
+    if s.board.filter().urgent_only {
+        filter.push_str(" · urgent");
+    }
     if !s.board.query().is_empty() {
         filter.push_str(&format!(" · \"{}\"", s.board.query()));
     }
@@ -486,6 +489,25 @@ mod tests {
             "{}",
             rows[0]
         );
+    }
+
+    #[test]
+    fn the_header_names_the_ready_and_urgent_filters_after_the_menu_closes() {
+        let mut sim = mine(vec!["ABC-1"]);
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            !rows[0].contains("· ready") && !rows[0].contains("· urgent"),
+            "{}",
+            rows[0]
+        );
+        sim.char('f');
+        sim.char('j');
+        sim.char(' '); // row 1: ready only
+        sim.char('j');
+        sim.char(' '); // row 2: urgent only
+        sim.press(KeyCode::Esc, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        assert!(rows[0].contains("mine · ready · urgent"), "{}", rows[0]);
     }
 
     #[test]
