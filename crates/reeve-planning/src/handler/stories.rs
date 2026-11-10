@@ -5,7 +5,7 @@ use super::*;
 use crate::domain::{items::*, readiness::compute_readiness, urgency::Urgency};
 use reeve_protocol::{
     DeliveryState, DoneFilter, GoalContextDto, GoalRefDto, ItemType, Key, Kind, Readiness,
-    StoryContextDto, StoryDto, StoryWithReadiness,
+    StoryContextDto, StoryDto, StorySort, StoryWithReadiness,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -262,13 +262,37 @@ impl Handlers {
     /// Readiness is computed for every story whatever its delivery state, but `ready_only` means pickable work: ready
     /// stories that are still in todo. One `REPEATABLE READ READ ONLY` snapshot: stories, readiness facts, blockers and
     /// pull requests, in a number of statements that does not depend on the number of stories.
+    /// The story list for `f`, read in one snapshot. Validates first, so a filter that would list nothing is still
+    /// refused when its text or sort is invalid: the text is trimmed and must be 1..=200 characters, and
+    /// `StorySort::Relevance` needs text. The key the text names is derived here (`key_named_by`), whatever the caller
+    /// set. `initiative` narrows `f.epics` to that initiative's epics; `f.urgent` keeps the rows whose computed
+    /// urgency has a source (kb/ADR-0021 R4).
     pub async fn list_stories(
         &self,
         f: &StoryFilter,
+        initiative: Option<&Key>,
         ready_only: bool,
         done: DoneFilter,
         now: DateTime<Utc>,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
+        let mut f = f.clone();
+        if let Some(t) = f.text.take() {
+            let text = t.text.trim();
+            if text.is_empty() || text.chars().count() > 200 {
+                return Err(HandlerError::Validation(
+                    "story text must be 1..=200 characters".into(),
+                ));
+            }
+            f.text = Some(StoryText {
+                key: self.key_named_by(text),
+                text: text.to_string(),
+            });
+        }
+        if f.sort == StorySort::Relevance && f.text.is_none() {
+            return Err(HandlerError::Validation(
+                "sort=relevance needs text (q)".into(),
+            ));
+        }
         let done_window = match done {
             DoneFilter::All => DoneWindow::All,
             // An absurd window reaches before the oldest representable date: list everything rather than panic.
@@ -276,16 +300,36 @@ impl Handlers {
                 .and_then(|window| now.checked_sub_signed(window))
                 .map_or(DoneWindow::All, DoneWindow::Since),
         };
-        let mut f = f.clone();
         f.owner = f.owner.map(|o| reeve_protocol::normalise_email(&o));
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
+            if let Some(i) = initiative {
+                let under: Vec<Key> = self
+                    .ports
+                    .epics
+                    .list_epics_in(&mut tx, Some(i))
+                    .await?
+                    .iter()
+                    .map(|e| e.key().clone())
+                    .collect();
+                f.epics = Some(match f.epics.take() {
+                    Some(given) => given.into_iter().filter(|k| under.contains(k)).collect(),
+                    None => under,
+                });
+            }
             let urg = self.urgency_in(&mut tx, now).await?;
-            self.list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
-                .await
+            let mut out = self
+                .list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
+                .await?;
+            // Urgency is computed once per snapshot (`urgency_in`) and shown on every row; the filter keeps exactly the
+            // rows shown urgent rather than restating kb/ADR-0017 R3 in SQL.
+            if f.urgent {
+                out.retain(|s| !s.story.urgent_sources.is_empty());
+            }
+            Ok(out)
         }
         .await;
         end_read(tx, out).await

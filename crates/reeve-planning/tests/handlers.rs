@@ -676,7 +676,7 @@ async fn owners_are_normalised_on_write_and_on_the_list_filter() {
             ..Default::default()
         };
         let found = h
-            .list_stories(&f, false, DoneFilter::All, Utc::now())
+            .list_stories(&f, None, false, DoneFilter::All, Utc::now())
             .await
             .unwrap();
         assert_eq!(found.len(), 1, "filter {filter:?}");
@@ -1071,7 +1071,13 @@ async fn ready_filter_lists_only_pickable_work() {
     .await
     .unwrap();
     let all = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap();
     assert_eq!(all.len(), 3);
@@ -1080,7 +1086,13 @@ async fn ready_filter_lists_only_pickable_work() {
         "readiness is still computed in every state"
     );
     let ready: Vec<_> = h
-        .list_stories(&StoryFilter::default(), true, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            true,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap()
         .into_iter()
@@ -1466,6 +1478,7 @@ async fn rank_story_renumbers_todo_in_one_write_and_bumps_only_the_moved_story()
                     delivery: Some(DeliveryState::Todo),
                     ..Default::default()
                 },
+                None,
                 false,
                 DoneFilter::All,
                 Utc::now(),
@@ -3139,25 +3152,43 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     let list = || {
         let h = h.clone();
         async move {
-            h.list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
-                .await
-                .unwrap();
+            h.list_stories(
+                &StoryFilter::default(),
+                None,
+                false,
+                DoneFilter::All,
+                Utc::now(),
+            )
+            .await
+            .unwrap();
         }
     };
     list().await; // warm up: prepared statements, catalog caches
     let three = common::statements(&pool, list).await;
     seed_board(&h, "b", 9, 100).await;
     assert_eq!(
-        h.list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
-            .await
-            .unwrap()
-            .len(),
+        h.list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now()
+        )
+        .await
+        .unwrap()
+        .len(),
         12
     );
     let twelve = common::statements(&pool, list).await;
     assert_eq!(three, twelve);
     let board = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap();
     let marked = board.iter().find(|r| r.story.key == keys[1]).unwrap();
@@ -3268,7 +3299,13 @@ async fn list_pairs_each_story_with_its_own_readiness() {
         list.iter().find(|x| &x.story.key == k).unwrap().clone()
     };
     let list = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap();
     assert_ne!(
@@ -3295,7 +3332,13 @@ async fn list_pairs_each_story_with_its_own_readiness() {
     .await
     .unwrap();
     let list = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap();
     let s_row = find(&list, &s);
@@ -3427,8 +3470,14 @@ async fn list_stories_reads_one_snapshot() {
     let call = tokio::spawn({
         let h = h.clone();
         async move {
-            h.list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
-                .await
+            h.list_stories(
+                &StoryFilter::default(),
+                None,
+                false,
+                DoneFilter::All,
+                Utc::now(),
+            )
+            .await
         }
     });
     wait_until_blocked(&pool).await;
@@ -3454,7 +3503,13 @@ async fn list_stories_reads_one_snapshot() {
     assert!(row(&t).readiness.ready);
 
     let after = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, Utc::now())
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
         .await
         .unwrap();
     let row = |k: &reeve_protocol::Key| after.iter().find(|x| &x.story.key == k).unwrap();
@@ -3895,6 +3950,7 @@ async fn list_stories_with_an_absurd_done_window_lists_everything() {
     let all = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             false,
             DoneFilter::Recent,
             Utc::now(),
@@ -5850,7 +5906,7 @@ async fn every_item_dto_carries_its_urgency() {
         sk
     );
     let board = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
         .await
         .unwrap();
     let row = |k: &Key| {
@@ -6127,7 +6183,7 @@ async fn urgency_changes_no_readiness_delivery_or_progress() {
     );
     let facts = || async {
         let board = h
-            .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+            .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
             .await
             .unwrap();
         let stories = board
@@ -6274,7 +6330,7 @@ async fn every_item_read_is_one_transaction_on_one_connection() {
         "story_dto"
     );
     let urgent = h
-        .list_stories(&StoryFilter::default(), false, DoneFilter::All, now)
+        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
         .await
         .unwrap()[0]
         .story
@@ -6297,4 +6353,271 @@ async fn every_item_read_is_one_transaction_on_one_connection() {
         (1, vec![sk]),
         "story_context"
     );
+}
+
+/// A story with no epic and no criteria, created at `c.now`.
+async fn plain_story(h: &Handlers, c: &Ctx, idem: &str, title: &str, epic: Option<&Key>) -> Key {
+    h.create_story(
+        c,
+        idem,
+        title,
+        Kind::Story,
+        epic.cloned(),
+        "",
+        vec![],
+        vec![],
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .key()
+    .clone()
+}
+
+/// The keys of the story list for `f` and `initiative`, every done story included, in order.
+async fn list_keys(
+    h: &Handlers,
+    f: &StoryFilter,
+    initiative: Option<&Key>,
+    now: chrono::DateTime<Utc>,
+) -> Vec<Key> {
+    h.list_stories(f, initiative, false, DoneFilter::All, now)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| s.story.key)
+        .collect()
+}
+
+fn text_filter(t: &str) -> StoryFilter {
+    StoryFilter {
+        text: Some(StoryText {
+            text: t.into(),
+            key: None,
+        }),
+        ..Default::default()
+    }
+}
+
+/// Text is 1..=200 characters after trimming, counted as characters, not bytes; relevance needs text. Validation
+/// runs before the empty-result shortcut of an epic set that names nothing.
+#[tokio::test]
+async fn story_list_validates_text_and_sort() {
+    let (_c, pool) = common::pg().await;
+    let (h, _) = mk(pool);
+    let c = ctx("dan@example.com", false);
+    let s = plain_story(&h, &c, "s", &"é".repeat(200), None).await;
+    let refused = |f: StoryFilter| {
+        let h = &h;
+        async move {
+            let r = h
+                .list_stories(&f, None, false, DoneFilter::All, c.now)
+                .await;
+            assert!(
+                matches!(r, Err(HandlerError::Validation(_))),
+                "{f:?}: {r:?}"
+            );
+        }
+    };
+    refused(text_filter("")).await;
+    refused(text_filter("   ")).await;
+    refused(text_filter(&"a".repeat(201))).await;
+    refused(StoryFilter {
+        epics: Some(vec![]),
+        ..text_filter(" ")
+    })
+    .await;
+    refused(StoryFilter {
+        sort: reeve_protocol::StorySort::Relevance,
+        ..Default::default()
+    })
+    .await;
+    refused(StoryFilter {
+        sort: reeve_protocol::StorySort::Relevance,
+        epics: Some(vec![]),
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(
+        list_keys(&h, &text_filter(&"é".repeat(200)), None, c.now).await,
+        vec![s.clone()],
+        "200 two-byte characters are within the limit"
+    );
+    assert_eq!(
+        list_keys(
+            &h,
+            &StoryFilter {
+                sort: reeve_protocol::StorySort::Relevance,
+                ..text_filter(&format!("  {}  ", "é".repeat(200)))
+            },
+            None,
+            c.now
+        )
+        .await,
+        vec![s],
+        "the text is trimmed before it is counted and matched"
+    );
+}
+
+/// An initiative keeps the stories of its epics; an initiative with no epics keeps none.
+#[tokio::test]
+async fn story_list_initiative_expands_to_its_epics() {
+    let (_c, pool) = common::pg().await;
+    let (h, _) = mk(pool);
+    let c = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let j = h
+        .create_initiative(&c, "j", "J", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let empty = h
+        .create_initiative(&c, "k", "K", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e1 = h
+        .create_epic(&c, "e1", "E1", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let e2 = h
+        .create_epic(&c, "e2", "E2", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let e3 = h
+        .create_epic(&c, "e3", "E3", Some(j.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s1 = plain_story(&h, &c, "s1", "S1", Some(e1.key())).await;
+    let s2 = plain_story(&h, &c, "s2", "S2", Some(e2.key())).await;
+    let s3 = plain_story(&h, &c, "s3", "S3", Some(e3.key())).await;
+    let loose = plain_story(&h, &c, "s4", "S4", None).await;
+    let f = StoryFilter::default();
+    let got = list_keys(&h, &f, Some(i.key()), c.now).await;
+    assert_eq!(got, vec![s1.clone(), s2], "not {s3} nor {loose}");
+    assert_eq!(
+        list_keys(&h, &f, Some(empty.key()), c.now).await,
+        Vec::<Key>::new()
+    );
+    // With an epic set already given, the initiative narrows it.
+    assert_eq!(
+        list_keys(
+            &h,
+            &StoryFilter {
+                epics: Some(vec![e1.key().clone(), e3.key().clone()]),
+                ..Default::default()
+            },
+            Some(i.key()),
+            c.now
+        )
+        .await,
+        vec![s1]
+    );
+}
+
+/// `urgent` keeps exactly the rows shown urgent: a marked initiative's descendants and a directly marked story, not
+/// its unmarked sibling, not a done story with a mark, not a mark past its cycle or exactly at its end.
+#[tokio::test]
+async fn story_list_urgent_selects_the_rows_shown_urgent() {
+    let (_c, pool) = common::pg().await;
+    let (h, _) = mk(pool);
+    let c = ctx("dan@example.com", false);
+    let now = c.now;
+    let cycle = chrono::Duration::days(settings().sprint_length_days.into());
+    let at = |t: chrono::DateTime<Utc>| Ctx {
+        now: t,
+        ..c.clone()
+    };
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let ei = h
+        .create_epic(&c, "ei", "EI", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let e2 = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
+    let a1 = plain_story(&h, &c, "a1", "A1", Some(ei.key())).await;
+    let a2 = plain_story(&h, &c, "a2", "A2", Some(ei.key())).await;
+    let marked = plain_story(&h, &c, "m", "Marked", Some(e2.key())).await;
+    let sibling = plain_story(&h, &c, "sib", "Sibling", Some(e2.key())).await;
+    let done = plain_story(&h, &c, "d", "Done", None).await;
+    let expired = plain_story(&h, &c, "x", "Expired", None).await;
+    let boundary = plain_story(&h, &c, "b", "Boundary", None).await;
+    let calm = plain_story(&h, &c, "p", "Calm", None).await;
+    h.mark_urgent(&c, ItemType::Initiative, i.key(), None)
+        .await
+        .unwrap();
+    h.mark_urgent(&c, ItemType::Story, &marked, None)
+        .await
+        .unwrap();
+    h.mark_urgent(&c, ItemType::Story, &done, None)
+        .await
+        .unwrap();
+    h.mark_urgent(
+        &at(now - cycle - chrono::Duration::seconds(1)),
+        ItemType::Story,
+        &expired,
+        None,
+    )
+    .await
+    .unwrap();
+    h.mark_urgent(&at(now - cycle), ItemType::Story, &boundary, None)
+        .await
+        .unwrap();
+    let v = h.ports.stories.get_story(&done).await.unwrap().version();
+    h.move_story(
+        &c,
+        &done,
+        v,
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let urgent = StoryFilter {
+        urgent: true,
+        ..Default::default()
+    };
+    let got = list_keys(&h, &urgent, None, now).await;
+    let expected = vec![a1, a2, marked];
+    assert_eq!(
+        got, expected,
+        "not {sibling}, {done}, {expired}, {boundary} nor {calm}"
+    );
+    let shown_urgent: Vec<Key> = h
+        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|s| !s.story.urgent_sources.is_empty())
+        .map(|s| s.story.key)
+        .collect();
+    assert_eq!(
+        got, shown_urgent,
+        "the filter agrees with the rows the response shows urgent"
+    );
+}
+
+/// A bare number or `#n` names story n, which the list finds though no field of it contains the text.
+#[tokio::test]
+async fn story_list_text_names_a_key() {
+    let (_c, pool) = common::pg().await;
+    let (h, _) = mk(pool);
+    let c = ctx("dan@example.com", false);
+    let _one = plain_story(&h, &c, "1", "First", None).await;
+    let _two = plain_story(&h, &c, "2", "Second", None).await;
+    let three = plain_story(&h, &c, "3", "Third", None).await;
+    assert_eq!(three.to_string(), "ABC-3");
+    for t in ["#3", "3", "abc-3"] {
+        assert_eq!(
+            list_keys(&h, &text_filter(t), None, c.now).await,
+            vec![three.clone()],
+            "{t}"
+        );
+    }
 }

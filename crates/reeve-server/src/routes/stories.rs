@@ -81,7 +81,7 @@ async fn list(
     };
     Ok(ok(s
         .handlers
-        .list_stories(&f, q.ready, q.done, c.ctx().now)
+        .list_stories(&f, None, q.ready, q.done, c.ctx().now)
         .await?))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]

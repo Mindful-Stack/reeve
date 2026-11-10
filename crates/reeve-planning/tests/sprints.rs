@@ -1712,7 +1712,7 @@ mod views {
         let list = |f: StoryFilter| {
             let h = h.clone();
             async move {
-                h.list_stories(&f, false, reeve_protocol::DoneFilter::All, at(3, 18))
+                h.list_stories(&f, None, false, reeve_protocol::DoneFilter::All, at(3, 18))
                     .await
                     .unwrap()
             }
@@ -1809,7 +1809,7 @@ mod views {
             let h = h.clone();
             async move {
                 let mut k: Vec<_> = h
-                    .list_stories(&f, ready, reeve_protocol::DoneFilter::All, at(3, 18))
+                    .list_stories(&f, None, ready, reeve_protocol::DoneFilter::All, at(3, 18))
                     .await
                     .unwrap()
                     .into_iter()
@@ -2469,6 +2469,7 @@ mod views {
             async move {
                 h.list_stories(
                     &StoryFilter::default(),
+                    None,
                     false,
                     reeve_protocol::DoneFilter::All,
                     at(4, 0),
@@ -2486,6 +2487,7 @@ mod views {
         let all = h
             .list_stories(
                 &StoryFilter::default(),
+                None,
                 false,
                 reeve_protocol::DoneFilter::All,
                 at(4, 0),

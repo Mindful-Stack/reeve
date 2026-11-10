@@ -60,7 +60,7 @@ impl Handlers {
 
     /// The key a query names: a bare number or `#n` under the current prefix, or a key in any case (`abc-12`, an
     /// earlier prefix's `old-3`).
-    fn key_named_by(&self, q: &str) -> Option<Key> {
+    pub(super) fn key_named_by(&self, q: &str) -> Option<Key> {
         let n = q.strip_prefix('#').unwrap_or(q);
         if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
             return format!("{}-{n}", self.settings.key_prefix).parse().ok();
