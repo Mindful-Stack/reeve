@@ -4,9 +4,9 @@
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import { levelOfItem } from '#lib/glyphs.ts';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import type { AffectedStory, ClosureKind, Comment, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-	import { fullLabel } from '#lib/board.ts';
-	import { closeActions, dateLine, decisionStatus, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
+	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
+	import { closeActions, dateLine, decisionStatus, neededInText, neededLabel, nextStepText, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
@@ -27,6 +27,9 @@
 
 	let {
 		decisions,
+		entries,
+		expandAll = false,
+		decisionHref,
 		itemHref,
 		onchanged,
 		poll = true,
@@ -44,6 +47,14 @@
 		/** The stories each decision keeps out of active work, by decision id (the queue's `blocks`). A decision missing
 		 *  from the map shows no blocks line, so a view without the queue (the drawers, the item pages) passes none. */
 		blocks?: ReadonlyMap<number, AffectedStory[]>;
+		/** The queue's entry for each decision, by id. A row with an entry shows its next step, when it is needed and the work it
+		 *  holds ("Holds N · M under way"); a row without one shows none of these. */
+		entries?: ReadonlyMap<number, DecisionQueueEntry>;
+		/** Every row starts with its discussion open and loaded (the decision drawer). Each id opens once: a discussion the
+		 *  user collapsed stays collapsed through refetches. */
+		expandAll?: boolean;
+		/** Where a decision opens in the drawer; when absent (in the drawer itself) the title is plain text. */
+		decisionHref?: (id: number) => string;
 		/** Where the item a decision blocks opens; when absent (on the item's own page) the item column is left out. */
 		itemHref?: (key: string) => string;
 		/** Reloads the list: after a decision changed (closed, or a conflict), and every two minutes while visible. */
@@ -209,7 +220,7 @@
 
 	/** The PR link of a proposed record, only when http(s): plain text otherwise, so a stored `javascript:` url never runs. */
 	function prHref(d: RequiredDecision): string | null {
-		return d.check.kind === 'proposed_pr_open' && d.pr_url ? safePrUrl(d.pr_url) : null;
+		return (d.check.kind === 'proposed_pr_open' || d.check.kind === 'unchecked') && d.pr_url ? safePrUrl(d.pr_url) : null;
 	}
 
 	/** One idempotency key per comment being written; `draftKey` keeps it across retries of the same text only. */
@@ -256,6 +267,21 @@
 		// Prune ids whose row left the list (e.g. a decision closed while closed ones are hidden): no refetch for them.
 		pruneExpanded(expanded, decisions);
 		for (const id of expanded) void loadThread(id);
+	});
+
+	/** The ids `expandAll` already opened: each opens once, so a discussion the user collapsed is not reopened by a refetch. */
+	const autoExpanded = new Set<number>();
+	$effect(() => {
+		if (!expandAll) return;
+		const ids = decisions.map((d) => d.id);
+		untrack(() => {
+			for (const id of ids) {
+				if (autoExpanded.has(id)) continue;
+				autoExpanded.add(id);
+				expanded.add(id);
+				void loadThread(id);
+			}
+		});
 	});
 
 	async function post(e: SubmitEvent, id: number) {
@@ -306,7 +332,7 @@
 	const blocksOpen = new SvelteSet<number>();
 
 	function blockedOf(d: RequiredDecision): AffectedStory[] {
-		return blocks?.get(d.id) ?? [];
+		return blocks?.get(d.id) ?? entries?.get(d.id)?.blocks ?? [];
 	}
 
 	function stories(n: number): string {
@@ -577,11 +603,15 @@
 	{@const tone = d.closed ? 'muted' : d.check.kind === 'accepted' ? 'ready' : 'warn'}
 	{@const when = dateLine(d, now)}
 	{@const blocked = blockedOf(d)}
+	{@const entry = entries?.get(d.id)}
+	{@const underWay = entry?.under_way ?? []}
+	{@const work = blocked.length + underWay.length > 0}
+	{@const holds = entry ? `Holds ${blocked.length}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
 		<div class="row">
-			<span class="cell headline" data-col="title"><span class="title">{d.title}</span>{@render chip(d)}</span>
+			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
 			<span class="cell decider" data-col="decider" title={d.closed ? undefined : d.decider}>{#if !d.closed}{short(d.decider)}<span class="visually-hidden">{' decides'}</span>{/if}</span>
 			<span class="cell when" data-col="when"
 				>{#if !d.closed}<span class={when.tone}>{when.text}</span>
@@ -597,15 +627,15 @@
 					{/if}{/if}</span
 			>
 			<span class="cell blocks-line" data-col="blocks"
-				>{#if blocked.length}<button
+				>{#if work}<button
 						type="button"
 						class="ghost inline"
 						data-field="blocks"
-						aria-label="Blocks {stories(blocked.length)}: {d.title}"
+						aria-label="{holds}: {d.title}"
 						aria-expanded={blocksOpen.has(d.id)}
 						aria-controls={blocksOpen.has(d.id) ? `${uid}-${d.id}-blocked` : undefined}
 						onclick={() => (blocksOpen.has(d.id) ? blocksOpen.delete(d.id) : blocksOpen.add(d.id))}
-						>Blocks {stories(blocked.length)} <span aria-hidden="true">{blocksOpen.has(d.id) ? '▾' : '▸'}</span></button
+						>{holds} <span aria-hidden="true">{blocksOpen.has(d.id) ? '▾' : '▸'}</span></button
 					>{/if}</span
 			>
 			<span class="cell on" data-col="on"
@@ -633,9 +663,27 @@
 			>
 		</div>
 
-		{#if d.closed || errors[d.id] || (edits[d.id] && !edits[d.id].inline) || closing[d.id] || expanded.has(d.id) || (blocked.length && blocksOpen.has(d.id)) || mismatch}
+		{#if entry && !d.closed}
+			{@const next = entry.next_step}
+			{@const reason = entry.needed_in_reason}
+			{#if next || entry.needed_in !== 'none'}
+				<div class="lines">
+					{#if entry.needed_in !== 'none'}
+						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}{neededInText(reason)}{/if}</p>
+					{/if}
+					{#if next}
+						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
+						<p class="next-step" data-testid="next-step">
+							{#if link}<a href={link} data-field="next-pr" target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility, minuteClock.now)}</a>{:else}{nextStepText(next, d.reversibility, minuteClock.now)}{/if}
+						</p>
+					{/if}
+				</div>
+			{/if}
+		{/if}
+
+		{#if d.closed || errors[d.id] || (edits[d.id] && !edits[d.id].inline) || closing[d.id] || expanded.has(d.id) || (work && blocksOpen.has(d.id)) || mismatch}
 			<div class="body">
-				{#if blocked.length && blocksOpen.has(d.id)}
+				{#if work && blocksOpen.has(d.id)}
 					<ul class="blocked" id="{uid}-{d.id}-blocked">
 						{#each blocked as s (s.key)}
 							<li>
@@ -644,6 +692,16 @@
 								{:else}
 									{@render story(s)}
 								{/if}
+							</li>
+						{/each}
+						{#each underWay as s (s.key)}
+							<li class="under-way">
+								{#if itemHref}
+									<a data-field="blocked-{s.key}" href={itemHref(s.key)}>{@render story(s)}</a>
+								{:else}
+									{@render story(s)}
+								{/if}
+								<span class="muted">· {COLUMN_LABEL[s.delivery]}, under way</span>
 							</li>
 						{/each}
 					</ul>
@@ -744,8 +802,9 @@
 				{#if expanded.has(d.id)}
 					<section class="discussion-panel" id="{uid}-{d.id}-discussion" aria-label="Discussion of {d.title}">
 						{#if d.record}
+							{@const url = d.record.browse_url ? safePrUrl(d.record.browse_url) : null}
 							<p class="record-line">
-								<span class="record" title={d.record.record_id}>{d.record.repo}/{d.record.path}</span>
+								{#if url}<a class="record" href={url} data-field="record" target="_blank" rel="noopener noreferrer" title={d.record.record_id}>{d.record.repo}/{d.record.path}</a>{:else}<span class="record" title={d.record.record_id}>{d.record.repo}/{d.record.path}</span>{/if}
 								{#if d.checked_at}
 									· <time class="checked" datetime={d.checked_at} title={new Date(d.checked_at).toLocaleString()}>checked {age(d.checked_at, minuteClock.now)} ago</time>
 								{/if}
@@ -891,7 +950,8 @@
 		.cell.actions {
 			order: 0;
 		}
-		.body {
+		.body,
+		.lines {
 			flex-basis: 100%;
 			order: 2;
 		}
@@ -971,6 +1031,17 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--muted);
+	}
+	.lines {
+		display: grid;
+		grid-column: 1 / -1;
+		gap: 2px;
+		padding: 2px 0;
+		font-size: 14px;
+		color: var(--muted);
+	}
+	.lines p {
+		margin: 0;
 	}
 	.discussion-panel {
 		display: grid;

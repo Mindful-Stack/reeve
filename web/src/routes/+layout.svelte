@@ -19,6 +19,8 @@
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
+	import DecisionDrawer from '#lib/components/DecisionDrawer.svelte';
+	import { storyHref } from '#lib/drawer.ts';
 	import Logo from '#lib/components/Logo.svelte';
 	import GoalPicker from '#lib/components/GoalPicker.svelte';
 	import type { LayoutProps } from './$types';
@@ -54,9 +56,17 @@
 
 	/** `?story=KEY` opens the story drawer over whatever view is showing. */
 	const drawerKey = $derived(page.url.searchParams.get('story'));
+	/** `?decision=ID` opens the decision drawer the same way. The two are mutually exclusive (links drop the other, see
+	 *  #lib/drawer.ts); a URL with both shows the story. Anything but a positive whole number opens nothing. */
+	const drawerDecision = $derived.by(() => {
+		const raw = page.url.searchParams.get('decision');
+		return raw !== null && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+	});
+	/** The URL names a drawer, whichever. */
+	const hasDrawer = (u: URL) => u.searchParams.has('story') || u.searchParams.has('decision');
 
 	// Focus returns to whatever opened the drawer (a card's title link, a row's title) when it closes. Moving from one
-	// story to another (a blocker link) remounts the drawer but keeps the first opener. Captured in onNavigate: the
+	// story to another (a blocker link), or between a decision and a story, remounts the drawer but keeps the first opener. Captured in onNavigate: the
 	// router's default focus reset blurs the clicked link after these callbacks and before `page.url` changes, so an
 	// effect on the URL would only see `body`. Restored once the drawer is gone, and only when focus went with it (focus
 	// the user moved elsewhere is theirs). A drawer opened by loading its URL has no opener.
@@ -67,7 +77,7 @@
 			notice = null;
 			restoredNotice = false;
 		}
-		if (!to?.url.searchParams.has('story') || from?.url.searchParams.has('story')) return;
+		if (!to || !hasDrawer(to.url) || (from && hasDrawer(from.url))) return;
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
 	});
@@ -75,6 +85,7 @@
 		const strip = (u: URL) => {
 			const c = new URL(u.href);
 			c.searchParams.delete('story');
+			c.searchParams.delete('decision');
 			c.hash = '';
 			return c.href;
 		};
@@ -85,7 +96,7 @@
 	let reportButton: HTMLButtonElement | undefined = $state();
 	let drawerWasOpen = false;
 	$effect.pre(() => {
-		const open = drawerKey !== null;
+		const open = drawerKey !== null || drawerDecision !== null;
 		if (!open && drawerWasOpen) {
 			const o = opener;
 			opener = null;
@@ -102,6 +113,7 @@
 	function closeDrawer() {
 		const url = new URL(page.url.href);
 		url.searchParams.delete('story');
+		url.searchParams.delete('decision');
 		goto(url, { replace: true, reset: false });
 	}
 
@@ -143,9 +155,7 @@
 	let restoredFor: string | null = null;
 	const noticeHref = $derived.by(() => {
 		if (!notice) return '';
-		const url = new URL(page.url.href);
-		url.searchParams.set('story', notice.story.key);
-		return url.pathname + url.search;
+		return storyHref(page.url, notice.story.key);
 	});
 
 	let opening = $state(false);
@@ -177,9 +187,7 @@
 	}
 
 	function viewStory(k: string) {
-		const url = new URL(page.url.href);
-		url.searchParams.set('story', k);
-		goto(url, { reset: false });
+		goto(new URL(storyHref(page.url, k), page.url.href), { reset: false });
 	}
 
 	// Sign-in: bring back this tab's draft once per account; then keep it saved while it changes. Declared in this
@@ -258,6 +266,10 @@
 		{#if drawerKey}
 			{#key drawerKey}
 				<StoryDrawer storyKey={drawerKey} onclose={closeDrawer} />
+			{/key}
+		{:else if drawerDecision}
+			{#key drawerDecision}
+				<DecisionDrawer decisionId={drawerDecision} onclose={closeDrawer} />
 			{/key}
 		{/if}
 	{:catch e}

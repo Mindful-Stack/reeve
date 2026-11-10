@@ -6,7 +6,9 @@
 import { flushSync, mount, unmount, type Component } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '#lib/me.svelte.ts';
+import DecisionDrawer from '#lib/components/DecisionDrawer.svelte';
 import StoryDrawer from '#lib/components/StoryDrawer.svelte';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import { activity, config, decision, epic, initiative, me, queueEntry, queueSummary, story, withReadiness } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Planning from './+page.svelte';
@@ -88,6 +90,11 @@ held.reply = (path, query, mark) => {
 			return []; // the planning page's strip
 		case '/api/v1/sprints':
 			return { active: null, closed: [], draft: null };
+		case '/api/v1/decisions/7/context':
+			// The decision drawer reads one queue entry.
+			return queueEntry({ decision: decision({ id: 7, on: 'K-1', title: `${mark} decision` }) });
+		case '/api/v1/decisions/7/comments':
+			return [];
 		case '/api/v1/decisions/queue':
 			// The decisions page reads the queue.
 			return {
@@ -110,6 +117,7 @@ afterEach(() => {
 	held.pending.length = 0;
 	held.auto = null;
 	route.fake!.reset();
+	resetDecisionDraftsForTests();
 });
 
 /** Lets every request a round starts reach `fetch` (openapi-fetch awaits before calling it). */
@@ -168,5 +176,6 @@ describe('a late answer to an older reload is dropped', () => {
 	it('on the decisions page', () => keepsNewest(Decisions));
 	it('on the board', () => keepsNewest(Board));
 	it('on the activity page', () => keepsNewest(Activity));
+	it('in the decision drawer', () => keepsNewest(DecisionDrawer, { decisionId: 7, onclose: () => {} }));
 	it('in the story drawer', () => keepsNewest(StoryDrawer, { storyKey: 'K-1', onclose: () => {} }, drawerShown));
 });
