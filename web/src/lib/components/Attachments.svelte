@@ -8,10 +8,14 @@
 	import type { AttachmentDto } from '#lib/api/types.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
+	import Notice from '#lib/ui/Notice.svelte';
 
 	let { itemKey }: { itemKey: string } = $props();
 
 	let list = $state<AttachmentDto[]>([]);
+	/** The list belongs to this key; another item's never counts as removed from this one. */
+	let listKey = '';
+	let loadError = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 	let root = $state<HTMLElement | null>(null);
@@ -19,19 +23,24 @@
 	const removed = (id: string) => window.dispatchEvent(new CustomEvent('reeve:attachment-removed', { detail: { id } }));
 
 	async function load() {
+		const key = itemKey;
 		try {
-			const next = await unwrap(api.GET('/api/v1/items/{key}/attachments', { params: { path: { key: itemKey } } }));
+			const next = await unwrap(api.GET('/api/v1/items/{key}/attachments', { params: { path: { key } } }));
+			if (key !== itemKey) return; // an answer for an item no longer shown
 			// One deleted elsewhere (seen on the stream): its rendered images change too.
-			for (const a of list) if (!next.some((n) => n.id === a.id)) removed(a.id);
+			if (listKey === key) for (const a of list) if (!next.some((n) => n.id === a.id)) removed(a.id);
 			list = next;
-			error = null;
+			listKey = key;
+			loadError = null;
 		} catch (e) {
-			error = errorMessage(e);
+			if (key === itemKey) loadError = errorMessage(e);
 		}
 	}
 
 	$effect(() => {
 		void itemKey;
+		list = [];
+		listKey = '';
 		void load();
 	});
 	onLive(load);
@@ -40,6 +49,8 @@
 		if (busy) return;
 		if (!confirm(`Delete ${a.filename}? It disappears wherever it is shown, and cannot be restored.`)) return;
 		busy = true;
+		// Taken before the delete: with the last one gone, the disclosure itself leaves the page.
+		const heading = root?.closest('section')?.querySelector<HTMLElement>('h2, h3') ?? null;
 		try {
 			await unwrap(api.DELETE('/api/v1/attachments/{id}', { params: { path: { id: a.id } } }));
 			list = list.filter((x) => x.id !== a.id);
@@ -50,9 +61,13 @@
 			await tick();
 			const buttons = root?.querySelectorAll<HTMLButtonElement>('button.delete');
 			const next = buttons?.[Math.min(index, buttons.length - 1)];
-			(next ?? root?.querySelector<HTMLElement>('summary'))?.focus();
+			if (next) next.focus();
+			else if (heading) {
+				heading.tabIndex = -1;
+				heading.focus();
+			}
 		} catch (e) {
-			error = errorMessage(e);
+			error = `Could not delete ${a.filename}: ${errorMessage(e)}`;
 		} finally {
 			busy = false;
 		}
@@ -65,8 +80,8 @@
 		<ul>
 			{#each list as a, i (a.id)}
 				<li>
-					<a href={a.url} target="_blank" rel="noopener noreferrer" class="thumb"
-						><img src={a.url} alt={a.filename} loading="lazy" decoding="async" /></a
+					<a href={a.url} target="_blank" rel="noopener noreferrer" class="thumb" tabindex="-1" aria-hidden="true"
+						><img src={a.url} alt="" loading="lazy" decoding="async" /></a
 					>
 					<a href={a.url} target="_blank" rel="noopener noreferrer" class="name">{a.filename}</a>
 					<span class="muted"><span title={a.uploaded_by}>{short(a.uploaded_by)}</span> · {age(a.uploaded_at)}</span>
@@ -78,8 +93,9 @@
 		</ul>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 	</details>
-{:else if error}
-	<p class="error" role="alert">Could not load attachments: {error}</p>
+{/if}
+{#if loadError}
+	<Notice tone="error" onretry={load} ondismiss={() => (loadError = null)}>Could not load attachments: {loadError}</Notice>
 {/if}
 
 <style>
@@ -100,7 +116,7 @@
 	}
 	li {
 		display: grid;
-		grid-template-columns: 3rem 1fr auto auto;
+		grid-template-columns: 3rem minmax(0, 1fr) auto auto;
 		gap: 0.5rem;
 		align-items: center;
 	}

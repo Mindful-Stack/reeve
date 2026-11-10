@@ -198,6 +198,7 @@
 		if (busy) return; // a pending create keeps its dialog: its completion navigates or shows the error here
 		creating = false;
 		createError = null;
+		uploads.reset();
 		void tick().then(() => newButton?.focus());
 	}
 

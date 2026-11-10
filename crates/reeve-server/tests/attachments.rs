@@ -265,6 +265,14 @@ mod attachments {
         assert_eq!(again.headers()["cache-control"], "private, no-cache");
         assert_eq!(again.headers()["etag"], tag.as_str());
         assert!(bytes_of(again).await.is_empty());
+        // A weakened tag (a proxy may add W/) and a wildcard match too.
+        assert_eq!(
+            get(&h, &h.admin_token, &id, Some(&format!("W/{tag}")))
+                .await
+                .status(),
+            304
+        );
+        assert_eq!(get(&h, &h.admin_token, &id, Some("*")).await.status(), 304);
 
         // Disabled: refused on the next request, conditional or not.
         let (s, _) = call(
@@ -387,5 +395,47 @@ mod attachments {
             bytes.len().to_string().as_str()
         );
         assert_eq!(bytes_of(res).await, bytes);
+    }
+
+    #[tokio::test]
+    async fn an_empty_idempotency_key_is_no_key() {
+        let h = harness().await;
+        let first = call_raw(
+            &h.app,
+            upload_req(
+                &h.admin_token,
+                "a.png",
+                Some(""),
+                Body::from(png(4, 4, false)),
+            ),
+        )
+        .await;
+        let second = call_raw(
+            &h.app,
+            upload_req(
+                &h.admin_token,
+                "b.png",
+                Some(""),
+                Body::from(png(5, 5, false)),
+            ),
+        )
+        .await;
+        let (a, b) = (body_json(first).await, body_json(second).await);
+        assert_ne!(
+            a["value"]["id"], b["value"]["id"],
+            "two uploads with an empty key were merged"
+        );
+        let long = "k".repeat(201);
+        let res = call_raw(
+            &h.app,
+            upload_req(
+                &h.admin_token,
+                "c.png",
+                Some(&long),
+                Body::from(png(4, 4, false)),
+            ),
+        )
+        .await;
+        assert_eq!(res.status(), 400);
     }
 }

@@ -351,3 +351,95 @@ fn an_upright_orientation_leaves_no_exif_at_all() {
     let out = strip_metadata(ImageType::Jpeg, j.encoder().bytes()).unwrap();
     assert!(Jpeg::from_bytes(out).unwrap().exif().is_none());
 }
+
+/// A JPEG segment: marker and payload, with its length.
+fn segment(marker: u8, payload: &[u8]) -> Vec<u8> {
+    let mut v = vec![0xFF, marker];
+    v.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    v.extend_from_slice(payload);
+    v
+}
+
+#[test]
+fn jpeg_metadata_after_the_scan_and_unknown_carriers_go_and_a_stray_end_marker_does_not_cut_the_image()
+ {
+    let clean = encode(ImageFormat::Jpeg);
+    let eoi = clean.len() - 2;
+    assert_eq!(&clean[eoi..], &[0xFF, 0xD9]);
+    let mut b = clean[..2].to_vec();
+    // Before the frame: a JFXX thumbnail and a C2PA/JUMBF manifest (APP11).
+    b.extend(segment(0xE0, b"JFXX\0secret thumbnail"));
+    b.extend(segment(0xEB, b"JP\0\0jumbf TestPhone"));
+    b.extend_from_slice(&clean[2..eoi]);
+    // After the scan, before the end: what a progressive file may carry between scans, one segment holding FF D9.
+    b.extend(segment(0xE1, b"Exif\0\0MM\0*TestPhone"));
+    b.extend(segment(0xFE, b"secret comment"));
+    b.extend(segment(
+        0xEF,
+        &[b's', b'e', b'c', b'r', b'e', b't', 0xFF, 0xD9, 1, 2],
+    ));
+    b.extend_from_slice(&[0xFF, 0xD9]);
+    b.extend_from_slice(b"secret trailer");
+    let out = strip_metadata(ImageType::Jpeg, Bytes::from(b)).unwrap();
+    assert_nothing_planted(&out);
+    for (m, _) in jpeg_segments(&out) {
+        assert!(
+            matches!(m, 0xC0..=0xCF | 0xDA..=0xDD | 0xE0 | 0xE2 | 0xEE),
+            "marker {m:#x} kept"
+        );
+    }
+    assert!(out.ends_with(&[0xFF, 0xD9]));
+    assert_eq!(
+        payload(ImageType::Jpeg, &out),
+        payload(ImageType::Jpeg, &clean),
+        "image data changed"
+    );
+    assert_eq!(pixels(&out), pixels(&clean));
+}
+
+#[test]
+fn png_and_webp_keep_only_what_draws_the_image() {
+    let mut p = Png::from_bytes(encode(ImageFormat::Png)).unwrap();
+    for (k, v) in [
+        (*b"tIME", &b"\x07\xea\x0b\x0a\x09\0\0"[..]),
+        (*b"caBX", b"c2pa TestPhone"),
+        (*b"prVt", b"secret"),
+    ] {
+        p.chunks_mut()
+            .insert(1, PngChunk::new(k, Bytes::copy_from_slice(v)));
+    }
+    let out = strip_metadata(ImageType::Png, p.encoder().bytes()).unwrap();
+    let kinds = png_chunks(&out);
+    for k in [b"tIME", b"caBX", b"prVt"] {
+        assert!(!kinds.contains(k), "{k:?} left");
+    }
+    assert_nothing_planted(&out);
+
+    use img_parts::riff::{RiffChunk, RiffContent};
+    let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+    w.chunks_mut().push(RiffChunk::new(
+        *b"abcd",
+        RiffContent::Data(Bytes::from_static(b"secret")),
+    ));
+    let out = strip_metadata(ImageType::Webp, w.encoder().bytes()).unwrap();
+    assert!(!webp_chunks(&out).0.contains(b"abcd"));
+    assert_nothing_planted(&out);
+    assert_eq!(pixels(&out), pixels(&encode(ImageFormat::WebP)));
+}
+
+#[test]
+fn a_container_with_no_image_in_it_is_unreadable() {
+    for (t, b) in [
+        (ImageType::Jpeg, &[0xFF, 0xD8, 0xFF, 0xD9][..]),
+        (
+            ImageType::Jpeg,
+            &[0xFF, 0xD8, 0xFF, 0xDB, 0x00, 0x04, 0, 0][..],
+        ),
+        (ImageType::Png, b"\x89PNG\r\n\x1a\n"),
+    ] {
+        assert!(
+            strip_metadata(t, Bytes::copy_from_slice(b)).is_err(),
+            "{t:?} {b:?}"
+        );
+    }
+}

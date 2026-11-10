@@ -109,7 +109,8 @@ The web client keeps one server-sent-events stream open per tab (`/api/v1/events
 with `listen 443 ssl; http2 on;` and `client_max_body_size 11m;` in the server block. The server accepts images up to
 10 MiB on `POST /api/v1/attachments` (kb/ADR-0023), and nginx refuses bodies over 1 MB by default: a proxy limit below
 the server's makes a screenshot upload fail with nginx's own 413 page instead of the server's message. Caddy sets no
-body limit by default. Caddy's `reverse_proxy` streams server-sent events without buffering by default (no `flush_interval -1` needed) and serves HTTP/2 over TLS out of the box:
+body limit by default. An upload's filename and idempotency key travel in its query string, so they reach the
+proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy` streams server-sent events without buffering by default (no `flush_interval -1` needed) and serves HTTP/2 over TLS out of the box:
 
     planner.example.com {
         reverse_proxy 127.0.0.1:7474

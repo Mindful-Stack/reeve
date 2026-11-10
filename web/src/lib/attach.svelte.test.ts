@@ -89,7 +89,9 @@ describe('ImageUploads', () => {
 		const second = deferred('two');
 		u.add([file('image.png'), file('image.png')], el);
 		const names = u.pending.map((p) => p.name);
-		expect(names[0]).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}-\d{4}\.png$/);
+		expect(names[0]).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}-\d{6}\.png$/);
+		// Two clipboard images in the same second keep apart names.
+		expect(names[1]).toBe(names[0].replace('.png', '-2.png'));
 		second();
 		await until(() => model.includes('/two)'));
 		first();
@@ -138,6 +140,37 @@ describe('ImageUploads', () => {
 		expect(u.ids()).toEqual(['untyped']);
 	});
 
+	it('takes a removed image out of the text, and focuses nothing it should not', async () => {
+		const release = deferred('rm');
+		u.add([file('shot.png')], el);
+		release();
+		await until(() => !u.busy);
+		expect(model).toBe('![shot](/api/v1/attachments/rm)');
+		u.remove(u.pending[0]);
+		expect(model).toBe('');
+		expect(u.ids()).toEqual([]);
+		expect(net.calls.some((c) => c.method === 'DELETE')).toBe(false);
+	});
+
+	it('claims an image moved here from another field', async () => {
+		const release = deferred('moved');
+		u.add([file('shot.png')], el);
+		release();
+		await until(() => !u.busy);
+		let other = '';
+		const elsewhere = new ImageUploads(() => other, (t) => (other = t));
+		other = model;
+		expect(elsewhere.ids()).toEqual(['moved']);
+	});
+
+	it('ends an insertion on a line of its own', () => {
+		deferred('mid');
+		el.value = model = 'foobar';
+		el.selectionStart = el.selectionEnd = 3;
+		u.add([file('shot.png')], el);
+		expect(model).toMatch(/^foo\n!\[Uploading shot… ‹u\d+›\]\(\)\nbar$/);
+	});
+
 	it('forgets everything on reset and never deletes', async () => {
 		const release = deferred('r');
 		u.add([file('shot.png')], el);
@@ -160,16 +193,22 @@ describe('ImageUploads', () => {
 });
 
 describe('attachable', () => {
-	it('handles an image-only paste and leaves a text paste to the browser', () => {
+	it('handles an image-only paste and a copied file, and leaves a rich text paste to the browser', () => {
 		deferred('p');
 		const image = pasteEvent([file('image.png')]);
 		el.dispatchEvent(image);
 		expect(image.defaultPrevented).toBe(true);
 		expect(u.pending).toHaveLength(1);
-		const rich = pasteEvent([file('image.png')], { text: true });
+		const rich = pasteEvent([file('image.png')], { text: true, html: true });
 		el.dispatchEvent(rich);
 		expect(rich.defaultPrevented).toBe(false);
 		expect(u.pending).toHaveLength(1);
+		// A file copied in a file manager brings its name as plain text, and no HTML: it is the image.
+		deferred('q');
+		const copied = pasteEvent([file('shot.png')], { text: true });
+		el.dispatchEvent(copied);
+		expect(copied.defaultPrevented).toBe(true);
+		expect(u.pending).toHaveLength(2);
 	});
 
 	it('takes a file drop, refusing a non-image with its message, and marks the drop target', () => {
@@ -198,7 +237,7 @@ describe('attachable', () => {
 
 describe('helpers', () => {
 	it('names clipboard images by time and escapes alt text', () => {
-		expect(nameFor(file('image.png'), new Date(2026, 10, 10, 14, 32))).toBe('screenshot-2026-11-10-1432.png');
+		expect(nameFor(file('image.png'), new Date(2026, 10, 10, 14, 32, 5))).toBe('screenshot-2026-11-10-143205.png');
 		expect(nameFor(file('mine.png'))).toBe('mine.png');
 		expect(altFor('a[1]\\b.png')).toBe('a\\[1\\]\\\\b');
 	});

@@ -155,10 +155,11 @@ impl Handlers {
         idem: Option<&str>,
         attachments: &[Uuid],
     ) -> Result<i64, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         let entity = match item {
             ItemType::Story => {
                 return self
-                    .comment_story_attaching(c, on, body, idem, attachments)
+                    .comment_story_attaching(c, on, body, idem, &attachments)
                     .await;
             }
             ItemType::Initiative => {
@@ -183,7 +184,6 @@ impl Handlers {
             tx.rollback().await?;
             return Ok(id);
         }
-        let attachments = attachment_ids(attachments)?;
         self.claim_attachments(&mut tx, c, &attachments, item, on)
             .await?;
         self.activity

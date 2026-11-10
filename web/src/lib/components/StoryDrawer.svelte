@@ -421,13 +421,18 @@
 	}
 
 	function startDescription() {
+		descriptionUploads.reset();
 		description = story?.description ?? '';
 		descriptionBase = { version: story?.version ?? 0, text: story?.description ?? '' };
 		editingDescription = true;
 		focusEditor('description', true);
 	}
 
-	const stopDescription = () => leave('description', () => (editingDescription = false));
+	const stopDescription = () =>
+		leave('description', () => {
+			editingDescription = false;
+			descriptionUploads.reset();
+		});
 
 	async function saveDescription(e: SubmitEvent) {
 		e.preventDefault();

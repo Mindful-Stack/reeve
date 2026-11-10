@@ -6,9 +6,10 @@ function transfer(files: File[], types: string[]) {
 	return { files, types: [...types, ...(files.length ? ['Files'] : [])], getData: () => '' };
 }
 
-export function pasteEvent(files: File[], { text = false } = {}): Event {
+export function pasteEvent(files: File[], { text = false, html = false } = {}): Event {
 	const e = new Event('paste', { bubbles: true, cancelable: true });
-	Object.defineProperty(e, 'clipboardData', { value: transfer(files, text ? ['text/plain'] : []) });
+	const types = [...(text ? ['text/plain'] : []), ...(html ? ['text/html'] : [])];
+	Object.defineProperty(e, 'clipboardData', { value: transfer(files, types) });
 	return e;
 }
 

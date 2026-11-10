@@ -81,4 +81,19 @@ describe('Attachments', () => {
 		await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Delete attachment two.png'));
 		expect(document.body.querySelector('summary')!.textContent).toBe('Attachments · 1');
 	});
+
+	it('gives focus to the section heading when the last one is deleted, and shows a failed load with Retry', async () => {
+		net.list = [dto('a1', 'one.png')];
+		const section = document.createElement('section');
+		section.innerHTML = '<h3>Description</h3>';
+		document.body.append(section);
+		app = mount(Attachments, { target: section, props: { itemKey: 'ABC-1' } });
+		await vi.waitFor(() => expect(section.querySelector('details')).not.toBeNull());
+		section.querySelector('details')!.open = true;
+		vi.spyOn(window, 'confirm').mockReturnValue(true);
+		net.list = [];
+		section.querySelector<HTMLButtonElement>('button.delete')!.click();
+		await vi.waitFor(() => expect(document.activeElement?.tagName).toBe('H3'));
+		expect(section.querySelector('details')).toBeNull();
+	});
 });

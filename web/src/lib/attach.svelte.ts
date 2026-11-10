@@ -8,7 +8,7 @@ import { api, unwrap, ApiError } from '#lib/api/client.ts';
 /** An upload this field knows: what the server answered, kept so `ids()` can tell which are still shown. */
 export type AttachmentRef = { id: string; url: string };
 export type PendingState = 'uploading' | 'failed' | 'added';
-export type Pending = { token: string; name: string; state: PendingState; error: string | null };
+export type Pending = { token: string; name: string; state: PendingState; error: string | null; url: string | null };
 
 export const MAX_BYTES = 10_485_760;
 export const TYPES = ['image/png', 'image/jpeg', 'image/webp'];
@@ -19,11 +19,19 @@ export const MESSAGES = {
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
 const pad = (n: number) => String(n).padStart(2, '0');
-/** A clipboard image has no real name ("image.png" or none): it is named for when it was added. */
+/** A clipboard image has no real name ("image.png" or none): it is named for when it was added, to the second. */
 export function nameFor(file: File, now = new Date()): string {
 	if (file.name && file.name !== 'image.png') return file.name;
-	const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+	const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 	return `screenshot-${stamp}.${EXT[file.type] ?? 'png'}`;
+}
+
+/** `name`, or `name-2`, `name-3`… when it is taken already: two pastes in one second stay apart. */
+export function unique(name: string, taken: Set<string>): string {
+	if (!taken.has(name)) return name;
+	const dot = name.lastIndexOf('.');
+	const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+	for (let n = 2; ; n++) if (!taken.has(`${stem}-${n}${ext}`)) return `${stem}-${n}${ext}`;
 }
 
 /** Markdown alt text from a filename: no extension, and `\`, `[` and `]` escaped. */
@@ -42,6 +50,9 @@ export function precheck(file: File): string | null {
 }
 
 let seq = 0;
+/** Every upload this tab stored, whichever field it was added in: an image line cut from one editor and pasted into
+ *  another is still claimed by the write that saves it. */
+const stored = new Map<string, AttachmentRef>();
 
 export class ImageUploads {
 	pending = $state<Pending[]>([]);
@@ -65,10 +76,12 @@ export class ImageUploads {
 		return [...this.added];
 	}
 
-	/** The uploads still shown in the text: what the write sends as `attachments`. */
+	/** The uploads still shown in the text: what the write sends as `attachments`. Any upload of this tab counts, so an
+	 *  image moved from another field is claimed too. */
 	ids(): string[] {
 		const text = this.get();
-		return this.added.filter((r) => text.includes(`(${r.url})`)).map((r) => r.id);
+		const all = new Map([...stored, ...this.added.map((r) => [r.id, r] as const)]);
+		return [...all.values()].filter((r) => text.includes(`(${r.url})`)).map((r) => r.id);
 	}
 
 	/** The `attachments` field of a write: absent when there are none, so a write without images is unchanged. */
@@ -84,22 +97,31 @@ export class ImageUploads {
 		this.status = '';
 	}
 
-	/** Drops a row, and its placeholder if it is still uploading; the upload itself is left for the sweep. */
+	/** Drops a row and takes its image out of the text (the placeholder, or the image line once added); the upload
+	 *  itself is never deleted, it is left for the sweep. */
 	remove(p: Pending): void {
 		this.pending = this.pending.filter((x) => x.token !== p.token);
 		const text = this.get();
-		const line = this.placeholder(p);
-		if (text.includes(line)) this.set(text.replace(line + '\n', '').replace(line, ''));
+		const lines = [this.placeholder(p)];
+		if (p.url) lines.push(`![${altFor(p.name)}](${p.url})`);
+		for (const line of lines) {
+			if (text.includes(line)) {
+				this.set(text.replace(line + '\n', '').replace(line, ''));
+				return;
+			}
+		}
 	}
 
 	/** Uploads `files` in order, each behind a placeholder at the caret of `el` (or at the end of the text). */
 	add(files: File[], el?: HTMLTextAreaElement | null): void {
 		const ready: Pending[] = [];
 		const sources = new Map<string, File>();
+		const taken = new Set(this.pending.map((p) => p.name));
 		for (const file of files) {
-			const name = nameFor(file);
+			const name = unique(nameFor(file), taken);
+			taken.add(name);
 			const refused = precheck(file);
-			const p: Pending = { token: `‹u${++seq}›`, name, state: refused ? 'failed' : 'uploading', error: refused };
+			const p: Pending = { token: `‹u${++seq}›`, name, state: refused ? 'failed' : 'uploading', error: refused, url: null };
 			this.pending = [...this.pending, p];
 			if (refused) this.status = `${name}: ${refused}`;
 			else {
@@ -121,9 +143,12 @@ export class ImageUploads {
 	private insert(text: string, el?: HTMLTextAreaElement | null): void {
 		if (el && el.isConnected && !el.disabled) {
 			const start = el.selectionStart ?? el.value.length;
+			const end = el.selectionEnd ?? start;
 			const before = el.value.slice(0, start);
+			const after = el.value.slice(end);
 			const lead = before === '' || before.endsWith('\n') ? '' : '\n';
-			el.setRangeText(lead + text, start, el.selectionEnd ?? start, 'end');
+			const trail = after === '' || after.startsWith('\n') ? '' : '\n';
+			el.setRangeText(lead + text + trail, start, end, 'end');
 			el.dispatchEvent(new Event('input', { bubbles: true }));
 			return;
 		}
@@ -149,16 +174,20 @@ export class ImageUploads {
 				})
 			);
 			const ref = { id: dto.id, url: dto.url };
+			stored.set(ref.id, ref);
+			// Removed or reset while it uploaded: nothing more to show for it.
+			if (!this.pending.some((x) => x.token === p.token)) return;
 			this.added = [...this.added, ref];
 			this.onAdded?.(this.refs());
 			const text = this.get();
 			const line = this.placeholder(p);
 			// The placeholder was edited away meanwhile: the image is not put back; the upload stays unclaimed.
 			if (text.includes(line)) this.set(text.replace(line, `![${altFor(p.name)}](${dto.url})`));
-			this.update(p, { state: 'added' });
+			this.update(p, { state: 'added', url: dto.url });
 			this.status = `${p.name} added`;
 		} catch (e) {
-			const message = e instanceof ApiError ? e.message : 'the image could not be uploaded';
+			if (!this.pending.some((x) => x.token === p.token)) return;
+			const message = e instanceof ApiError && e.code !== 'transport' ? e.message : 'the image could not be uploaded; add it again';
 			this.update(p, { state: 'failed', error: message });
 			const text = this.get();
 			const line = this.placeholder(p);
@@ -185,8 +214,10 @@ export function attachable(uploads: ImageUploads): Attachment<HTMLTextAreaElemen
 		const onPaste = (e: ClipboardEvent) => {
 			const data = e.clipboardData;
 			if (!data) return;
-			// A rich paste (text with an image of it) pastes the text.
-			if ([...(data.types ?? [])].includes('text/plain')) return;
+			// A rich paste (an office or web selection: text, HTML and an image of it) pastes the text. A copied file
+			// brings its name as plain text but no HTML: that one is the image.
+			const types = [...(data.types ?? [])];
+			if (types.includes('text/plain') && types.includes('text/html')) return;
 			const files = imagesOf(data.files).filter((f) => f.type.startsWith('image/') || f.type === '');
 			if (files.length === 0) return;
 			e.preventDefault();

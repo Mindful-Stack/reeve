@@ -10,6 +10,8 @@ use bytes::Bytes;
 pub const MAX_CLAIM: usize = 50;
 /// How long an upload may stay unclaimed before the sweep takes it (kb/ADR-0022 R4).
 const UNCLAIMED_DAYS: i64 = 7;
+/// The longest upload idempotency key.
+const MAX_KEY: usize = 200;
 
 /// A write's attachment ids, deduplicated and sorted (so two writes claiming the same set lock rows in one order),
 /// and at most `MAX_CLAIM` of them.
@@ -40,8 +42,22 @@ impl Handlers {
         idem: Option<&str>,
         body: Bytes,
     ) -> Result<Attachment, HandlerError> {
+        // The sweep runs for every upload attempt, accepted or not, in a transaction of its own (kb/ADR-0022 R4).
+        let mut sweep = self.pool.begin().await?;
+        self.ports
+            .attachments
+            .sweep_unclaimed_attachments(&mut sweep, c.now - chrono::Duration::days(UNCLAIMED_DAYS))
+            .await?;
+        sweep.commit().await?;
         if body.len() > MAX_BYTES {
             return Err(upload_error(UploadError::TooLarge));
+        }
+        // An empty key is no key; a long one would not fit the index.
+        let idem = idem.filter(|k| !k.is_empty());
+        if idem.is_some_and(|k| k.chars().count() > MAX_KEY) {
+            return Err(HandlerError::Validation(format!(
+                "idempotency_key must be at most {MAX_KEY} characters"
+            )));
         }
         if let Some(k) = idem
             && let Some(a) = self
@@ -56,10 +72,6 @@ impl Handlers {
         let stored = strip_metadata(t, body).map_err(upload_error)?;
         let a = Attachment::new(Uuid::new_v4(), &c.actor, c.now, filename, t, &stored);
         let mut tx = self.pool.begin().await?;
-        self.ports
-            .attachments
-            .sweep_unclaimed_attachments(&mut tx, c.now - chrono::Duration::days(UNCLAIMED_DAYS))
-            .await?;
         if !self
             .ports
             .attachments

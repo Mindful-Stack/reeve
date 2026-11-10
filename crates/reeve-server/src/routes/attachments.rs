@@ -100,11 +100,15 @@ async fn get(
     let a = s.handlers.attachment_meta(id, &c.ctx().actor).await?;
     let tag = etag(&a);
     let headers = image_headers(&a, &tag);
-    if req
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|t| t.trim() == tag))
-    {
+    // A weak comparison over every If-None-Match line (RFC 9110 13.1.2): a proxy may weaken the tag, and `*` matches.
+    let matches = req
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|t| t.trim())
+        .any(|t| t == "*" || t.strip_prefix("W/").unwrap_or(t) == tag);
+    if matches {
         return Ok((StatusCode::NOT_MODIFIED, headers).into_response());
     }
     let handlers = Arc::new(s.handlers.clone());

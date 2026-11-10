@@ -122,6 +122,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			s.epic = { ...s.epic, ...b, version: s.epic.version + 1 };
 			return s.epic;
 		}
+		if (method === 'GET' && path.endsWith('/attachments')) return [];
 		throw new Error(`unexpected ${method} ${path}`);
 	});
 	return orig();

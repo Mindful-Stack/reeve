@@ -102,13 +102,15 @@
 		font-size: 14px;
 	}
 	form {
-		display: flex;
+		display: grid;
 		gap: 0.5rem;
-		align-items: flex-start;
 	}
 	.compose {
-		flex: 1;
 		display: grid;
+	}
+	form > button {
+		justify-self: end;
+		min-width: 7rem;
 	}
 	textarea {
 		font: inherit;

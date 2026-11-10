@@ -285,6 +285,7 @@
 	}
 
 	function startEdit() {
+		briefUploads.reset();
 		briefDraft = initiative?.brief ?? '';
 		briefBase = { version: initiative?.version ?? 0, text: initiative?.brief ?? '' };
 		editing = true;
@@ -552,13 +553,20 @@
 					<textarea
 						bind:this={briefField}
 						bind:value={briefDraft}
+						disabled={busy}
 						rows="12"
 						aria-label="brief (Markdown)"
 						{@attach attachable(briefUploads)}
 					></textarea>
 					<ImageUploadsRow uploads={briefUploads} field={briefField} disabled={busy} />
 					<div class="actions">
-						<button type="button" onclick={() => (editing = false)}>Cancel</button>
+						<button
+							type="button"
+							onclick={() => {
+								editing = false;
+								briefUploads.reset();
+							}}>Cancel</button
+						>
 						<button type="submit" disabled={busy || briefUploads.busy}>{briefUploads.busy ? 'Uploading…' : 'Save brief'}</button>
 					</div>
 				</form>
