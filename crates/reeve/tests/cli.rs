@@ -69,6 +69,16 @@ fn lazy(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
     Box::new(f)
 }
 
+/// `lazy`, built 2 ms after the request arrives: a mark it stamps is later than any clock the CLI read before sending
+/// by whole milliseconds, which the expiry's millisecond arithmetic cannot round away, so a CLI that measures from such
+/// a clock says "expires in 15 d" every run.
+fn late(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
+    lazy(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        f()
+    })
+}
+
 /// `serve`, with each body built when its request arrives: a mark the fake server answers is timestamped as the real
 /// server would stamp it, after the CLI sent its request.
 fn serve_lazy(
@@ -2594,6 +2604,38 @@ fn story_context_prints_the_urgent_line_after_the_storys_first_line() {
     assert_eq!(lines[at + 1], "  urgent · via epic ABC-40", "{text}");
 }
 
+/// `story show` and `story context` measure a mark's expiry from a clock read after the answer: the fake server stamps
+/// a fresh 14-day mark while handling the GET (as when another client marks the story while the read is in flight), so
+/// a CLI that reads its clock before the request says 15 d.
+#[test]
+fn story_show_and_context_measure_a_fresh_mark_after_the_answer() {
+    let (url, server) = serve_lazy(vec![(
+        "GET /api/v1/stories/TST-1",
+        200,
+        late(|| ok(marked_story_json("TST-1", None))),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("· expires in 14 d"), "{text}");
+
+    let (url, server) = serve_lazy(vec![(
+        "GET /api/v1/stories/TST-1/context",
+        200,
+        late(|| {
+            ok(serde_json::json!({
+                "story": marked_story_json("TST-1", None), "epic": null, "initiative": null,
+                "required_decisions": [], "blockers": [], "comments": [],
+                "readiness": {"ready": true, "reasons": []}, "goals": []
+            }))
+        }),
+    )]);
+    let out = reeve_at(&url, &["story", "context", "TST-1"]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("· expires in 14 d"), "{text}");
+}
+
 /// A story as the urgent route answers a mark: urgent by its own mark, which carries `reason`.
 fn marked_story_json(key: &str, reason: Option<&str>) -> serde_json::Value {
     let at = chrono::Utc::now();
@@ -2621,7 +2663,7 @@ fn story_urgent_posts_the_trimmed_reason() {
     let (url, server) = serve_lazy(vec![(
         "POST /api/v1/stories/TST-1/urgent",
         200,
-        lazy(|| ok(marked_story_json("TST-1", Some("Customer X blocked")))),
+        late(|| ok(marked_story_json("TST-1", Some("Customer X blocked")))),
     )]);
     let out = reeve_at(
         &url,
@@ -2840,7 +2882,9 @@ fn epic_urgent_with_a_failed_read_posts_nothing() {
 // `serve` closes its listener after the last answer, so an unexpected POST makes the CLI fail: the exit-0 assert on
 // a GET-only test is what proves nothing was posted.
 
-/// A war-room row. `at_d` and `exp_d` are days from now (half days, so floor and ceiling are unambiguous).
+/// A war-room row. `at_d` and `exp_d` are days from now: half days for a row built when the test starts, so floor and
+/// ceiling are unambiguous; whole days are fine for a row built when its request is handled (`late`), since the CLI
+/// reads its clock after the answer.
 fn wr_row(
     key: &str,
     item: &str,
@@ -3073,7 +3117,7 @@ fn war_room_re_mark_yes_prints_the_servers_answer_like_ls() {
         (
             "POST /api/v1/war-room/renew",
             200,
-            lazy(|| {
+            late(|| {
                 ok(serde_json::json!([wr_row(
                     "ABC-2",
                     "story",
