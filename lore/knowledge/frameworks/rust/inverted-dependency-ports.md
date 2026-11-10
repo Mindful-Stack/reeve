@@ -200,4 +200,4 @@ If any of those fail, consider:
 
 - [[general/architecture]] for the broader rules; this pattern is rule #1 ("cross-context coupling only through ports").
 - [[frameworks/rust/repo-port-adapter]] for the within-crate version of this (where the port and impl live in the same crate).
-- [[domain/card]] §"Key entities" for the actual ports Card consumes.
+- [[domain/planning]] §"Context map" for the current ports between contexts (planning defines `ActivitySink`, which `reeve-activity` implements).

@@ -22,7 +22,7 @@ Rust's visibility system is a load-bearing piece of Reeve's architecture, not a 
 
 ### Adapters are `pub(crate)`
 
-Every concrete implementation of a port trait — every `Sqlite*Repo`, `Real*`, `Docker*` — is `pub(crate)`. The factory function (`make_*_repo`, `make_*_ops`) returns `Arc<dyn Trait>`, which is the only handle external callers can hold.
+Every concrete implementation of a port trait — every `Sqlite*Repo`, `Real*`, `Docker*` — is `pub(crate)`. The factory function (`make_*_repo`, `make_*_ops`) returns `Arc<dyn Trait>`, or a struct of them (`make_planning_ports`), which is the only handle external callers can hold.
 
 ```rust
 // reeve-card/src/repo.rs

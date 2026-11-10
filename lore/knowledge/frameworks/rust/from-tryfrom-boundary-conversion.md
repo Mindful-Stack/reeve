@@ -202,7 +202,7 @@ So γ is applied where the wire-shape and domain-shape genuinely coincide as the
 
 ## See also
 
-- [[domain/card]] — the only current use of this pattern.
+- [[domain/planning]] — the planning context, whose DTO builders in `handler/dto.rs` keep wire types out of `domain/`.
 - [[general/architecture]] §"Type strategy" — the rule that motivated γ.
 - [[general/testing]] §"Drift protection" — the round-trip test that pins the boundary.
 - [[frameworks/rust/repo-port-adapter]] — the repo trait uses `domain::Card`; the adapter converts at the row boundary via `from_persisted`.
