@@ -64,6 +64,7 @@ We decided to model work as initiative, epic and story with kinds story, bug and
 - 2026-11-04 (kb/ADR-0014): R6's bound vocabulary gains sprint, goal, confidence, verdict and upkeep as the trial names; the settled words are recorded here when the team's naming trial ends. Sprints and goals take numeric ids, not keys from R5's sequence, and a goal is never a parent of an item, so R1 holds. No trigger fired; the decision holds.
 - 2026-11-04 (public copy, one-time edit): F2's source named an internal research document, and F3's an internal Jira board and a product name; F4, about a third-party prototype the research studied, is left out of this copy (the numbering is kept). The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No rule or decision changed; the decision holds.
 - 2026-11-09 (kb/ADR-0017): R6's bound vocabulary grows by "urgent" (a mark on any item, kb/ADR-0017); "war room" names the planning page's list of urgent marks (active and expired) and is not bound vocabulary. No trigger fired; the decision holds.
+- 2026-11-09 (kb/ADR-0017): "war room" also names the API resource `/war-room` and the CLI's `reeve war-room`; it stays unbound vocabulary. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0003, kb/ADR-0004.

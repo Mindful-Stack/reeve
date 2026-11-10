@@ -79,6 +79,7 @@ propagation would go stale, and an override with no end would bypass cycle plann
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-09: The CLI and the TUI show and change urgent marks: `reeve <level> urgent`, `reeve war-room ls|clear|re-mark`, and the TUI board's `!`, drawer line, `u` and `U`. Presentation differs by client and the server decides (R3 makes a done story's mark inert): the web and the TUI do not offer marking a done story, `reeve … urgent` does and prints it as `done`, and re-mark in the web and the CLI leaves done marks out. `renew` is only the route's name; people see re-mark. This record's scope does not list `reeve:crates/reeve/**` and cannot change once accepted; those paths follow it all the same. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0002, kb/ADR-0014.
