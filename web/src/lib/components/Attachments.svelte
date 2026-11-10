@@ -3,7 +3,7 @@
      items, §3). A delete, here or seen on the event stream, tells every rendered image of it to show "image
      unavailable" (`reeve:attachment-removed`). -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { AttachmentDto } from '#lib/api/types.ts';
 	import { onLive } from '#lib/events.svelte.ts';
@@ -37,11 +37,16 @@
 		}
 	}
 
+	// A derived key changes only when the key does: a prop read directly re-runs this for every refetch of the item
+	// that passes it (the drawer's story), which would empty the list and close the disclosure.
+	const key = $derived(itemKey);
 	$effect(() => {
-		void itemKey;
-		list = [];
-		listKey = '';
-		void load();
+		void key;
+		untrack(() => {
+			list = [];
+			listKey = '';
+			void load();
+		});
 	});
 	onLive(load);
 
