@@ -189,10 +189,43 @@ describe('decisions queue page', () => {
 		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing needed this sprint or next.');
 	});
 
-	it('adds the review count to the summary only when above zero', async () => {
-		net.queue = queue([entry('review', dec(1, 'R'))], queueSummary({ open: 1, review: 1 }));
+	it('counts the summary by lane and leaves out a zero part', async () => {
+		net.queue = queue(
+			[entry('review', dec(1, 'R')), entry('beyond', dec(2, 'B1')), entry('beyond', dec(3, 'B2')), entry('open', dec(4, 'O'))],
+			queueSummary({ open: 4, review: 1, this_sprint: 0, next_sprint: 3, overdue: 2 })
+		);
 		await open();
-		expect(text(document.body.querySelector('.summary'))).toBe('1 open · 0 blocking 0 stories · 0 overdue · 1 to review');
+		// Beyond is counted from the entries; this sprint (zero) is left out; Open is not a part.
+		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 3 next sprint · 2 after next sprint · 2 overdue');
+	});
+
+	it('words every part of the summary', async () => {
+		net.queue = queue(
+			[entry('beyond', dec(1, 'B'))],
+			queueSummary({ review: 1, this_sprint: 2, next_sprint: 3, overdue: 5 })
+		);
+		await open();
+		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 2 this sprint · 3 next sprint · 1 after next sprint · 5 overdue');
+	});
+
+	it('has no summary line when every part is zero', async () => {
+		net.queue = queue([entry('open', dec(1, 'Idle'))], queueSummary({ open: 1 }));
+		await open();
+		expect(document.body.querySelector('.summary')).toBeNull();
+	});
+
+	it('says a lane named by the hash is empty, only when it is', async () => {
+		await route.fake!.goto('/decisions#this-sprint');
+		net.queue = queue([entry('next_sprint', dec(1, 'Soon'))]);
+		await open();
+		expect(text(document.body.querySelector('[data-testid="empty-lane"]'))).toBe('Nothing needed in this lane right now.');
+		// A lane with rows, and a hash that is not a lane, say nothing.
+		await route.fake!.goto('/decisions#next-sprint');
+		flushSync();
+		expect(document.body.querySelector('[data-testid="empty-lane"]')).toBeNull();
+		await route.fake!.goto('/decisions#somewhere');
+		flushSync();
+		expect(document.body.querySelector('[data-testid="empty-lane"]')).toBeNull();
 	});
 
 	it('scrolls to the lane named by the hash once the queue has rendered', async () => {
@@ -249,10 +282,10 @@ describe('decisions queue page', () => {
 		expect(document.body.textContent).not.toContain('Theirs');
 	});
 
-	it("says the server's summary", async () => {
+	it("says the server's overdue count", async () => {
 		net.queue = queue([entry('this_sprint', dec(1, 'One'))], queueSummary({ open: 6, blocking: 4, blocked_stories: 11, overdue: 2 }));
 		await open();
-		expect(text(document.body.querySelector('.summary'))).toBe('6 open · 4 blocking 11 stories · 2 overdue');
+		expect(text(document.body.querySelector('.summary'))).toBe('2 overdue');
 	});
 
 	it("groups by the server's groups, in server order, with Closed folded", async () => {

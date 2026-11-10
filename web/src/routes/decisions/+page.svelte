@@ -45,7 +45,27 @@
 	const nothingNeeded = $derived((queue?.entries.length ?? 0) > 0 && ![...NEEDED].some((l) => populated.has(l)));
 	/** Beyond and Open are the lanes the Tuesday queue works through; with only Accepted or Closed below, the divider names just the window. */
 	const tuesdayWork = $derived(populated.has('beyond') || populated.has('open'));
-	const summary = $derived(queue?.summary);
+	/** The summary line, by lane: the server's counts for the window lanes and the overdue ones, and Beyond counted from the
+	 *  entries (the server's summary has no field for it). A zero part is left out. */
+	const summaryParts = $derived.by(() => {
+		const s = queue?.summary;
+		if (!s) return [];
+		const beyond = (queue?.entries ?? []).filter((e) => e.lane === 'beyond').length;
+		return [
+			[s.review, 'to review'],
+			[s.this_sprint, 'this sprint'],
+			[s.next_sprint, 'next sprint'],
+			[beyond, 'after next sprint'],
+			[s.overdue, 'overdue']
+		]
+			.filter(([n]) => (n as number) > 0)
+			.map(([n, what]) => `${n} ${what}`);
+	});
+	/** A link to a lane (#review, #this-sprint, #next-sprint) whose lane has no row has nothing to scroll to; say so. */
+	const emptyLane = $derived.by(() => {
+		const lane = (Object.keys(LANE_ANCHOR) as QueueLane[]).find((l) => LANE_ANCHOR[l] === page.url.hash.slice(1));
+		return !!queue && !!lane && !populated.has(lane);
+	});
 
 	/** The newest check of any listed record: how fresh the whole page's statuses are. */
 	const lastChecked = $derived(
@@ -152,11 +172,11 @@
 	{#if staleNotice}
 		<Notice tone="error" onretry={reload} ondismiss={() => (staleNotice = null)}>{staleNotice}</Notice>
 	{/if}
-	{#if summary}
-		<p class="summary">
-			{summary.open} open · {summary.blocking} blocking {summary.blocked_stories}
-			{summary.blocked_stories === 1 ? 'story' : 'stories'} · {summary.overdue} overdue{#if summary.review > 0}{' · '}{summary.review} to review{/if}
-		</p>
+	{#if summaryParts.length}
+		<p class="summary">{summaryParts.join(' · ')}</p>
+	{/if}
+	{#if emptyLane}
+		<p class="lane-note muted" data-testid="empty-lane">Nothing needed in this lane right now.</p>
 	{/if}
 	{#if nothingNeeded}
 		<p class="quiet muted">{mine ? 'Nothing of yours needed' : 'Nothing needed'} this sprint or next.</p>
@@ -203,7 +223,8 @@
 	.summary {
 		margin: 0 0 4px;
 	}
-	.quiet {
+	.quiet,
+	.lane-note {
 		margin: 0 0 4px;
 	}
 	.divider {
