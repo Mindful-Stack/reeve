@@ -1,12 +1,11 @@
+use super::dto::urgent_fields;
 use super::epics::epic_dto_of;
 use super::import::{Claim, with_ref};
-use super::urgent::urgent_fields;
 use super::*;
-use crate::domain::{delivery::*, items::*, readiness::compute_readiness, urgency::Urgency};
-use crate::ports::RepoError;
+use crate::domain::{items::*, readiness::compute_readiness, urgency::Urgency};
 use reeve_protocol::{
     DeliveryState, DoneFilter, GoalContextDto, GoalRefDto, ItemType, Key, Kind, Readiness,
-    Resolution, StoryContextDto, StoryDto, StoryWithReadiness, TokenKind,
+    StoryContextDto, StoryDto, StoryWithReadiness,
 };
 use sqlx::{Postgres, Transaction};
 
@@ -65,11 +64,16 @@ impl Handlers {
                 "only a migrated story (with an external_ref) is created in a state, and never done".into(),
             ));
         }
-        if let Some(k) = self.repo.find_by_idempotency(ItemType::Story, idem).await? {
-            return Ok((self.repo.get_story(&k).await?, false));
+        if let Some(k) = self
+            .ports
+            .keys
+            .find_by_idempotency(ItemType::Story, idem)
+            .await?
+        {
+            return Ok((self.ports.stories.get_story(&k).await?, false));
         }
         if let Some(ek) = &epic {
-            self.repo.get_epic(ek).await?;
+            self.ports.epics.get_epic(ek).await?;
         }
         let mut tx = self.pool.begin().await?;
         let r = match self
@@ -79,11 +83,12 @@ impl Handlers {
             Claim::Free(r) => r,
             Claim::Retried(k) => {
                 tx.rollback().await?;
-                return Ok((self.repo.get_story(&k).await?, false));
+                return Ok((self.ports.stories.get_story(&k).await?, false));
             }
         };
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let s = Story::new(
@@ -98,14 +103,20 @@ impl Handlers {
         )?
         .with_external_ref(r)
         .grandfathered(delivery);
-        if !self.repo.insert_story(&mut tx, &s, idem, c.now).await? {
+        if !self
+            .ports
+            .stories
+            .insert_story(&mut tx, &s, idem, c.now)
+            .await?
+        {
             tx.rollback().await?;
             let k = self
-                .repo
+                .ports
+                .keys
                 .find_by_idempotency(ItemType::Story, idem)
                 .await?
                 .ok_or(HandlerError::NotFound)?;
-            return Ok((self.repo.get_story(&k).await?, false));
+            return Ok((self.ports.stories.get_story(&k).await?, false));
         }
         let (action, payload) = match s.external_ref() {
             Some(r) if delivery != DeliveryState::Todo => {
@@ -141,13 +152,13 @@ impl Handlers {
         rank: Option<i32>,
         external_ref: Option<String>,
     ) -> Result<Story, HandlerError> {
-        let cur = self.repo.get_story(key).await?;
+        let cur = self.ports.stories.get_story(key).await?;
         let title = title.unwrap_or_else(|| cur.title().into());
         check_title(&title)?;
         let title = title.trim().to_string();
         let epic = epic.unwrap_or(cur.epic().cloned());
         if let Some(ek) = &epic {
-            self.repo.get_epic(ek).await?;
+            self.ports.epics.get_epic(ek).await?;
         }
         let mut criteria = criteria.unwrap_or_else(|| cur.criteria().to_vec());
         for x in criteria.iter_mut() {
@@ -179,7 +190,8 @@ impl Handlers {
             r,
             cur.version(),
         );
-        self.repo
+        self.ports
+            .stories
             .update_story(&mut tx, &next, rank, version, c.now)
             .await?;
         self.activity
@@ -195,11 +207,11 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_story(key).await?)
+        Ok(self.ports.stories.get_story(key).await?)
     }
 
     pub async fn get_story(&self, key: &Key) -> Result<Story, HandlerError> {
-        Ok(self.repo.get_story(key).await?)
+        Ok(self.ports.stories.get_story(key).await?)
     }
 
     /// The story imported from `external_ref` (a Jira delivery key such as `SCRUM-11`), if any. A plain lookup of the
@@ -210,7 +222,8 @@ impl Handlers {
         external_ref: &str,
     ) -> Result<Option<Key>, HandlerError> {
         Ok(self
-            .repo
+            .ports
+            .keys
             .find_by_external_ref(ItemType::Story, external_ref)
             .await?)
     }
@@ -230,7 +243,8 @@ impl Handlers {
             && k.prefix() == self.settings.key_prefix
         {
             return Ok(self
-                .repo
+                .ports
+                .keys
                 .key_exists(ItemType::Story, &k)
                 .await?
                 .then_some(k));
@@ -284,9 +298,9 @@ impl Handlers {
         done_since: Option<DateTime<Utc>>,
         urg: &Urgency,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
-        let stories = self.repo.list_stories(tx, f, done_since).await?;
+        let stories = self.ports.stories.list_stories(tx, f, done_since).await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
-        let mut inputs = self.repo.readiness_inputs(tx, &keys).await?;
+        let mut inputs = self.ports.reads.readiness_inputs(tx, &keys).await?;
         for i in inputs.values_mut() {
             self.mark_configured(i);
         }
@@ -336,7 +350,8 @@ impl Handlers {
         key: &Key,
     ) -> Result<Readiness, HandlerError> {
         let mut m = self
-            .repo
+            .ports
+            .reads
             .readiness_inputs(tx, std::slice::from_ref(key))
             .await?;
         let mut input = m.remove(key).ok_or(HandlerError::NotFound)?;
@@ -357,126 +372,6 @@ impl Handlers {
         }
     }
 
-    /// The gate. Readiness, the two rules, the state change and the activity entry all happen inside one transaction.
-    pub async fn move_story(
-        &self,
-        c: &Ctx,
-        key: &Key,
-        version: i64,
-        to: DeliveryState,
-        resolution: Option<Resolution>,
-        override_reason: Option<String>,
-    ) -> Result<Story, HandlerError> {
-        // One snapshot for every readiness fact (discovery marks, decisions, blockers) rather than READ COMMITTED's per-statement
-        // snapshots: https://www.postgresql.org/docs/16/transaction-iso.html. The FOR UPDATE below fails with a serialization failure
-        // (SQLSTATE 40001) if the story row changed after the snapshot; that is a version conflict.
-        let mut tx = self
-            .pool
-            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
-            .await?;
-        let cur = match self.repo.get_story_for_update(&mut tx, key).await {
-            Ok(s) => s,
-            Err(RepoError::Db(e))
-                if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("40001") =>
-            {
-                tx.rollback().await?;
-                let current = self.repo.get_story(key).await?.version();
-                return Err(HandlerError::Conflict { current });
-            }
-            Err(e) => return Err(e.into()),
-        };
-        if cur.version() != version {
-            tx.rollback().await?;
-            return Err(HandlerError::Conflict {
-                current: cur.version(),
-            });
-        }
-        let readiness = self.readiness_in(&mut tx, key).await?;
-        let req = MoveRequest {
-            from: cur.delivery(),
-            current_resolution: cur.resolution(),
-            to,
-            ready: readiness.ready,
-            resolution,
-            override_reason,
-            token_kind: if c.via != reeve_protocol::Via::Interactive {
-                TokenKind::Automation
-            } else {
-                TokenKind::Interactive
-            },
-        };
-        let refused = match validate_move(&req) {
-            Ok(e) => Ok(e),
-            Err(MoveRefused::NotReady) => Err(readiness.reasons.clone()),
-            Err(MoveRefused::AutomationCannotOverride) => {
-                let mut r = readiness.reasons.clone();
-                r.push(reeve_protocol::Reason::AutomationCannotOverride);
-                Err(r)
-            }
-            Err(MoveRefused::OverrideNeedsReason) => {
-                Err(vec![reeve_protocol::Reason::OverrideNeedsReason])
-            }
-            Err(MoveRefused::ResolutionRequired) => {
-                Err(vec![reeve_protocol::Reason::ResolutionRequired])
-            }
-            Err(MoveRefused::CompletedNeedsActiveOrigin) => {
-                Err(vec![reeve_protocol::Reason::CompletedNeedsActiveOrigin])
-            }
-        };
-        let effect = match refused {
-            Ok(e) => e,
-            Err(reasons) => {
-                tx.rollback().await?;
-                return Err(HandlerError::Refused(reasons));
-            }
-        };
-        if effect == MoveEffect::NoOp {
-            tx.rollback().await?;
-            return Ok(cur);
-        }
-        let resolution = match effect {
-            MoveEffect::Resolve(r) => Some(r),
-            _ => None,
-        };
-        let owner_email = reeve_protocol::normalise_email(&c.actor);
-        let owner_if_none = if to == DeliveryState::InProgress {
-            Some(owner_email.as_str())
-        } else {
-            None
-        };
-        self.repo
-            .set_delivery(&mut tx, key, version, to, resolution, owner_if_none, c.now)
-            .await?;
-        if let MoveEffect::Override { reason } = &effect {
-            self.activity
-                .record(
-                    &mut tx,
-                    self.rec(
-                        c,
-                        "story",
-                        &key.to_string(),
-                        "override",
-                        serde_json::json!({"from": cur.delivery(), "to": to, "reason": reason, "reasons": readiness.reasons}),
-                    ),
-                )
-                .await?;
-        }
-        self.activity
-            .record(
-                &mut tx,
-                self.rec(
-                    c,
-                    "story",
-                    &key.to_string(),
-                    "moved",
-                    serde_json::json!({"from": cur.delivery(), "to": to, "resolution": resolution}),
-                ),
-            )
-            .await?;
-        tx.commit().await?;
-        Ok(self.repo.get_story(key).await?)
-    }
-
     /// Places a todo story before `before` (another todo story), or at the end of the todo column. One transaction at the
     /// caller's version: the whole column is locked and renumbered 0..n-1 in one statement, only the moved story's version
     /// is bumped (rank is ordering metadata, so a neighbour's open editor keeps its base), and one `reranked` entry with the
@@ -494,8 +389,12 @@ impl Handlers {
             ));
         }
         let mut tx = self.pool.begin().await?;
-        let column = self.repo.todo_column_for_update(&mut tx).await?;
-        let cur = self.repo.get_story_for_update(&mut tx, key).await?;
+        let column = self.ports.stories.todo_column_for_update(&mut tx).await?;
+        let cur = self
+            .ports
+            .stories
+            .get_story_for_update(&mut tx, key)
+            .await?;
         if cur.version() != version {
             tx.rollback().await?;
             return Err(HandlerError::Conflict {
@@ -531,8 +430,11 @@ impl Handlers {
             .enumerate()
             .map(|(i, k)| (k, i as i32))
             .collect();
-        self.repo.set_ranks(&mut tx, &ranks).await?;
-        self.repo.touch_story(&mut tx, key, version, c.now).await?;
+        self.ports.stories.set_ranks(&mut tx, &ranks).await?;
+        self.ports
+            .stories
+            .touch_story(&mut tx, key, version, c.now)
+            .await?;
         self.activity
             .record(
                 &mut tx,
@@ -546,7 +448,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_story(key).await?)
+        Ok(self.ports.stories.get_story(key).await?)
     }
 
     pub async fn add_block(&self, c: &Ctx, story: &Key, blocker: &Key) -> Result<(), HandlerError> {
@@ -567,10 +469,15 @@ impl Handlers {
                 "a story cannot block itself".into(),
             ));
         }
-        self.repo.get_story(story).await?;
-        self.repo.get_story(blocker).await?;
+        self.ports.stories.get_story(story).await?;
+        self.ports.stories.get_story(blocker).await?;
         let mut tx = self.pool.begin().await?;
-        if !self.repo.add_block(&mut tx, story, blocker).await? {
+        if !self
+            .ports
+            .stories
+            .add_block(&mut tx, story, blocker)
+            .await?
+        {
             tx.rollback().await?;
             return Ok(false);
         }
@@ -599,10 +506,15 @@ impl Handlers {
         story: &Key,
         blocker: &Key,
     ) -> Result<(), HandlerError> {
-        self.repo.get_story(story).await?;
-        self.repo.get_story(blocker).await?;
+        self.ports.stories.get_story(story).await?;
+        self.ports.stories.get_story(blocker).await?;
         let mut tx = self.pool.begin().await?;
-        if !self.repo.remove_block(&mut tx, story, blocker).await? {
+        if !self
+            .ports
+            .stories
+            .remove_block(&mut tx, story, blocker)
+            .await?
+        {
             tx.rollback().await?;
             return Ok(());
         }
@@ -632,7 +544,8 @@ impl Handlers {
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
             let stories = self
-                .repo
+                .ports
+                .reads
                 .stories_by_keys(&mut tx, std::slice::from_ref(key))
                 .await?;
             self.story_dtos_in(&mut tx, &stories, &urg).await
@@ -655,9 +568,9 @@ impl Handlers {
             return Ok(Vec::new());
         }
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
-        let mut blockers = self.repo.blockers_of_many(tx, &keys).await?;
-        let mut prs = self.repo.pull_requests_for_many(tx, &keys).await?;
-        let mut goals = self.repo.active_goals_of_stories(tx, &keys).await?;
+        let mut blockers = self.ports.reads.blockers_of_many(tx, &keys).await?;
+        let mut prs = self.ports.reads.pull_requests_for_many(tx, &keys).await?;
+        let mut goals = self.ports.reads.active_goals_of_stories(tx, &keys).await?;
         Ok(stories
             .iter()
             .map(|s| {
@@ -708,13 +621,14 @@ impl Handlers {
         urg: &Urgency,
     ) -> Result<StoryContextDto, HandlerError> {
         let s = self
-            .repo
+            .ports
+            .reads
             .stories_by_keys(tx, std::slice::from_ref(key))
             .await?
             .pop()
             .ok_or(HandlerError::NotFound)?;
         let epic = match s.epic() {
-            Some(k) => Some(self.repo.get_epic_in(tx, k).await?),
+            Some(k) => Some(self.ports.epics.get_epic_in(tx, k).await?),
             None => None,
         };
         let initiative = match epic.as_ref().and_then(|e| e.initiative()) {
@@ -723,24 +637,35 @@ impl Handlers {
         };
         let mut required_decisions = Vec::new();
         if let Some(i) = &initiative {
-            required_decisions.extend(self.repo.list_decisions_on_in(tx, &i.key).await?);
+            required_decisions.extend(
+                self.ports
+                    .decisions
+                    .list_decisions_on_in(tx, &i.key)
+                    .await?,
+            );
         }
         if let Some(e) = &epic {
-            required_decisions.extend(self.repo.list_decisions_on_in(tx, e.key()).await?);
+            required_decisions.extend(
+                self.ports
+                    .decisions
+                    .list_decisions_on_in(tx, e.key())
+                    .await?,
+            );
         }
-        required_decisions.extend(self.repo.list_decisions_on_in(tx, key).await?);
+        required_decisions.extend(self.ports.decisions.list_decisions_on_in(tx, key).await?);
         // A closed decision no longer gates anything; it stays out of the bundle so an agent never reads it as pending.
-        required_decisions.retain(|d| d.closed.is_none());
+        required_decisions.retain(|d| d.closed().is_none());
         // Blockers in three statements whatever their number: the edges (in key-number order), the blocker rows (in
         // that order), and one assembly for the story and its blockers together.
         let blocker_keys = self
-            .repo
+            .ports
+            .reads
             .blockers_of_many(tx, std::slice::from_ref(key))
             .await?
             .remove(key)
             .unwrap_or_default();
         let mut stories = vec![s];
-        stories.extend(self.repo.stories_by_keys(tx, &blocker_keys).await?);
+        stories.extend(self.ports.reads.stories_by_keys(tx, &blocker_keys).await?);
         let mut dtos = self.story_dtos_in(tx, &stories, urg).await?.into_iter();
         let story = dtos.next().ok_or(HandlerError::NotFound)?;
         let blockers = dtos.collect();
@@ -754,7 +679,11 @@ impl Handlers {
                 .map(reeve_protocol::RequiredDecisionDto::from)
                 .collect(),
             blockers,
-            comments: self.repo.list_comments_for_story_in(tx, key).await?,
+            comments: self
+                .ports
+                .comments
+                .list_comments_for_story_in(tx, key)
+                .await?,
             readiness: self.readiness_in(tx, key).await?,
             goals,
         })
@@ -771,11 +700,12 @@ impl Handlers {
             return Ok(Vec::new());
         }
         let ids: Vec<i64> = refs.iter().map(|r| r.id).collect();
-        let goals = self.repo.goals_by_ids_in(tx, &ids).await?;
-        let links = self.repo.links_of_in(tx, &ids).await?;
+        let goals = self.ports.sprints.goals_by_ids_in(tx, &ids).await?;
+        let links = self.ports.sprints.links_of_in(tx, &ids).await?;
         // The refs name the active sprint's goals, read in this snapshot, so it exists.
         let sprint = self
-            .repo
+            .ports
+            .sprints
             .sprint_in_state(tx, reeve_protocol::SprintState::Active)
             .await?
             .ok_or(HandlerError::NotFound)?;
@@ -786,7 +716,7 @@ impl Handlers {
                     .find(|g| g.id == r.id)
                     .ok_or(HandlerError::NotFound)?;
                 Ok(GoalContextDto {
-                    goal: crate::domain::sprint::goal_dto(g, &links),
+                    goal: super::dto::goal_dto(g, &links),
                     starts_on: sprint.starts_on,
                     ends_on: sprint.ends_on,
                     via: r.via,

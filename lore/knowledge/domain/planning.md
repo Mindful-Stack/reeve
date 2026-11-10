@@ -1,0 +1,85 @@
+---
+title: Planning bounded context
+description: The planning context's language, aggregates and their rules (urgent marks included), ports, read side, the guarantees the lint and tests pin, and its relationships to identity, activity, the CLI's Jira import and decision check, and GitHub.
+tags: [domain, planning]
+---
+
+# Planning bounded context
+
+`reeve-planning` owns the work hierarchy, the delivery gate, required decisions, pull-request links, sprints and goals, and urgent marks. How its crate is laid out (ports, adapters, transactions, clock) is in [[general/architecture]]; this node says what the context means and what it will not do. Reason: an agent changing planning needs the language and the guarantees before the file layout.
+
+## Ubiquitous language
+
+The words below are bound across API, database, CLI and UI (kb/ADR-0002 R6; sprint, goal, confidence, verdict and upkeep are trial names under kb/ADR-0014 R6; urgent is added by kb/ADR-0017).
+
+- **Initiative, epic, story.** The three levels of the hierarchy; only stories are delivered. Keys come from one sequence (`ABC-12`, kb/ADR-0002 R5). An initiative has a **horizon** (a configured bucket) and an optional target month.
+- **Kind.** A story is a `story`, a `bug` or a `chore`. A story of kind `story` needs an epic; an **untriaged** story is one of kind `story` with no epic (`Story::is_untriaged`).
+- **Delivery state and resolution.** `todo`, `in_progress`, `in_review`, `testing`, `done`; a story that enters `done` carries a **resolution**, `completed` or `dropped`.
+- **Blocker.** A story that blocks another until it is finished.
+- **Readiness.** A story is ready or it has reasons; computed on read, never stored (kb/ADR-0003 R1). A **discovery mark** on an initiative or epic says its discovery is done.
+- **Override.** An interactive caller's written reason for entering active work although the story is not ready (kb/ADR-0003 R2). **Grandfathered** stories are imported already in their state and are never overrides.
+- **Required decision.** A decision a work item waits on, with a **decider**, a due date and an optional **reversibility** (`one_way` or `two_way`, kb/ADR-0013). It points at a **record reference** (repository, path, record id) in a household repository. Its **check result** is `unchecked`, `accepted`, `not_accepted`, `proposed_pr_open` or `not_found`. It ends with a **closure kind**, `decided` or `withdrawn`.
+- **Sprint, goal, goal link, upkeep line.** A sprint is a window of time, a goal is a team intention with confidence and verdict, a goal link ties a goal to an initiative, epic or story (`link_goal`; `sprint::serves` says which goals a story serves, through itself, its epic or its epic's initiative; kb/ADR-0014 R3), and the upkeep line is the configured reference for how much of a sprint is upkeep (kb/ADR-0014).
+- **Urgent mark, urgent, war room.** A person marks one initiative, epic or story **urgent**, with an optional reason; the mark lasts one sprint length unless renewed, and marking again replaces it. While a mark is active its item, the item's ancestors and its descendants are urgent (a done story is not, and a mark on a done story makes nothing urgent); urgency is computed on read, never stored. The **war room** lists every stored mark, active then expired, until a person clears or renews it (kb/ADR-0017).
+
+## Aggregates
+
+Each aggregate is a Rust type under `crates/reeve-planning/src/domain/`, persisted by one port in `src/ports/`. Rules live on the aggregate or beside it in `domain/`; the handler loads, calls, persists and writes the activity entry. Reason: a rule on the aggregate is testable without a database. For moves and decisions the aggregate is the only way in (private fields, `Story::move_to`, `RequiredDecision`'s methods), so a second caller cannot skip the rule. Item edits are not there yet: `edit_story` checks the title (`check_title`) and the criteria in the handler, `edit_epic` and `edit_initiative` validate through `Epic::new` and `Initiative::new`, and all three rebuild the item with `from_persisted` before `update_*` writes it, so a new edit path must repeat those checks.
+
+| Aggregate | Owns | Port |
+|---|---|---|
+| `Initiative` | title, brief, horizon, target month, discovery mark | `InitiativeRepo` |
+| `Epic` | title, brief, parent initiative, discovery mark | `EpicRepo` |
+| `Story` | kind, description, criteria, owner, labels, rank, delivery, resolution | `StoryRepo` |
+| `RequiredDecision` | planner fields, record reference, PR url, check, closure | `DecisionRepo` |
+| `Sprint` | window and state | `SprintRepo` |
+| `Goal` | outcome, check, owner, notes, confidence and verdict | `SprintRepo` |
+| `UrgentMark` | time, person and optional reason of the mark on one item | `UrgencyRepo` |
+
+`Sprint` and `Goal` are two aggregates behind one port: each has its own version and is locked (`sprint_for_update`, `goal_for_update`) and saved (`save_sprint`, `save_goal`) on its own. A `GoalLink` (goal id and item key) is a row of its own, written by `insert_goal_link` and `delete_goal_link`, not a field of `Goal`. Blocking edges are not part of `Story`: they are rows written by `StoryRepo::add_block` and `remove_block` and read as readiness input (`ReadinessInput::open_blockers`). Comments have no domain type: `CommentRepo` inserts them (`insert_comment`, `insert_item_comment`) and returns `CommentDto` rows. The "no DTO" guarantee below covers `domain/` only: some ports still carry wire types (`CommentRepo`'s `CommentDto`, `GoalVia` in `PlanningReads::active_goals_of_stories`). A pull request (`domain/pull_request.rs`, `PullRequestRepo`) is a cache of GitHub's state, not an aggregate with business rules. An urgent mark is stored in its item's row (`urgent_at`, `urgent_by`, `urgent_reason`) but is no field of `Initiative`, `Epic` or `Story`: only `UrgencyRepo` reads or writes those columns, and no item `UPDATE` names them, so marking takes no version and no edit or move drops a mark (kb/ADR-0017 R1, R5).
+
+### Invariants and where they live
+
+- **The delivery rule is `Story::move_to`** (`domain/items.rs`): entering `done` needs a resolution and a completed story needs an active origin, re-resolving a done story follows the same rule (kb/ADR-0002 R4), a not-ready entry into active work is refused, and an override needs an interactive caller and a non-blank reason (kb/ADR-0003 R2). It returns `Moved::Unchanged` or `Moved::Moved { from, override_reason }`, or a `MoveRefused`, and leaves the story untouched on a refusal. It also sets the owner when a story without one enters `in_progress`. It receives `ready: bool` and nothing from sprints or goals. Reason: readiness is a derived fact the handler loads (kb/ADR-0003 R1), and a goal must never decide a move (kb/ADR-0014 R4).
+- **Decision rules are `RequiredDecision::{link, edit, record_check, close}`** (`domain/decision.rs`), all refusing with `DecisionError` and leaving the decision untouched. `link` resets the check to `unchecked` (kb/ADR-0004 R3); `edit` changes only title, decider, due and reversibility and returns the typed `FieldChange`s; `record_check` refuses, in order, no reference, a result for a changed reference (a conflict at the API), and a closed decision, and reports `CheckOutcome::Unchanged` for a result that says the same; `close` needs a reason, and a one-way decision cannot be closed as `decided` (`OneWayDecided`). Input is validated by value objects built before any row is read: `RecordRef::new`, `PrUrl::parse`, `DecisionEdit::new`.
+- **A changed horizon must be a configured bucket** (`check_horizon_change`, `domain/items.rs`); an unchanged horizon is always valid, so unlisting a bucket does not block editing the initiative's other fields. Create and import check the bucket in `Initiative::new`.
+- **A sprint allows a write only in some states** (`sprint::allow` over `Op`, `domain/sprint.rs`): one explicit table, so a new state or operation fails to compile (kb/ADR-0014 R1, R6).
+- **Urgency is `urgency` over the stored marks and their `Lineage`** (`domain/urgency.rs`): a mark is active until `expires_at`, its time plus the configured sprint length (kb/ADR-0017 R2); an active mark on a story reaches its epic and initiative, on an epic its initiative and its unfinished stories, on an initiative its epics and their unfinished stories, never siblings, and never further from a derived urgency (R3). The handler computes it once per snapshot (`urgency_in`, `handler/urgent.rs`) and every item DTO carries it; nothing stores it (R1). Marking, renewing and clearing need an interactive caller (`interactive`, `handler/mod.rs`), are logged `urgent_marked` and `urgent_cleared`, never `override` (R4), and a reason is trimmed and at most 200 characters (`clean_reason`). The rules on the mark itself are still in the handler and the adapter's SQL; they move onto the domain when next touched.
+- **Readiness is `compute_readiness` over a `ReadinessInput`** (`domain/readiness.rs`). The only derivation stored is a decision's check result, because it needs git.
+- **The time facts `started_at` and `done_at` are set by `set_delivery`'s SQL** from the row's state, not by the aggregate. This is the current implementation choice, not a limit of the aggregate: `move_story` reads the story `FOR UPDATE` (`get_story_for_update`) before it calls `move_to`, so the story it holds has the locked state. The same SQL keeps a stored owner (`COALESCE(owner, …)`), so an owner change must not rely on `set_delivery`.
+- **Fields are private.** `Story`, `RequiredDecision` and `RecordRef` expose getters and `from_persisted` for the adapter and the integration tests. Reason: a field that can be assigned bypasses the rule that guards it. `from_persisted` does not validate, so it is still a way around the rules: the item edit handlers use it, as above.
+
+## The read side
+
+Reads that join other aggregates' tables are on `PlanningReads`: `readiness_inputs` (the one five-statement loader), counts, the decision queue's inputs, search, the export readers and `urgency_lineage_in` (the epics and stories an urgent mark reaches). `KeyRepo` holds the one key sequence and every key or external-reference lookup across item types. Reason: a read across aggregates belongs to no single aggregate, and one sequence keeps keys unique across types.
+
+Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`Summary`, `TodoStory`, `QueueEntry`). Reason: the domain must not change when the wire does, and the OpenAPI snapshot catches the wire side. Values are pinned by `crates/reeve-planning/tests/dto_values.rs`.
+
+## What the context never does
+
+Each guarantee is pinned by `scripts/check-context-isolation.sh`, proven by its fixtures in `scripts/tests/isolation.sh` (`mise run isolation-test`), or by a named test.
+
+- **It never stores readiness** (kb/ADR-0003 R1). Pinned by the schema, which has no readiness column; the gate itself is pinned by `leaving_done_for_an_active_state_is_gated_by_readiness` in `crates/reeve-planning/tests/rules.rs`.
+- **It never moves a story outside `move_story`** (kb/ADR-0002 R4). The lint refuses the names `set_delivery` and `move_to` in any handler file except `handler/moves.rs`, whether called, called through UFCS or taken as a method value. The lint is a tripwire over source text, not a proof (a call through another handler method or a macro escapes it); the behaviour is pinned by `crates/reeve-planning/tests/rules.rs`.
+- **It never reads sprints, goals or urgency to move a story** (kb/ADR-0014 R4, kb/ADR-0017 R5). The lint refuses `ports.sprints`, `active_goals_of_stories`, `ports.urgency`, `urgency_lineage_in` and `urgency_in` in `handler/moves.rs`. Test: `urgency_changes_no_readiness_delivery_or_progress` in `crates/reeve-planning/tests/handlers.rs`.
+- **It never stores urgency, and a mark never changes its item** (kb/ADR-0017 R1, R5). Tests: `urgent_marks_round_trip_without_touching_the_item` in `crates/reeve-planning/tests/repo.rs` and `a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both` in `crates/reeve-planning/tests/handlers.rs`.
+- **The GitHub webhook never moves a story.** The lint allows `handler/prs.rs` only `ports.pull_requests.<method>` and `ports.stories.get_story` (no alias of a port, no UFCS) and refuses `move_story`; `recording_a_pull_request_links_updates_and_never_moves_the_story` in `crates/reeve-planning/tests/handlers.rs` pins the behaviour; `PullRequestRepo` has no method that writes delivery, resolution or version. Tests: `webhook_never_moves_a_story_that_could_move`, `the_webhook_has_no_path_to_moving_a_story` and `webhook_never_touches_an_urgent_mark` in `crates/reeve-server/tests/webhook.rs`.
+- **The import never writes an `override` entry.** Grandfathered stories are created in their state and logged `imported`. Test: `import_creates_with_state_once_and_never_logs_an_override` in `crates/reeve-planning/tests/handlers.rs`, and the server's `crates/reeve-server/tests/import_export.rs`, where `the_importer_has_no_path_to_an_urgent_mark` also pins that the import never reads or writes a mark (kb/ADR-0017 R5).
+- **The domain never names a wire DTO.** The lint refuses any identifier ending in `Dto`, and `StoryWithReadiness`, under `domain/`.
+- **Only an interactive caller overrides.** `move_to` refuses automation with `AutomationCannotOverride`; tests in `crates/reeve-planning/tests/rules.rs` and `handlers.rs` (`only_interactive_callers_may_override_a_system_actor_is_refused`).
+
+A use case that spans ports (a move reads readiness, the story and the activity log) runs in one transaction that the handler opens and the port methods borrow. Reason: kb/ADR-0010 R5.
+
+## Context map
+
+- **Identity (upstream, authenticates).** Planning's `Ctx { actor, via, now }` is its own type; the server builds it from identity's authenticated token (`crates/reeve-server/src/auth/mod.rs`). Planning never imports identity. Reason: kb/ADR-0010, the supplier can change without planning noticing.
+- **Activity (downstream, implements planning's port).** `reeve-activity` implements `ActivitySink`; planning calls `record` in the mutation's transaction.
+- **Jira (anticorruption layer in the CLI).** The translation from Jira's status to delivery, type to kind and owner mapping is `crates/reeve/src/jira/`. Planning's import endpoints receive planner-vocabulary items and create them with their state. Planning knows nothing of Jira beyond an opaque external reference.
+- **Decision records (outside planning).** Records live in household repositories. The CLI's scheduled check reads them and posts check results; it is the only authority that does (kb/ADR-0004, kb/ADR-0016). Planning stores the reference and the result and never reads a repository. Only an admin's check stores `accepted`.
+- **GitHub (informational).** The webhook upserts a story's pull request through `PullRequestRepo` as a cache; status never decides delivery.
+
+## See also
+
+- [[general/architecture]] for the crate rules, transactions, call-site lint and port placement.
+- [[frameworks/rust/repo-port-adapter]] and [[frameworks/rust/inverted-dependency-ports]] for the port patterns.
+- kb/ADR-0002 (hierarchy and vocabulary), kb/ADR-0003 (readiness and gate), kb/ADR-0004 (required decisions), kb/ADR-0010 (crate rules), kb/ADR-0013 (reversibility), kb/ADR-0014 (sprints and goals), kb/ADR-0016 (instance configuration: key prefix, repositories, horizon buckets and sprint settings; replaces kb/ADR-0009), kb/ADR-0017 (urgent marks).

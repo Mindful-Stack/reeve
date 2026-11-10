@@ -5,69 +5,6 @@ use crate::domain::readiness::satisfies;
 use crate::domain::urgency::Urgency;
 use reeve_protocol::{CheckResult, ClosureKind, DeliveryState, Key, Reversibility, TokenKind, Via};
 
-/// A reference names a repository and a path inside it: relative, without a `..` component, and not starting with `-`,
-/// so a checker never reads outside the repository or hands git an option. The repository need not be configured yet
-///: the reference is stored, readiness says the record is in an unchecked repository, and the scheduled check,
-/// which reads only configured repositories (kb/ADR-0016 R2), picks it up once the repository is configured. Its name
-/// is one plain directory name, as a checker uses it. Returns the path in normal form, without empty and `.` components
-/// (`./a//b` is `a/b`): git names tree entries that way, and the checker compares the stored path with that name. A path
-/// that is nothing but such components names no file.
-fn validate_reference(repo: &str, path: &str) -> Result<String, HandlerError> {
-    if repo.starts_with(['-', '.'])
-        || repo.contains(['/', '\\'])
-        || repo.chars().any(char::is_whitespace)
-    {
-        return Err(HandlerError::Validation(format!(
-            "repo `{repo}` is not a single repository name"
-        )));
-    }
-    if path.starts_with('/') || path.starts_with('\\') {
-        return Err(HandlerError::Validation(format!(
-            "path `{path}` must be relative to the repository"
-        )));
-    }
-    if path.split(['/', '\\']).any(|c| c == "..") {
-        return Err(HandlerError::Validation(format!(
-            "path `{path}` must not contain a `..` component"
-        )));
-    }
-    let normal = path
-        .split('/')
-        .filter(|c| !c.is_empty() && *c != ".")
-        .collect::<Vec<_>>()
-        .join("/");
-    if normal.is_empty() {
-        return Err(HandlerError::Validation(format!(
-            "path `{path}` names no file"
-        )));
-    }
-    // Checked on the normal form, which is what git is handed: `./-x.md` is `-x.md`.
-    if normal.starts_with('-') {
-        return Err(HandlerError::Validation(format!(
-            "path `{path}` must not start with `-`"
-        )));
-    }
-    Ok(normal)
-}
-
-/// A decision's PR url is rendered as a link, so it must be an absolute `http(s)://` URL with a host: a `javascript:`
-/// or `data:` url stored here would run in the web client when clicked. Returns the trimmed url.
-fn validate_pr_url(pr_url: Option<String>) -> Result<Option<String>, HandlerError> {
-    let Some(raw) = pr_url else { return Ok(None) };
-    let t = raw.trim();
-    let ok = url::Url::parse(t)
-        .map(|u| {
-            matches!(u.scheme(), "http" | "https") && u.host_str().is_some_and(|h| !h.is_empty())
-        })
-        .unwrap_or(false);
-    if !ok {
-        return Err(HandlerError::Validation(format!(
-            "pr_url `{t}` must be an absolute http(s) URL"
-        )));
-    }
-    Ok(Some(t.to_string()))
-}
-
 impl Handlers {
     pub async fn require_decision(
         &self,
@@ -103,7 +40,8 @@ impl Handlers {
         let item = self.item_type_of(on).await?;
         let mut tx = self.pool.begin().await?;
         let (d, inserted) = self
-            .repo
+            .ports
+            .decisions
             .insert_decision(
                 &mut tx,
                 item,
@@ -123,9 +61,9 @@ impl Handlers {
                     self.rec(
                         c,
                         "decision",
-                        &d.id.to_string(),
+                        &d.id().to_string(),
                         "required",
-                        serde_json::json!({"on": on, "title": d.title, "decider": d.decider, "reversibility": d.reversibility}),
+                        serde_json::json!({"on": on, "title": d.title(), "decider": d.decider(), "reversibility": d.reversibility()}),
                     ),
                 )
                 .await?;
@@ -145,27 +83,17 @@ impl Handlers {
         record_id: &str,
         pr_url: Option<String>,
     ) -> Result<RequiredDecision, HandlerError> {
-        if repo.trim().is_empty() || path.trim().is_empty() || record_id.trim().is_empty() {
-            return Err(HandlerError::Validation(
-                "repo, path and record_id are required".into(),
-            ));
-        }
-        let path = &validate_reference(repo.trim(), path.trim())?;
-        let pr_url = validate_pr_url(pr_url)?;
+        let r = RecordRef::new(repo, path, record_id)?;
+        let pr = pr_url.as_deref().map(PrUrl::parse).transpose()?;
         let mut tx = self.pool.begin().await?;
-        let cur = self.repo.get_decision_for_update(&mut tx, id).await?;
-        if cur.closed.is_some() {
-            return Err(HandlerError::Validation("decision is closed".into()));
-        }
-        let d = cur.with_record(
-            RecordRef {
-                repo: repo.trim().into(),
-                path: path.clone(),
-                record_id: record_id.trim().into(),
-            },
-            pr_url,
-        );
-        self.repo.save_decision(&mut tx, &d).await?;
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
+        d.link(r, pr)?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
+        let r = d.record().expect("just linked");
         self.activity
             .record(
                 &mut tx,
@@ -174,12 +102,12 @@ impl Handlers {
                     "decision",
                     &id.to_string(),
                     "linked",
-                    serde_json::json!({"repo": repo.trim(), "record_id": record_id.trim(), "path": path, "pr_url": d.pr_url}),
+                    serde_json::json!({"repo": r.repo(), "record_id": r.record_id(), "path": r.path(), "pr_url": d.pr_url()}),
                 ),
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// `for_record` and `observed_version` are what the CLI saw when it ran the check; a result for a reference or
@@ -210,48 +138,45 @@ impl Handlers {
             return Err(HandlerError::Forbidden);
         }
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
-        if d.version != observed_version {
-            return Err(HandlerError::Conflict { current: d.version });
-        }
-        match &d.record {
-            None => {
-                return Err(HandlerError::Validation(
-                    "decision has no record reference".into(),
-                ));
-            }
-            Some(r) if r.record_id != for_record => {
-                return Err(HandlerError::Conflict { current: d.version });
-            }
-            _ => {}
-        }
-        if d.closed.is_some() {
-            return Err(HandlerError::Validation("decision is closed".into()));
-        }
-        // The scheduled check posts every open, linked decision every few minutes; logging and bumping an unchanged
-        // result would bury people's entries in the activity log and refetch every client on each run.
-        if same_outcome(&d.check, &check) {
-            self.repo.touch_decision_checked(&mut tx, id, c.now).await?;
-            tx.commit().await?;
-            return Ok(self.repo.get_decision(id).await?);
-        }
-        d.check = check;
-        d.checked_at = Some(c.now);
-        self.repo.save_decision(&mut tx, &d).await?;
-        self.activity
-            .record(
-                &mut tx,
-                self.rec(
-                    c,
-                    "decision",
-                    &id.to_string(),
-                    "checked",
-                    serde_json::json!({"check": d.check}),
-                ),
-            )
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
             .await?;
+        // The version is the handler's to compare; the aggregate owns the remaining refusals, in this order: no record,
+        // a stale reference, closed.
+        if d.version() != observed_version {
+            return Err(HandlerError::Conflict {
+                current: d.version(),
+            });
+        }
+        match d.record_check(for_record, check, c.now)? {
+            // The scheduled check posts every open, linked decision every few minutes; logging and bumping an
+            // unchanged result would bury people's entries in the activity log and refetch every client on each run.
+            CheckOutcome::Unchanged => {
+                self.ports
+                    .decisions
+                    .touch_decision_checked(&mut tx, id, c.now)
+                    .await?;
+            }
+            CheckOutcome::Changed => {
+                self.ports.decisions.save_decision(&mut tx, &d).await?;
+                self.activity
+                    .record(
+                        &mut tx,
+                        self.rec(
+                            c,
+                            "decision",
+                            &id.to_string(),
+                            "checked",
+                            serde_json::json!({"check": d.check()}),
+                        ),
+                    )
+                    .await?;
+            }
+        }
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// Closes the decision as decided or withdrawn (kb/ADR-0013 R3). Every rule is the aggregate's
@@ -270,10 +195,14 @@ impl Handlers {
             Via::System => return Err(HandlerError::Forbidden),
         };
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
         d.close(kind, reason, &c.actor, via, c.now)?;
-        self.repo.save_decision(&mut tx, &d).await?;
-        let reason = &d.closed.as_ref().expect("just closed").reason;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
+        let reason = &d.closed().expect("just closed").reason;
         self.activity
             .record(
                 &mut tx,
@@ -287,7 +216,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// Edits the planner-side fields of an open decision (kb/ADR-0004 R2): title, decider, due and reversibility
@@ -305,65 +234,50 @@ impl Handlers {
         due: Option<Option<chrono::NaiveDate>>,
         reversibility: Option<Option<Reversibility>>,
     ) -> Result<RequiredDecision, HandlerError> {
-        let title = title.map(|t| t.trim().to_string());
-        let decider = decider.map(|d| d.trim().to_string());
-        if title.as_deref() == Some("") || decider.as_deref() == Some("") {
-            return Err(HandlerError::Validation(
-                "title and decider must not be blank".into(),
-            ));
-        }
+        let e = DecisionEdit::new(title, decider, due, reversibility)?;
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
-        if d.version != version {
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
+        if d.version() != version {
             tx.rollback().await?;
-            return Err(HandlerError::Conflict { current: d.version });
+            return Err(HandlerError::Conflict {
+                current: d.version(),
+            });
         }
-        if d.closed.is_some() {
+        let changes = match d.edit(e) {
+            Ok(changes) => changes,
+            Err(e) => {
+                tx.rollback().await?;
+                return Err(e.into());
+            }
+        };
+        if changes.is_empty() {
             tx.rollback().await?;
-            return Err(HandlerError::Validation("decision is closed".into()));
+            return Ok(d);
         }
         // Each changed field's old and new value goes into the entry, so a retitle of a satisfied decision stays
         // recoverable from the log.
         let mut fields = Vec::new();
         let mut from = serde_json::Map::new();
         let mut to = serde_json::Map::new();
-        if let Some(t) = title
-            && t != d.title
-        {
-            from.insert("title".into(), serde_json::json!(d.title));
-            to.insert("title".into(), serde_json::json!(t));
-            d.title = t;
-            fields.push("title");
+        for ch in &changes {
+            let (old, new) = match ch {
+                FieldChange::Title { from: a, to: b } | FieldChange::Decider { from: a, to: b } => {
+                    (serde_json::json!(a), serde_json::json!(b))
+                }
+                FieldChange::Due { from: a, to: b } => (serde_json::json!(a), serde_json::json!(b)),
+                FieldChange::Reversibility { from: a, to: b } => {
+                    (serde_json::json!(a), serde_json::json!(b))
+                }
+            };
+            from.insert(ch.name().into(), old);
+            to.insert(ch.name().into(), new);
+            fields.push(ch.name());
         }
-        if let Some(x) = decider
-            && x != d.decider
-        {
-            from.insert("decider".into(), serde_json::json!(d.decider));
-            to.insert("decider".into(), serde_json::json!(x));
-            d.decider = x;
-            fields.push("decider");
-        }
-        if let Some(due) = due
-            && due != d.due
-        {
-            from.insert("due".into(), serde_json::json!(d.due));
-            to.insert("due".into(), serde_json::json!(due));
-            d.due = due;
-            fields.push("due");
-        }
-        if let Some(r) = reversibility
-            && r != d.reversibility
-        {
-            from.insert("reversibility".into(), serde_json::json!(d.reversibility));
-            to.insert("reversibility".into(), serde_json::json!(r));
-            d.reversibility = r;
-            fields.push("reversibility");
-        }
-        if fields.is_empty() {
-            tx.rollback().await?;
-            return Ok(d);
-        }
-        self.repo.save_decision(&mut tx, &d).await?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
         self.activity
             .record(
                 &mut tx,
@@ -377,28 +291,29 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     pub async fn get_decision(&self, id: i64) -> Result<RequiredDecision, HandlerError> {
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
-    /// `open_with_record_only` keeps decisions that are open and carry a reference, whether or not `on` scopes the list.
-    /// Without `on`, closed decisions are left out unless `include_closed`; a list scoped by `on` always has them (unless
-    /// `open_with_record_only`, which wins over `include_closed`).
     /// Every decision under an initiative: on it, its epics and their stories.
     pub async fn decisions_under_initiative(
         &self,
         initiative: &Key,
     ) -> Result<Vec<RequiredDecision>, HandlerError> {
-        self.repo.get_initiative(initiative).await?;
+        self.ports.initiatives.get_initiative(initiative).await?;
         Ok(self
-            .repo
+            .ports
+            .reads
             .list_decisions_under_initiative(initiative)
             .await?)
     }
 
+    /// `open_with_record_only` keeps decisions that are open and carry a reference, whether or not `on` scopes the list.
+    /// Without `on`, closed decisions are left out unless `include_closed`; a list scoped by `on` always has them (unless
+    /// `open_with_record_only`, which wins over `include_closed`).
     pub async fn list_decisions(
         &self,
         on: Option<&Key>,
@@ -407,20 +322,20 @@ impl Handlers {
     ) -> Result<Vec<RequiredDecision>, HandlerError> {
         Ok(match on {
             Some(k) => {
-                let mut ds = self.repo.list_decisions_on(k).await?;
+                let mut ds = self.ports.decisions.list_decisions_on(k).await?;
                 if open_with_record_only {
                     ds.retain(|d| {
-                        d.closed.is_none()
-                            && d.record
-                                .as_ref()
-                                .is_some_and(|r| self.settings.repos.contains(&r.repo))
+                        d.closed().is_none()
+                            && d.record()
+                                .is_some_and(|r| self.settings.repos.iter().any(|x| x == r.repo()))
                     });
                 }
                 ds
             }
             None => {
                 let mut ds = self
-                    .repo
+                    .ports
+                    .decisions
                     .list_all_decisions(
                         include_closed && !open_with_record_only,
                         open_with_record_only,
@@ -430,9 +345,8 @@ impl Handlers {
                 // repository is configured.
                 if open_with_record_only {
                     ds.retain(|d| {
-                        d.record
-                            .as_ref()
-                            .is_some_and(|r| self.settings.repos.contains(&r.repo))
+                        d.record()
+                            .is_some_and(|r| self.settings.repos.iter().any(|x| x == r.repo()))
                     });
                 }
                 ds
@@ -476,11 +390,17 @@ impl Handlers {
     ) -> Result<(Vec<QueueEntry>, QueueSummary), HandlerError> {
         let ds = match scope {
             DecisionScope::All { include_closed } => {
-                self.repo.list_all_decisions_in(tx, *include_closed).await?
+                self.ports
+                    .decisions
+                    .list_all_decisions_in(tx, *include_closed)
+                    .await?
             }
-            DecisionScope::On(k) => self.repo.list_decisions_on_in(tx, k).await?,
+            DecisionScope::On(k) => self.ports.decisions.list_decisions_on_in(tx, k).await?,
             DecisionScope::Initiative(k) => {
-                self.repo.list_decisions_under_initiative_in(tx, k).await?
+                self.ports
+                    .reads
+                    .list_decisions_under_initiative_in(tx, k)
+                    .await?
             }
         };
         let todo = StoryFilter {
@@ -491,6 +411,14 @@ impl Handlers {
         let stories = self
             .list_stories_in(tx, &todo, false, None, &Urgency::default())
             .await?;
-        Ok(queue::order(ds, queue::blocks(&stories), now.date_naive()))
+        let todo: Vec<queue::TodoStory> = stories
+            .into_iter()
+            .map(|s| queue::TodoStory {
+                key: s.story.key,
+                title: s.story.title,
+                reasons: s.readiness.reasons,
+            })
+            .collect();
+        Ok(queue::order(ds, queue::blocks(&todo), now.date_naive()))
     }
 }

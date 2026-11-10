@@ -2,8 +2,8 @@
 //! from the handler's `Ctx.now`.
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use reeve_protocol::{
-    Confidence, DeliveryState, DemoStoryDto, GoalProgressDto, GoalVia, Key, Reason, Resolution,
-    SprintCountsDto, SprintState, SprintWarning, Verdict,
+    Confidence, DeliveryState, GoalVia, Key, Reason, Resolution, SprintState, SprintWarning,
+    Verdict,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,18 +166,38 @@ pub fn serves(s: &StoryTimes, links: &[GoalLink]) -> Vec<(i64, GoalVia)> {
     out
 }
 
-/// The counts (the protocol's one counts type: no domain twin, and no serde in planning) and the demo list (the
-/// protocol's type too, oldest completion first).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Summary {
-    pub counts: SprintCountsDto,
-    pub demo: Vec<DemoStoryDto>,
+/// One goal's counts over a sprint's window (kb/ADR-0014 R2).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GoalProgress {
+    pub goal_id: i64,
+    pub completed: u32,
+    pub in_flight: u32,
+    pub todo: u32,
+    pub in_review: u32,
+    /// Live: recomputed on every read from the decisions open now.
+    pub blocked_decisions: u32,
 }
 
-impl Summary {
-    pub fn counts(&self) -> SprintCountsDto {
-        self.counts.clone()
-    }
+/// The sprint's counts: what `summarise` folds, what the sprint view serves and what the `closed` entry carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SprintCounts {
+    pub goals: Vec<GoalProgress>,
+    pub completed: u32,
+    pub upkeep_completed: u32,
+}
+
+/// A story completed inside the sprint's demo window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DemoStory {
+    pub key: Key,
+    pub title: String,
+}
+
+/// The counts and the demo list (oldest completion first).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub counts: SprintCounts,
+    pub demo: Vec<DemoStory>,
 }
 
 /// Stories are read once and folded here; `blocked` maps an unfinished story to the decision ids in its readiness
@@ -193,9 +213,9 @@ pub fn summarise(
     let completed = |s: &StoryTimes| s.resolution == Some(Resolution::Completed);
     let completed_inside =
         |s: &StoryTimes| completed(s) && s.done_at.is_some_and(|t| t >= from && t < to);
-    let mut goals: Vec<GoalProgressDto> = goal_ids
+    let mut goals: Vec<GoalProgress> = goal_ids
         .iter()
-        .map(|&goal_id| GoalProgressDto {
+        .map(|&goal_id| GoalProgress {
             goal_id,
             ..Default::default()
         })
@@ -249,80 +269,13 @@ pub fn summarise(
     demo.sort_by_key(|s| s.done_at);
     out.demo = demo
         .into_iter()
-        .map(|s| DemoStoryDto {
+        .map(|s| DemoStory {
             key: s.key.clone(),
             title: s.title.clone(),
         })
         .collect();
     out.counts.goals = goals;
     out
-}
-
-/// A goal on the wire, with its links (any order in `links`; only this goal's are taken, in their given order).
-pub fn goal_dto(g: &Goal, links: &[GoalLink]) -> reeve_protocol::GoalDto {
-    reeve_protocol::GoalDto {
-        id: g.id,
-        sprint_id: g.sprint_id,
-        outcome: g.outcome.clone(),
-        check: g.check.clone(),
-        owner: g.owner.clone(),
-        notes: g.notes.clone(),
-        confidence: g.confidence,
-        confidence_note: g.confidence_note.clone(),
-        confidence_at: g.confidence_at,
-        suggested_confidence: g.suggested_confidence,
-        suggested_note: g.suggested_note.clone(),
-        suggested_at: g.suggested_at,
-        suggested_by: g.suggested_by.clone(),
-        verdict: g.verdict,
-        verdict_note: g.verdict_note.clone(),
-        version: g.version,
-        links: links
-            .iter()
-            .filter(|l| l.goal_id == g.id)
-            .map(|l| l.item_key.clone())
-            .collect(),
-    }
-}
-
-/// A sprint on the wire with its goals (taken from `goals` by sprint id) and, for a draft or the active sprint, the
-/// warnings of its goal count.
-pub fn sprint_dto(s: &Sprint, goals: &[Goal], links: &[GoalLink]) -> reeve_protocol::SprintDto {
-    let goals: Vec<reeve_protocol::GoalDto> = goals
-        .iter()
-        .filter(|g| g.sprint_id == s.id)
-        .map(|g| goal_dto(g, links))
-        .collect();
-    reeve_protocol::SprintDto {
-        id: s.id,
-        state: s.state,
-        starts_on: s.starts_on,
-        ends_on: s.ends_on,
-        opened_at: s.opened_at,
-        closed_at: s.closed_at,
-        version: s.version,
-        warnings: match s.state {
-            SprintState::Closed => vec![],
-            SprintState::Draft | SprintState::Active => warnings(goals.len()),
-        },
-        goals,
-    }
-}
-
-/// A sprint with its numbers; `summary` is None for a draft (no window), which shows zero counts and no demo list.
-pub fn sprint_view_dto(
-    s: &Sprint,
-    goals: &[Goal],
-    links: &[GoalLink],
-    summary: Option<&Summary>,
-    upkeep_line: u8,
-) -> reeve_protocol::SprintViewDto {
-    reeve_protocol::SprintViewDto {
-        sprint: sprint_dto(s, goals, links),
-        counts: summary.map(Summary::counts).unwrap_or_default(),
-        upkeep_line,
-        demo: summary.map(|x| x.demo.clone()).unwrap_or_default(),
-    }
 }
 
 #[cfg(test)]
@@ -745,9 +698,9 @@ mod tests {
     }
 
     #[test]
-    fn summary_counts_accessor_returns_the_counts() {
+    fn summary_carries_one_progress_per_goal() {
         let s = summarise(&[1], &[], &[], &Default::default(), t(3, 18), t(11, 18));
-        assert_eq!(s.counts().goals.len(), 1);
+        assert_eq!(s.counts.goals.len(), 1);
     }
 
     #[test]

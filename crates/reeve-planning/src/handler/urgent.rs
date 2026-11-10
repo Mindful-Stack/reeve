@@ -26,26 +26,6 @@ pub struct WarRoomEntry {
     pub state: MarkState,
 }
 
-/// The two urgency fields every item DTO carries: the mark stored on `key` (active or expired) and the active marks that
-/// make it urgent.
-pub(crate) fn urgent_fields(
-    u: &Urgency,
-    key: &Key,
-) -> (
-    Option<reeve_protocol::UrgentMarkDto>,
-    Vec<reeve_protocol::ItemRefDto>,
-) {
-    let sources = u
-        .sources(key)
-        .iter()
-        .map(|(k, t)| reeve_protocol::ItemRefDto {
-            key: k.clone(),
-            item: *t,
-        })
-        .collect();
-    (u.mark(key).map(Into::into), sources)
-}
-
 fn clean_reason(r: Option<String>) -> Result<Option<String>, HandlerError> {
     let r = r.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     if r.as_ref().is_some_and(|s| s.chars().count() > MAX_REASON) {
@@ -65,7 +45,7 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,
     ) -> Result<Urgency, HandlerError> {
-        let marks = self.repo.urgent_marks_in(tx).await?;
+        let marks = self.ports.urgency.urgent_marks_in(tx).await?;
         let mut epics = Vec::new();
         let mut initiatives = Vec::new();
         for m in &marks {
@@ -80,7 +60,8 @@ impl Handlers {
             }
         }
         let lineage = self
-            .repo
+            .ports
+            .reads
             .urgency_lineage_in(tx, &epics, &initiatives)
             .await?;
         Ok(urgency(
@@ -120,7 +101,12 @@ impl Handlers {
             by: c.actor.clone(),
             reason: reason.clone(),
         };
-        if !self.repo.set_urgent_mark(tx, item, key, &mark).await? {
+        if !self
+            .ports
+            .urgency
+            .set_urgent_mark(tx, item, key, &mark)
+            .await?
+        {
             return Err(HandlerError::NotFound);
         }
         self.record_marked(tx, c, item, key, &reason).await
@@ -158,7 +144,7 @@ impl Handlers {
         key: &Key,
     ) -> Result<(), HandlerError> {
         interactive(c)?;
-        if !self.repo.key_exists(item, key).await? {
+        if !self.ports.keys.key_exists(item, key).await? {
             return Err(HandlerError::NotFound);
         }
         let mut tx = self.pool.begin().await?;
@@ -174,7 +160,7 @@ impl Handlers {
         item: ItemType,
         key: &Key,
     ) -> Result<(), HandlerError> {
-        if self.repo.clear_urgent_mark(tx, item, key).await? {
+        if self.ports.urgency.clear_urgent_mark(tx, item, key).await? {
             let name = item_name(item);
             self.activity
                 .record(
@@ -208,7 +194,7 @@ impl Handlers {
         now: DateTime<Utc>,
     ) -> Result<Vec<WarRoomEntry>, HandlerError> {
         // The strip needs only the marks themselves, not who inherits them, so no lineage is read.
-        let marks = self.repo.urgent_marks_in(tx).await?;
+        let marks = self.ports.urgency.urgent_marks_in(tx).await?;
         let urg = urgency(
             &marks,
             &Lineage::default(),
@@ -221,14 +207,16 @@ impl Handlers {
         // Whole-table reads of initiatives and epics: an instance holds tens of them, and this keeps the strip to a
         // fixed number of statements whatever the number of marks.
         let initiatives: HashMap<Key, Initiative> = self
-            .repo
+            .ports
+            .reads
             .initiatives_in(tx)
             .await?
             .into_iter()
             .map(|i| (i.key().clone(), i))
             .collect();
         let epics: HashMap<Key, Epic> = self
-            .repo
+            .ports
+            .reads
             .epics_in(tx)
             .await?
             .into_iter()
@@ -240,7 +228,8 @@ impl Handlers {
             .map(|(k, _)| k.clone())
             .collect();
         let stories: HashMap<Key, Story> = self
-            .repo
+            .ports
+            .reads
             .stories_by_keys(tx, &story_keys)
             .await?
             .into_iter()
@@ -317,7 +306,8 @@ impl Handlers {
         for (t, k) in &items {
             // Only a row still marked: a clear that committed meanwhile is not undone.
             if let Some(reason) = self
-                .repo
+                .ports
+                .urgency
                 .renew_urgent_mark(&mut tx, *t, k, c.now, &c.actor)
                 .await?
             {
@@ -346,7 +336,7 @@ impl Handlers {
             .collect();
         let mut tx = self.pool.begin().await?;
         let keys: Vec<Key> = items.iter().map(|(_, k)| k.clone()).collect();
-        let types = self.repo.item_types_in(&mut tx, &keys).await?;
+        let types = self.ports.keys.item_types_in(&mut tx, &keys).await?;
         if let Some((t, k)) = items.iter().find(|(t, k)| types.get(k) != Some(t)) {
             return Err(HandlerError::Validation(format!(
                 "{k} is not a {}",
@@ -354,39 +344,5 @@ impl Handlers {
             )));
         }
         Ok((tx, items))
-    }
-}
-
-impl From<&MarkState> for reeve_protocol::UrgentMarkDto {
-    fn from(m: &MarkState) -> Self {
-        Self {
-            at: m.mark.at,
-            by: m.mark.by.clone(),
-            reason: m.mark.reason.clone(),
-            expires_at: m.expires_at,
-            active: m.active,
-            done: m.done,
-        }
-    }
-}
-
-impl From<&WarRoomEntry> for reeve_protocol::WarRoomEntryDto {
-    fn from(e: &WarRoomEntry) -> Self {
-        Self {
-            item: reeve_protocol::ItemRefDto {
-                key: e.key.clone(),
-                item: e.item,
-            },
-            title: e.title.clone(),
-            initiative: e
-                .initiative
-                .as_ref()
-                .map(|i| reeve_protocol::WarRoomInitiativeDto {
-                    key: i.key.clone(),
-                    title: i.title.clone(),
-                    horizon: i.horizon.clone(),
-                }),
-            mark: (&e.state).into(),
-        }
     }
 }

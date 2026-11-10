@@ -17,9 +17,13 @@ impl Handlers {
         pr: PullRequest,
     ) -> Result<PrChange, HandlerError> {
         let pr = pr.at_storage_precision().canonical();
-        self.repo.get_story(story).await?;
+        self.ports.stories.get_story(story).await?;
         let mut tx = self.pool.begin().await?;
-        let change = self.repo.upsert_pull_request(&mut tx, story, &pr).await?;
+        let change = self
+            .ports
+            .pull_requests
+            .upsert_pull_request(&mut tx, story, &pr)
+            .await?;
         let payload = |extra: Option<(&str, &Key)>| {
             let mut p = serde_json::json!({
                 "repo": pr.repo,

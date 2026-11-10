@@ -1,5 +1,5 @@
 use chrono::{DateTime, SubsecRound, Utc};
-use reeve_protocol::{Key, PrStatus, PullRequestDto};
+use reeve_protocol::{Key, PrStatus};
 
 /// A pull request linked to a story: a cache of GitHub's state keyed by (repo, number). It is informational only;
 /// nothing in planning reads its status to move a story (kb/ADR-0002 R4). `repo` is `owner/name` lower-cased (GitHub
@@ -71,19 +71,6 @@ pub fn decide(
         (true, true) => PrChange::Ignored,
         (true, false) => PrChange::Touched,
         (false, _) => PrChange::Updated,
-    }
-}
-
-impl From<&PullRequest> for PullRequestDto {
-    fn from(p: &PullRequest) -> Self {
-        Self {
-            repo: p.repo.clone(),
-            number: p.number,
-            url: p.url.clone(),
-            title: p.title.clone(),
-            status: p.status,
-            updated_at: p.updated_at,
-        }
     }
 }
 

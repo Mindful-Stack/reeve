@@ -19,9 +19,9 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         urg: &Urgency,
     ) -> Result<Vec<InitiativeDto>, HandlerError> {
-        let initiatives = self.repo.initiatives_in(tx).await?;
-        let epics = self.repo.epics_in(tx).await?;
-        let stories = self.repo.stories_in(tx).await?;
+        let initiatives = self.ports.reads.initiatives_in(tx).await?;
+        let epics = self.ports.reads.epics_in(tx).await?;
+        let stories = self.ports.reads.stories_in(tx).await?;
         let initiative_of: HashMap<&Key, &Key> = epics
             .iter()
             .filter_map(|e| e.initiative().map(|i| (e.key(), i)))
@@ -51,7 +51,8 @@ impl Handlers {
         urg: &Urgency,
     ) -> Result<Vec<EpicDto>, HandlerError> {
         Ok(self
-            .repo
+            .ports
+            .reads
             .epics_in(tx)
             .await?
             .iter()
@@ -65,7 +66,7 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         urg: &Urgency,
     ) -> Result<Vec<StoryDto>, HandlerError> {
-        let stories = self.repo.stories_in(tx).await?;
+        let stories = self.ports.reads.stories_in(tx).await?;
         self.story_dtos_in(tx, &stories, urg).await
     }
 
@@ -75,16 +76,16 @@ impl Handlers {
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<SprintDto>, HandlerError> {
-        let mut all = self.repo.sprints_in(tx).await?;
+        let mut all = self.ports.sprints.sprints_in(tx).await?;
         // `sprints_in` answers newest first (`ORDER BY id DESC`); the export is oldest first.
         all.sort_by_key(|s| s.id);
         let ids: Vec<i64> = all.iter().map(|s| s.id).collect();
-        let goals = self.repo.goals_of_in(tx, &ids).await?;
+        let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
         let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
-        let links = self.repo.links_of_in(tx, &goal_ids).await?;
+        let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
         Ok(all
             .iter()
-            .map(|s| crate::domain::sprint::sprint_dto(s, &goals, &links))
+            .map(|s| super::dto::sprint_dto(s, &goals, &links))
             .collect())
     }
 
@@ -93,7 +94,8 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<RequiredDecisionDto>, HandlerError> {
         Ok(self
-            .repo
+            .ports
+            .reads
             .decisions_in(tx)
             .await?
             .iter()
@@ -105,6 +107,6 @@ impl Handlers {
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<CommentDto>, HandlerError> {
-        Ok(self.repo.comments_in(tx).await?)
+        Ok(self.ports.reads.comments_in(tx).await?)
     }
 }

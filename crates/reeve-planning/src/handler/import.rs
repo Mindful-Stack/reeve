@@ -100,7 +100,8 @@ impl Handlers {
             return Ok(existing(k));
         }
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let item = Initiative::from_persisted(
@@ -114,7 +115,11 @@ impl Handlers {
             Some(r.clone()),
             1,
         );
-        let inserted = self.repo.insert_initiative(&mut tx, &item, &r, c.now).await;
+        let inserted = self
+            .ports
+            .initiatives
+            .insert_initiative(&mut tx, &item, &r, c.now)
+            .await;
         self.finish(c, tx, inserted, ItemType::Initiative, "initiative", key, &r)
             .await
     }
@@ -128,7 +133,7 @@ impl Handlers {
             e.brief.as_deref().unwrap_or(""),
         )?;
         if let Some(ik) = &e.initiative {
-            self.repo.get_initiative(ik).await?;
+            self.ports.initiatives.get_initiative(ik).await?;
         }
         let mut tx = self.pool.begin().await?;
         if let Some(k) = self.imported_as(&mut tx, ItemType::Epic, &r).await? {
@@ -136,7 +141,8 @@ impl Handlers {
             return Ok(existing(k));
         }
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let item = Epic::from_persisted(
@@ -148,7 +154,11 @@ impl Handlers {
             Some(r.clone()),
             1,
         );
-        let inserted = self.repo.insert_epic(&mut tx, &item, &r, c.now).await;
+        let inserted = self
+            .ports
+            .epics
+            .insert_epic(&mut tx, &item, &r, c.now)
+            .await;
         self.finish(c, tx, inserted, ItemType::Epic, "epic", key, &r)
             .await
     }
@@ -171,7 +181,7 @@ impl Handlers {
             s.labels,
         )?;
         if let Some(ek) = &s.epic {
-            self.repo.get_epic(ek).await?;
+            self.ports.epics.get_epic(ek).await?;
         }
         let mut tx = self.pool.begin().await?;
         if let Some(k) = self.imported_as(&mut tx, ItemType::Story, &r).await? {
@@ -179,7 +189,8 @@ impl Handlers {
             return Ok(existing(k));
         }
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let criteria = probe
@@ -206,7 +217,11 @@ impl Handlers {
             Some(r.clone()),
             1,
         );
-        let inserted = self.repo.insert_story(&mut tx, &item, &r, c.now).await;
+        let inserted = self
+            .ports
+            .stories
+            .insert_story(&mut tx, &item, &r, c.now)
+            .await;
         self.finish(c, tx, inserted, ItemType::Story, "story", key, &r)
             .await
     }
@@ -225,10 +240,11 @@ impl Handlers {
         let r = check_ref(&m.external_ref)?;
         let author = non_blank("author", &m.author)?;
         let body = non_blank("body", &m.body)?;
-        self.repo.get_story(&m.story).await?;
+        self.ports.stories.get_story(&m.story).await?;
         let mut tx = self.pool.begin().await?;
         let (id, inserted) = self
-            .repo
+            .ports
+            .comments
             .insert_comment(
                 &mut tx,
                 Some(&m.story),
@@ -309,7 +325,8 @@ impl Handlers {
         if let Some((other, k)) = self.ref_holder(tx, &r).await? {
             if other == item
                 && self
-                    .repo
+                    .ports
+                    .keys
                     .find_by_idempotency_in(tx, item, idem)
                     .await?
                     .as_ref()
@@ -366,9 +383,9 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         r: &str,
     ) -> Result<Option<(ItemType, Key)>, HandlerError> {
-        self.repo.lock_external_ref(tx, r).await?;
+        self.ports.keys.lock_external_ref(tx, r).await?;
         for item in [ItemType::Initiative, ItemType::Epic, ItemType::Story] {
-            if let Some(k) = self.repo.find_by_external_ref_in(tx, item, r).await? {
+            if let Some(k) = self.ports.keys.find_by_external_ref_in(tx, item, r).await? {
                 return Ok(Some((item, k)));
             }
         }
@@ -401,7 +418,7 @@ impl Handlers {
         };
         if !won {
             tx.rollback().await?;
-            return match self.repo.find_by_external_ref(item, r).await? {
+            return match self.ports.keys.find_by_external_ref(item, r).await? {
                 Some(k) => Ok(existing(k)),
                 None => Err(HandlerError::Validation(format!(
                     "{r:?} is already the idempotency key of a {entity} that was not imported"

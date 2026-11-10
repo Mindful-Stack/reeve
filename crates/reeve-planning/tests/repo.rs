@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, Epic, Handlers, Initiative, ItemType, RepoError,
-    Settings, Story, StoryFilter, UrgentMark, compute_readiness, make_planning_repo,
+    RequiredDecision, Settings, Story, StoryFilter, UrgentMark, compute_readiness,
+    make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -14,30 +15,34 @@ use std::sync::Arc;
 #[tokio::test]
 async fn keys_items_versions_and_readiness_inputs() {
     let (_c, pool) = common::pg().await;
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let now = Utc.with_ymd_and_hms(2026, 10, 26, 9, 0, 0).unwrap();
     let buckets = vec!["Now".to_string(), "Later".to_string()];
 
     let mut tx = pool.begin().await.unwrap();
-    let k1 = repo.next_key(&mut tx, "ABC").await.unwrap();
-    let k2 = repo.next_key(&mut tx, "ABC").await.unwrap();
+    let k1 = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
+    let k2 = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     assert_eq!(
         (k1.to_string(), k2.to_string()),
         ("ABC-1".to_string(), "ABC-2".to_string())
     );
     let ini = Initiative::new(k1.clone(), "Orion", "", "Now", &buckets, None, None).unwrap();
     assert!(
-        repo.insert_initiative(&mut tx, &ini, "idem-ini", now)
+        ports
+            .initiatives
+            .insert_initiative(&mut tx, &ini, "idem-ini", now)
             .await
             .unwrap()
     );
     let epic = Epic::new(k2.clone(), "Orion v2", Some(k1.clone()), "").unwrap();
     assert!(
-        repo.insert_epic(&mut tx, &epic, "idem-epic", now)
+        ports
+            .epics
+            .insert_epic(&mut tx, &epic, "idem-epic", now)
             .await
             .unwrap()
     );
-    let k3 = repo.next_key(&mut tx, "ABC").await.unwrap();
+    let k3 = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     let story = Story::new(
         k3.clone(),
         "Booking flow",
@@ -50,12 +55,14 @@ async fn keys_items_versions_and_readiness_inputs() {
     )
     .unwrap();
     assert!(
-        repo.insert_story(&mut tx, &story, "idem-story", now)
+        ports
+            .stories
+            .insert_story(&mut tx, &story, "idem-story", now)
             .await
             .unwrap()
     );
     let dup = Story::new(
-        repo.next_key(&mut tx, "ABC").await.unwrap(),
+        ports.keys.next_key(&mut tx, "ABC").await.unwrap(),
         "Dup",
         Kind::Story,
         None,
@@ -66,13 +73,15 @@ async fn keys_items_versions_and_readiness_inputs() {
     )
     .unwrap();
     assert!(
-        !repo
+        !ports
+            .stories
             .insert_story(&mut tx, &dup, "idem-story", now)
             .await
             .unwrap(),
         "a repeated idempotency key inserts nothing"
     );
-    let (d, inserted) = repo
+    let (d, inserted) = ports
+        .decisions
         .insert_decision(
             &mut tx,
             ItemType::Epic,
@@ -87,7 +96,8 @@ async fn keys_items_versions_and_readiness_inputs() {
         .await
         .unwrap();
     assert!(inserted);
-    let (again, inserted_again) = repo
+    let (again, inserted_again) = ports
+        .decisions
         .insert_decision(
             &mut tx,
             ItemType::Epic,
@@ -103,20 +113,25 @@ async fn keys_items_versions_and_readiness_inputs() {
         .unwrap();
     assert!(!inserted_again);
     assert_eq!(
-        again.id, d.id,
+        again.id(),
+        d.id(),
         "a repeated idempotency key returns the existing decision"
     );
     tx.commit().await.unwrap();
 
     // Idempotency lookups find the same keys.
     assert_eq!(
-        repo.find_by_idempotency(ItemType::Story, "idem-story")
+        ports
+            .keys
+            .find_by_idempotency(ItemType::Story, "idem-story")
             .await
             .unwrap(),
         Some(k3.clone())
     );
     assert_eq!(
-        repo.find_by_idempotency(ItemType::Story, "nope")
+        ports
+            .keys
+            .find_by_idempotency(ItemType::Story, "nope")
             .await
             .unwrap(),
         None
@@ -124,7 +139,8 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // Readiness input carries ancestors epic-first, their decisions, and criteria count.
     let mut tx = pool.begin().await.unwrap();
-    let input = repo
+    let input = ports
+        .reads
         .readiness_inputs(&mut tx, std::slice::from_ref(&k3))
         .await
         .unwrap()
@@ -139,34 +155,36 @@ async fn keys_items_versions_and_readiness_inputs() {
         ["ABC-2", "ABC-1"]
     );
     assert!(!input.ancestors[0].discovery_complete);
-    assert_eq!(input.ancestors[0].decisions[0].id, d.id);
+    assert_eq!(input.ancestors[0].decisions[0].id, d.id());
     assert_eq!(input.criteria_count, 1);
     tx.rollback().await.unwrap();
 
     // Version check: a stale update is refused with the current version.
     let mut tx = pool.begin().await.unwrap();
-    let fresh = repo.get_story(&k3).await.unwrap();
-    repo.set_delivery(
-        &mut tx,
-        &k3,
-        fresh.version(),
-        DeliveryState::InProgress,
-        None,
-        Some("dan@example.com"),
-        now,
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-    let mut tx = pool.begin().await.unwrap();
-    let err = repo
+    let fresh = ports.stories.get_story(&k3).await.unwrap();
+    ports
+        .stories
         .set_delivery(
             &mut tx,
-            &k3,
+            &target(
+                &k3,
+                DeliveryState::InProgress,
+                None,
+                Some("dan@example.com"),
+            ),
             fresh.version(),
-            DeliveryState::InReview,
-            None,
-            None,
+            now,
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let err = ports
+        .stories
+        .set_delivery(
+            &mut tx,
+            &target(&k3, DeliveryState::InReview, None, None),
+            fresh.version(),
             now,
         )
         .await
@@ -176,7 +194,7 @@ async fn keys_items_versions_and_readiness_inputs() {
         reeve_planning::RepoError::Conflict { current: 2 }
     ));
     tx.rollback().await.unwrap();
-    let after = repo.get_story(&k3).await.unwrap();
+    let after = ports.stories.get_story(&k3).await.unwrap();
     assert_eq!(
         after.owner(),
         Some("dan@example.com"),
@@ -187,24 +205,29 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // Done with a resolution: owner_if_none does not overwrite an existing owner; counts see the completion.
     let mut tx = pool.begin().await.unwrap();
-    repo.set_delivery(
-        &mut tx,
-        &k3,
-        2,
-        DeliveryState::Done,
-        Some(Resolution::Completed),
-        Some("other@example.com"),
-        now,
-    )
-    .await
-    .unwrap();
+    ports
+        .stories
+        .set_delivery(
+            &mut tx,
+            &target(
+                &k3,
+                DeliveryState::Done,
+                Some(Resolution::Completed),
+                Some("other@example.com"),
+            ),
+            2,
+            now,
+        )
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    let done = repo.get_story(&k3).await.unwrap();
+    let done = ports.stories.get_story(&k3).await.unwrap();
     assert_eq!(done.owner(), Some("dan@example.com"));
     assert_eq!(done.delivery(), DeliveryState::Done);
     assert_eq!(done.resolution(), Some(Resolution::Completed));
     let mut tx = pool.begin().await.unwrap();
-    let counts = repo
+    let counts = ports
+        .reads
         .story_counts_under_initiative_in(&mut tx, &k1)
         .await
         .unwrap();
@@ -213,16 +236,24 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // Reopening to todo with no resolution clears the resolution.
     let mut tx = pool.begin().await.unwrap();
-    repo.set_delivery(&mut tx, &k3, 3, DeliveryState::Todo, None, None, now)
+    ports
+        .stories
+        .set_delivery(
+            &mut tx,
+            &target(&k3, DeliveryState::Todo, None, None),
+            3,
+            now,
+        )
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let reopened = repo.get_story(&k3).await.unwrap();
+    let reopened = ports.stories.get_story(&k3).await.unwrap();
     assert_eq!(reopened.delivery(), DeliveryState::Todo);
     assert_eq!(reopened.resolution(), None);
     assert_eq!(reopened.version(), 4);
     let mut tx = pool.begin().await.unwrap();
-    let counts = repo
+    let counts = ports
+        .reads
         .story_counts_under_initiative_in(&mut tx, &k1)
         .await
         .unwrap();
@@ -231,14 +262,18 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // update_story, update_epic and update_initiative: success, stale write, missing row.
     let mut tx = pool.begin().await.unwrap();
-    repo.update_story(&mut tx, &reopened, None, 4, now)
+    ports
+        .stories
+        .update_story(&mut tx, &reopened, None, 4, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(repo.get_story(&k3).await.unwrap().version(), 5);
+    assert_eq!(ports.stories.get_story(&k3).await.unwrap().version(), 5);
     let mut tx = pool.begin().await.unwrap();
     assert!(matches!(
-        repo.update_story(&mut tx, &reopened, None, 4, now)
+        ports
+            .stories
+            .update_story(&mut tx, &reopened, None, 4, now)
             .await
             .unwrap_err(),
         reeve_planning::RepoError::Conflict { current: 5 }
@@ -249,46 +284,74 @@ async fn keys_items_versions_and_readiness_inputs() {
     // committed since must survive an update that supplies none.
     let stale_rank = reopened.rank();
     let mut tx = pool.begin().await.unwrap();
-    repo.set_ranks(&mut tx, &[(k3.clone(), stale_rank + 7)])
+    ports
+        .stories
+        .set_ranks(&mut tx, &[(k3.clone(), stale_rank + 7)])
         .await
         .unwrap();
     tx.commit().await.unwrap();
     let mut tx = pool.begin().await.unwrap();
-    repo.update_story(&mut tx, &reopened, None, 5, now)
+    ports
+        .stories
+        .update_story(&mut tx, &reopened, None, 5, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let kept = repo.get_story(&k3).await.unwrap();
+    let kept = ports.stories.get_story(&k3).await.unwrap();
     assert_eq!(
         kept.rank(),
         stale_rank + 7,
         "a rank-less update restored a stale rank"
     );
     let mut tx = pool.begin().await.unwrap();
-    repo.update_story(&mut tx, &reopened, Some(3), 6, now)
+    ports
+        .stories
+        .update_story(&mut tx, &reopened, Some(3), 6, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(repo.get_story(&k3).await.unwrap().rank(), 3);
+    assert_eq!(ports.stories.get_story(&k3).await.unwrap().rank(), 3);
 
     let mut tx = pool.begin().await.unwrap();
-    repo.update_epic(&mut tx, &epic, 1, now).await.unwrap();
+    ports
+        .epics
+        .update_epic(&mut tx, &epic, 1, now)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(repo.get_epic(&k2).await.unwrap().version(), 2);
+    assert_eq!(ports.epics.get_epic(&k2).await.unwrap().version(), 2);
     let mut tx = pool.begin().await.unwrap();
     assert!(matches!(
-        repo.update_epic(&mut tx, &epic, 1, now).await.unwrap_err(),
+        ports
+            .epics
+            .update_epic(&mut tx, &epic, 1, now)
+            .await
+            .unwrap_err(),
         reeve_planning::RepoError::Conflict { current: 2 }
     ));
     tx.rollback().await.unwrap();
 
     let mut tx = pool.begin().await.unwrap();
-    repo.update_initiative(&mut tx, &ini, 1, now).await.unwrap();
+    ports
+        .initiatives
+        .update_initiative(&mut tx, &ini, 1, now)
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(repo.get_initiative(&k1).await.unwrap().version(), 2);
+    assert_eq!(
+        ports
+            .initiatives
+            .get_initiative(&k1)
+            .await
+            .unwrap()
+            .version(),
+        2
+    );
     let mut tx = pool.begin().await.unwrap();
     assert!(matches!(
-        repo.update_initiative(&mut tx, &ini, 1, now)
+        ports
+            .initiatives
+            .update_initiative(&mut tx, &ini, 1, now)
             .await
             .unwrap_err(),
         reeve_planning::RepoError::Conflict { current: 2 }
@@ -299,46 +362,63 @@ async fn keys_items_versions_and_readiness_inputs() {
     let mut tx = pool.begin().await.unwrap();
     let ghost_epic = Epic::new(ghost.clone(), "Ghost", None, "").unwrap();
     assert!(matches!(
-        repo.update_epic(&mut tx, &ghost_epic, 1, now)
+        ports
+            .epics
+            .update_epic(&mut tx, &ghost_epic, 1, now)
             .await
             .unwrap_err(),
         reeve_planning::RepoError::NotFound
     ));
     assert!(matches!(
-        repo.set_delivery(&mut tx, &ghost, 1, DeliveryState::Done, None, None, now)
+        ports
+            .stories
+            .set_delivery(
+                &mut tx,
+                &target(&ghost, DeliveryState::Done, None, None),
+                1,
+                now,
+            )
             .await
             .unwrap_err(),
         reeve_planning::RepoError::NotFound
     ));
     tx.rollback().await.unwrap();
     assert!(matches!(
-        repo.get_story(&ghost).await.unwrap_err(),
+        ports.stories.get_story(&ghost).await.unwrap_err(),
         reeve_planning::RepoError::NotFound
     ));
 
     // Saving a decision's check result round-trips through JSONB.
     let mut tx = pool.begin().await.unwrap();
-    let mut d2 = repo.get_decision(d.id).await.unwrap();
-    d2.check = CheckResult::Accepted {
-        commit: "abc123".into(),
-        reversibility: None,
-    };
-    d2.checked_at = Some(now);
-    repo.save_decision(&mut tx, &d2).await.unwrap();
-    tx.commit().await.unwrap();
-    let after_d = repo.get_decision(d.id).await.unwrap();
-    assert_eq!(
-        after_d.check,
+    let d2 = ports.decisions.get_decision(d.id()).await.unwrap();
+    let d2 = written(
+        &d2,
         CheckResult::Accepted {
+            commit: "abc123".into(),
+            reversibility: None,
+        },
+        Some(now),
+        d2.closed().cloned(),
+    );
+    ports.decisions.save_decision(&mut tx, &d2).await.unwrap();
+    tx.commit().await.unwrap();
+    let after_d = ports.decisions.get_decision(d.id()).await.unwrap();
+    assert_eq!(
+        after_d.check(),
+        &CheckResult::Accepted {
             commit: "abc123".into(),
             reversibility: None,
         }
     );
-    assert_eq!(after_d.version, 2);
+    assert_eq!(after_d.version(), 2);
     let mut tx = pool.begin().await.unwrap();
     assert!(
         matches!(
-            repo.save_decision(&mut tx, &d2).await.unwrap_err(),
+            ports
+                .decisions
+                .save_decision(&mut tx, &d2)
+                .await
+                .unwrap_err(),
             reeve_planning::RepoError::Conflict { current: 2 }
         ),
         "saving with the old version is refused"
@@ -347,7 +427,7 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     // A second story without an epic: untriaged, labelled, blocked by the first.
     let mut tx = pool.begin().await.unwrap();
-    let ku = repo.next_key(&mut tx, "ABC").await.unwrap();
+    let ku = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     let loose = Story::new(
         ku.clone(),
         "Loose",
@@ -360,13 +440,16 @@ async fn keys_items_versions_and_readiness_inputs() {
     )
     .unwrap();
     assert!(
-        repo.insert_story(&mut tx, &loose, "idem-loose", now)
+        ports
+            .stories
+            .insert_story(&mut tx, &loose, "idem-loose", now)
             .await
             .unwrap()
     );
-    repo.add_block(&mut tx, &ku, &k3).await.unwrap();
-    repo.add_block(&mut tx, &ku, &k3).await.unwrap();
-    let input = repo
+    ports.stories.add_block(&mut tx, &ku, &k3).await.unwrap();
+    ports.stories.add_block(&mut tx, &ku, &k3).await.unwrap();
+    let input = ports
+        .reads
         .readiness_inputs(&mut tx, std::slice::from_ref(&ku))
         .await
         .unwrap()
@@ -376,7 +459,9 @@ async fn keys_items_versions_and_readiness_inputs() {
     tx.commit().await.unwrap();
     let mut tx = pool.begin().await.unwrap();
     assert_eq!(
-        repo.blockers_of_many(&mut tx, std::slice::from_ref(&ku))
+        ports
+            .reads
+            .blockers_of_many(&mut tx, std::slice::from_ref(&ku))
             .await
             .unwrap()
             .remove(&ku)
@@ -387,14 +472,15 @@ async fn keys_items_versions_and_readiness_inputs() {
 
     let mut tx = pool.begin().await.unwrap();
     assert!(
-        repo.add_block(&mut tx, &ku, &ku).await.is_err(),
+        ports.stories.add_block(&mut tx, &ku, &ku).await.is_err(),
         "a story cannot block itself"
     );
     drop(tx);
 
     // Comments: the same external_ref returns the existing row.
     let mut tx = pool.begin().await.unwrap();
-    let (c1, fresh_c) = repo
+    let (c1, fresh_c) = ports
+        .comments
         .insert_comment(
             &mut tx,
             Some(&k3),
@@ -407,7 +493,8 @@ async fn keys_items_versions_and_readiness_inputs() {
         )
         .await
         .unwrap();
-    let (c2, fresh_c2) = repo
+    let (c2, fresh_c2) = ports
+        .comments
         .insert_comment(
             &mut tx,
             Some(&k3),
@@ -423,16 +510,24 @@ async fn keys_items_versions_and_readiness_inputs() {
     tx.commit().await.unwrap();
     assert!(fresh_c && !fresh_c2);
     assert_eq!(c1, c2);
-    assert_eq!(repo.list_comments_for_story(&k3).await.unwrap().len(), 1);
+    assert_eq!(
+        ports
+            .comments
+            .list_comments_for_story(&k3)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 
     // Filters.
     let keys = |v: Vec<Story>| v.iter().map(|s| s.key().to_string()).collect::<Vec<_>>();
     let f = |f: StoryFilter| {
-        let repo = repo.clone();
+        let ports = ports.clone();
         let pool = pool.clone();
         async move {
             let mut tx = pool.begin().await.unwrap();
-            let found = repo.list_stories(&mut tx, &f, None).await.unwrap();
+            let found = ports.stories.list_stories(&mut tx, &f, None).await.unwrap();
             tx.rollback().await.unwrap();
             keys(found)
         }
@@ -540,7 +635,7 @@ impl ActivitySink for NoSink {
 
 fn handlers(pool: &sqlx::PgPool) -> Handlers {
     Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(NoSink),
         pool: pool.clone(),
         settings: Settings {
@@ -595,7 +690,8 @@ async fn stories_by_keys_keeps_the_order_given() {
     let missing: Key = "ABC-99".parse().unwrap();
     let mut tx = pool.begin().await.unwrap();
     let got = h
-        .repo
+        .ports
+        .reads
         .stories_by_keys(&mut tx, &[k3.clone(), k1.clone(), missing, k2.clone()])
         .await
         .unwrap();
@@ -655,9 +751,14 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         .require_decision(&c, "d-closed", e1.key(), "Closed on E1", "dan", None, None)
         .await
         .unwrap();
-    h.close_decision(&c, d_closed.id, ClosureKind::Withdrawn, "no longer needed")
-        .await
-        .unwrap();
+    h.close_decision(
+        &c,
+        d_closed.id(),
+        ClosureKind::Withdrawn,
+        "no longer needed",
+    )
+    .await
+    .unwrap();
     let d_acc = h
         .require_decision(&c, "d-acc", e1.key(), "Accepted on E1", "dan", None, None)
         .await
@@ -678,10 +779,10 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         (&d_s1, "kb/ADR-0002", CheckResult::NotFound),
     ] {
         let linked = h
-            .link_record(&c, d.id, "kb", "knowledge/adrs/x.md", rid, None)
+            .link_record(&c, d.id(), "kb", "knowledge/adrs/x.md", rid, None)
             .await
             .unwrap();
-        h.record_check(&c, d.id, rid, linked.version, check, true)
+        h.record_check(&c, d.id(), rid, linked.version(), check, true)
             .await
             .unwrap();
     }
@@ -719,12 +820,13 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();
-    let batched = h.repo.readiness_inputs(&mut tx, &all).await.unwrap();
+    let batched = h.ports.reads.readiness_inputs(&mut tx, &all).await.unwrap();
     assert_eq!(batched.len(), all.len());
     let reasons_of = |k: &Key| compute_readiness(&batched[k]).reasons;
     for k in &all {
         let one = h
-            .repo
+            .ports
+            .reads
             .readiness_inputs(&mut tx, std::slice::from_ref(k))
             .await
             .unwrap();
@@ -736,7 +838,8 @@ async fn batched_readiness_equals_one_key_at_a_time() {
     }
     let unknown: Key = "ABC-999".parse().unwrap();
     assert!(
-        h.repo
+        h.ports
+            .reads
             .readiness_inputs(&mut tx, &[unknown])
             .await
             .unwrap()
@@ -747,7 +850,7 @@ async fn batched_readiness_equals_one_key_at_a_time() {
     assert_eq!(
         reasons_of(s1.key()),
         vec![Reason::DecisionRecordNotFound {
-            decision_id: d_s1.id,
+            decision_id: d_s1.id(),
             title: "On S1".into()
         }]
     );
@@ -761,7 +864,7 @@ async fn batched_readiness_equals_one_key_at_a_time() {
                 item: i2.key().clone()
             },
             Reason::DecisionNoRecord {
-                decision_id: d_i2.id,
+                decision_id: d_i2.id(),
                 title: "On I2".into()
             },
             Reason::NoCriteria,
@@ -843,14 +946,14 @@ async fn readiness_inputs_costs_the_same_for_three_and_thirty_stories() {
     let mut keys = seed(&h, "a", 3, 2).await;
     let measure = |keys: Vec<Key>| {
         let pool = pool.clone();
-        let repo = h.repo.clone();
+        let ports = h.ports.clone();
         async move {
             common::statements(&pool.clone(), || async move {
                 let mut tx = pool
                     .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
                     .await
                     .unwrap();
-                repo.readiness_inputs(&mut tx, &keys).await.unwrap();
+                ports.reads.readiness_inputs(&mut tx, &keys).await.unwrap();
                 tx.rollback().await.unwrap();
             })
             .await
@@ -871,6 +974,57 @@ async fn done_at_of(pool: &sqlx::PgPool, key: &Key) -> Option<chrono::DateTime<U
         .unwrap()
 }
 
+/// `d` as stored, with the check, `checked_at` and closure an adapter test writes (built directly, not through the
+/// aggregate's methods, since these are adapter tests).
+fn written(
+    d: &RequiredDecision,
+    check: CheckResult,
+    checked_at: Option<chrono::DateTime<Utc>>,
+    closed: Option<Closed>,
+) -> RequiredDecision {
+    RequiredDecision::from_persisted(
+        d.id(),
+        d.on().clone(),
+        d.on_type(),
+        d.title().into(),
+        d.decider().into(),
+        d.due(),
+        d.reversibility(),
+        d.record().cloned(),
+        d.pr_url().map(Into::into),
+        check,
+        checked_at,
+        closed,
+        d.created_at(),
+        d.version(),
+    )
+}
+
+/// The input `set_delivery` writes, carrying exactly the fields its SQL binds (key, delivery, resolution, owner); built
+/// directly rather than through `Story::move_to`, since these are adapter tests.
+fn target(
+    key: &Key,
+    delivery: DeliveryState,
+    resolution: Option<Resolution>,
+    owner: Option<&str>,
+) -> Story {
+    Story::from_persisted(
+        key.clone(),
+        "t".into(),
+        Kind::Story,
+        None,
+        String::new(),
+        vec![],
+        owner.map(Into::into),
+        vec![],
+        0,
+        delivery,
+        resolution,
+        None,
+        0,
+    )
+}
+
 fn day(d: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, d, 9, 0, 0).unwrap()
 }
@@ -883,14 +1037,17 @@ async fn move_to(
     resolution: Option<Resolution>,
     now: chrono::DateTime<Utc>,
 ) {
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let mut tx = pool.begin().await.unwrap();
-    let v = repo
+    let v = ports
+        .stories
         .get_story_for_update(&mut tx, key)
         .await
         .unwrap()
         .version();
-    repo.set_delivery(&mut tx, key, v, to, resolution, None, now)
+    ports
+        .stories
+        .set_delivery(&mut tx, &target(key, to, resolution, None), v, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -921,9 +1078,9 @@ async fn done_at_follows_delivery() {
 }
 
 async fn insert_imported_done(pool: &sqlx::PgPool) -> Key {
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let mut tx = pool.begin().await.unwrap();
-    let k = repo.next_key(&mut tx, "ABC").await.unwrap();
+    let k = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     let s = Story::from_persisted(
         k.clone(),
         "Old".into(),
@@ -939,7 +1096,13 @@ async fn insert_imported_done(pool: &sqlx::PgPool) -> Key {
         Some("SCRUM-1".into()),
         1,
     );
-    assert!(repo.insert_story(&mut tx, &s, "imp", day(1)).await.unwrap());
+    assert!(
+        ports
+            .stories
+            .insert_story(&mut tx, &s, "imp", day(1))
+            .await
+            .unwrap()
+    );
     tx.commit().await.unwrap();
     k
 }
@@ -1023,12 +1186,16 @@ async fn list_stories_with_a_cutoff() {
     ] {
         move_to(&pool, k, DeliveryState::Done, done, at).await;
     }
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let list = |f: StoryFilter, since: Option<chrono::DateTime<Utc>>| {
-        let (repo, pool) = (repo.clone(), pool.clone());
+        let (ports, pool) = (ports.clone(), pool.clone());
         async move {
             let mut tx = pool.begin().await.unwrap();
-            let got = repo.list_stories(&mut tx, &f, since).await.unwrap();
+            let got = ports
+                .stories
+                .list_stories(&mut tx, &f, since)
+                .await
+                .unwrap();
             tx.rollback().await.unwrap();
             got.iter().map(|s| s.key().clone()).collect::<Vec<Key>>()
         }
@@ -1062,9 +1229,10 @@ async fn decision_reversibility_and_closure_round_trip() {
     let (_c, pool) = common::pg().await;
     let h = handlers(&pool);
     let s = story(&h, "rt-story", Kind::Story, None, &["works"]).await;
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let mut tx = pool.begin().await.unwrap();
-    let (d, _) = repo
+    let (d, _) = ports
+        .decisions
         .insert_decision(
             &mut tx,
             ItemType::Story,
@@ -1080,22 +1248,39 @@ async fn decision_reversibility_and_closure_round_trip() {
         .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(
-        repo.get_decision(d.id).await.unwrap().reversibility,
+        ports
+            .decisions
+            .get_decision(d.id())
+            .await
+            .unwrap()
+            .reversibility(),
         Some(Reversibility::OneWay)
     );
 
-    let mut d = repo.get_decision(d.id).await.unwrap();
-    d.closed = Some(Closed {
-        at: dan().now,
-        by: "dan@example.com".into(),
-        reason: "not needed".into(),
-        kind: Some(ClosureKind::Withdrawn),
-        via: Some(TokenKind::Automation),
-    });
+    let d = ports.decisions.get_decision(d.id()).await.unwrap();
+    let d = written(
+        &d,
+        d.check().clone(),
+        d.checked_at(),
+        Some(Closed {
+            at: dan().now,
+            by: "dan@example.com".into(),
+            reason: "not needed".into(),
+            kind: Some(ClosureKind::Withdrawn),
+            via: Some(TokenKind::Automation),
+        }),
+    );
     let mut tx = pool.begin().await.unwrap();
-    repo.save_decision(&mut tx, &d).await.unwrap();
+    ports.decisions.save_decision(&mut tx, &d).await.unwrap();
     tx.commit().await.unwrap();
-    let c = repo.get_decision(d.id).await.unwrap().closed.unwrap();
+    let c = ports
+        .decisions
+        .get_decision(d.id())
+        .await
+        .unwrap()
+        .closed()
+        .cloned()
+        .unwrap();
     assert_eq!(
         (c.kind, c.via),
         (Some(ClosureKind::Withdrawn), Some(TokenKind::Automation))
@@ -1130,7 +1315,7 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
             "UPDATE required_decisions SET {col} = $1 WHERE id = $2"
         ))
         .bind(v)
-        .bind(d.id)
+        .bind(d.id())
         .execute(&pool)
         .await;
         assert!(
@@ -1142,15 +1327,17 @@ async fn decision_columns_refuse_unknown_values_and_read_legacy_closes() {
         "UPDATE required_decisions SET closed_at = now(), closed_by = 'dan@example.com', \
          closed_reason = 'old' WHERE id = $1",
     )
-    .bind(d.id)
+    .bind(d.id())
     .execute(&pool)
     .await
     .unwrap();
-    let c = make_planning_repo(pool.clone())
-        .get_decision(d.id)
+    let c = make_planning_ports(pool.clone())
+        .decisions
+        .get_decision(d.id())
         .await
         .unwrap()
-        .closed
+        .closed()
+        .cloned()
         .unwrap();
     assert_eq!((c.reason.as_str(), c.kind, c.via), ("old", None, None));
 }
@@ -1208,7 +1395,7 @@ async fn seed_urgent_tree(pool: &sqlx::PgPool) {
 #[tokio::test]
 async fn urgent_marks_round_trip_without_touching_the_item() {
     let (_c, pool) = common::pg().await;
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     seed_urgent_tree(&pool).await;
     let before: (i64, chrono::DateTime<Utc>) =
         sqlx::query_as("SELECT version, updated_at FROM stories WHERE key='ABC-4'")
@@ -1224,23 +1411,28 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
     let k = |s: &str| s.parse::<Key>().unwrap();
     let mut tx = pool.begin().await.unwrap();
     assert!(
-        repo.set_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"), &m)
+        ports
+            .urgency
+            .set_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"), &m)
             .await
             .unwrap()
     );
     assert!(
-        repo.set_urgent_mark(&mut tx, ItemType::Initiative, &k("ABC-1"), &m)
+        ports
+            .urgency
+            .set_urgent_mark(&mut tx, ItemType::Initiative, &k("ABC-1"), &m)
             .await
             .unwrap()
     );
     assert!(
-        !repo
+        !ports
+            .urgency
             .set_urgent_mark(&mut tx, ItemType::Epic, &k("ABC-4"), &m)
             .await
             .unwrap(),
         "ABC-4 is not an epic"
     );
-    let marks = repo.urgent_marks_in(&mut tx).await.unwrap();
+    let marks = ports.urgency.urgent_marks_in(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
     assert_eq!(marks.len(), 2);
     let story = marks.iter().find(|f| f.key.to_string() == "ABC-4").unwrap();
@@ -1261,7 +1453,8 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
     assert_eq!(before, after, "a mark is not item content (kb/ADR-0017 R5)");
 
     let mut tx = pool.begin().await.unwrap();
-    let lineage = repo
+    let lineage = ports
+        .reads
         .urgency_lineage_in(&mut tx, &[k("ABC-2")], &[k("ABC-1")])
         .await
         .unwrap();
@@ -1276,15 +1469,22 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
         lineage.epics.iter().all(|(e, _)| e.to_string() != "ABC-5"),
         "an unrelated epic is not loaded"
     );
-    let none = repo.urgency_lineage_in(&mut tx, &[], &[]).await.unwrap();
+    let none = ports
+        .reads
+        .urgency_lineage_in(&mut tx, &[], &[])
+        .await
+        .unwrap();
     assert!(none.epics.is_empty() && none.stories.is_empty());
     assert!(
-        repo.clear_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"))
+        ports
+            .urgency
+            .clear_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"))
             .await
             .unwrap()
     );
     assert!(
-        !repo
+        !ports
+            .urgency
             .clear_urgent_mark(&mut tx, ItemType::Story, &k("ABC-4"))
             .await
             .unwrap(),

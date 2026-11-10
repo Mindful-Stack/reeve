@@ -1,5 +1,5 @@
+use super::dto::urgent_fields;
 use super::import::{Claim, with_ref};
-use super::urgent::urgent_fields;
 use super::*;
 use crate::domain::{items::*, progress::progress, urgency::Urgency};
 use reeve_protocol::{InitiativeDto, ItemType, Key};
@@ -58,11 +58,12 @@ impl Handlers {
         external_ref: Option<String>,
     ) -> Result<(Initiative, bool), HandlerError> {
         if let Some(k) = self
-            .repo
+            .ports
+            .keys
             .find_by_idempotency(ItemType::Initiative, idem)
             .await?
         {
-            return Ok((self.repo.get_initiative(&k).await?, false));
+            return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
         let mut tx = self.pool.begin().await?;
         let r = match self
@@ -72,11 +73,12 @@ impl Handlers {
             Claim::Free(r) => r,
             Claim::Retried(k) => {
                 tx.rollback().await?;
-                return Ok((self.repo.get_initiative(&k).await?, false));
+                return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
             }
         };
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let i = Initiative::new(
@@ -90,17 +92,19 @@ impl Handlers {
         )?
         .with_external_ref(r);
         if !self
-            .repo
+            .ports
+            .initiatives
             .insert_initiative(&mut tx, &i, idem, c.now)
             .await?
         {
             tx.rollback().await?;
             let k = self
-                .repo
+                .ports
+                .keys
                 .find_by_idempotency(ItemType::Initiative, idem)
                 .await?
                 .ok_or(HandlerError::NotFound)?;
-            return Ok((self.repo.get_initiative(&k).await?, false));
+            return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
         self.activity
             .record(
@@ -130,7 +134,7 @@ impl Handlers {
         owner: Option<Option<String>>,
         external_ref: Option<String>,
     ) -> Result<Initiative, HandlerError> {
-        let cur = self.repo.get_initiative(key).await?;
+        let cur = self.ports.initiatives.get_initiative(key).await?;
         let new_horizon = horizon.as_deref().unwrap_or(cur.horizon());
         check_horizon_change(cur.horizon(), new_horizon, &self.settings.horizon_buckets)?;
         // Validated above, so the constructor sees the chosen horizon as its only bucket.
@@ -161,7 +165,8 @@ impl Handlers {
             r,
             cur.version(),
         );
-        self.repo
+        self.ports
+            .initiatives
             .update_initiative(&mut tx, &next, version, c.now)
             .await?;
         self.activity
@@ -177,7 +182,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_initiative(key).await?)
+        Ok(self.ports.initiatives.get_initiative(key).await?)
     }
 
     /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot.
@@ -206,8 +211,12 @@ impl Handlers {
         key: &Key,
         urg: &Urgency,
     ) -> Result<InitiativeDto, HandlerError> {
-        let i = self.repo.get_initiative_in(tx, key).await?;
-        let counts = self.repo.story_counts_under_initiative_in(tx, key).await?;
+        let i = self.ports.initiatives.get_initiative_in(tx, key).await?;
+        let counts = self
+            .ports
+            .reads
+            .story_counts_under_initiative_in(tx, key)
+            .await?;
         Ok(initiative_dto_of(&i, &counts, urg))
     }
 
@@ -223,8 +232,12 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            let initiatives = self.repo.list_initiatives_in(&mut tx).await?;
-            let counts = self.repo.story_counts_by_initiative_in(&mut tx).await?;
+            let initiatives = self.ports.initiatives.list_initiatives_in(&mut tx).await?;
+            let counts = self
+                .ports
+                .reads
+                .story_counts_by_initiative_in(&mut tx)
+                .await?;
             Ok(initiatives
                 .iter()
                 .map(|i| {
@@ -264,8 +277,12 @@ impl Handlers {
         use crate::domain::findings::{FindingsInput, compute_findings};
         let (brief, discovery_complete, above, stories) = match item {
             ItemType::Initiative => {
-                let i = self.repo.get_initiative_in(tx, key).await?;
-                let counts = self.repo.story_counts_under_initiative_in(tx, key).await?;
+                let i = self.ports.initiatives.get_initiative_in(tx, key).await?;
+                let counts = self
+                    .ports
+                    .reads
+                    .story_counts_under_initiative_in(tx, key)
+                    .await?;
                 (
                     i.brief().to_string(),
                     i.discovery().is_some(),
@@ -274,12 +291,17 @@ impl Handlers {
                 )
             }
             ItemType::Epic => {
-                let e = self.repo.get_epic_in(tx, key).await?;
+                let e = self.ports.epics.get_epic_in(tx, key).await?;
                 let filter = crate::ports::StoryFilter {
                     epic: Some(key.clone()),
                     ..Default::default()
                 };
-                let stories = self.repo.list_stories(tx, &filter, None).await?.len() as u32;
+                let stories = self
+                    .ports
+                    .stories
+                    .list_stories(tx, &filter, None)
+                    .await?
+                    .len() as u32;
                 (
                     e.brief().to_string(),
                     e.discovery().is_some(),
@@ -289,9 +311,14 @@ impl Handlers {
             }
             ItemType::Story => return Err(HandlerError::NotFound),
         };
-        let own = self.repo.list_decisions_on_in(tx, key).await?;
+        let own = self.ports.decisions.list_decisions_on_in(tx, key).await?;
         let ancestor_has_decision = match &above {
-            Some(ik) => !self.repo.list_decisions_on_in(tx, ik).await?.is_empty(),
+            Some(ik) => !self
+                .ports
+                .decisions
+                .list_decisions_on_in(tx, ik)
+                .await?
+                .is_empty(),
             None => false,
         };
         Ok(compute_findings(&FindingsInput {
@@ -318,8 +345,11 @@ impl Handlers {
             E(Epic),
         }
         let (cur, entity) = match item {
-            ItemType::Initiative => (Cur::I(self.repo.get_initiative(key).await?), "initiative"),
-            ItemType::Epic => (Cur::E(self.repo.get_epic(key).await?), "epic"),
+            ItemType::Initiative => (
+                Cur::I(self.ports.initiatives.get_initiative(key).await?),
+                "initiative",
+            ),
+            ItemType::Epic => (Cur::E(self.ports.epics.get_epic(key).await?), "epic"),
             ItemType::Story => {
                 return Err(HandlerError::Validation(
                     "stories have no discovery mark".into(),
@@ -359,7 +389,8 @@ impl Handlers {
                     i.external_ref().map(String::from),
                     i.version(),
                 );
-                self.repo
+                self.ports
+                    .initiatives
                     .update_initiative(&mut tx, &n, version, c.now)
                     .await?;
             }
@@ -373,7 +404,10 @@ impl Handlers {
                     e.external_ref().map(String::from),
                     e.version(),
                 );
-                self.repo.update_epic(&mut tx, &n, version, c.now).await?;
+                self.ports
+                    .epics
+                    .update_epic(&mut tx, &n, version, c.now)
+                    .await?;
             }
         }
         self.activity

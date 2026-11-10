@@ -68,7 +68,7 @@ fn mk_probe(pool: sqlx::PgPool, sql: &'static str) -> (Handlers, Arc<ProbeSink>)
         seen: Mutex::new(vec![]),
     });
     let h = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: sink.clone(),
         pool,
         settings: settings(),
@@ -107,10 +107,10 @@ fn settings() -> Settings {
 #[tokio::test]
 async fn the_acceptance_flow_at_handler_level() {
     let (_c, pool) = common::pg().await;
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let sink = Arc::new(MemSink(Mutex::new(vec![])));
     let h = Handlers {
-        repo: repo.clone(),
+        ports: ports.clone(),
         activity: sink.clone(),
         pool: pool.clone(),
         settings: settings(),
@@ -204,7 +204,7 @@ async fn the_acceptance_flow_at_handler_level() {
     assert_eq!(
         r.reasons,
         vec![Reason::DecisionNoRecord {
-            decision_id: d.id,
+            decision_id: d.id(),
             title: "Pick queue".into()
         }]
     );
@@ -256,7 +256,7 @@ async fn the_acceptance_flow_at_handler_level() {
     // Link, check accepted, ready.
     h.link_record(
         &dan,
-        d.id,
+        d.id(),
         "knowledge-base",
         "knowledge/adrs/0031-queue.md",
         "kb/ADR-0031",
@@ -267,17 +267,17 @@ async fn the_acceptance_flow_at_handler_level() {
     assert_eq!(
         h.readiness(story.key()).await.unwrap().reasons,
         vec![Reason::DecisionUnchecked {
-            decision_id: d.id,
+            decision_id: d.id(),
             title: "Pick queue".into()
         }],
         "linking alone does not satisfy; the reason says a check is pending"
     );
-    let linked = h.get_decision(d.id).await.unwrap();
+    let linked = h.get_decision(d.id()).await.unwrap();
     h.record_check(
         &dan,
-        d.id,
+        d.id(),
         "kb/ADR-0031",
-        linked.version,
+        linked.version(),
         CheckResult::ProposedPrOpen,
         true,
     )
@@ -287,9 +287,9 @@ async fn the_acceptance_flow_at_handler_level() {
         matches!(
             h.record_check(
                 &dan,
-                d.id,
+                d.id(),
                 "kb/ADR-0031",
-                linked.version,
+                linked.version(),
                 CheckResult::Accepted {
                     commit: "zzz".into(),
                     reversibility: None,
@@ -306,10 +306,10 @@ async fn the_acceptance_flow_at_handler_level() {
         h.readiness(story.key()).await.unwrap().reasons[0],
         Reason::DecisionProposedPrOpen { .. }
     ));
-    let v = h.get_decision(d.id).await.unwrap().version;
+    let v = h.get_decision(d.id()).await.unwrap().version();
     h.record_check(
         &dan,
-        d.id,
+        d.id(),
         "kb/ADR-0031",
         v,
         CheckResult::Accepted {
@@ -418,7 +418,7 @@ async fn the_acceptance_flow_at_handler_level() {
 fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
     let sink = Arc::new(MemSink(Mutex::new(vec![])));
     let h = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: sink.clone(),
         pool,
         settings: settings(),
@@ -443,7 +443,7 @@ async fn create_replays_record_one_created_entry() {
 
     // A row that already exists under the key (inserted directly): create returns it and writes no entry.
     let mut tx = pool.begin().await.unwrap();
-    let key = h.repo.next_key(&mut tx, "ABC").await.unwrap();
+    let key = h.ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     let pre = Story::new(
         key,
         "Pre-existing",
@@ -456,7 +456,8 @@ async fn create_replays_record_one_created_entry() {
     )
     .unwrap();
     assert!(
-        h.repo
+        h.ports
+            .stories
             .insert_story(&mut tx, &pre, "k-direct", dan.now)
             .await
             .unwrap()
@@ -827,18 +828,18 @@ async fn smaller_use_cases() {
         .await
         .unwrap();
     assert!(matches!(
-        h.link_record(&dan, d.id, "kb", " ", "kb/ADR-1", None)
+        h.link_record(&dan, d.id(), "kb", " ", "kb/ADR-1", None)
             .await
             .unwrap_err(),
         HandlerError::Validation(_)
     ));
     let closed = h
-        .close_decision(&dan, d.id, ClosureKind::Withdrawn, " not needed ")
+        .close_decision(&dan, d.id(), ClosureKind::Withdrawn, " not needed ")
         .await
         .unwrap();
-    assert_eq!(closed.closed.as_ref().unwrap().reason, "not needed");
+    assert_eq!(closed.closed().as_ref().unwrap().reason, "not needed");
     assert!(
-        matches!(h.close_decision(&dan, d.id, ClosureKind::Withdrawn, "again").await.unwrap_err(), HandlerError::Validation(m) if m == "already closed")
+        matches!(h.close_decision(&dan, d.id(), ClosureKind::Withdrawn, "again").await.unwrap_err(), HandlerError::Validation(m) if m == "already closed")
     );
 
     // mark_discovery: re-marking keeps the first mark and logs nothing; reopening clears it.
@@ -907,7 +908,7 @@ async fn item_scoped_decision_list_honours_open_with_record() {
             h.require_decision(&dan, k, s.key(), k, "dan@example.com", None, None)
                 .await
                 .unwrap()
-                .id,
+                .id(),
         );
     }
     for id in [ids[0], ids[2]] {
@@ -930,7 +931,7 @@ async fn item_scoped_decision_list_honours_open_with_record() {
         .await
         .unwrap()
         .iter()
-        .map(|d| d.id)
+        .map(|d| d.id())
         .collect();
     assert_eq!(all, ids);
     let open_linked: Vec<i64> = h
@@ -938,7 +939,7 @@ async fn item_scoped_decision_list_honours_open_with_record() {
         .await
         .unwrap()
         .iter()
-        .map(|d| d.id)
+        .map(|d| d.id())
         .collect();
     assert_eq!(open_linked, vec![ids[0]]);
     // The context bundle leaves the closed decision out.
@@ -979,7 +980,7 @@ async fn unscoped_decision_list_includes_closed_only_when_asked() {
             h.require_decision(&dan, k, s.key(), k, "dan@example.com", None, None)
                 .await
                 .unwrap()
-                .id,
+                .id(),
         );
     }
     h.link_record(
@@ -1002,7 +1003,7 @@ async fn unscoped_decision_list_includes_closed_only_when_asked() {
                 .await
                 .unwrap()
                 .iter()
-                .map(|d| d.id)
+                .map(|d| d.id())
                 .collect::<Vec<i64>>()
         }
     };
@@ -1121,7 +1122,7 @@ async fn link_refuses_unconfigured_repos_and_escaping_paths() {
         ("knowledge-base", "./-x.md", "`-`"),
     ] {
         match h
-            .link_record(&dan, d.id, repo, path, "kb/ADR-1", None)
+            .link_record(&dan, d.id(), repo, path, "kb/ADR-1", None)
             .await
             .unwrap_err()
         {
@@ -1129,10 +1130,10 @@ async fn link_refuses_unconfigured_repos_and_escaping_paths() {
             e => panic!("{repo} {path}: {e:?}"),
         }
     }
-    assert_eq!(count(&sink, "linked", &d.id.to_string()), 0);
+    assert_eq!(count(&sink, "linked", &d.id().to_string()), 0);
     h.link_record(
         &dan,
-        d.id,
+        d.id(),
         "knowledge-base",
         "knowledge/adrs/0001..draft.md",
         "kb/ADR-1",
@@ -1170,7 +1171,7 @@ async fn link_stores_the_path_in_normal_form() {
         .unwrap();
     for path in [".", "./", ".//./"] {
         match h
-            .link_record(&dan, d.id, "knowledge-base", path, "kb/ADR-1", None)
+            .link_record(&dan, d.id(), "knowledge-base", path, "kb/ADR-1", None)
             .await
             .unwrap_err()
         {
@@ -1178,11 +1179,11 @@ async fn link_stores_the_path_in_normal_form() {
             e => panic!("{path}: {e:?}"),
         }
     }
-    assert_eq!(count(&sink, "linked", &d.id.to_string()), 0);
+    assert_eq!(count(&sink, "linked", &d.id().to_string()), 0);
     let linked = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             " ./knowledge//adrs/./0001.md ",
             "kb/ADR-1",
@@ -1191,7 +1192,7 @@ async fn link_stores_the_path_in_normal_form() {
         .await
         .unwrap();
     assert_eq!(
-        linked.record.unwrap().path,
+        linked.record().unwrap().path(),
         "knowledge/adrs/0001.md",
         "stored in normal form"
     );
@@ -1245,7 +1246,7 @@ async fn link_refuses_a_pr_url_that_is_not_http() {
         match h
             .link_record(
                 &dan,
-                d.id,
+                d.id(),
                 "knowledge-base",
                 "docs/adr/1.md",
                 "kb/ADR-1",
@@ -1258,11 +1259,11 @@ async fn link_refuses_a_pr_url_that_is_not_http() {
             e => panic!("{bad}: {e:?}"),
         }
     }
-    assert_eq!(count(&sink, "linked", &d.id.to_string()), 0);
+    assert_eq!(count(&sink, "linked", &d.id().to_string()), 0);
     let linked = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             "docs/adr/1.md",
             "kb/ADR-1",
@@ -1270,10 +1271,7 @@ async fn link_refuses_a_pr_url_that_is_not_http() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        linked.pr_url.as_deref(),
-        Some("https://github.com/x/y/pull/1")
-    );
+    assert_eq!(linked.pr_url(), Some("https://github.com/x/y/pull/1"));
 }
 
 #[tokio::test]
@@ -1326,15 +1324,15 @@ async fn comment_replay_with_the_same_key_returns_the_same_comment() {
         .await
         .unwrap();
     let a = h
-        .comment_decision(&dan, d.id, "why", Some("dc1"))
+        .comment_decision(&dan, d.id(), "why", Some("dc1"))
         .await
         .unwrap();
     let b = h
-        .comment_decision(&dan, d.id, "why", Some("dc1"))
+        .comment_decision(&dan, d.id(), "why", Some("dc1"))
         .await
         .unwrap();
     assert_eq!(a, b);
-    assert_eq!(h.comments_for_decision(d.id).await.unwrap().len(), 1);
+    assert_eq!(h.comments_for_decision(d.id()).await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -2157,7 +2155,7 @@ async fn resolve_ref_resolves_keys_of_an_earlier_prefix_before_external_refs() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -2295,7 +2293,7 @@ async fn resolve_any_checks_native_keys_of_every_type_before_external_refs() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -2342,7 +2340,7 @@ async fn resolve_any_checks_native_keys_of_every_type_before_external_refs() {
         .require_decision(&c, "d", &k, "Pick", "dan@example.com", None, None)
         .await
         .unwrap();
-    assert_eq!(&d.on, old_epic.key());
+    assert_eq!(d.on(), old_epic.key());
     let listed = h.list_decisions(Some(&k), false, true).await.unwrap();
     assert_eq!(listed.len(), 1);
 
@@ -3513,7 +3511,7 @@ async fn resolution_precedence_is_one_table() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -3709,7 +3707,7 @@ async fn resolution_precedence_is_one_table() {
         .unwrap();
     let on_type: String =
         sqlx::query_scalar("SELECT on_type FROM required_decisions WHERE id = $1")
-            .bind(d.id)
+            .bind(d.id())
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -3921,7 +3919,7 @@ async fn only_an_admins_check_stores_accepted() {
     let d = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             "knowledge/adrs/0001.md",
             "kb/ADR-0001",
@@ -3936,7 +3934,7 @@ async fn only_an_admins_check_stores_accepted() {
     let closed = h
         .link_record(
             &dan,
-            closed.id,
+            closed.id(),
             "knowledge-base",
             "knowledge/adrs/0002.md",
             "kb/ADR-0002",
@@ -3944,35 +3942,35 @@ async fn only_an_admins_check_stores_accepted() {
         )
         .await
         .unwrap();
-    h.close_decision(&dan, closed.id, ClosureKind::Withdrawn, "not needed")
+    h.close_decision(&dan, closed.id(), ClosureKind::Withdrawn, "not needed")
         .await
         .unwrap();
     let accepted = || CheckResult::Accepted {
         commit: "abc".into(),
         reversibility: None,
     };
-    let checked = || count(&sink, "checked", &d.id.to_string());
+    let checked = || count(&sink, "checked", &d.id().to_string());
 
     // 1. A member's accepted: Forbidden; the decision, its version and the log are untouched.
-    let before = h.get_decision(d.id).await.unwrap();
+    let before = h.get_decision(d.id()).await.unwrap();
     let err = h
         .record_check(
             &mia_bot,
-            d.id,
+            d.id(),
             "kb/ADR-0001",
-            before.version,
+            before.version(),
             accepted(),
             false,
         )
         .await
         .unwrap_err();
     assert!(matches!(err, HandlerError::Forbidden), "{err:?}");
-    let after = h.get_decision(d.id).await.unwrap();
+    let after = h.get_decision(d.id()).await.unwrap();
     assert_eq!(
-        (after.version, after.checked_at),
-        (before.version, before.checked_at)
+        (after.version(), after.checked_at()),
+        (before.version(), before.checked_at())
     );
-    assert_eq!(after.check, before.check);
+    assert_eq!(after.check(), before.check());
     assert_eq!(checked(), 0);
     let r = h.readiness(s.key()).await.unwrap().reasons;
     assert!(
@@ -3982,9 +3980,9 @@ async fn only_an_admins_check_stores_accepted() {
 
     // 2. Role first: a stale version, a closed decision and an unknown id all answer Forbidden to a member.
     for (id, record, version) in [
-        (d.id, "kb/ADR-0001", before.version + 5),
-        (closed.id, "kb/ADR-0002", closed.version + 1),
-        (d.id + 10_000, "kb/ADR-0001", 1),
+        (d.id(), "kb/ADR-0001", before.version() + 5),
+        (closed.id(), "kb/ADR-0002", closed.version() + 1),
+        (d.id() + 10_000, "kb/ADR-0001", 1),
     ] {
         let err = h
             .record_check(&mia_bot, id, record, version, accepted(), false)
@@ -3996,9 +3994,9 @@ async fn only_an_admins_check_stores_accepted() {
     let err = h
         .record_check(
             &dan,
-            d.id,
+            d.id(),
             "kb/ADR-0001",
-            before.version + 5,
+            before.version() + 5,
             accepted(),
             true,
         )
@@ -4009,9 +4007,9 @@ async fn only_an_admins_check_stores_accepted() {
     // 3. A member's not_found and not_accepted are stored, each yielding its own reason.
     h.record_check(
         &mia_bot,
-        d.id,
+        d.id(),
         "kb/ADR-0001",
-        before.version,
+        before.version(),
         CheckResult::NotFound,
         false,
     )
@@ -4022,10 +4020,10 @@ async fn only_an_admins_check_stores_accepted() {
         matches!(r[..], [Reason::DecisionRecordNotFound { .. }]),
         "{r:?}"
     );
-    let v = h.get_decision(d.id).await.unwrap().version;
+    let v = h.get_decision(d.id()).await.unwrap().version();
     h.record_check(
         &mia_bot,
-        d.id,
+        d.id(),
         "kb/ADR-0001",
         v,
         CheckResult::NotAccepted {
@@ -4046,19 +4044,19 @@ async fn only_an_admins_check_stores_accepted() {
     assert_eq!(checked(), 2);
 
     // 4. An admin's automation token stores accepted, and the story is ready.
-    let v = h.get_decision(d.id).await.unwrap().version;
-    h.record_check(&dan_bot, d.id, "kb/ADR-0001", v, accepted(), true)
+    let v = h.get_decision(d.id()).await.unwrap().version();
+    h.record_check(&dan_bot, d.id(), "kb/ADR-0001", v, accepted(), true)
         .await
         .unwrap();
     assert!(h.readiness(s.key()).await.unwrap().ready);
     assert_eq!(checked(), 3);
 
     // 5. A posted unchecked is refused from anyone: a member cannot reset an accepted decision.
-    let v = h.get_decision(d.id).await.unwrap().version;
+    let v = h.get_decision(d.id()).await.unwrap().version();
     let err = h
         .record_check(
             &mia_bot,
-            d.id,
+            d.id(),
             "kb/ADR-0001",
             v,
             CheckResult::Unchecked,
@@ -4067,7 +4065,7 @@ async fn only_an_admins_check_stores_accepted() {
         .await
         .unwrap_err();
     assert!(matches!(err, HandlerError::Validation(_)), "{err:?}");
-    assert!(h.get_decision(d.id).await.unwrap().is_satisfied());
+    assert!(h.get_decision(d.id()).await.unwrap().is_satisfied());
     assert_eq!(checked(), 3);
 }
 
@@ -4105,7 +4103,7 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
     let d = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             "knowledge/adrs/0001.md",
             "kb/ADR-0001",
@@ -4113,7 +4111,7 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
         )
         .await
         .unwrap();
-    let checked = || count(&sink, "checked", &d.id.to_string());
+    let checked = || count(&sink, "checked", &d.id().to_string());
     let accepted = |commit: &str| CheckResult::Accepted {
         commit: commit.into(),
         reversibility: None,
@@ -4127,20 +4125,27 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
 
     // The first result is a change from unchecked: logged, bumped.
     let first = h
-        .record_check(&dan, d.id, "kb/ADR-0001", d.version, accepted("aaa"), true)
+        .record_check(
+            &dan,
+            d.id(),
+            "kb/ADR-0001",
+            d.version(),
+            accepted("aaa"),
+            true,
+        )
         .await
         .unwrap();
     assert_eq!(checked(), 1);
-    assert_eq!(first.version, d.version + 1);
-    assert_eq!(first.checked_at, Some(dan.now));
+    assert_eq!(first.version(), d.version() + 1);
+    assert_eq!(first.checked_at(), Some(dan.now));
 
     // The same result at a later commit: only checked_at moves; the stored result is kept as it was.
     let again = h
         .record_check(
             &later(10),
-            d.id,
+            d.id(),
             "kb/ADR-0001",
-            first.version,
+            first.version(),
             accepted("bbb"),
             true,
         )
@@ -4148,15 +4153,20 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
         .unwrap();
     assert_eq!(checked(), 1, "an unchanged result writes no activity entry");
     assert_eq!(
-        again.version, first.version,
+        again.version(),
+        first.version(),
         "and does not bump the version"
     );
-    assert_eq!(again.checked_at, Some(later(10).now), "checked_at advances");
-    assert_eq!(again.check, accepted("aaa"));
-    assert_eq!(h.get_decision(d.id).await.unwrap(), again);
+    assert_eq!(
+        again.checked_at(),
+        Some(later(10).now),
+        "checked_at advances"
+    );
+    assert_eq!(again.check(), &accepted("aaa"));
+    assert_eq!(h.get_decision(d.id()).await.unwrap(), again);
 
     // A changed result is logged and bumps, and so is each change of status or superseded_by.
-    let mut v = again.version;
+    let mut v = again.version();
     let mut n = 1;
     for (mins, result) in [
         (20, not_accepted("superseded", Some("kb/ADR-0002"), "ccc")),
@@ -4166,14 +4176,14 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
         (60, CheckResult::ProposedPrOpen),
     ] {
         let got = h
-            .record_check(&later(mins), d.id, "kb/ADR-0001", v, result.clone(), true)
+            .record_check(&later(mins), d.id(), "kb/ADR-0001", v, result.clone(), true)
             .await
             .unwrap();
         n += 1;
         assert_eq!(checked(), n, "{result:?} is a change");
-        assert_eq!(got.version, v + 1, "{result:?} bumps");
-        assert_eq!(got.check, result);
-        v = got.version;
+        assert_eq!(got.version(), v + 1, "{result:?} bumps");
+        assert_eq!(got.check(), &result);
+        v = got.version();
         // ...and posting it again is not, at a later commit too (the commit is not part of the outcome).
         let again = match &result {
             CheckResult::NotAccepted {
@@ -4186,7 +4196,7 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
         let same = h
             .record_check(
                 &later(mins + 5),
-                d.id,
+                d.id(),
                 "kb/ADR-0001",
                 v,
                 again.clone(),
@@ -4195,16 +4205,16 @@ async fn an_unchanged_check_result_only_moves_checked_at() {
             .await
             .unwrap();
         assert_eq!(checked(), n, "{again:?} again is unchanged");
-        assert_eq!(same.version, v);
-        assert_eq!(same.checked_at, Some(later(mins + 5).now));
-        assert_eq!(same.check, result, "the stored result keeps its commit");
+        assert_eq!(same.version(), v);
+        assert_eq!(same.checked_at(), Some(later(mins + 5).now));
+        assert_eq!(same.check(), &result, "the stored result keeps its commit");
     }
 
     // The guards still run for an unchanged result: a stale version is a conflict.
     let err = h
         .record_check(
             &later(70),
-            d.id,
+            d.id(),
             "kb/ADR-0001",
             v - 1,
             CheckResult::ProposedPrOpen,
@@ -4246,7 +4256,7 @@ async fn a_change_in_the_records_reversibility_is_a_new_check_outcome() {
     let d = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             "knowledge/adrs/0001.md",
             "kb/ADR-0001",
@@ -4254,50 +4264,57 @@ async fn a_change_in_the_records_reversibility_is_a_new_check_outcome() {
         )
         .await
         .unwrap();
-    let checked = || count(&sink, "checked", &d.id.to_string());
+    let checked = || count(&sink, "checked", &d.id().to_string());
     let accepted = |rv| CheckResult::Accepted {
         commit: "abc".into(),
         reversibility: rv,
     };
 
     let first = h
-        .record_check(&dan, d.id, "kb/ADR-0001", d.version, accepted(None), true)
+        .record_check(
+            &dan,
+            d.id(),
+            "kb/ADR-0001",
+            d.version(),
+            accepted(None),
+            true,
+        )
         .await
         .unwrap();
-    assert_eq!((checked(), first.version), (1, d.version + 1));
+    assert_eq!((checked(), first.version()), (1, d.version() + 1));
 
     let second = h
         .record_check(
             &dan,
-            d.id,
+            d.id(),
             "kb/ADR-0001",
-            first.version,
+            first.version(),
             accepted(Some(Reversibility::OneWay)),
             true,
         )
         .await
         .unwrap();
-    assert_eq!((checked(), second.version), (2, first.version + 1));
-    assert_eq!(second.check, accepted(Some(Reversibility::OneWay)));
+    assert_eq!((checked(), second.version()), (2, first.version() + 1));
+    assert_eq!(second.check(), &accepted(Some(Reversibility::OneWay)));
 
     let third = h
         .record_check(
             &dan,
-            d.id,
+            d.id(),
             "kb/ADR-0001",
-            second.version,
+            second.version(),
             accepted(Some(Reversibility::OneWay)),
             true,
         )
         .await
         .unwrap();
     assert_eq!(checked(), 2, "the same value again is not a new outcome");
-    assert_eq!(third.version, second.version);
+    assert_eq!(third.version(), second.version());
 
     let relinked = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "knowledge-base",
             "knowledge/adrs/0002.md",
             "kb/ADR-0002",
@@ -4306,9 +4323,9 @@ async fn a_change_in_the_records_reversibility_is_a_new_check_outcome() {
         .await
         .unwrap();
     assert!(
-        matches!(relinked.check, CheckResult::Unchecked),
+        matches!(relinked.check(), CheckResult::Unchecked),
         "{:?}",
-        relinked.check
+        relinked.check()
     );
 }
 
@@ -4464,7 +4481,7 @@ async fn edit_decision_changes_planner_fields_only() {
         .unwrap();
     h.link_record(
         &dan,
-        d.id,
+        d.id(),
         "kb",
         "adrs/0031-queue.md",
         "kb/ADR-0031",
@@ -4472,11 +4489,11 @@ async fn edit_decision_changes_planner_fields_only() {
     )
     .await
     .unwrap();
-    let v = h.get_decision(d.id).await.unwrap().version;
+    let v = h.get_decision(d.id()).await.unwrap().version();
     // Only an admin's check stores accepted (m2d); this fixture is the admin's.
     h.record_check(
         &dan,
-        d.id,
+        d.id(),
         "kb/ADR-0031",
         v,
         CheckResult::Accepted {
@@ -4487,7 +4504,7 @@ async fn edit_decision_changes_planner_fields_only() {
     )
     .await
     .unwrap();
-    let before = h.get_decision(d.id).await.unwrap();
+    let before = h.get_decision(d.id()).await.unwrap();
     assert!(h.readiness(s.key()).await.unwrap().ready);
 
     // One field: only it changes. The reference, PR url and check stay exactly as stored (kb/ADR-0004 R1).
@@ -4499,8 +4516,8 @@ async fn edit_decision_changes_planner_fields_only() {
     let e = h
         .edit_decision(
             &later,
-            d.id,
-            before.version,
+            d.id(),
+            before.version(),
             None,
             Some(" bob@example.com ".into()),
             None,
@@ -4508,21 +4525,18 @@ async fn edit_decision_changes_planner_fields_only() {
         )
         .await
         .unwrap();
-    assert_eq!(e.decider, "bob@example.com", "trimmed");
+    assert_eq!(e.decider(), "bob@example.com", "trimmed");
+    assert_eq!((e.title(), e.due()), (before.title(), before.due()));
     assert_eq!(
-        (e.title.as_str(), e.due),
-        (before.title.as_str(), before.due)
-    );
-    assert_eq!(
-        (&e.record, &e.pr_url, &e.check, e.checked_at),
+        (&e.record(), &e.pr_url(), &e.check(), e.checked_at()),
         (
-            &before.record,
-            &before.pr_url,
-            &before.check,
-            before.checked_at
+            &before.record(),
+            &before.pr_url(),
+            &before.check(),
+            before.checked_at()
         )
     );
-    assert_eq!(e.version, before.version + 1);
+    assert_eq!(e.version(), before.version() + 1);
     assert!(
         h.readiness(s.key()).await.unwrap().ready,
         "an edit never unsatisfies the decision"
@@ -4540,7 +4554,7 @@ async fn edit_decision_changes_planner_fields_only() {
         edited[0].0.at, later.now,
         "the entry's time is the edit's own (kb/ADR-0010 R4)"
     );
-    let id = d.id.to_string();
+    let id = d.id().to_string();
     assert_eq!(
         (edited[0].0.entity_type, edited[0].0.entity_key.as_str()),
         ("decision", id.as_str()),
@@ -4561,8 +4575,8 @@ async fn edit_decision_changes_planner_fields_only() {
     let e = h
         .edit_decision(
             &dan,
-            d.id,
-            e.version,
+            d.id(),
+            e.version(),
             Some("  Pick the queue  ".into()),
             None,
             Some(None),
@@ -4570,7 +4584,7 @@ async fn edit_decision_changes_planner_fields_only() {
         )
         .await
         .unwrap();
-    assert_eq!((e.title.as_str(), e.due), ("Pick the queue", None));
+    assert_eq!((e.title(), e.due()), ("Pick the queue", None));
     assert_eq!(
         probe.entries("edited")[1].0.payload,
         serde_json::json!({
@@ -4585,8 +4599,8 @@ async fn edit_decision_changes_planner_fields_only() {
     let same = h
         .edit_decision(
             &dan,
-            d.id,
-            e.version,
+            d.id(),
+            e.version(),
             Some("Pick the queue".into()),
             Some("bob@example.com".into()),
             Some(None),
@@ -4594,27 +4608,27 @@ async fn edit_decision_changes_planner_fields_only() {
         )
         .await
         .unwrap();
-    assert_eq!(same.version, e.version);
+    assert_eq!(same.version(), e.version());
     assert_eq!(probe.entries("edited").len(), 2);
 
     // Refusals write nothing, and their precedence is fixed: blank input (no row read) before the version, the version
     // before the closed rule. Each case asserts the exact error and that the version and the log did not move.
     const BLANK: &str = "title and decider must not be blank";
-    let stale = e.version - 1;
+    let stale = e.version() - 1;
     assert!(matches!(
-        h.edit_decision(&dan, d.id, stale, Some("x".into()), None, None, None).await.unwrap_err(),
-        HandlerError::Conflict { current } if current == e.version
+        h.edit_decision(&dan, d.id(), stale, Some("x".into()), None, None, None).await.unwrap_err(),
+        HandlerError::Conflict { current } if current == e.version()
     ));
     // A stale no-op is still a conflict: the values match, but the caller has not seen the current row.
     assert!(matches!(
-        h.edit_decision(&dan, d.id, stale, Some("Pick the queue".into()), None, None, None).await.unwrap_err(),
-        HandlerError::Conflict { current } if current == e.version
+        h.edit_decision(&dan, d.id(), stale, Some("Pick the queue".into()), None, None, None).await.unwrap_err(),
+        HandlerError::Conflict { current } if current == e.version()
     ));
-    for version in [e.version, stale] {
+    for version in [e.version(), stale] {
         for (title, decider) in [(Some("   ".to_string()), None), (None, Some(String::new()))] {
             assert!(
                 matches!(
-                    h.edit_decision(&dan, d.id, version, title, decider, None, None).await.unwrap_err(),
+                    h.edit_decision(&dan, d.id(), version, title, decider, None, None).await.unwrap_err(),
                     HandlerError::Validation(ref m) if m == BLANK
                 ),
                 "blank input is refused before the version is compared (version {version})"
@@ -4622,8 +4636,8 @@ async fn edit_decision_changes_planner_fields_only() {
         }
     }
     assert_eq!(
-        h.get_decision(d.id).await.unwrap().version,
-        e.version,
+        h.get_decision(d.id()).await.unwrap().version(),
+        e.version(),
         "no refusal moved the version"
     );
     assert_eq!(
@@ -4637,20 +4651,23 @@ async fn edit_decision_changes_planner_fields_only() {
             .unwrap_err(),
         HandlerError::NotFound
     ));
-    h.close_decision(&dan, d.id, ClosureKind::Withdrawn, "not needed")
+    h.close_decision(&dan, d.id(), ClosureKind::Withdrawn, "not needed")
         .await
         .unwrap();
-    let closed = h.get_decision(d.id).await.unwrap();
+    let closed = h.get_decision(d.id()).await.unwrap();
     assert!(matches!(
-        h.edit_decision(&dan, d.id, closed.version, Some("x".into()), None, None, None).await.unwrap_err(),
+        h.edit_decision(&dan, d.id(), closed.version(), Some("x".into()), None, None, None).await.unwrap_err(),
         HandlerError::Validation(m) if m == "decision is closed"
     ));
     // Stale on a closed decision: the version answers first, so the caller reloads and then sees it closed.
     assert!(matches!(
-        h.edit_decision(&dan, d.id, closed.version - 1, Some("x".into()), None, None, None).await.unwrap_err(),
-        HandlerError::Conflict { current } if current == closed.version
+        h.edit_decision(&dan, d.id(), closed.version() - 1, Some("x".into()), None, None, None).await.unwrap_err(),
+        HandlerError::Conflict { current } if current == closed.version()
     ));
-    assert_eq!(h.get_decision(d.id).await.unwrap().version, closed.version);
+    assert_eq!(
+        h.get_decision(d.id()).await.unwrap().version(),
+        closed.version()
+    );
     assert_eq!(probe.entries("edited").len(), 2);
 }
 
@@ -4667,7 +4684,7 @@ async fn a_details_edit_keeps_an_unlisted_horizon() {
     let mut s = settings();
     s.horizon_buckets = vec!["Soon".into(), "Later".into()];
     let h2 = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: h.activity.clone(),
         pool,
         settings: s,
@@ -4712,7 +4729,12 @@ async fn a_details_edit_keeps_an_unlisted_horizon() {
             .unwrap_err(),
         HandlerError::Validation(m) if m.contains("Someday")
     ));
-    let stored = h2.repo.get_initiative(ini.key()).await.unwrap();
+    let stored = h2
+        .ports
+        .initiatives
+        .get_initiative(ini.key())
+        .await
+        .unwrap();
     assert_eq!(stored.horizon(), "Now");
     assert_eq!(stored.version(), same.version());
     // A listed bucket is still accepted.
@@ -4824,7 +4846,7 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
     let linked = h
         .link_record(
             &dan,
-            d.id,
+            d.id(),
             "infra",
             "docs/adr/0001-host.md",
             "infra/ADR-0001",
@@ -4832,10 +4854,10 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
         )
         .await
         .expect("an unconfigured repository is stored, not refused");
-    assert_eq!(linked.record.as_ref().unwrap().repo, "infra");
+    assert_eq!(linked.record().as_ref().unwrap().repo(), "infra");
     // a bad path is still refused
     assert!(matches!(
-        h.link_record(&dan, d.id, "infra", "../x.md", "infra/ADR-0001", None)
+        h.link_record(&dan, d.id(), "infra", "../x.md", "infra/ADR-0001", None)
             .await,
         Err(HandlerError::Validation(_))
     ));
@@ -4843,7 +4865,7 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
     assert_eq!(
         r.reasons,
         vec![Reason::DecisionRepoNotConfigured {
-            decision_id: d.id,
+            decision_id: d.id(),
             title: "Pick a host".into()
         }]
     );
@@ -4858,7 +4880,7 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
     let mut configured = settings();
     configured.repos.push("infra".into());
     let h2 = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: std::sync::Arc::new(MemSink(std::sync::Mutex::new(vec![]))),
         pool,
         settings: configured,
@@ -4868,14 +4890,14 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
             .await
             .unwrap()
             .iter()
-            .map(|x| x.id)
+            .map(|x| x.id())
             .collect::<Vec<_>>(),
-        vec![d.id]
+        vec![d.id()]
     );
     assert_eq!(
         h2.readiness(s.key()).await.unwrap().reasons,
         vec![Reason::DecisionUnchecked {
-            decision_id: d.id,
+            decision_id: d.id(),
             title: "Pick a host".into()
         }]
     );
@@ -4942,7 +4964,7 @@ async fn reversibility_is_set_on_create_and_changed_only_by_a_logged_edit() {
         )
         .await
         .unwrap();
-    assert_eq!(d.reversibility, Some(Reversibility::OneWay));
+    assert_eq!(d.reversibility(), Some(Reversibility::OneWay));
     assert_eq!(last(&sink, "required").payload["reversibility"], "one_way");
     let again = h
         .require_decision(
@@ -4957,15 +4979,15 @@ async fn reversibility_is_set_on_create_and_changed_only_by_a_logged_edit() {
         .await
         .unwrap();
     assert_eq!(
-        (again.id, again.reversibility),
-        (d.id, Some(Reversibility::OneWay))
+        (again.id(), again.reversibility()),
+        (d.id(), Some(Reversibility::OneWay))
     );
 
     let e = h
         .edit_decision(
             &dan,
-            d.id,
-            d.version,
+            d.id(),
+            d.version(),
             None,
             None,
             None,
@@ -4974,18 +4996,18 @@ async fn reversibility_is_set_on_create_and_changed_only_by_a_logged_edit() {
         .await
         .unwrap();
     assert_eq!(
-        (e.reversibility, e.version),
-        (Some(Reversibility::TwoWay), d.version + 1)
+        (e.reversibility(), e.version()),
+        (Some(Reversibility::TwoWay), d.version() + 1)
     );
     let edited = last(&sink, "edited");
     assert_eq!(edited.payload["from"]["reversibility"], "one_way");
     assert_eq!(edited.payload["to"]["reversibility"], "two_way");
 
-    h.close_decision(&dan, d.id, ClosureKind::Decided, "Postgres")
+    h.close_decision(&dan, d.id(), ClosureKind::Decided, "Postgres")
         .await
         .unwrap();
     assert!(matches!(
-        h.edit_decision(&dan, d.id, e.version + 1, None, None, None, Some(None)).await.unwrap_err(),
+        h.edit_decision(&dan, d.id(), e.version() + 1, None, None, None, Some(None)).await.unwrap_err(),
         HandlerError::Validation(m) if m == "decision is closed"));
 }
 
@@ -5025,43 +5047,43 @@ async fn close_stores_kind_and_via_and_refuses_decided_one_way() {
         .unwrap();
 
     let err = h
-        .close_decision(&dan, one.id, ClosureKind::Decided, "flat fee")
+        .close_decision(&dan, one.id(), ClosureKind::Decided, "flat fee")
         .await
         .unwrap_err();
     assert!(
         matches!(err, HandlerError::Validation(ref m) if m.starts_with("a one-way decision is decided")),
         "{err:?}"
     );
-    let after = h.get_decision(one.id).await.unwrap();
-    assert_eq!((after.closed, after.version), (None, one.version));
-    assert_eq!(count(&sink, "closed", &one.id.to_string()), 0);
+    let after = h.get_decision(one.id()).await.unwrap();
+    assert_eq!((after.closed(), after.version()), (None, one.version()));
+    assert_eq!(count(&sink, "closed", &one.id().to_string()), 0);
 
     let sys = ctx_via("reeve", Via::System);
     assert!(matches!(
-        h.close_decision(&sys, one.id, ClosureKind::Withdrawn, "x")
+        h.close_decision(&sys, one.id(), ClosureKind::Withdrawn, "x")
             .await
             .unwrap_err(),
         HandlerError::Forbidden
     ));
-    let after = h.get_decision(one.id).await.unwrap();
-    assert_eq!((after.closed, after.version), (None, one.version));
-    assert_eq!(count(&sink, "closed", &one.id.to_string()), 0);
+    let after = h.get_decision(one.id()).await.unwrap();
+    assert_eq!((after.closed(), after.version()), (None, one.version()));
+    assert_eq!(count(&sink, "closed", &one.id().to_string()), 0);
 
     let w = h
-        .close_decision(&bot, one.id, ClosureKind::Withdrawn, "dropped the tier")
+        .close_decision(&bot, one.id(), ClosureKind::Withdrawn, "dropped the tier")
         .await
         .unwrap();
-    let c = w.closed.unwrap();
+    let c = w.closed().unwrap();
     assert_eq!(
         (c.kind, c.via),
         (Some(ClosureKind::Withdrawn), Some(TokenKind::Automation))
     );
 
     let d = h
-        .close_decision(&dan, two.id, ClosureKind::Decided, "plain words")
+        .close_decision(&dan, two.id(), ClosureKind::Decided, "plain words")
         .await
         .unwrap();
-    let c = d.closed.unwrap();
+    let c = d.closed().unwrap();
     assert_eq!(
         (c.kind, c.via),
         (Some(ClosureKind::Decided), Some(TokenKind::Interactive))
@@ -5182,7 +5204,7 @@ async fn decision_queue_over_real_readiness() {
         .await
         .unwrap();
 
-    let ids = |q: &[QueueEntry]| q.iter().map(|e| e.decision.id).collect::<Vec<_>>();
+    let ids = |q: &[QueueEntry]| q.iter().map(|e| e.decision.id()).collect::<Vec<_>>();
     let (all, summary) = h
         .decision_queue(
             &DecisionScope::All {
@@ -5194,12 +5216,12 @@ async fn decision_queue_over_real_readiness() {
         .unwrap();
     assert_eq!(
         all.iter()
-            .map(|e| (e.group, e.decision.id))
+            .map(|e| (e.group, e.decision.id()))
             .collect::<Vec<_>>(),
         vec![
-            (QueueGroup::Blocking, d1.id),
-            (QueueGroup::Blocking, d2.id),
-            (QueueGroup::Open, d_i2.id)
+            (QueueGroup::Blocking, d1.id()),
+            (QueueGroup::Blocking, d2.id()),
+            (QueueGroup::Open, d_i2.id())
         ]
     );
     let keys = |e: &QueueEntry| e.blocks.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
@@ -5216,17 +5238,17 @@ async fn decision_queue_over_real_readiness() {
         .decision_queue(&DecisionScope::On(s1.key().clone()), dan.now)
         .await
         .unwrap();
-    assert_eq!(ids(&on_s1), vec![d2.id]);
+    assert_eq!(ids(&on_s1), vec![d2.id()]);
     let (under_i, _) = h
         .decision_queue(&DecisionScope::Initiative(ini.key().clone()), dan.now)
         .await
         .unwrap();
-    assert_eq!(ids(&under_i), vec![d1.id, d2.id]);
+    assert_eq!(ids(&under_i), vec![d1.id(), d2.id()]);
 
     let linked = h
         .link_record(
             &dan,
-            d1.id,
+            d1.id(),
             "knowledge-base",
             "knowledge/adrs/0040-queue.md",
             "kb/ADR-0040",
@@ -5236,9 +5258,9 @@ async fn decision_queue_over_real_readiness() {
         .unwrap();
     h.record_check(
         &dan,
-        d1.id,
+        d1.id(),
         "kb/ADR-0040",
-        linked.version,
+        linked.version(),
         CheckResult::Accepted {
             commit: "abc".into(),
             reversibility: None,
@@ -5256,10 +5278,10 @@ async fn decision_queue_over_real_readiness() {
         )
         .await
         .unwrap();
-    let e1 = all.iter().find(|e| e.decision.id == d1.id).unwrap();
+    let e1 = all.iter().find(|e| e.decision.id() == d1.id()).unwrap();
     assert_eq!(e1.group, QueueGroup::Satisfied);
     assert!(e1.blocks.is_empty());
-    let e2 = all.iter().find(|e| e.decision.id == d2.id).unwrap();
+    let e2 = all.iter().find(|e| e.decision.id() == d2.id()).unwrap();
     assert_eq!(
         (e2.group, keys(e2)),
         (QueueGroup::Blocking, vec![s1.key().clone()])
@@ -5658,7 +5680,8 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
     // the repo variant on an unmarked row: None, and no change
     let mut tx = pool.begin().await.unwrap();
     assert_eq!(
-        h.repo
+        h.ports
+            .urgency
             .renew_urgent_mark(
                 &mut tx,
                 ItemType::Initiative,
@@ -5670,7 +5693,14 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
             .unwrap(),
         None
     );
-    assert!(h.repo.urgent_marks_in(&mut tx).await.unwrap().is_empty());
+    assert!(
+        h.ports
+            .urgency
+            .urgent_marks_in(&mut tx)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     tx.commit().await.unwrap();
     // and a renewal of an unmarked item through the handler writes nothing
     h.war_room_renew(&dan, &twice[..1]).await.unwrap();
@@ -6179,7 +6209,7 @@ async fn every_item_read_is_one_transaction_on_one_connection() {
         .unwrap();
     sqlx::query("SELECT 1").execute(&one).await.unwrap(); // the connection exists and is idle
     let h = Handlers {
-        repo: make_planning_repo(one.clone()),
+        ports: make_planning_ports(one.clone()),
         pool: one,
         ..h
     };
