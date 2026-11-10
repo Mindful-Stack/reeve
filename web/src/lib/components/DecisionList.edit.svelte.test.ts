@@ -868,11 +868,9 @@ describe('DecisionList row', () => {
 	});
 
 	it('keeps an unsent comment and its idempotency key across an unmount and remount', async () => {
-		let fail = true;
-		net.replies.reply = (r) => {
-			if (r.method === 'POST' && fail) return { status: 500, body: { outcome: 'error', code: 'internal', message: 'boom' } };
-			return net.replies.ok(r.method === 'POST' ? [] : []);
-		};
+		// Every send fails on purpose: the draft and its key must survive, and a retry must reuse the key.
+		net.replies.reply = (r) =>
+			r.method === 'POST' ? { status: 500, body: { outcome: 'error', code: 'internal', message: 'boom' } } : net.replies.ok([]);
 		const comment = () => rows()[0].querySelector<HTMLTextAreaElement>('textarea[data-field="comment"]')!;
 		const posts = () => net.sent.filter((r) => r.method === 'POST').map((r) => (r.body as { body: string; idempotency_key: string }));
 		const write = (text: string) => {

@@ -656,6 +656,7 @@
 
 		<section id="decisions" aria-labelledby="decisions-h">
 			<div class="section-head">
+				<!-- The separators sit inside template literals: Svelte trims a span's leading space, which would run "Decisions" into the count. -->
 				<h2 id="decisions-h">Decisions{#if blockingDecisions.length}<span class="count">{` · ${blockingDecisions.length} blocking`}</span>{/if}{#if acceptedCount}<span class="count">{` · ${acceptedCount} accepted`}</span>{/if}</h2>
 				<button type="button" onclick={() => (addingDecision = ++decisionOpenings)}>+ Add decision</button>
 			</div>

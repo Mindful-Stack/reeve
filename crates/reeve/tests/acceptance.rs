@@ -366,7 +366,7 @@ async fn flow() {
     assert_eq!(body["outcome"], "refused");
     assert_eq!(body["reasons"][0]["reason"], "decision_no_record");
 
-    // 5. The agent drafts the record on a branch (a PR in real life) and links it: proposed, PR open.
+    // 5. The agent drafts the record on a branch (a PR in real life) and links it: proposed (PR linked).
     std::fs::write(
         kb.join("knowledge/adrs/0001-queue.md"),
         "---\nid: kb/ADR-0001\nstatus: proposed\nsuperseded_by:\n---\n# Queue\n",

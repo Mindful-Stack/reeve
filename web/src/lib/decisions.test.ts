@@ -198,10 +198,11 @@ describe('next step and needed-in wording', () => {
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
 		expect(neededLabel('beyond')).toBe('Needed beyond');
+		expect(neededLabel('none')).toBe('Not needed yet');
 	});
 
 	it('orders and labels every lane', () => {
-		expect(LANE_ORDER).toHaveLength(7);
+		expect(LANE_ORDER).toEqual(['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed']);
 		for (const l of LANE_ORDER) expect(LANE_LABEL[l]).toBeTruthy();
 	});
 });

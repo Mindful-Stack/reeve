@@ -24,7 +24,7 @@ pub fn short(r: &Reason) -> String {
         Reason::AncestorDiscoveryIncomplete { item } => format!("discovery open: {item}"),
         Reason::DecisionNoRecord { .. } => "decision: no record".into(),
         Reason::DecisionUnchecked { .. } => "decision unchecked".into(),
-        Reason::DecisionProposedPrOpen { .. } => "decision: proposed, PR open".into(),
+        Reason::DecisionProposedPrOpen { .. } => "decision: proposed (PR linked)".into(),
         Reason::DecisionRecordNotFound { .. } => "decision: record not found".into(),
         Reason::DecisionRepoNotConfigured { .. } => {
             "decision: record in an unchecked repository".into()
@@ -130,7 +130,7 @@ mod tests {
                     decision_id: 3,
                     title: t(),
                 },
-                "decision: proposed, PR open",
+                "decision: proposed (PR linked)",
                 true,
             ),
             (

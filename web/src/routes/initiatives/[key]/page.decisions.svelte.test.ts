@@ -19,8 +19,8 @@ const net = vi.hoisted(() => ({ decisions: [] as RequiredDecision[] }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch } = await import('#lib/test/net.ts');
 	installFetch(async ({ method, path }) => {
-		if (method === 'GET' && path === '/api/v1/initiatives/ABC-1') {
-			const ini: Initiative = { key: 'ABC-1', title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
+		if (method === 'GET' && (path === '/api/v1/initiatives/ABC-1' || path === '/api/v1/initiatives/ABC-2')) {
+			const ini: Initiative = { key: path.slice(-5), title: 'Orion', brief: '', horizon: 'Now', version: 3, target_month: null, owner: null, urgent_mark: null, urgent_sources: [] };
 			return ini;
 		}
 		if (method === 'GET' && (path === '/api/v1/epics' || path === '/api/v1/stories' || path === '/api/v1/activity')) return [];
@@ -56,7 +56,20 @@ describe('decisions heading and accepted fold', () => {
 		expect(document.querySelector('#decisions-h')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('Decisions · 1 accepted');
 		expect(fold().textContent).toBe('1 accepted decision');
 		expect(fold().getAttribute('aria-expanded')).toBe('true');
-		expect(document.querySelector('#decisions-rest')).not.toBeNull();
+		expect(document.querySelector('#decisions-rest')!.textContent).toContain('decision 1');
+	});
+
+	it("forgets the user's choice when the page moves to another initiative", async () => {
+		net.decisions = [accepted(1)];
+		await open();
+		fold().click();
+		flushSync();
+		expect(fold().getAttribute('aria-expanded')).toBe('false');
+		route.fake!.params.set('key', 'ABC-2');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(fold().getAttribute('aria-expanded')).toBe('true');
+		});
 	});
 
 	it('counts blocking and accepted, with the fold closed', async () => {
