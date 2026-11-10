@@ -246,17 +246,20 @@
 			<fieldset role="radiogroup" aria-required="true" aria-invalid={kindError ? 'true' : undefined} aria-describedby={kindError ? `${id}-error` : undefined}>
 				<legend>What kind of thing is it?</legend>
 				{#each TYPES as t (t.kind)}
-					<label class="type"
-						><input
-							type="radio"
-							name="kind"
-							checked={d.kind === t.kind}
-							onchange={() => chooseKind(t.kind)}
-							aria-describedby={kindError ? `${id}-help-${t.kind} ${id}-error` : `${id}-help-${t.kind}`}
-							disabled={busy}
-						/>
-						{t.label} <span class="help" id="{id}-help-{t.kind}">{t.help}</span></label
-					>
+					<div class="option">
+						<label class="type"
+							><input
+								type="radio"
+								name="kind"
+								checked={d.kind === t.kind}
+								onchange={() => chooseKind(t.kind)}
+								aria-describedby={kindError ? `${id}-help-${t.kind} ${id}-error` : `${id}-help-${t.kind}`}
+								disabled={busy}
+							/>
+							{t.label}</label
+						>
+						<span class="help" id="{id}-help-{t.kind}">{t.help}</span>
+					</div>
 				{/each}
 				<p class="hint">Pick the closest fit; the team can change it.</p>
 			</fieldset>
@@ -289,6 +292,9 @@
 		gap: 4px;
 	}
 	.type {
+		display: block;
+	}
+	.help {
 		display: block;
 	}
 	.help,

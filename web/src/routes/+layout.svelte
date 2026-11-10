@@ -79,6 +79,9 @@
 		};
 		return strip(a) === strip(b);
 	}
+	// A hit viewed from the report dialog unmounts with the dialog, so the recorded opener is gone: the header's Report
+	// button takes the focus instead of letting it drop to the body.
+	let reportButton: HTMLButtonElement | undefined = $state();
 	let drawerWasOpen = false;
 	$effect.pre(() => {
 		const open = drawerKey !== null;
@@ -86,7 +89,9 @@
 			const o = opener;
 			opener = null;
 			tick().then(() => {
-				if (o?.isConnected && focusIsFree(null)) o.focus();
+				if (!focusIsFree(null)) return;
+				if (o?.isConnected) o.focus();
+				else if (o) reportButton?.focus();
 			});
 		}
 		drawerWasOpen = open;
@@ -220,7 +225,7 @@
 			</nav>
 			<div class="right">
 				<GoalPicker />
-				<button type="button" class="primary report" aria-label={label} aria-busy={opening} onclick={openFromHere}>
+				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
 				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>

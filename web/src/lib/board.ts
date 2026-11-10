@@ -163,10 +163,10 @@ function byKey(a: string, b: string): number {
  *  filters nothing. */
 export type Filters = { mine?: string; epic?: string; kind?: Kind; untriaged?: boolean; goal?: number | 'none' | null };
 
-/** Untriaged as the server reports it (kb/ADR-0018 R4: an item of any kind without an epic): a readiness reason, never
- *  re-derived from kind and epic on the client (kb/ADR-0018 R1). */
+/** Untriaged (kb/ADR-0018 R4: an item of any kind without an epic that is not done): the server's readiness reason,
+ *  never re-derived from kind and epic on the client (kb/ADR-0018 R1), and not a finished item. */
 export function isUntriaged(s: StoryWithReadiness): boolean {
-	return s.readiness.reasons.some((r) => r.reason === 'untriaged');
+	return s.story.delivery !== 'done' && s.readiness.reasons.some((r) => r.reason === 'untriaged');
 }
 
 /** `mine` is the caller's email; `untriaged` keeps the stories the server calls untriaged (`isUntriaged`); `goal` reads

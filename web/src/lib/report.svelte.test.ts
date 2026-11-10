@@ -55,6 +55,16 @@ describe('report draft', () => {
 		expect(report.draft).toBeNull();
 		expect(restoreDraft('dan@example.com')).toBe(false); // and gone from storage
 	});
+	it('gives a restored draft that is not uncertain a fresh key (a duplicated tab copies the storage)', () => {
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'x';
+		const before = { ...report.draft!.key };
+		persist('dan@example.com');
+		discardDraft({ keepStorage: true });
+		expect(restoreDraft('dan@example.com')).toBe(true);
+		expect(report.draft?.key.key).not.toBe(before.key);
+		expect(report.draft?.title).toBe('x');
+	});
 	it('round-trips the key and the uncertain flag', () => {
 		openReport({ path: '/board', label: 'Board', epic: null });
 		Object.assign(report.draft!, { title: 'x', uncertain: true });

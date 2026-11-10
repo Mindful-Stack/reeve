@@ -76,12 +76,14 @@ describe('applyFilters', () => {
 		sw('ABC-4', { epic: null }, [{ reason: 'untriaged' }]),
 		sw('ABC-5', { epic: null, kind: 'chore' }, [{ reason: 'untriaged' }]),
 		// The client must not re-derive it: no epic but no untriaged reason from the server, so not untriaged.
-		sw('ABC-6', { epic: null })
+		sw('ABC-6', { epic: null }),
+		// Done items leave the filter even if they carry the reason (kb/ADR-0018 R4: epic-less and not done).
+		sw('ABC-8', { epic: null, delivery: 'done' }, [{ reason: 'untriaged' }])
 	];
 	const keys = (f: Parameters<typeof applyFilters>[1]) => applyFilters(all, f).map((s) => s.story.key);
 
 	it('filters by owner, epic, kind and untriaged, and combines them', () => {
-		expect(keys({})).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5', 'ABC-6']);
+		expect(keys({})).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5', 'ABC-6', 'ABC-8']);
 		expect(keys({ mine: 'ana@x.se' })).toEqual(['ABC-2']);
 		expect(keys({ epic: 'ABC-7' })).toEqual(['ABC-3']);
 		expect(keys({ kind: 'bug' })).toEqual(['ABC-2']);

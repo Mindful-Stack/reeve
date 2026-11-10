@@ -563,6 +563,9 @@ describe('ReportDialog', () => {
 		mountDialog();
 		const radioHelp = radio("Something's broken").getAttribute('aria-describedby')!;
 		expect(document.getElementById(radioHelp)!.textContent).toContain('It worked before');
+		// Outside the label, so a screen reader does not announce the help as the name and again as the description.
+		expect(document.getElementById(radioHelp)!.closest('label')).toBeNull();
+		expect(radio("Something's broken").labels![0].textContent).not.toContain('It worked before');
 		type(title(), 'Needs a kind');
 		form().requestSubmit();
 		flushSync();

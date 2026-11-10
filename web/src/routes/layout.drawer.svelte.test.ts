@@ -129,4 +129,25 @@ describe('the layout and the story drawer', () => {
 			expect(document.activeElement).toBe(opener);
 		});
 	});
+
+	it('falls back to the header Report button when the recorded opener is gone (a hit viewed from the dialog)', async () => {
+		const hit = document.createElement('button');
+		document.body.append(hit);
+		hit.focus();
+		const children = createRawSnippet(() => ({ render: () => '<p>content</p>' }));
+		app = mount(Layout, { target: document.body, props: { children } as never });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('main')).not.toBeNull();
+		});
+		navigate('http://localhost/board?story=RV-5');
+		await drawerFocused('RV-5');
+		hit.remove(); // the dialog, and its hit button with it, unmounted
+		document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(drawer('RV-5')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button.report'));
+		});
+	});
 });

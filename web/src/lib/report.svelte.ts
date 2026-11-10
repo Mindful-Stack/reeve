@@ -131,7 +131,9 @@ export function restoreDraft(email: string): boolean {
 		const saved: unknown = JSON.parse(raw);
 		if (isObj(saved) && saved.email === email && isDraft(saved.draft)) {
 			const prev = report.draft;
-			report.draft = saved.draft;
+			// A duplicated tab copies sessionStorage: only an uncertain send must retry with its stored key; any other
+			// draft takes a fresh one so two tabs never share a key.
+			report.draft = saved.draft.uncertain ? saved.draft : { ...saved.draft, key: newDraftKey() };
 			if (hasDraft()) return true;
 			report.draft = prev;
 		}
