@@ -154,10 +154,10 @@ where
 
     pub fn draw(&mut self) -> std::io::Result<()> {
         let now = Instant::now();
-        let wall = chrono::Utc::now();
+        self.state.set_wall(chrono::Utc::now());
         let s = &self.state;
         self.terminal
-            .draw(|f| view::draw(f, s, now, wall))
+            .draw(|f| view::draw(f, s, now))
             .map_err(std::io::Error::other)?;
         Ok(())
     }

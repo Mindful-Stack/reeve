@@ -37,9 +37,13 @@ fn status_of(s: &State, e: &Entry) -> String {
     words::readiness_short(&e.item.readiness)
 }
 
-fn card_style(s: &State, e: &Entry, now: Instant) -> Style {
+fn is_selected(s: &State, e: &Entry) -> bool {
+    s.board.selected() == Some(&e.item.story.key)
+}
+
+fn card_style(s: &State, e: &Entry, selected: bool, now: Instant) -> Style {
     let k = &e.item.story.key;
-    if s.board.selected() == Some(k) {
+    if selected {
         return selected_style();
     }
     match s.live.last_changed() {
@@ -126,35 +130,39 @@ fn empty_text(s: &State, cx: &Ctx, visible: &[&Entry]) -> Option<String> {
     })
 }
 
-/// The `!` before an urgent story's title: bold red when colour is on and the row is not selected. The selected row
-/// keeps its own style so it never turns into a red background; the symbol carries the meaning without colour.
-fn bang_style(s: &State, e: &Entry, card: Style) -> Style {
-    if s.ui.color && s.board.selected() != Some(&e.item.story.key) {
+/// The `!` before a title, or `None` when the server does not call the story urgent: bold red when colour is on and the
+/// row is not selected. The selected row keeps its own style so it never turns into a red background; the symbol
+/// carries the meaning without colour.
+fn bang(s: &State, e: &Entry, selected: bool, card: Style) -> Option<Style> {
+    if !is_urgent(&e.item.story.urgent_sources) {
+        return None;
+    }
+    Some(if s.ui.color && !selected {
         card.patch(Style::new().fg(Color::Red).add_modifier(Modifier::BOLD))
     } else {
         card
-    }
+    })
 }
 
-/// A card's title line. `lead` comes before the title; `plain_gap` stands in the `!` slot when the story is not urgent
-/// (the columns indent the title by two). Only a story the server calls urgent gets the `!`, as its own span, and the
-/// title then gives up its two columns.
+/// A card's title line. `lead` comes before the title; `plain_gap` stands in the `!` slot when there is no `!` (the
+/// columns indent the title by two). The `!` is its own span, and the title then gives up its two columns.
 fn title_line(
-    s: &State,
-    e: &Entry,
     card: Style,
+    bang: Option<Style>,
     w: usize,
     lead: &str,
     plain_gap: &str,
     title: &str,
 ) -> Line<'static> {
-    if !is_urgent(&e.item.story.urgent_sources) {
+    let Some(bang) = bang else {
         return Line::styled(fit(&format!("{lead}{plain_gap}{title}"), w), card);
-    }
+    };
+    // A long lead (a long owner at a narrow width) is cut first, so it can never push the `!` out of the line.
+    let lead = fit(lead, w.saturating_sub(2));
     let room = w.saturating_sub(lead.width() + 2);
     Line::from(vec![
-        Span::styled(lead.to_string(), card),
-        Span::styled("! ", bang_style(s, e, card)),
+        Span::styled(lead, card),
+        Span::styled("! ", bang),
         Span::styled(fit(title, room), card),
     ])
 }
@@ -212,7 +220,8 @@ fn columns(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now:
             .position(|e| s.board.selected.as_ref() == Some(&e.item.story.key));
         let mut lines: Vec<Line> = Vec::new();
         for e in cards.iter().skip(scroll(sel, 4, inner.height as usize)) {
-            let st = card_style(s, e, now);
+            let selected = is_selected(s, e);
+            let st = card_style(s, e, selected, now);
             let story = &e.item.story;
             let head = format!(
                 "{}{} {}{}",
@@ -222,7 +231,14 @@ fn columns(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now:
                 owner_tag(s, e)
             );
             lines.push(Line::styled(fit(&head, w), st));
-            lines.push(title_line(s, e, st, w, "", "  ", &story.title));
+            lines.push(title_line(
+                st,
+                bang(s, e, selected, st),
+                w,
+                "",
+                "  ",
+                &story.title,
+            ));
             let third = format!("  {}{}", status_of(s, e), meta(e));
             lines.push(Line::from(Span::styled(
                 fit(&third, w),
@@ -250,7 +266,8 @@ fn list(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now: In
             if s.board.selected.as_ref() == Some(&e.item.story.key) {
                 sel_line = Some(lines.len());
             }
-            let st = card_style(s, e, now);
+            let selected = is_selected(s, e);
+            let st = card_style(s, e, selected, now);
             let story = &e.item.story;
             let lead = format!(
                 "{}{} {}{}  ",
@@ -259,7 +276,14 @@ fn list(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now: In
                 words::kind(story.kind),
                 owner_tag(s, e),
             );
-            lines.push(title_line(s, e, st, w, &lead, "", &story.title));
+            lines.push(title_line(
+                st,
+                bang(s, e, selected, st),
+                w,
+                &lead,
+                "",
+                &story.title,
+            ));
             let second = format!("    {}{}", status_of(s, e), meta(e));
             lines.push(Line::from(Span::styled(
                 fit(&second, w),

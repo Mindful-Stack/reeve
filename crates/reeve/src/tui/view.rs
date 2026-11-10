@@ -209,8 +209,7 @@ pub fn layout(area: Rect) -> [Rect; 3] {
     .areas(area)
 }
 
-/// `wall` is the wall clock for the dates in the drawer; the caller reads it, the view never does (kb/ADR-0011).
-pub fn draw(f: &mut Frame, s: &State, now: Instant, wall: chrono::DateTime<chrono::Utc>) {
+pub fn draw(f: &mut Frame, s: &State, now: Instant) {
     let area = f.area();
     if area.width < MIN_W || area.height < MIN_H {
         f.render_widget(Paragraph::new("terminal too small"), area);
@@ -234,7 +233,7 @@ pub fn draw(f: &mut Frame, s: &State, now: Instant, wall: chrono::DateTime<chron
     if let Some(scroll) = s.ui.drawer
         && let Some(e) = s.board.selected_entry()
     {
-        drawer::draw(f, drawer::area(area), &s.board, e, scroll, wall);
+        drawer::draw(f, drawer::area(area), &s.board, e, scroll, s.ui.wall);
     }
     if let Some(row) = s.board.filter_menu() {
         board::view::filter_menu(f, body, &s.board, row);
@@ -703,9 +702,10 @@ mod tests {
         let (rows, _) = sim.render(50, 30);
         let head = rows.iter().find(|r| r.contains("! A very")).unwrap();
         assert!(
-            head.trim_end().ends_with('…') && head.chars().count() <= 50,
-            "{rows:#?}"
+            head.starts_with("• ● ABC-1 story  ! A very"),
+            "the bang directly follows the lead: {rows:#?}"
         );
+        assert!(head.trim_end().ends_with('…'), "{rows:#?}");
     }
 
     #[test]
@@ -777,16 +777,69 @@ mod tests {
     }
 
     #[test]
-    fn the_ticker_names_an_urgent_mark_and_its_clearing() {
-        let mut sim = mine(vec!["ABC-1"]);
-        activity(&mut sim, "ABC-1", "urgent_marked");
-        sim.now += crate::tui::app::STATUS_FOR + std::time::Duration::from_millis(1);
+    fn urgency_comes_from_the_sources_never_from_the_mark() {
+        let list = vec![
+            urgent_via_epic(owned(story("ABC-1", Todo, 1), "dan@example.com")),
+            marked_without_sources(owned(story("ABC-2", Todo, 1), "dan@example.com")),
+        ];
+        for w in [120, 100] {
+            let mut sim = Sim::loaded(TokenKind::Interactive, list.clone());
+            let (rows, _) = sim.render(w, 30);
+            assert!(has(&rows, "! Title of ABC-1"), "width {w}: {rows:#?}");
+            assert!(
+                has(&rows, "Title of ABC-2") && !has(&rows, "! Title of ABC-2"),
+                "{rows:#?}"
+            );
+        }
+        let mut sim = Sim::loaded(TokenKind::Interactive, list);
+        sim.char('f');
+        sim.char('j');
+        sim.char('j');
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        sim.char('f');
         let (rows, _) = sim.render(120, 30);
         assert!(
-            rows[29].contains("ABC-1 marked urgent · anna"),
-            "{}",
-            rows[29]
+            has(&rows, "Title of ABC-1") && !has(&rows, "Title of ABC-2"),
+            "{rows:#?}"
         );
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "urgent · via epic ABC-100"), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_long_owner_at_a_narrow_width_never_clips_the_bang() {
+        let mut s = urgent(owned(
+            story("ABC-1", Todo, 1),
+            "a-remarkably-long-owner-name@example.com",
+        ));
+        s.story.title = "Title".into();
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.s.board.test_set_filter_all(true);
+        let (rows, _) = sim.render(40, 20);
+        let head = rows.iter().find(|r| r.contains("ABC-1")).unwrap();
+        assert!(head.contains("…! "), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_drawer_scroll_cap_agrees_with_what_is_drawn() {
+        // The frame's wording ("2 d ago", "expires in 10 d") is longer than the mark's own date would give, so
+        // the urgent line wraps in the drawer and a cap counted with other wording would miss a line.
+        let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        s.story.urgent_mark.as_mut().unwrap().reason = Some("abcde".into());
+        s.story.description = (1..=60)
+            .map(|i| format!("line {i}"))
+            .chain(["LASTLINE".to_string()])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let _ = sim.render(120, 30); // the core learns the terminal's size from the driver's frames
+        for _ in 0..100 {
+            sim.char('J');
+        }
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "LASTLINE"), "{rows:#?}");
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub fn owned(mut s: StoryWithReadiness, email: &str) -> StoryWithReadiness {
     s
 }
 
-/// A mark made by dana two days before `WALL`, with its reason, expiring ten days after `WALL`.
+/// A mark made by dana two days before `WALL`, without a reason, expiring ten days after `WALL`.
 pub fn own_mark() -> reeve_protocol::UrgentMarkDto {
     reeve_protocol::UrgentMarkDto {
         at: "2026-11-08T12:00:00Z".parse().unwrap(),
@@ -74,6 +74,22 @@ pub fn urgent(mut s: StoryWithReadiness) -> StoryWithReadiness {
         key: s.story.key.clone(),
         item: reeve_protocol::ItemType::Story,
     }];
+    s
+}
+
+/// A story that is urgent only through its epic: the server lists the epic as the one source and the story has no mark.
+pub fn urgent_via_epic(mut s: StoryWithReadiness) -> StoryWithReadiness {
+    s.story.urgent_sources = vec![reeve_protocol::ItemRefDto {
+        key: key("ABC-100"),
+        item: reeve_protocol::ItemType::Epic,
+    }];
+    s
+}
+
+/// A story that is not done, with an active own mark and no sources. The server never sends this shape for a live
+/// story (an active mark makes it its own source), so a client that reads the mark would wrongly show it as urgent.
+pub fn marked_without_sources(mut s: StoryWithReadiness) -> StoryWithReadiness {
+    s.story.urgent_mark = Some(own_mark());
     s
 }
 
@@ -182,8 +198,6 @@ pub(crate) struct Sim {
     pub timers: Vec<Msg>,
     pub other: Vec<Effect<Msg>>,
     pub now: Instant,
-    /// The wall clock the view is drawn with: fixed, so dates in the drawer are stable.
-    pub wall: chrono::DateTime<chrono::Utc>,
 }
 
 pub fn me(kind: TokenKind) -> Me {
@@ -215,8 +229,8 @@ impl Sim {
             timers: vec![],
             other: vec![],
             now,
-            wall: WALL.parse().unwrap(),
         };
+        sim.s.set_wall(WALL.parse().unwrap());
         sim.absorb(fx);
         sim
     }
@@ -306,8 +320,9 @@ impl Sim {
     pub fn render(&mut self, w: u16, h: u16) -> (Vec<String>, ratatui::buffer::Buffer) {
         self.s.ui.width = w;
         self.s.ui.height = h;
+        self.s.set_wall(WALL.parse().unwrap());
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
-        term.draw(|f| crate::tui::view::draw(f, &self.s, self.now, self.wall))
+        term.draw(|f| crate::tui::view::draw(f, &self.s, self.now))
             .unwrap();
         let buf = term.backend().buffer().clone();
         (crate::tui::view::rows(&buf), buf)

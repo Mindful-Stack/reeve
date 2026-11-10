@@ -63,6 +63,9 @@ pub struct Ui {
     pub height: u16,
     /// `NO_COLOR` is unset.
     pub color: bool,
+    /// The wall clock of the frame being drawn. The driver reads it once per frame and records it here, so the view and
+    /// the drawer's scroll cap word the dates the same way.
+    pub wall: chrono::DateTime<chrono::Utc>,
 }
 
 /// What draws over the board and receives the keys. At most one is open at a time: opening one closes the others.
@@ -217,6 +220,11 @@ impl State {
     /// The number of the last request sent.
     pub fn seq(&self) -> Seq {
         self.seq
+    }
+
+    /// Records the wall clock the next frame is drawn with. Only the driver (and the test harness) calls this.
+    pub fn set_wall(&mut self, wall: chrono::DateTime<chrono::Utc>) {
+        self.ui.wall = wall;
     }
 
     /// Numbers a request as it is sent. Only the driver (and the test harness) calls this.
@@ -561,7 +569,12 @@ impl State {
     fn drawer_max(&self) -> Option<u16> {
         let e = self.board.selected_entry()?;
         let terminal = ratatui::layout::Rect::new(0, 0, self.ui.width, self.ui.height);
-        Some(drawer::max_scroll(&self.board, e, drawer::area(terminal)))
+        Some(drawer::max_scroll(
+            &self.board,
+            e,
+            drawer::area(terminal),
+            self.ui.wall,
+        ))
     }
 
     fn selected_key(&self) -> Option<Key> {

@@ -129,15 +129,9 @@ fn last(p: &Paragraph, inner: Rect) -> u16 {
 
 /// The furthest the drawer at `area` scrolls: its wrapped line count less its inner height (0 when it all fits).
 ///
-/// The core has no clock (kb/ADR-0011 R4), so the urgent lines are counted with the own mark's creation time as "now":
-/// the dates only change a number's width inside a line, never how many lines there are.
-pub fn max_scroll(board: &State, e: &Entry, area: Rect) -> u16 {
-    let wall = e
-        .item
-        .story
-        .urgent_mark
-        .as_ref()
-        .map_or(DateTime::<Utc>::UNIX_EPOCH, |m| m.at);
+/// `wall` is the frame's wall clock, the one the view draws with (`Ui::wall`): the wording of the dates decides how
+/// the urgent line wraps, so the cap must count the same text.
+pub fn max_scroll(board: &State, e: &Entry, area: Rect, wall: DateTime<Utc>) -> u16 {
     last(&paragraph(board, e, wall), block(e).inner(area))
 }
 
