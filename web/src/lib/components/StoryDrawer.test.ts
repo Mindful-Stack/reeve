@@ -88,6 +88,17 @@ describe('StoryDrawer Report action', () => {
 		expect(report.draft!.epic).toBeNull();
 		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
 	});
+
+	it('says Resume report while a draft exists, and is not hidden by a media rule', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
+		expect(btn().textContent).toBe('Report');
+		btn().click();
+		flushSync();
+		report.draft!.title = 'a draft in progress';
+		flushSync();
+		expect(btn().textContent).toBe('Resume report');
+	});
 });
 
 describe('StoryDrawer opened by an external reference', () => {
