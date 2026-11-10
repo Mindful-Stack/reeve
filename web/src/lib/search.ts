@@ -32,3 +32,9 @@ export function highlight(title: string, query: string): Piece[] {
 	if (at < title.length) pieces.push({ text: title.slice(at), match: false });
 	return pieces.length ? pieces : [{ text: title, match: false }];
 }
+
+/** Text that names a key (`12`, `#12`, `GRA-12`, any case) or a Jira-style reference (`SCRUM-40`), as the server reads
+ *  one: the header box looks it up before filtering the backlog by it. A phrase ("12 apples") is never key-shaped. */
+export function isKeyShaped(text: string): boolean {
+	return /^(#?\d+|[a-z][a-z0-9]*-\d+)$/i.test(text.trim());
+}

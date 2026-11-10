@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { highlight, hitHref, hitLevel } from './search.ts';
+import { highlight, hitHref, hitLevel, isKeyShaped } from './search.ts';
 
 const hit = (item: 'initiative' | 'epic' | 'story', kind: 'story' | 'bug' | 'chore' | null = null) => ({
 	key: 'ABC-7',
@@ -56,5 +56,14 @@ describe('highlight', () => {
 	it('returns the title whole for an empty query or no match', () => {
 		expect(highlight('Title', '  ')).toEqual([{ text: 'Title', match: false }]);
 		expect(highlight('Title', 'zz')).toEqual([{ text: 'Title', match: false }]);
+	});
+});
+
+describe('isKeyShaped', () => {
+	it.each(['12', '#12', 'TST-12', 'tst-12', 'SCRUM-40', ' GRA-7 '])('%s names a key or a Jira reference', (q) => {
+		expect(isKeyShaped(q)).toBe(true);
+	});
+	it.each(['invoice', '12 apples', 'TST-', '-12', 'a-b', '#', '', 'TST-12-3', '1-2'])('%s is text', (q) => {
+		expect(isKeyShaped(q)).toBe(false);
 	});
 });

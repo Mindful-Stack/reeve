@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reason, Story } from '#lib/api/types.ts';
 import { epic as epicDto, initiative, withReadiness } from '#lib/test/fixtures.ts';
-import { groupBacklog } from './backlog.ts';
+import { backlogState, backlogView, groupBacklog, toStoryQuery } from './backlog.ts';
 
 const ini = (key: string, horizon: string, title = key) => initiative({ key, title, horizon });
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: `Epic ${key}`, initiative });
@@ -50,5 +50,69 @@ describe('groupBacklog', () => {
 	it('epics without an initiative go under No initiative', () => {
 		expect(b.sections[3].epics.map((e) => e.epic.key)).toEqual(['E-3']);
 		expect(b.sections[3].epics[0].tone).toBe('ready');
+	});
+});
+
+describe('toStoryQuery', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	const me = 'a@example.com';
+
+	it('is null for the plain backlog: the unfiltered todo list is the rows', () => {
+		expect(toStoryQuery(at(''), me)).toBeNull();
+		expect(toStoryQuery(at('?group=rank'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=rank&state=todo'), me)).toBeNull();
+		expect(toStoryQuery(at('?story=S-1'), me)).toBeNull();
+	});
+	it('defaults state to todo, also with text (the header box supplies state=open)', () => {
+		expect(toStoryQuery(at('?q=a'), me)).toEqual({ q: 'a', delivery: 'todo' });
+		expect(toStoryQuery(at('?q=%20a%20'), me)).toEqual({ q: 'a', delivery: 'todo' });
+		expect(toStoryQuery(at('?q=%20%20'), me)).toBeNull();
+	});
+	it('maps state to delivery or done, and relevance to sort only with text', () => {
+		expect(toStoryQuery(at('?q=a&state=open&view=relevance'), me)).toEqual({ q: 'a', done: 'none', sort: 'relevance' });
+		expect(toStoryQuery(at('?state=all'), me)).toEqual({ done: 'all' });
+		expect(toStoryQuery(at('?state=open'), me)).toEqual({ done: 'none' });
+		expect(toStoryQuery(at('?state=zz'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=relevance'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=relevance&state=all'), me)).toEqual({ done: 'all' });
+		expect(toStoryQuery(at('?q=a&view=rank'), me)).toEqual({ q: 'a', delivery: 'todo' });
+	});
+	it('sends mine as the owner only while signed in', () => {
+		expect(toStoryQuery(at('?mine=1'), me)).toEqual({ delivery: 'todo', owner: me });
+		expect(toStoryQuery(at('?mine=1'), undefined)).toBeNull();
+		expect(toStoryQuery(at('?mine=1&state=open'), null)).toEqual({ done: 'none' });
+	});
+	it('drops an unknown kind and passes the other filters through', () => {
+		expect(toStoryQuery(at('?kind=zz'), me)).toBeNull();
+		expect(toStoryQuery(at('?kind=bug&epic=E-1&initiative=I-1&label=ux&ready=1&untriaged=1&urgent=1'), me)).toEqual({
+			delivery: 'todo',
+			kind: 'bug',
+			epic: 'E-1',
+			initiative: 'I-1',
+			label: 'ux',
+			ready: true,
+			untriaged: true,
+			urgent: true
+		});
+		expect(toStoryQuery(at('?ready=0&urgent=true'), me)).toBeNull();
+	});
+});
+
+describe('backlogState and backlogView', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	it('read the URL with their defaults', () => {
+		expect(backlogState(at(''))).toBe('todo');
+		expect(backlogState(at('?state=open'))).toBe('open');
+		expect(backlogState(at('?state=all'))).toBe('all');
+		expect(backlogState(at('?state=zz'))).toBe('todo');
+		expect(backlogView(at(''))).toBe('epic');
+		expect(backlogView(at('?group=rank'))).toBe('rank');
+		expect(backlogView(at('?view=rank'))).toBe('rank');
+		expect(backlogView(at('?view=epic&group=rank'))).toBe('epic');
+		expect(backlogView(at('?q=a&view=relevance'))).toBe('relevance');
+	});
+	it('shows relevance without text as ranked', () => {
+		expect(backlogView(at('?view=relevance'))).toBe('rank');
+		expect(backlogView(at('?view=relevance&q=%20'))).toBe('rank');
 	});
 });
