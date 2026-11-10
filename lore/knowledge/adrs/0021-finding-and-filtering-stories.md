@@ -47,6 +47,7 @@ parameters it does not know, so a client newer than the server gets an unfiltere
 - F4 Every story the list returns already carries its computed urgency — source: `crates/reeve-planning/src/handler/dto.rs` `urgent_fields`; `crates/reeve-planning/src/handler/urgent.rs` `urgency_in`.
 - F5 Lorekeeper's CLI reference lists `reeve story ls` and its flags, and the skill smoke checks them — source: Lorekeeper `references/reeve-cli.md`; `scripts/skill-smoke.sh`.
 - F6 Unknown query parameters are ignored, not refused — source: `crates/reeve-server/src/routes/stories.rs` `StoryQuery` (no `deny_unknown_fields`); `crates/reeve-server/src/extract.rs` `ApiQuery`.
+- F7 The skill smoke fails when a flag in `reeve <command> --help` is missing from Lorekeeper's reference, and runs against Lorekeeper `main` unless `LOREKEEPER_REF` names an open pull request's branch — source: `.github/workflows/skill-smoke.yml`; Lorekeeper `scripts/__tests__/reeve-reference.test.js`.
 
 ## Considered options
 - **A new list over all three levels** (`/items`) that replaces both the backlog's list and search: one filter type for everything, but a mixed row has no rank, readiness or state for epics and initiatives, grouping and ranking become awkward, and the list Lorekeeper uses would be replaced in a three-repository migration.
@@ -67,13 +68,13 @@ Lorekeeper's skills already depend on this list (F5).
 - **R3** An existing parameter's name, value set or meaning MUST NOT change, and no parameter or flag named in R2 MAY be removed or renamed, without a record that replaces this one.
 - **R4** `ready`, `goal` and `urgent` MUST be evaluated on values computed in the same snapshot as the rows they filter (kb/ADR-0018 R1, kb/ADR-0014 R6, kb/ADR-0017 R1); `urgent` MUST select exactly the rows the response shows as urgent, as computed by `urgency_in`.
 - **R5** `untriaged` MUST keep the meaning of kb/ADR-0018 R4.
-- **R6** A server that understands a parameter MUST be deployed before Lorekeeper's reference lists the flag that sends it (F6).
+- **R6** A server that understands a parameter MUST be deployed before a Lorekeeper release (the marketplace listing installs pull) lists the flag that sends it (F6); Lorekeeper's pull request may merge earlier, since this repository's skill smoke needs the reference to list every flag the CLI has (F7).
 
 ## Consequences
 - The header search box jumps to an item when it is given a key and otherwise opens the backlog filtered by the text; `/search` stays as the view across all levels and done work.
 - Which fields `q` matches, how it matches them (ILIKE today) and the order below the exact-match tier are design, not contract; full-text ranking can replace them without a new record.
 - "Open" is not wire vocabulary: on the wire it is `done=none`, in the CLI `--open`, in the web the "Open" state.
-- Every new flag must be listed in Lorekeeper's CLI reference, with a version and listing bump, after the server that understands it is deployed (R6).
+- Every new flag must be listed in Lorekeeper's CLI reference in a pull request that merges before this repository's change (F7); its release, the version tag and the listing bump, waits for the deployment (R6).
 - Negative: the list has no pagination; adding it would need `ready`, `goal` and `urgent` moved into one read on `PlanningReads`, or pages would come back short.
 - Negative: R3 freezes the vocabulary's names, so a poorly named parameter stays until a replacing record.
 - Negative: an older server silently ignores the new parameters (F6); R6 orders the rollout but does not make skew fail loudly.
