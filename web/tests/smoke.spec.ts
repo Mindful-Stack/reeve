@@ -756,12 +756,27 @@ test('the header box filters the open backlog by relevance, links to search all,
 for (const width of [320, 720, 1280]) {
 	test(`the backlog's filter bar fits at ${width}px with the filters open: no horizontal scroll`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 800 });
-		await chore(page, `Smoke filter bar at ${width}px`);
+		// The widest options the selects can hold: an epic with an 80-character title (the Epic select) and a long label
+		// on a todo story (the Label select).
+		const title = `Smoke epic at ${width}px with a title long enough to fill eighty characters`.padEnd(80, '.');
+		expect(title).toHaveLength(80);
+		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title });
+		await post(page, '/api/v1/stories', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Smoke filter bar at ${width}px`,
+			kind: 'chore',
+			epic: EPIC,
+			criteria: [],
+			labels: ['smoke-a-label-long-enough-to-name-a-whole-area-of-the-product-and-then-some-more']
+		});
 		await page.goto('/backlog?q=smoke&kind=chore&state=open');
 		await expect(page.getByRole('group', { name: 'Filters' })).toBeVisible(); // open on load: a filter is set
 		await expect(page.getByRole('button', { name: 'Filters (1)' })).toHaveAttribute('aria-expanded', 'true');
 		await expect(page.getByRole('button', { name: /^Remove the text filter/ })).toBeVisible();
 		await expect(page.locator('ol.rows li[data-key]').first()).toBeVisible();
+		const panel = page.getByRole('group', { name: 'Filters' });
+		await expect(panel.getByRole('combobox', { name: 'Epic' }).locator('option', { hasText: title })).toHaveCount(1);
+		await expect(panel.getByRole('combobox', { name: 'Label' }).locator('option', { hasText: 'smoke-a-label-long-enough' })).toHaveCount(1);
 		const m = await page.evaluate(() => ({
 			scroll: document.documentElement.scrollWidth,
 			client: document.documentElement.clientWidth,
