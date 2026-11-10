@@ -164,6 +164,25 @@ describe('decisions queue page', () => {
 		expect(text(divider.nextElementSibling)).toContain('Blocking beyond');
 	});
 
+	it('does not say nothing is needed on a completely empty queue', async () => {
+		await open();
+		expect(document.body.textContent).toContain('No open decisions');
+		expect(document.body.querySelector('.quiet')).toBeNull();
+	});
+
+	it('words the empty line for the caller under ?mine=1', async () => {
+		await route.fake!.goto('/decisions?mine=1');
+		net.queue = queue([entry('beyond', dec(1, 'Later'))]);
+		await open();
+		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing of yours needed this sprint or next.');
+	});
+
+	it('names only the window in the divider when just Accepted or Closed lie below it', async () => {
+		net.queue = queue([entry('this_sprint', dec(1, 'Now')), entry('satisfied', dec(2, 'Settled'))]);
+		await open();
+		expect(text(document.body.querySelector('.divider'))).toBe('Outside the two-sprint window');
+	});
+
 	it('says nothing is needed this sprint or next when those lanes are empty', async () => {
 		net.queue = queue([entry('beyond', dec(1, 'Later'))]);
 		await open();
@@ -332,8 +351,8 @@ describe('decisions queue page', () => {
 		net.queue = queue([entry('this_sprint', dec(1, 'Gate'), blocks), entry('open', dec(4, 'Free'))]);
 		await open();
 		const lines = [...document.body.querySelectorAll('button[data-field="blocks"]')].map((l) => text(l));
-		expect(lines).toEqual(['Holds 2 ▸']);
-		expect(document.getElementById('decisions-this_sprint')!.textContent).toContain('Holds 2');
+		expect(lines).toEqual(['Holds 2 stories ▸']);
+		expect(document.getElementById('decisions-this_sprint')!.textContent).toContain('Holds 2 stories');
 	});
 
 	it('says how fresh the newest record check is', async () => {

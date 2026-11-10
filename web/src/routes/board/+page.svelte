@@ -375,9 +375,11 @@
 
 {#if queueSummary}
 	<DecisionBanner summary={queueSummary} />
-	{#if queueStale}<p class="queue-note muted">Decisions may be out of date.</p>{/if}
+	{#if queueStale && (queueSummary.review > 0 || queueSummary.this_sprint > 0 || queueSummary.next_sprint > 0)}
+		<p class="queue-note muted">Decision counts may be out of date.</p>
+	{/if}
 {:else if queueFailed}
-	<p class="queue-note muted" role="status">Could not load decisions · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
+	<p class="queue-note muted">Could not load decisions · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
 {/if}
 
 {#if loadError}

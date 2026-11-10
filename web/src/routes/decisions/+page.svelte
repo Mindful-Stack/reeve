@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
@@ -9,7 +10,6 @@
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { age, errorMessage } from '#lib/format.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { tick } from 'svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
@@ -41,7 +41,10 @@
 	const populated = $derived(new Set(shown.map((d) => laneById.get(d.id)).filter((l): l is QueueLane => !!l)));
 	/** The first lane below the window with a row: the divider goes before its heading. */
 	const firstOutside = $derived(LANE_ORDER.find((l) => OUTSIDE.has(l) && populated.has(l)));
-	const nothingNeeded = $derived(![...NEEDED].some((l) => populated.has(l)));
+	/** Nothing is needed in the two-sprint window; said only when the queue has entries, since an empty queue says "No open decisions". */
+	const nothingNeeded = $derived((queue?.entries.length ?? 0) > 0 && ![...NEEDED].some((l) => populated.has(l)));
+	/** Beyond and Open are the lanes the Tuesday queue works through; with only Accepted or Closed below, the divider names just the window. */
+	const tuesdayWork = $derived(populated.has('beyond') || populated.has('open'));
 	const summary = $derived(queue?.summary);
 
 	/** The newest check of any listed record: how fresh the whole page's statuses are. */
@@ -156,7 +159,7 @@
 		</p>
 	{/if}
 	{#if nothingNeeded}
-		<p class="quiet muted">Nothing needed this sprint or next.</p>
+		<p class="quiet muted">{mine ? 'Nothing of yours needed' : 'Nothing needed'} this sprint or next.</p>
 	{/if}
 	<!-- The headings carry their own margins, so the list adds no gap between them and the groups. -->
 	<DecisionList
@@ -173,7 +176,7 @@
 	>
 		{#snippet heading(group, count)}
 			{#if group === firstOutside}
-				<p class="divider muted">Outside the two-sprint window · for the Tuesday queue</p>
+				<p class="divider muted">Outside the two-sprint window{tuesdayWork ? ' · for the Tuesday queue' : ''}</p>
 			{/if}
 			<h2 id={LANE_ANCHOR[group as QueueLane]}>
 				{#if group === 'closed'}

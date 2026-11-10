@@ -89,21 +89,41 @@ describe('board decisions', () => {
 		await mounted();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav[aria-label="Decisions needing attention"]'))).toBe('⚑ 1 record to review · 2 block this sprint');
+			expect(text(q('nav[aria-label="Decisions needing attention"]'))).toBe('⚑ 1 record to review · 2 decisions block this sprint');
 		});
 		expect(net.paths).toContain('/api/v1/decisions/queue');
 		const banner = q('nav.decision-banner')!;
 		expect(banner.compareDocumentPosition(q('.board')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
-	it('shows no banner when nothing needs attention', async () => {
+	it('shows no banner when nothing needs attention, once the answer has landed', async () => {
+		// Fail first, so the Retry note proves the answer is awaited; its disappearance proves the zero answer landed.
+		queue = null;
+		await mounted();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(text(q('.queue-note'))).toBe('Could not load decisions · Retry');
+		});
+		queue = { entries: [], summary: queueSummary() };
+		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(q('.queue-note')).toBeNull();
+		});
+		expect(q('nav.decision-banner')).toBeNull();
+	});
+
+	it('does not say the counts are stale when the last good summary has no parts', async () => {
 		queue = { entries: [], summary: queueSummary() };
 		await mounted();
-		await vi.waitFor(() => expect(net.paths).toContain('/api/v1/decisions/queue'));
+		await new Promise((r) => setTimeout(r, 30));
+		queue = null;
+		live.fns.forEach((f) => f());
+		await vi.waitFor(() => expect(net.paths.filter((p) => p === '/api/v1/decisions/queue')).toHaveLength(2));
 		await new Promise((r) => setTimeout(r, 30));
 		flushSync();
-		expect(q('nav.decision-banner')).toBeNull();
 		expect(q('.queue-note')).toBeNull();
+		expect(q('nav.decision-banner')).toBeNull();
 	});
 
 	it('says how many not-ready cards wait on decisions', async () => {
@@ -145,7 +165,7 @@ describe('board decisions', () => {
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav.decision-banner'))).toBe('⚑ 1 blocks next sprint');
+			expect(text(q('nav.decision-banner'))).toBe('⚑ 1 decision blocks next sprint');
 		});
 		expect(q('.queue-note')).toBeNull();
 	});
@@ -157,9 +177,9 @@ describe('board decisions', () => {
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Decisions may be out of date.');
+			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date.');
 		});
-		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 block this sprint');
+		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions block this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
 		queue = { entries: [], summary: queueSummary({ review: 3 }) };
 		live.fns.forEach((f) => f());

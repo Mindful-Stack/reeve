@@ -76,7 +76,7 @@ describe('DecisionList entries', () => {
 		expect(step.querySelector('a')?.getAttribute('href')).toBe(PR);
 		// The label stays beside the reason, so a row in the review lane still says which sprint it is for.
 		expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 for goal: Ship tiers');
-		expect(row.querySelector('[data-field="blocks"]')?.textContent).toContain('Holds 2 \u00b7 1 under way');
+		expect(row.querySelector('[data-field="blocks"]')?.textContent).toContain('Holds 2 stories \u00b7 1 under way');
 	});
 
 	it('shows no such lines for a row without an entry, and keeps its plain-text step when the PR url is unsafe', () => {

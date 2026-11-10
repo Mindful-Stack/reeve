@@ -189,7 +189,7 @@
 				{/if}
 				{#if !prFirst}{@render prLink()}{/if}
 				{#if d.check.kind === 'accepted'}<p>Satisfied by its record ({shortSha(d.check.commit)})</p>{/if}
-				{#if d.closed}<p>Closed · {d.closed.kind}</p>{/if}
+				{#if d.closed}<p>Closed{#if d.closed.kind}{' · '}{d.closed.kind}{/if}</p>{/if}
 			</div>
 		{/if}
 

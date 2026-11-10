@@ -209,6 +209,20 @@ describe('DecisionDrawer', () => {
 		expect(words(plain)).toBe('Record kb/docs/adr/7.md');
 	});
 
+	it('says just Closed for a closure with no kind (before kb/ADR-0013)', async () => {
+		const drawer = await open(
+			entry({
+				decision: decision({ id: 7, closed: { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: null } }),
+				next_step: null,
+				needed_in: 'none',
+				needed_in_reason: null
+			})
+		);
+		const lines = [...drawer.querySelectorAll('p')].map(words);
+		expect(lines).toContain('Closed');
+		expect(drawer.textContent).not.toContain('null');
+	});
+
 	it('says satisfied by its record and closed as separate lines', async () => {
 		const drawer = await open(
 			entry({

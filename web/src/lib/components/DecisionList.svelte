@@ -48,7 +48,7 @@
 		 *  from the map shows no blocks line, so a view without the queue (the drawers, the item pages) passes none. */
 		blocks?: ReadonlyMap<number, AffectedStory[]>;
 		/** The queue's entry for each decision, by id. A row with an entry shows its next step, when it is needed and the work it
-		 *  holds ("Holds N · M under way"); a row without one shows none of these. */
+		 *  holds ("Holds N stories · M under way"); a row without one shows none of these. */
 		entries?: ReadonlyMap<number, DecisionQueueEntry>;
 		/** Every row starts with its discussion open and loaded (the decision drawer). Each id opens once: a discussion the
 		 *  user collapsed stays collapsed through refetches. */
@@ -606,7 +606,7 @@
 	{@const entry = entries?.get(d.id)}
 	{@const underWay = entry?.under_way ?? []}
 	{@const work = blocked.length + underWay.length > 0}
-	{@const holds = entry ? `Holds ${blocked.length}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
+	{@const holds = entry ? `Holds ${stories(blocked.length)}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
@@ -967,6 +967,10 @@
 	}
 	.title {
 		font-weight: 600;
+	}
+	a.title:hover,
+	a.title:focus-visible {
+		text-decoration: underline;
 	}
 	.check a {
 		text-decoration: none;

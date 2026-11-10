@@ -9,6 +9,7 @@ import type { Story } from '#lib/api/types.ts';
 import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
 import { discardDraft, report } from '#lib/report.svelte.ts';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
 vi.mock('$app/state', async () => ({
@@ -69,6 +70,7 @@ net.answers.of = answer;
 
 let app: ReturnType<typeof mount> | null = null;
 afterEach(() => {
+	resetDecisionDraftsForTests();
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
