@@ -15,17 +15,19 @@ export type Backlog = {
 	sections: { key: string | null; title: string; initiative: Initiative | null; epics: EpicRows[] }[];
 };
 
-const matches = (n: number) => `${n} ${n === 1 ? 'match' : 'matches'}`;
+export const matches = (n: number) => `${n} ${n === 1 ? 'match' : 'matches'}`;
+export const stories = (n: number) => `${n} ${n === 1 ? 'story' : 'stories'}`;
 
 /** Groups `rows` in the order given (the server's: the client never re-sorts). `filtered` (any filter or text): epics and
- *  initiatives with no rows are left out and an epic's summary is its match count; otherwise every epic is listed with
- *  its readiness. */
+ *  initiatives with no rows are left out and an epic's summary is its match count. Otherwise every epic is listed: with
+ *  its readiness in Todo (`todo`, the default), with its story count in Open and All, where readiness is not what the
+ *  rows are about. */
 export function groupBacklog(
 	buckets: string[],
 	initiatives: Initiative[],
 	epics: Epic[],
 	rows: StoryWithReadiness[],
-	{ filtered = false }: { filtered?: boolean } = {}
+	{ filtered = false, todo = true }: { filtered?: boolean; todo?: boolean } = {}
 ): Backlog {
 	const noEpic = rows.filter((s) => !s.story.epic);
 	const byEpic = new Map<string, StoryWithReadiness[]>();
@@ -47,6 +49,7 @@ export function groupBacklog(
 					const rows = byEpic.get(epic.key) ?? [];
 					const ready = rows.filter((s) => s.readiness.ready).length;
 					if (filtered) return { epic, rows, summary: matches(rows.length), tone: 'muted' as Tone };
+					if (!todo) return { epic, rows, summary: rows.length ? stories(rows.length) : 'No stories', tone: 'muted' as Tone };
 					const tone: Tone = rows.length === 0 ? 'muted' : ready === rows.length ? 'ready' : 'warn';
 					return { epic, rows, summary: rows.length ? `${ready} of ${rows.length} ready` : 'No stories waiting', tone };
 				})
@@ -100,11 +103,25 @@ export function backlogFilters(url: BacklogUrl, me: string | null | undefined): 
 /** The URL params Filters (n) counts and Clear filters removes. */
 export const FILTER_PARAMS = ['mine', 'kind', 'epic', 'initiative', 'label', 'ready', 'untriaged', 'urgent'] as const;
 
-/** Clear filters: the URL without its filters and text; state and view are kept. */
+/** Filters (n): the filters the URL sets, as the server is sent them (Mine counts only while signed in). */
+export function activeFilterCount(url: BacklogUrl, me: string | null | undefined): number {
+	return Object.keys(backlogFilters(url, me)).length;
+}
+
+/** Clear filters: the URL without its filters. Text, state and view are kept: the text chip is what drops the text (and
+ *  relevance with it, `withoutText`). */
 export function withoutFilters(url: BacklogUrl): URL {
 	const next = new URL(url.href);
 	for (const name of FILTER_PARAMS) next.searchParams.delete(name);
+	return next;
+}
+
+/** The text chip's ×: the URL without its text and `view=relevance`, which needs text; filters, state and the other
+ *  views are kept. */
+export function withoutText(url: BacklogUrl): URL {
+	const next = new URL(url.href);
 	next.searchParams.delete('q');
+	if (next.searchParams.get('view') === 'relevance') next.searchParams.delete('view');
 	return next;
 }
 

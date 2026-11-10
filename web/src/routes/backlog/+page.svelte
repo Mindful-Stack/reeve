@@ -8,14 +8,26 @@
 	import { errorMessage } from '#lib/format.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import type { Epic, Initiative, Reason, StoryWithReadiness } from '#lib/api/types.ts';
-	import { backlogFilters, backlogState, backlogText, backlogView, groupBacklog, toStoryQuery, withoutFilters } from '#lib/backlog.ts';
+	import {
+		activeFilterCount,
+		backlogState,
+		backlogText,
+		backlogView,
+		groupBacklog,
+		matches,
+		stories,
+		toStoryQuery,
+		withoutFilters,
+		type BacklogState
+	} from '#lib/backlog.ts';
 	import { COLUMN_LABEL, fullLabel, orderAfterDrop, resolutionsFor, type Column, type Resolution } from '#lib/board.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { rankStory } from '#lib/rank.ts';
-	import BacklogFilters from '#lib/components/BacklogFilters.svelte';
+	import { isKeyShaped } from '#lib/search.ts';
+	import BacklogFilters, { focusFiltersToggle } from '#lib/components/BacklogFilters.svelte';
 	import BacklogList from '#lib/components/BacklogList.svelte';
 	import NewEpicForm from '#lib/components/NewEpicForm.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
@@ -25,10 +37,17 @@
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 
-	/** What the server last answered, all from one request: the complete todo list in rank order (ranking places against
-	 *  it, kb/ADR-0021), the rows the URL's query asked for (the todo list itself for the plain backlog) and the query they
-	 *  belong to (`key`, serialised). Nothing changes until a reload: no optimistic moves, no filtering in the client. */
-	let loaded = $state<{ key: string; full: StoryWithReadiness[]; rows: StoryWithReadiness[] } | null>(null);
+	/** The URL's reading the shown rows answer: everything the page decorates them with (count, highlight, matched tag,
+	 *  grouping, empty state) comes from here, so while a new query is pending the old rows are still described as what
+	 *  they are. */
+	type Applied = { key: string; text: string | null; filtered: boolean; state: BacklogState };
+	/** What the server last answered: the complete todo list in rank order (ranking places against it, kb/ADR-0021), the
+	 *  rows the URL's query asked for (the todo list itself for the plain backlog) and the reading they belong to. `full`
+	 *  and `rows` are two requests, so two snapshots: a write landing between them can show a row in one and not the
+	 *  other. That is harmless (ranking reads only `full`, the rows only display) and heals on the next refetch, which
+	 *  every activity entry triggers (kb/ADR-0011 R10). Nothing changes until a reload: no optimistic moves, no filtering
+	 *  in the client. */
+	let loaded = $state<(Applied & { full: StoryWithReadiness[]; rows: StoryWithReadiness[] }) | null>(null);
 	let epics = $state<Epic[]>([]);
 	let initiatives = $state<Initiative[]>([]);
 	/** The last fetch failed and there are no rows for the current query to show (the first load, or a new query). */
@@ -72,24 +91,36 @@
 	const listState = $derived(backlogState(page.url));
 	const view = $derived(backlogView(page.url));
 	const text = $derived(backlogText(page.url));
-	const filtered = $derived(text !== null || Object.keys(backlogFilters(page.url, session.me?.email)).length > 0);
+	/** The URL's reading now; `loaded` holds the one the shown rows answer. */
+	const reading = (): Applied => {
+		const text = backlogText(page.url);
+		return { key: queryKey, text, filtered: text !== null || activeFilterCount(page.url, session.me?.email) > 0, state: backlogState(page.url) };
+	};
+	/** The shown rows' text, filters and state (see `Applied`). */
+	const shownText = $derived(loaded?.text ?? null);
+	const shownFiltered = $derived(loaded?.filtered ?? false);
+	const shownState = $derived(loaded?.state ?? 'todo');
 	const full = $derived(loaded?.full ?? null);
 	const rows = $derived(loaded?.rows ?? []);
 	/** The shown rows answer an older query: they offer no action until the current one lands. */
 	const pending = $derived(loaded !== null && loaded.key !== queryKey);
 	/** Ranking is offered in Todo, not by relevance, and only for the rows of the current query. */
 	const rankable = $derived(!pending && listState === 'todo' && view !== 'relevance');
-	const backlog = $derived(groupBacklog(session.config?.horizon_buckets ?? [], initiatives, epics, rows, { filtered }));
+	const backlog = $derived(
+		groupBacklog(session.config?.horizon_buckets ?? [], initiatives, epics, rows, { filtered: shownFiltered, todo: shownState === 'todo' })
+	);
 	const epicTitle = $derived(new Map(epics.map((e) => [e.key, e.title])));
-	const stories = (n: number) => `${n} ${n === 1 ? 'story' : 'stories'}`;
-	/** The header's count: "3 of 240" in Todo with filters or text, "3" in plain Todo, "3 stories" in Open and All. */
-	const countText = $derived.by(() => {
-		if (!loaded) return undefined;
-		const n = loaded.rows.length;
-		if (listState !== 'todo') return stories(n);
-		return filtered ? `${n} of ${loaded.full.length}` : `${n}`;
-	});
-	/** The Label filter's options: the labels of the todo list and of the rows, and the selected one. */
+	/** The count the header shows and the live region reads: "3 of 240" in Todo with filters or text, "3" in plain Todo,
+	 *  "3 stories" in Open and All. */
+	function countOf(a: Applied, rows: number, full: number, spoken: boolean): string {
+		if (a.state !== 'todo') return stories(rows);
+		if (!a.filtered) return spoken ? stories(rows) : `${rows}`;
+		return `${rows} of ${spoken ? stories(full) : full}`;
+	}
+	const countText = $derived(loaded ? countOf(loaded, loaded.rows.length, loaded.full.length, false) : undefined);
+	/** The Label filter's options: the labels of the todo list and of the rows, and the selected one. Not every label in
+	 *  use: one carried only by stories outside both (in progress or done under Todo) is offered once a state shows them.
+	 *  Accepted: a full list would be another request on every load for a select that is rarely opened. */
 	const labels = $derived.by(() => {
 		const all = new Set<string>();
 		for (const s of [...(full ?? []), ...rows]) for (const l of s.story.labels) all.add(l);
@@ -97,14 +128,25 @@
 		if (selected) all.add(selected);
 		return [...all].sort((a, b) => a.localeCompare(b));
 	});
-	const matches = (n: number) => `${n} ${n === 1 ? 'match' : 'matches'}`;
-	const searchAll = $derived(text ? `/search?q=${encodeURIComponent(text)}` : null);
+	const searchAll = $derived(shownText ? `/search?q=${encodeURIComponent(shownText)}` : null);
 
-	function clearFilters() {
-		goto(withoutFilters(page.url), { replace: true, reset: false });
+	/** The empty state's Clear filters: the filters go, the text stays (the chip drops it). */
+	async function clearFilters() {
+		await goto(withoutFilters(page.url), { replace: true, reset: false });
+		await focusFiltersToggle();
+	}
+	/** The Todo empty state under text: the same text over every open story. */
+	function showOpen() {
+		const url = new URL(page.url.href);
+		url.searchParams.set('state', 'open');
+		return goto(url, { replace: true, reset: false });
 	}
 
 	let latest = 0;
+	/** The reading the live region last announced a count for: a filter change is announced, the first load is not, and
+	 *  neither is a refetch of the same query. Kept apart from `loaded`, which a failed new query clears, so the answer
+	 *  that recovers from that failure is still announced. */
+	let announced: string | null = null;
 
 	/** A write's own reload, a live refetch and a query change can overlap; only the latest request's answer (or failure)
 	 *  lands. Reads the URL's query when called. Returns the todo list this request fetched, in rank order, even when a
@@ -112,7 +154,8 @@
 	async function reload(): Promise<StoryWithReadiness[] | null> {
 		const seq = ++latest;
 		const sq = storyQuery;
-		const key = queryKey;
+		const applied = reading();
+		const key = applied.key;
 		try {
 			const [f, r, e, i] = await Promise.all([
 				unwrap(api.GET('/api/v1/stories', { params: { query: { delivery: 'todo' } } })),
@@ -121,9 +164,8 @@
 				unwrap(api.GET('/api/v1/initiatives'))
 			]);
 			if (seq !== latest) return f;
-			const before = loaded?.key;
 			const shown = r ?? f;
-			loaded = { key, full: f, rows: shown };
+			loaded = { ...applied, full: f, rows: shown };
 			if (leaving) {
 				const l = leaving;
 				leaving = null;
@@ -137,8 +179,8 @@
 			epics = e;
 			initiatives = i;
 			loadError = stale = null;
-			// A filter change is announced with the new count (the first load is not).
-			if (before !== undefined && before !== key) void say(listState !== 'todo' || !filtered ? stories(shown.length) : `${shown.length} of ${stories(f.length)}`);
+			if (announced !== null && announced !== key) void say(countOf(applied, shown.length, f.length, true));
+			announced = key;
 			return f;
 		} catch (err) {
 			if (seq !== latest) return null;
@@ -307,7 +349,7 @@
 	}
 </script>
 
-<svelte:head><title>Backlog · Reeve</title></svelte:head>
+<svelte:head><title>{text ? `Backlog: “${text}” · Reeve` : 'Backlog · Reeve'}</title></svelte:head>
 
 <div class="page">
 	<PageHeader title="Backlog" count={countText}>
@@ -328,7 +370,7 @@
 		<!-- One notice at a time: what the last write said wins over a failed refetch (a retry would not answer it). -->
 		{#if stale && !notice}<Notice onretry={reload} ondismiss={() => (stale = null)}>{stale}</Notice>{/if}
 		{#if notice}<Notice ondismiss={() => (notice = null)}>{notice}</Notice>{/if}
-		{#if rows.length === 0 && (filtered || listState !== 'todo')}
+		{#if rows.length === 0 && (shownFiltered || shownState !== 'todo')}
 			{@render noMatch()}
 		{:else if rows.length === 0 && (view !== 'epic' || (epics.length === 0 && backlog.sections.length === 0))}
 			<p class="muted empty">Nothing waiting</p>
@@ -338,7 +380,7 @@
 			{#if backlog.noEpic.length}
 				<section aria-label="No epic" class="section">
 					<h2 class="initiative" tabindex="-1">
-						No epic <span class="count">{filtered ? matches(backlog.noEpic.length) : `${backlog.untriaged} untriaged`}</span>
+						No epic <span class="count">{shownFiltered ? matches(backlog.noEpic.length) : `${backlog.untriaged} untriaged`}</span>
 					</h2>
 					{@render list(backlog.noEpic, false)}
 				</section>
@@ -374,15 +416,29 @@
 </div>
 
 {#snippet searchAllLink()}
+	<!-- Under All the backlog already lists done work: what /search adds is epics and initiatives. -->
 	<p class="muted footer">
-		Not here? <a href={searchAll}>Search all items, including epics, initiatives and done work, for “{text}”</a>
+		Not here? <a href={searchAll}
+			>Search all items, including {shownState === 'all' ? 'epics and initiatives' : 'epics, initiatives and done work'}, for “{shownText}”</a
+		>
 	</p>
 {/snippet}
 
 {#snippet noMatch()}
+	<!-- What the empty answer was for: a key (the header looked it up and fell through), the todo list under text, any
+	     other filter, or nothing filtered at all (an empty Open or All). -->
+	{@const said =
+		shownText && isKeyShaped(shownText)
+			? `No item ${shownText}`
+			: shownText && shownState === 'todo'
+				? 'No todo stories match'
+				: shownFiltered
+					? 'No stories match'
+					: 'No stories'}
 	<div class="empty">
 		<p class="muted">
-			No stories match{#if Object.keys(backlogFilters(page.url, session.me?.email)).length}
+			{said}{#if shownText && shownState === 'todo'}
+				· <button type="button" class="link" onclick={showOpen}>Show open stories</button>{/if}{#if activeFilterCount(page.url, session.me?.email)}
 				· <button type="button" class="link" onclick={clearFilters}>Clear filters</button>{/if}
 		</p>
 		{#if searchAll}{@render searchAllLink()}{/if}
@@ -398,7 +454,7 @@
 		href={(key) => storyHref(page.url, key)}
 		busy={busy || pending}
 		{rankable}
-		query={text}
+		query={shownText}
 		onrank={rank}
 		onmove={startMove}
 		onepic={(item) => (changingEpic = { item, epic: item.story.epic ?? '' })}

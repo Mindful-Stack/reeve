@@ -44,21 +44,30 @@ const data = vi.hoisted(() => {
 	return { ...fresh(), fresh };
 });
 /** The fake server's story list: the plain `delivery=todo` query is the todo list in rank order; any other query is
- *  filtered here by the params the tests use, in the server's order (delivery state, then rank). */
+ *  filtered here by the params the tests use, in the server's order (delivery state, then rank; under `sort=relevance`
+ *  title matches first). A param it does not implement throws, so no test passes on a filter that was never applied. */
 const ORDER = ['todo', 'in_progress', 'in_review', 'testing', 'done'];
+const IMPLEMENTED = new Set(['delivery', 'done', 'epic', 'initiative', 'kind', 'label', 'ready', 'q', 'sort']);
 function answer(query: Record<string, unknown>): StoryWithReadiness[] {
+	for (const name of Object.keys(query)) if (!IMPLEMENTED.has(name)) throw new Error(`the fake server does not implement ${name}`);
+	const q = (query.q as string | undefined)?.toLowerCase();
+	const tier = (s: Story) => (query.sort === 'relevance' && q && s.title.toLowerCase().includes(q) ? 0 : 1);
 	return data.stories
 		.filter(({ story: s, readiness }) => {
 			if (query.delivery && s.delivery !== query.delivery) return false;
 			if (query.done === 'none' && s.delivery === 'done') return false;
 			if (query.epic && s.epic !== query.epic) return false;
 			if (query.kind && s.kind !== query.kind) return false;
+			if (query.initiative && data.epics.find((e) => e.key === s.epic)?.initiative !== query.initiative) return false;
 			if (query.label && !s.labels.includes(query.label as string)) return false;
 			if (query.ready && !readiness.ready) return false;
 			if (query.q && !`${s.title} ${s.description}`.toLowerCase().includes((query.q as string).toLowerCase())) return false;
 			return true;
 		})
-		.sort((a, b) => ORDER.indexOf(a.story.delivery) - ORDER.indexOf(b.story.delivery) || a.story.rank - b.story.rank);
+		.sort(
+			(a, b) =>
+				tier(a.story) - tier(b.story) || ORDER.indexOf(a.story.delivery) - ORDER.indexOf(b.story.delivery) || a.story.rank - b.story.rank
+		);
 }
 const plain = (query: Record<string, unknown>) => query.delivery === 'todo' && Object.keys(query).length === 1;
 vi.mock('#lib/api/client.ts', async (orig) => {
@@ -681,15 +690,16 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(lastQuery()).toEqual({ q: 'zebra', done: 'none', sort: 'relevance' });
 	});
 
-	it('no match: says so, offers Clear filters and the search-all link; Clear filters keeps state and view', async () => {
+	it('no match: says so, offers Clear filters and the search-all link; Clear filters keeps text, state and view', async () => {
 		go('?q=nothing&state=open&view=rank&kind=bug');
 		data.stories = [row('S-1', 1, null)];
 		await open('No stories match');
 		expect([...document.body.querySelectorAll('a')].some((a) => a.getAttribute('href') === '/search?q=nothing')).toBe(true);
-		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Clear filters')!.click();
+		[...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Clear filters')!.click();
 		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalled());
 		const [url, opts] = vi.mocked(goto).mock.calls.at(-1)!;
-		expect(String(url)).toBe('http://localhost/backlog?state=open&view=rank');
+		// The filters go; the text, the state and the view stay (the chip is what drops the text).
+		expect(String(url)).toBe('http://localhost/backlog?q=nothing&state=open&view=rank');
 		expect(opts).toEqual({ replace: true, reset: false }); // SvelteKit 3: reset false keeps focus and scroll
 	});
 
@@ -757,6 +767,190 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 			flushSync();
 			expect(document.body.querySelector('li[data-key="S-1"]')).toBeNull();
 			expect(document.activeElement?.getAttribute('aria-label')).toBe('Actions for S-3');
+		});
+	});
+
+	it('offers no rank controls by relevance in Todo; the same rows ranked offer Move up', async () => {
+		data.stories = [row('S-1', 1, 'E-1'), row('S-2', 2, 'E-1')];
+		go('?q=title&view=relevance');
+		await open('Title S-2');
+		expect(menuLabels('S-2')).not.toContain('Move up');
+		expect(document.body.querySelector('button.handle')).toBeNull();
+		go('?q=title&view=rank');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(lastQuery()).toEqual({ q: 'title', delivery: 'todo' });
+			expect(document.body.querySelector('ol.rows')!.getAttribute('aria-busy')).toBe('false');
+		});
+		expect(menuLabels('S-2')).toContain('Move up');
+		expect(document.body.querySelector('button.handle')).not.toBeNull();
+	});
+
+	it("by relevance the rows are one flat list in the server's relevance order, not rank order", async () => {
+		go('?q=apple&state=open&view=relevance');
+		data.stories = [
+			row('S-1', 1, 'E-1', true, 'story', false, { title: 'Pears', description: 'with apple' }),
+			row('S-2', 2, null, true, 'story', false, { title: 'Apple pie' })
+		];
+		await open('Apple pie');
+		expect(document.body.querySelectorAll('section')).toHaveLength(0);
+		expect(keys(document.body)).toEqual(['S-2', 'S-1']);
+	});
+
+	it('announces the count after a filter change, not after the first load', async () => {
+		data.stories = [row('S-1', 1, 'E-1', true, 'bug'), row('S-2', 2, null)];
+		await open('Title S-2');
+		const live = () => document.body.querySelector('[aria-live="polite"]')!.textContent;
+		expect(live()).toBe('');
+		go('?kind=bug');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(live()).toBe('1 of 2 stories');
+		});
+		go('?kind=bug&state=open');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(live()).toBe('1 story');
+		});
+	});
+
+	it('announces the count of the answer that recovers from a failed new query', async () => {
+		data.stories = [row('S-1', 1, 'E-1', true, 'bug'), row('S-2', 2, null)];
+		await open('Title S-2');
+		data.failFiltered = true;
+		go('?kind=bug');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('Could not load the backlog: filter failed');
+		});
+		data.failFiltered = false;
+		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Retry')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[aria-live="polite"]')!.textContent).toBe('1 of 2 stories');
+		});
+	});
+
+	it('while a new query is held, a move posts nothing and the old rows keep their own decorations', async () => {
+		data.refuseMoves = false;
+		data.stories = [row('S-1', 1, null, true, 'story', false, { title: 'Apple' }), row('S-2', 2, null, true, 'story', false, { title: 'Banana' })];
+		go('?q=apple');
+		await open('Apple');
+		expect(count()).toBe('1 of 2');
+		data.hold = true;
+		go('?q=banana');
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		flushSync();
+		choose('S-1', 'Move to in progress').click();
+		flushSync();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(data.posts).toEqual([]);
+		closeMenu();
+		// Still the rows for "apple": highlighted as such, counted as such, untagged.
+		expect(document.body.querySelector('li[data-key="S-1"] mark')?.textContent).toBe('Apple');
+		expect(document.body.querySelector('li[data-key="S-1"]')!.textContent).not.toContain('matched');
+		expect(count()).toBe('1 of 2');
+		data.held.forEach((f) => f());
+		await vi.waitFor(() => {
+			flushSync();
+			expect(keys(document.body)).toEqual(['S-2']);
+		});
+		expect(document.body.querySelector('li[data-key="S-2"] mark')?.textContent).toBe('Banana');
+	});
+
+	it('the chip and Clear filters hand focus to the Filters button once they are gone', async () => {
+		go('?q=zebra&kind=bug');
+		data.stories = [row('S-1', 1, null, true, 'bug', false, { title: 'zebra' })];
+		await open('zebra');
+		const toggle = () => document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement;
+		const clear = [...document.body.querySelectorAll('.panel button')].find((b) => b.textContent?.trim() === 'Clear filters') as HTMLButtonElement;
+		clear.focus();
+		clear.click();
+		await vi.waitFor(() => expect(document.activeElement).toBe(toggle()));
+		expect(String(page.url)).toBe('http://localhost/backlog?q=zebra');
+		const chip = document.body.querySelector('button[aria-label^="Remove the text filter"]') as HTMLButtonElement;
+		chip.focus();
+		chip.click();
+		await vi.waitFor(() => expect(document.activeElement).toBe(toggle()));
+		expect(String(page.url)).toBe('http://localhost/backlog');
+	});
+
+	it('the Filters panel is always in the DOM right after its trigger, hidden while closed', async () => {
+		await open('Loose epic');
+		const toggle = document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement;
+		const panel = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+		expect(panel).not.toBeNull();
+		expect(toggle.nextElementSibling).toBe(panel);
+		expect(panel.hidden).toBe(true);
+		toggle.click();
+		flushSync();
+		expect(panel.hidden).toBe(false);
+		expect(toggle.getAttribute('aria-expanded')).toBe('true');
+	});
+
+	it('the chip ellipsises its text inside, the × outside it', async () => {
+		go('?q=zebra');
+		await open('No todo stories match');
+		const chip = document.body.querySelector('button[aria-label^="Remove the text filter"]')!;
+		expect(chip.querySelector('.text')!.textContent).toBe('“zebra”');
+		expect(chip.querySelector('.x')!.textContent).toBe('×');
+	});
+
+	it('the Todo empty state under text offers the open stories', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null)];
+		await open('No todo stories match');
+		expect(document.title).toBe('Backlog: “zzz” · Reeve');
+		[...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!.click();
+		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog?q=zzz&state=open'));
+	});
+
+	it('the empty state names a key that matched nothing, and says "No stories" when nothing is filtered', async () => {
+		go('?q=ABC-99&state=open');
+		await open('No item ABC-99');
+		expect(document.body.textContent).not.toContain('Show open stories');
+		go('?state=open');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('.empty')!.textContent!.trim()).toBe('No stories');
+		});
+	});
+
+	it('under All a done row shows its resolution, epics show their story count and the footer leaves out done work', async () => {
+		go('?q=title&state=all');
+		data.stories = [
+			row('S-1', 1, 'E-1', false),
+			row('S-2', 2, 'E-1', true, 'story', false, { delivery: 'done', resolution: 'dropped' })
+		];
+		await open('Title S-2');
+		expect(document.body.querySelector('li[data-key="S-2"] .end')!.textContent).toContain('dropped');
+		expect(document.body.querySelector('li[data-key="S-1"] .end')!.textContent).toContain('no criteria');
+		expect(section('No initiative').textContent).toContain('2 matches');
+		expect(document.body.querySelector('.footer')!.textContent).toContain('including epics and initiatives, for');
+		go('?state=all');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(section('No initiative').textContent).toContain('2 stories');
+		});
+		expect(document.body.querySelector('.footer')).toBeNull();
+	});
+
+	it('the Epic select lists only the chosen initiative\'s epics, and the chosen epic', async () => {
+		data.initiatives = [initiative({ key: 'I-1', title: 'Hosting', horizon: 'Now' })];
+		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Move', initiative: 'I-1' })];
+		go('?initiative=I-1');
+		await open('No stories match');
+		const epicSelect = () => [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Epic'))!.querySelector('select')!;
+		expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-2']);
+		go('?initiative=I-1&epic=E-1');
+		await vi.waitFor(() => {
+			flushSync();
+			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
+		});
+		go('');
+		await vi.waitFor(() => {
+			flushSync();
+			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
 		});
 	});
 });

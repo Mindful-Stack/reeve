@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reason, Story } from '#lib/api/types.ts';
 import { epic as epicDto, initiative, withReadiness } from '#lib/test/fixtures.ts';
-import { backlogState, backlogView, groupBacklog, toStoryQuery } from './backlog.ts';
+import { activeFilterCount, backlogState, backlogView, groupBacklog, toStoryQuery, withoutFilters } from './backlog.ts';
 
 const ini = (key: string, horizon: string, title = key) => initiative({ key, title, horizon });
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: `Epic ${key}`, initiative });
@@ -58,6 +58,28 @@ describe('groupBacklog', () => {
 		expect(f.sections[1].epics.map((e) => [e.epic.key, e.summary])).toEqual([['E-3', '1 match']]);
 		expect(f.noEpic.map((r) => r.story.key)).toEqual(['S-1']);
 		expect(groupBacklog(buckets, initiatives, epics, [], { filtered: true }).sections).toEqual([]);
+	});
+	it('outside Todo: every epic is listed with its story count, not its readiness', () => {
+		const o = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' }), row('S-5', 5, { epic: 'E-1', ready: true })], { todo: false });
+		expect(o.sections.map((s) => s.title)).toEqual(['Onboarding', 'Billing', 'Search', 'No initiative']);
+		expect(o.sections[0].epics.map((e) => [e.epic.key, e.summary, e.tone])).toEqual([
+			['E-1', '2 stories', 'muted'],
+			['E-2', 'No stories', 'muted']
+		]);
+		const f = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' })], { filtered: true, todo: false });
+		expect(f.sections[0].epics.map((e) => e.summary)).toEqual(['1 match']);
+	});
+});
+
+describe('activeFilterCount and withoutFilters', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	it('count the filters, not state, view or text; Mine only while signed in', () => {
+		expect(activeFilterCount(at('?q=a&state=open&view=rank'), 'a@example.com')).toBe(0);
+		expect(activeFilterCount(at('?kind=bug&mine=1&urgent=1'), 'a@example.com')).toBe(3);
+		expect(activeFilterCount(at('?kind=bug&mine=1'), null)).toBe(1);
+	});
+	it('Clear filters removes the filters and keeps the text, state and view', () => {
+		expect(withoutFilters(at('?q=zebra&state=open&view=relevance&kind=bug&mine=1&story=S-1')).search).toBe('?q=zebra&state=open&view=relevance&story=S-1');
 	});
 });
 

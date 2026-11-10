@@ -1,10 +1,11 @@
 <!-- web/src/lib/components/BacklogList.svelte: one list of backlog rows in the server's order: drag handle, rank (or
-     the delivery state of a row that is not todo), key, title (opens the drawer; the text filter's matches marked), optional
-     epic, readiness (the server's, kb/ADR-0018 R1), owner and an actions menu. Ranking targets come from the rows of this
-     list; the page does the writes and says when ranking is offered at all. -->
+     the delivery state of a row that is not todo), key, title (opens the drawer; the text filter's matches marked),
+     optional epic, status (the server's readiness, kb/ADR-0018 R1, or a done row's resolution), owner and an actions
+     menu. Ranking targets come from the rows of this list; the page does the writes and says when ranking is offered
+     at all. -->
 <script lang="ts">
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
-	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, neighbourBefore, orderAfterDrop, shortReason } from '#lib/board.ts';
+	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, neighbourBefore, orderAfterDrop, storyStatus } from '#lib/board.ts';
 	import { freshNote, live } from '#lib/events.svelte.ts';
 	import { highlight, matchedBy } from '#lib/search.ts';
 	import { session } from '#lib/me.svelte.ts';
@@ -116,7 +117,8 @@
 	{#each rows as r (r.story.key)}
 		{@const s = r.story}
 		{@const note = freshNote(live.recent, s.key, session.me?.email)}
-		{@const matched = matchedBy(s, query)}
+		{@const matched = matchedBy(s, query, session.config?.key_prefix)}
+		{@const status = storyStatus(r)}
 		<li data-key={s.key} class:fresh={note} class:urgent={s.urgent_sources.length > 0}>
 			{#if rankable}
 				<!-- The pointer path; the actions menu is the keyboard path, so the handle is out of the tab order. -->
@@ -147,8 +149,9 @@
 			{#if matched}<span class="matched">{matched}</span>{/if}
 			{#if showEpic}<span class="epic">{s.epic ? (epicTitle.get(s.epic) ?? s.epic) : 'No epic'}</span>{/if}
 			<span class="end">
-				<span title={r.readiness.ready ? undefined : r.readiness.reasons.map((x) => fullLabel(x)).join('\n')}
-					><StatusDot tone={r.readiness.ready ? 'ready' : 'warn'} label={shortReason(r.readiness)} /></span
+				<!-- The status word as a board card shows it: a done row its resolution, every other row its readiness. -->
+				<span title={s.delivery === 'done' || r.readiness.ready ? undefined : r.readiness.reasons.map((x) => fullLabel(x)).join('\n')}
+					><StatusDot tone={status.tone} label={status.word} /></span
 				>
 				<Avatar email={s.owner} />
 				<ActionsMenu label="Actions for {s.key}" items={menu(r)} control="menu" />
@@ -162,6 +165,11 @@
 	.rows > li {
 		gap: 6px 12px;
 		padding: 7px 10px;
+	}
+	/* The rows answer an older query or a write is in flight: they offer no action, and look it. */
+	.rows[aria-busy='true'] {
+		opacity: 0.6;
+		transition: opacity 0.15s;
 	}
 	.rows > li.urgent {
 		box-shadow: inset 0 0 0 2px var(--danger);
