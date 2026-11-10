@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The top navigation: Planning, Backlog, Board, Sprint, Decisions; the live indicator links to Activity.
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
@@ -52,7 +52,22 @@ vi.mock('#lib/me.svelte.ts', async (orig) => ({
 }));
 
 let app: ReturnType<typeof mount> | null = null;
+// A signed-in layout opens the event stream, and jsdom has no EventSource: an inert one for every test.
+beforeEach(() => {
+	vi.stubGlobal(
+		'EventSource',
+		class {
+			static CLOSED = 2;
+			readyState = 0;
+			onopen: (() => void) | null = null;
+			onerror: (() => void) | null = null;
+			addEventListener() {}
+			close() {}
+		}
+	);
+});
 afterEach(() => {
+	vi.unstubAllGlobals();
 	route.admin = false;
 	session.me = null;
 	discardDraft();
