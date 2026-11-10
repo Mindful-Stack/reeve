@@ -87,6 +87,8 @@ describe('DecisionDrawer', () => {
 		const drawer = await open();
 		expect(net.sent[0]).toEqual({ method: 'GET', path: '/api/v1/decisions/7/context' });
 		expect(drawer.getAttribute('aria-label')).toBe('Decision #7');
+		// The heading carries the decision's title with its number muted beside it.
+		expect(words(drawer.querySelector('h2'))).toBe('Pick a queue #7');
 		expect(words(drawer.querySelector('.decisions .title'))).toBe('Pick a queue');
 		// A story item opens its drawer over this view, which drops the decision parameter.
 		expect(drawer.querySelector('[data-testid="item-link"]')?.getAttribute('href')).toBe('/board?sort=rank&story=ABC-1');
@@ -96,6 +98,42 @@ describe('DecisionDrawer', () => {
 		expect(drawer.querySelectorAll('.title').length).toBe(1);
 		expect(drawer.querySelector('.decisions [data-field="blocks"]')).toBeNull();
 		expect(drawer.querySelector('.decisions .next-step')).toBeNull();
+	});
+
+	it('puts the strip, the record and the held work above the decision row, so a long thread cannot push them off-screen', async () => {
+		const drawer = await open(
+			entry({ decision: decision({ id: 7, record: RECORD }), blocks: [blockedStory({ key: 'ABC-31', needed_in: 'this_sprint' })] })
+		);
+		const order = ['[data-testid="strip"]', '[data-testid="record"]', '.held', '.decision-list'].map((sel) => {
+			const el = drawer.querySelector(sel);
+			expect(el, sel).not.toBeNull();
+			return el!;
+		});
+		for (let i = 1; i < order.length; i++) {
+			expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING, `${i}`).toBeTruthy();
+		}
+	});
+
+	it('says an open decision nothing waits on is not needed yet, and that it holds nothing yet', async () => {
+		const drawer = await open(entry({ needed_in: 'none', needed_in_reason: null, next_step: null }));
+		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet');
+		const held = drawer.querySelector('.held')!;
+		expect(words(held)).toBe('Held work Holds nothing yet');
+		expect(held.getAttribute('aria-labelledby')).toBe(held.querySelector('h3')!.id);
+		expect(held.querySelector('ul')).toBeNull();
+	});
+
+	it('does not say it holds nothing when only stories under way remain', async () => {
+		const drawer = await open(entry({ under_way: [blockedStory({ key: 'ABC-34', delivery: 'in_progress' })] }));
+		expect(drawer.querySelector('.held')?.textContent).not.toContain('Holds nothing yet');
+		expect(drawer.querySelector('[data-group="under-way"]')).not.toBeNull();
+	});
+
+	it('folds a held story with no window into Beyond', async () => {
+		const drawer = await open(entry({ blocks: [blockedStory({ key: 'ABC-31', needed_in: 'none' }), blockedStory({ key: 'ABC-32', needed_in: 'beyond' })] }));
+		const groups = [...drawer.querySelectorAll<HTMLElement>('.held .stories')].map((ul) => [ul.dataset.group, ul.querySelectorAll('li').length]);
+		expect(groups).toEqual([['beyond', 2]]);
+		expect(drawer.querySelector('.held')?.textContent).not.toContain('Not scheduled');
 	});
 
 	it('opens an initiative and an epic on their pages', async () => {
@@ -187,7 +225,7 @@ describe('DecisionDrawer', () => {
 		);
 		const lines = [...drawer.querySelectorAll('[data-testid="record"] p')].map(words);
 		expect(lines).toContain('Satisfied by its record (abcdef0)');
-		expect(lines).toContain('Closed by a person');
+		expect(lines).toContain('Closed · decided');
 		expect(drawer.querySelector('[data-testid="strip"]')).toBeNull();
 	});
 

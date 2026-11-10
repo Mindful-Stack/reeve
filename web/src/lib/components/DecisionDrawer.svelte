@@ -8,7 +8,7 @@
 	import { COLUMN_LABEL } from '#lib/board.ts';
 	import { neededInText, neededLabel, nextStepText, shortSha } from '#lib/decisions.ts';
 	import { storyHref } from '#lib/drawer.ts';
-	import { everyVisible, onLive } from '#lib/events.svelte.ts';
+	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
 	import { safePrUrl } from '#lib/prs.ts';
 	import DecisionList from '#lib/components/DecisionList.svelte';
@@ -78,15 +78,16 @@
 		return storyHref(page.url, d.on);
 	}
 
-	const GROUPS: { key: NeededIn; label: string }[] = [
+	const GROUPS: { key: Exclude<NeededIn, 'none'>; label: string }[] = [
 		{ key: 'this_sprint', label: 'This sprint' },
 		{ key: 'next_sprint', label: 'Next sprint' },
-		{ key: 'beyond', label: 'Beyond' },
-		{ key: 'none', label: 'Not scheduled' }
+		{ key: 'beyond', label: 'Beyond' }
 	];
-	/** The held stories by the window they are needed in, empty groups left out. */
+	/** The held stories by the window they are needed in, empty groups left out. The server never sends `none` for a held
+	 *  story (it is held by a decision some goal or discovery waits on), so `none` is folded into Beyond rather than given a group. */
 	function grouped(stories: AffectedStory[]): { key: NeededIn; label: string; stories: AffectedStory[] }[] {
-		return GROUPS.map((g) => ({ ...g, stories: stories.filter((s) => s.needed_in === g.key) })).filter((g) => g.stories.length);
+		const window = (s: AffectedStory) => (s.needed_in === 'none' ? 'beyond' : s.needed_in);
+		return GROUPS.map((g) => ({ ...g, stories: stories.filter((s) => window(s) === g.key) })).filter((g) => g.stories.length);
 	}
 
 	/** An open, unsatisfied decision no goal or discovery waits on yet: the strip says so instead of staying empty. */
@@ -122,7 +123,7 @@
 <!-- svelte-ignore a11y_no_redundant_roles, a11y_no_noninteractive_element_interactions -->
 <aside class="drawer" role="complementary" aria-label="Decision #{decisionId}" data-testid="decision-drawer" onkeydown={keydown}>
 	<header class="top">
-		<h2 tabindex="-1" bind:this={heading}>Decision #{decisionId}</h2>
+		<h2 tabindex="-1" bind:this={heading}>{#if entry}<span class="h-title">{entry.decision.title}</span>{' '}<span class="muted">#{decisionId}</span>{:else}Decision #{decisionId}{/if}</h2>
 		{#if entry}
 			<span class="item muted"
 				>on {entry.decision.on_type}
@@ -167,7 +168,7 @@
 				{#if next}
 					{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
 					<p class="next-step">
-						{#if link}<a href={link} target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility)}</a>{:else}{nextStepText(next, d.reversibility)}{/if}
+						{#if link}<a href={link} target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility, minuteClock.now)}</a>{:else}{nextStepText(next, d.reversibility, minuteClock.now)}{/if}
 					</p>
 				{/if}
 			</div>
@@ -188,33 +189,33 @@
 				{/if}
 				{#if !prFirst}{@render prLink()}{/if}
 				{#if d.check.kind === 'accepted'}<p>Satisfied by its record ({shortSha(d.check.commit)})</p>{/if}
-				{#if d.closed}<p>Closed by a person</p>{/if}
+				{#if d.closed}<p>Closed · {d.closed.kind}</p>{/if}
 			</div>
 		{/if}
 
-		<!-- The row carries the title, decider, date, status, Edit and Close, the mismatch warning and the discussion. It gets
-		     no queue entry: the strip above already says the next step, and the held work follows below. -->
-		<DecisionList decisions={list} expandAll onchanged={reload} poll={false} />
+		<section class="held" aria-labelledby="held-{decisionId}">
+			<h3 id="held-{decisionId}">Held work</h3>
+			{#if !e.blocks.length && !e.under_way.length}
+				<p class="muted">Holds nothing yet</p>
+			{/if}
+			{#each grouped(e.blocks) as g (g.key)}
+				<h4>{g.label}</h4>
+				<ul class="stories" data-group={g.key}>
+					{#each g.stories as s (s.key)}{@render storyRow(s)}{/each}
+				</ul>
+			{/each}
+			{#if e.under_way.length}
+				<h3>Under way without it</h3>
+				<ul class="stories" data-group="under-way">
+					{#each e.under_way as s (s.key)}{@render storyRow(s)}{/each}
+				</ul>
+			{/if}
+		</section>
 
-		{#if e.blocks.length || e.under_way.length}
-			<section class="held" aria-label="Held work">
-				{#if e.blocks.length}
-					<h3>Held work</h3>
-					{#each grouped(e.blocks) as g (g.key)}
-						<h4>{g.label}</h4>
-						<ul class="stories" data-group={g.key}>
-							{#each g.stories as s (s.key)}{@render storyRow(s)}{/each}
-						</ul>
-					{/each}
-				{/if}
-				{#if e.under_way.length}
-					<h3>Under way without it</h3>
-					<ul class="stories" data-group="under-way">
-						{#each e.under_way as s (s.key)}{@render storyRow(s)}{/each}
-					</ul>
-				{/if}
-			</section>
-		{/if}
+		<!-- The row carries the title, decider, date, status, Edit and Close, the mismatch warning and the discussion. It gets
+		     no queue entry: the strip above already says the next step, and the held work sits above it. The discussion comes last, so a long
+		     thread never pushes the held work off-screen. -->
+		<DecisionList decisions={list} expandAll onchanged={reload} poll={false} />
 	{/if}
 </aside>
 

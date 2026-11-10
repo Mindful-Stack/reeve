@@ -219,7 +219,7 @@ export function blockedStory(over: Partial<AffectedStory> = {}): AffectedStory {
 		delivery: 'todo',
 		owner: null,
 		urgent: false,
-		needed_in: 'none',
+		needed_in: 'beyond',
 		...over
 	};
 }

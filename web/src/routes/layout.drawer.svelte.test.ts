@@ -231,7 +231,7 @@ describe('the layout and the decision drawer', () => {
 		});
 	});
 
-	it('closing drops both parameters, and a decision that is not a positive whole number opens nothing', async () => {
+	it('opens nothing for a decision that is not a positive whole number, and closing the decision drawer drops its parameter', async () => {
 		await mountLayout();
 		navigate('http://localhost/board?decision=abc');
 		flushSync();

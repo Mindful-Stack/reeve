@@ -73,7 +73,7 @@
 	let opener: HTMLElement | null = null;
 	onNavigate(({ from, to }) => {
 		// A filed-report notice outlives the dialog; only opening its story (a drawer-only change) keeps it.
-		if (!(from && to && sameApartFromStory(from.url, to.url))) {
+		if (!(from && to && sameApartFromDrawer(from.url, to.url))) {
 			notice = null;
 			restoredNotice = false;
 		}
@@ -81,7 +81,7 @@
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
 	});
-	function sameApartFromStory(a: URL, b: URL): boolean {
+	function sameApartFromDrawer(a: URL, b: URL): boolean {
 		const strip = (u: URL) => {
 			const c = new URL(u.href);
 			c.searchParams.delete('story');
