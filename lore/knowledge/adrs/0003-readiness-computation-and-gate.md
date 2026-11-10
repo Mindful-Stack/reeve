@@ -3,7 +3,7 @@ id: kb/ADR-0003
 title: "ADR-0003: Readiness is computed from facts, never stored, and gates every entry into active work, with an interactive-only override"
 description: "A story's readiness is computed on read from its ancestors' discovery marks and required decisions, its own required decisions, its acceptance criteria and its unfinished blockers, never stored, and it gates entering any active state from todo or done with a written override for interactive users only, because a stored flag rots and an unmeasured gate cannot be tightened honestly."
 tags: [adr, reeve, readiness, gate, domain]
-status: accepted
+status: superseded
 date: 2026-10-25
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: []
 scope: ["reeve:crates/reeve-planning/**", "lorekeeper:skills/**"]
 supersedes: []
-superseded_by:
+superseded_by: kb/ADR-0018
 depends_on: [kb/ADR-0002, kb/ADR-0004]
 related: []
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-10-25.
 Accepted 2026-10-26 by Daniel Thyselius.
+Superseded 2026-11-10 by kb/ADR-0018.
 
 ## Context
 The team's initiative template has a section for decisions required before building, and it stays empty, because nothing checks it. Published practice computes readiness from facts: Beads' ready query is "open with no open blockers", Shape Up's "solved" and Kubernetes' "implementable" encode decided-ness as a state. Nobody found phrases the gate as "every required decision accepted", which is the gap this record fills. Definition-of-ready practices fail when they harden into a barrier the team routes around, so a gate that is bypassed silently teaches nothing. Automation acting under a person's token must not be able to bypass the gate, or the bypass count measures nothing. Review found that a gate on entering in progress alone could be sidestepped by moving to review or testing, and that named maturity levels (decided, refined) were vocabulary nobody needed.

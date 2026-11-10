@@ -65,6 +65,8 @@ We decided to model work as initiative, epic and story with kinds story, bug and
 - 2026-11-04 (public copy, one-time edit): F2's source named an internal research document, and F3's an internal Jira board and a product name; F4, about a third-party prototype the research studied, is left out of this copy (the numbering is kept). The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No rule or decision changed; the decision holds.
 - 2026-11-09 (kb/ADR-0017): R6's bound vocabulary grows by "urgent" (a mark on any item, kb/ADR-0017); "war room" names the planning page's list of urgent marks (active and expired) and is not bound vocabulary. No trigger fired; the decision holds.
 - 2026-11-09 (kb/ADR-0017): "war room" also names the API resource `/war-room` and the CLI's `reeve war-room`; it stays unbound vocabulary. No trigger fired; the decision holds.
+- 2026-11-10 (kb/ADR-0018): R2 is the story-kind case of kb/ADR-0018 R4, which governs: every item without an epic is untriaged, so the placement tree's "bug under no epic" end state is gone. No trigger fired; the decision holds.
+- 2026-11-10 (kb/ADR-0018): R3's discovery mark is set on standing loose-work epics without product decisions behind it; for their items the ancestor discovery check is a formality (kb/ADR-0018, Consequences). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0003, kb/ADR-0004.
