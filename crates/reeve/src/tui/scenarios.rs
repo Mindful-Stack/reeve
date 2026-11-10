@@ -1047,31 +1047,38 @@ fn clear_urgent_sends_delete_and_locks_without_changing_the_story() {
         "no optimistic write"
     );
     assert_eq!(e.item.story.urgent_sources.len(), 1);
+    sim.char('U'); // again, while the first is in flight
+    assert_eq!(
+        sim.pending.iter().filter(|(_, r, _)| is_clear(r)).count(),
+        1,
+        "a locked story sends no second clear"
+    );
+    assert_eq!(sim.status(), "ABC-1: a change is still saving");
 }
 
 #[test]
 fn every_clear_outcome_releases_the_lock() {
     let mut cleared = owned(story("ABC-1", Todo, 3), "dan@example.com").story;
     cleared.urgent_mark = None;
-    let cases: [(Completion, Option<&str>, bool); 4] = [
+    let cases: [(Completion, &str, bool); 4] = [
         (
             Completion::Ok(Reply::Story(cleared.clone())),
-            Some("ABC-1 urgent mark cleared"),
+            "ABC-1 urgent mark cleared",
             true,
         ),
         (
             refused(vec![Reason::InteractiveOnly]),
-            Some("ABC-1: interactive only"),
+            "ABC-1: interactive only",
             false,
         ),
         (
             Completion::Failed(Failure::Server("502 bad gateway".into())),
-            Some("502 bad gateway"),
+            "502 bad gateway",
             true,
         ),
         (
             Completion::Failed(Failure::Transport("timed out".into())),
-            Some("ABC-1: no answer — refreshing"),
+            "ABC-1: no answer — refreshing",
             true,
         ),
     ];
@@ -1081,9 +1088,13 @@ fn every_clear_outcome_releases_the_lock() {
         assert!(sim.s.board.locked(&key("ABC-1")));
         sim.reply(is_clear, result.clone());
         assert!(!sim.s.board.locked(&key("ABC-1")), "{result:?}");
-        if let Some(status) = status {
-            assert_eq!(sim.status(), status, "{result:?}");
-        }
+        assert_eq!(sim.status(), status, "{result:?}");
+        // R8: a committed or unknown write leaves readiness pending until the refetch lands; a refusal changed nothing.
+        assert_eq!(
+            sim.s.board.get(&key("ABC-1")).unwrap().readiness_pending,
+            refetch,
+            "{result:?}"
+        );
         assert_eq!(
             sim.pending.iter().filter(|(_, r, _)| is_stories(r)).count(),
             usize::from(refetch),
