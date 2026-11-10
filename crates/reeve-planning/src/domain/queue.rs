@@ -1,5 +1,5 @@
 //! The decision queue: pure, over decisions and the readiness the loader already computed. Nothing here
-//! derives readiness (kb/ADR-0003 R1, kb/ADR-0013 R4); blocked stories are read off the reasons.
+//! derives readiness (kb/ADR-0018 R1, kb/ADR-0013 R4); blocked stories are read off the reasons.
 
 use crate::domain::decision::RequiredDecision;
 use chrono::NaiveDate;

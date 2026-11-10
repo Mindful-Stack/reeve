@@ -1,6 +1,6 @@
 // web/src/lib/backlog.ts
 // The backlog's "by epic" view: epic-less stories (all untriaged, one rank run) first, then every epic under its initiative in planning
-// order, then epics with no initiative. Readiness is the server's (kb/ADR-0003 R1).
+// order, then epics with no initiative. Readiness is the server's (kb/ADR-0018 R1).
 import type { Epic, Initiative, StoryWithReadiness } from '#lib/api/types.ts';
 import { isUntriaged } from '#lib/board.ts';
 import { groupEpics } from '#lib/planning.ts';

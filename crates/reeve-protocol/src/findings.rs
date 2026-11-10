@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
-/// a move (kb/ADR-0003 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
+/// a move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "finding", rename_all = "snake_case")]
 pub enum Finding {

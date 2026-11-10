@@ -1221,7 +1221,7 @@
         "type": "object"
       },
       "Finding": {
-        "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0003 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
+        "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
         "oneOf": [
           {
             "description": "The brief is empty.",
@@ -5956,7 +5956,7 @@
               },
               "value": {
                 "items": {
-                  "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0003 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
+                  "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
                   "oneOf": [
                     {
                       "description": "The brief is empty.",

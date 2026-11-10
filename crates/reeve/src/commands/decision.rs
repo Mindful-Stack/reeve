@@ -458,7 +458,7 @@ fn repo_dir(household: &Path, repo: &str) -> PathBuf {
     }
 }
 
-/// Printed (on stderr) for a check whose `accepted` the server refused: only an admin's check stores it (kb/ADR-0003
+/// Printed (on stderr) for a check whose `accepted` the server refused: only an admin's check stores it (kb/ADR-0018
 /// R3), so the decision stays unchecked until the scheduled run.
 const HELD: &str =
     "held: accepted on the default branch; stored by the next scheduled check run by an admin";

@@ -3904,9 +3904,9 @@ async fn list_stories_with_an_absurd_done_window_lists_everything() {
     assert_eq!(all.len(), 2);
 }
 
-/// kb/ADR-0003 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
+/// kb/ADR-0018 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
 /// nothing about versions, closure or existence) and writes nothing; a member's other results are stored; an admin's
-/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0003 R2).
+/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0018 R2).
 #[tokio::test]
 async fn only_an_admins_check_stores_accepted() {
     let (_c, pool) = common::pg().await;

@@ -390,7 +390,7 @@ impl Story {
         self.version
     }
     /// The delivery policy: two rules, everything else free (kb/ADR-0002 R4). Readiness is computed by the caller
-    /// (kb/ADR-0003 R1); nothing about sprints or goals is an input (kb/ADR-0014 R4). On `Moved` the story carries
+    /// (kb/ADR-0018 R1); nothing about sprints or goals is an input (kb/ADR-0014 R4). On `Moved` the story carries
     /// the new delivery, the resolution (the given one when entering done, none otherwise) and, when started without
     /// an owner, `actor_email` (normalised by the caller) as its owner. Untouched on `Unchanged` and on refusal.
     pub fn move_to(

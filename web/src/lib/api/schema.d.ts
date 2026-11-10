@@ -1395,7 +1395,7 @@ export interface components {
         };
         /**
          * @description Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
-         *     a move (kb/ADR-0003 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
+         *     a move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
          */
         Finding: {
             /** @enum {string} */

@@ -40,7 +40,7 @@ export function columnHeading(col: Column, doneWindowDays: number | undefined): 
 }
 
 /** Up next: the todo column, ready stories first; both parts keep the column's rank order. Readiness is the
- *  server's answer, never recomputed (kb/ADR-0003 R1). */
+ *  server's answer, never recomputed (kb/ADR-0018 R1). */
 export function splitUpNext(todo: StoryWithReadiness[]): {
 	ready: StoryWithReadiness[];
 	notReady: StoryWithReadiness[];
@@ -128,7 +128,7 @@ export function shortReason(r: Readiness): string {
 export type StoryStatus = { word: string; tone: 'ready' | 'warn' | 'muted' };
 
 /** A story's status word and dot tone, as board cards and the epic page's rows show it: a done story its resolution,
- *  else the server's readiness rendered short (kb/ADR-0003 R1). */
+ *  else the server's readiness rendered short (kb/ADR-0018 R1). */
 export function storyStatus(item: StoryWithReadiness): StoryStatus {
 	const s = item.story;
 	if (s.delivery === 'done') return { word: s.resolution ?? 'done', tone: 'muted' };

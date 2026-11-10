@@ -73,7 +73,7 @@ fn decision_reason(d: &DecisionFact) -> Option<Reason> {
     })
 }
 
-/// The one check result that satisfies a required decision (kb/ADR-0003 R3). The check endpoint lets only an admin
+/// The one check result that satisfies a required decision (kb/ADR-0018 R3). The check endpoint lets only an admin
 /// store it; a test pins it against `decision_reason`, so the two cannot drift.
 pub(crate) fn satisfies(check: &CheckResult) -> bool {
     matches!(check, CheckResult::Accepted { .. })

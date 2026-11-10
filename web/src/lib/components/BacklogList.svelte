@@ -1,5 +1,5 @@
 <!-- web/src/lib/components/BacklogList.svelte: one ranked list of backlog rows: drag handle, rank, key, title
-     (opens the drawer), optional epic, readiness (the server's, kb/ADR-0003 R1), owner and an actions menu. Ranking
+     (opens the drawer), optional epic, readiness (the server's, kb/ADR-0018 R1), owner and an actions menu. Ranking
      targets come from the rows of this list; the page does the writes. -->
 <script lang="ts">
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
