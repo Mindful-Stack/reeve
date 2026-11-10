@@ -52,6 +52,10 @@ function serve(c: Call): unknown {
 	if (c.path === '/api/v1/epics') return [];
 	if (c.path === '/api/v1/sprints') return { active: null, closed: [], draft: null };
 	if (c.path === '/api/v1/decisions/queue') return queue ?? failure('queue is down');
+	if (c.method === 'POST' && c.path === '/api/v1/stories/ABC-1/move') {
+		stories = [withReadiness({ key: 'ABC-1', title: 'Ready one', delivery: 'in_progress', version: 2 }), ...stories.slice(1)];
+		return stories[0].story;
+	}
 	throw new Error(`unexpected ${c.method} ${c.path}`);
 }
 
@@ -124,6 +128,28 @@ describe('board decisions', () => {
 		flushSync();
 		expect(q('.queue-note')).toBeNull();
 		expect(q('nav.decision-banner')).toBeNull();
+	});
+
+	it("reloads the cards but not the decisions summary after the user's own card move; a live event reloads both", async () => {
+		await mounted();
+		const queueReads = () => net.paths.filter((p) => p === '/api/v1/decisions/queue').length;
+		const storyReads = () => net.paths.filter((p) => p === '/api/v1/stories').length;
+		await vi.waitFor(() => expect(queueReads()).toBe(1));
+		const before = storyReads();
+		q<HTMLButtonElement>('[data-testid="column-todo"] button[aria-label="Actions for ABC-1"]')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(q('[role="menu"]')).not.toBeNull();
+		});
+		[...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent === 'Move to in progress')!.click();
+		await vi.waitFor(() => expect(storyReads()).toBe(before + 1));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(q('[data-testid="column-in_progress"] [data-testid="card-ABC-1"]')).not.toBeNull();
+		});
+		expect(queueReads()).toBe(1);
+		for (const f of live.fns) f();
+		await vi.waitFor(() => expect(queueReads()).toBe(2));
 	});
 
 	it('says how many not-ready cards wait on decisions', async () => {

@@ -129,8 +129,13 @@
 	/** A write's own reload and a live refetch can overlap; only the latest request's answer (or failure) lands, so an
 	 *  older response arriving last never puts a moved card back in its old column. */
 	async function reload() {
-		const seq = ++latest;
 		void loadQueue();
+		await reloadBoard();
+	}
+
+	/** The board without the decisions summary: after the user's own card move, whose live event reloads both anyway. */
+	async function reloadBoard() {
+		const seq = ++latest;
 		try {
 			const [stories, list, sprintList] = await Promise.all([
 				unwrap(api.GET('/api/v1/stories', { params: { query: { done: 'recent' } } })),
@@ -206,7 +211,8 @@
 					notice = null;
 					// Keyed on the reply's story, never the card before the move: the server says which goals it serves now.
 					if (shouldNudge(s.delivery, out.story, !!active)) nudge = { key: s.key };
-					await reload();
+					// The move's own live event refetches the decisions summary; only the cards are fetched here.
+					await reloadBoard();
 				}
 			}
 		} catch (e) {
