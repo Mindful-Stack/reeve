@@ -124,6 +124,9 @@ export function recordMismatch(d: Pick<RequiredDecision, 'reversibility' | 'chec
 	return d.reversibility && theirs && theirs !== d.reversibility ? theirs : null;
 }
 
+/** A decision's reversibility as the lists and the drawer say it. */
+export const REVERSIBILITY_TEXT: Record<Reversibility, string> = { one_way: 'One-way', two_way: 'Two-way' };
+
 /** The queue's lanes, top to bottom. */
 export const LANE_ORDER: QueueLane[] = ['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed'];
 
@@ -159,6 +162,14 @@ export function nextStepText(s: NextStep, reversibility: Reversibility | null | 
 /** Why the decision is needed when it is: the goal's outcome, or the discovery that waits on it. */
 export function neededInText(r: NeededInReason): string {
 	return r.kind === 'goal' ? `for goal: ${r.outcome}` : `${r.key} is in discovery`;
+}
+
+/** Where the item in discovery opens: its initiative or epic page (a discovery item is never a story, but the story
+ *  drawer is the fallback for one). Null for a goal reason, which names no item. */
+export function discoveryHref(r: NeededInReason): string | null {
+	if (r.kind !== 'discovery') return null;
+	const k = encodeURIComponent(r.key);
+	return r.level === 'initiative' ? `/initiatives/${k}` : r.level === 'epic' ? `/epics/${k}` : `/board?story=${k}`;
 }
 
 /** The sprint a decision is needed in. Shown beside `neededInText`, so a row in the review lane still says which sprint. */

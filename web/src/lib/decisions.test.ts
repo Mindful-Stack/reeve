@@ -11,6 +11,7 @@ import {
 	decisionStatus,
 	filterDecisions,
 	itemHref,
+	discoveryHref,
 	neededInText,
 	neededLabel,
 	nextStepText,
@@ -196,6 +197,9 @@ describe('next step and needed-in wording', () => {
 	it('says why a decision is needed and in which sprint', () => {
 		expect(neededInText({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBe('for goal: Ship X');
 		expect(neededInText({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('GRA-12 is in discovery');
+		expect(discoveryHref({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('/initiatives/GRA-12');
+		expect(discoveryHref({ kind: 'discovery', key: 'GRA-13', level: 'epic' })).toBe('/epics/GRA-13');
+		expect(discoveryHref({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBeNull();
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
 		expect(neededLabel('beyond')).toBe('Needed after next sprint');

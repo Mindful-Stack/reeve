@@ -5,6 +5,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionQueueEntry } from '#lib/api/types.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
+import { today } from '#lib/decisions.ts';
 import { blockedStory, decision, queueEntry } from '#lib/test/fixtures.ts';
 import { failure } from '#lib/test/net.ts';
 import DecisionDrawer from './DecisionDrawer.svelte';
@@ -44,7 +45,7 @@ const RECORD = { repo: 'kb', path: 'docs/adr/7.md', record_id: 'kb/ADR-7' };
 
 function entry(over: Partial<DecisionQueueEntry> = {}): DecisionQueueEntry {
 	return queueEntry({
-		decision: decision({ id: 7, on: 'ABC-1', on_type: 'story', title: 'Pick a queue', decider: 'dan@example.com' }),
+		decision: decision({ id: 7, on: 'ABC-1', on_type: 'story', title: 'Pick a queue', decider: 'dan@example.com', due: today() }),
 		lane: 'this_sprint',
 		needed_in: 'this_sprint',
 		needed_in_reason: { kind: 'goal', goal_id: 3, outcome: 'Ship tiers' },
@@ -93,7 +94,7 @@ describe('DecisionDrawer', () => {
 		// A story item opens its drawer over this view, which drops the decision parameter.
 		expect(drawer.querySelector('[data-testid="item-link"]')?.getAttribute('href')).toBe('/board?sort=rank&story=ABC-1');
 		const strip = drawer.querySelector('[data-testid="strip"]')!;
-		expect(words(strip)).toBe('Needed this sprint · for goal: Ship tiers Write a record, or close it');
+		expect(words(strip)).toBe('Needed this sprint · for goal: Ship tiers Write a record, or close it dan decides · Due today');
 		// The row is not repeated: no second title, and no holds line from the list (the strip carries the next step).
 		expect(drawer.querySelectorAll('.title').length).toBe(1);
 		expect(drawer.querySelector('.decisions [data-field="blocks"]')).toBeNull();
@@ -116,11 +117,24 @@ describe('DecisionDrawer', () => {
 
 	it('says an open decision nothing waits on is not needed yet, and that it holds nothing yet', async () => {
 		const drawer = await open(entry({ needed_in: 'none', needed_in_reason: null, next_step: null }));
-		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet');
+		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet dan decides · Due today');
 		const held = drawer.querySelector('.held')!;
 		expect(words(held)).toBe('Held work Holds nothing yet');
 		expect(held.getAttribute('aria-labelledby')).toBe(held.querySelector('h3')!.id);
 		expect(held.querySelector('ul')).toBeNull();
+	});
+
+	it('says a closed or accepted decision holds nothing, without "yet"', async () => {
+		for (const decisionOver of [
+			{ closed: { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'withdrawn' as const } },
+			{ record: RECORD, check: { kind: 'accepted' as const, commit: 'abcdef0123' } }
+		]) {
+			const drawer = await open(entry({ decision: decision({ id: 7, ...decisionOver }), next_step: null, needed_in: 'none', needed_in_reason: null }));
+			expect(words(drawer.querySelector('.held'))).toBe('Held work Holds nothing');
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
 	});
 
 	it('does not say it holds nothing when only stories under way remain', async () => {
@@ -185,7 +199,7 @@ describe('DecisionDrawer', () => {
 		expect(wayRow.querySelector('.urgent-chip')).toBeNull();
 	});
 
-	it('links the record through browse_url, or names it when there is none, and links a linked PR first when it awaits review', async () => {
+	it('links the record through browse_url, or names it when there is none, and links the PR once, in the strip, when the record awaits review', async () => {
 		const withUrl = { ...RECORD, browse_url: 'https://github.com/o/kb/blob/HEAD/docs/adr/7.md' };
 		let drawer = await open(
 			entry({
@@ -194,11 +208,9 @@ describe('DecisionDrawer', () => {
 			})
 		);
 		const block = drawer.querySelector('[data-testid="record"]')!;
-		expect([...block.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-			['Linked PR', 'https://github.com/o/kb/pull/3'],
-			['kb/docs/adr/7.md', withUrl.browse_url]
-		]);
+		expect([...block.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')])).toEqual([['kb/docs/adr/7.md', withUrl.browse_url]]);
 		expect(drawer.querySelector('.strip .next-step a')?.getAttribute('href')).toBe('https://github.com/o/kb/pull/3');
+		expect([...drawer.querySelectorAll('[data-testid="strip"] a, [data-testid="record"] a')].filter((a) => a.getAttribute('href') === 'https://github.com/o/kb/pull/3')).toHaveLength(1);
 		unmount(app!);
 		app = null;
 		document.body.innerHTML = '';
@@ -207,6 +219,47 @@ describe('DecisionDrawer', () => {
 		const plain = drawer.querySelector('[data-testid="record"]')!;
 		expect(plain.querySelector('a')).toBeNull();
 		expect(words(plain)).toBe('Record kb/docs/adr/7.md');
+	});
+
+	it('keeps the linked PR in the record block when the next step is not a review', async () => {
+		const drawer = await open(
+			entry({
+				decision: decision({ id: 7, record: RECORD, pr_url: 'https://github.com/o/kb/pull/3', check: { kind: 'not_found' } }),
+				next_step: { kind: 'fix_record', result: { kind: 'not_found' } }
+			})
+		);
+		expect(words(drawer.querySelector('.strip .next-step'))).toBe('Fix the record: not found');
+		expect([...drawer.querySelectorAll('[data-testid="record"] a')].map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+			['Linked PR', 'https://github.com/o/kb/pull/3']
+		]);
+	});
+
+	it('names the decider, the date line and the reversibility in the strip', async () => {
+		let drawer = await open(entry({ decision: decision({ id: 7, decider: 'dan@example.com', due: today(), reversibility: 'one_way' }) }));
+		expect(words(drawer.querySelector('[data-testid="who"]'))).toBe('dan decides · Due today · One-way');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		// No due date and no reversibility: the date line says how long it has been open, and the last part is left out.
+		drawer = await open(entry({ decision: decision({ id: 7, decider: 'dan@example.com', due: null, created_at: new Date().toISOString() }) }));
+		expect(words(drawer.querySelector('[data-testid="who"]'))).toBe('dan decides · No date · open 0 days');
+	});
+
+	it('links the item in discovery to its page, by its level', async () => {
+		for (const [level, href] of [
+			['initiative', '/initiatives/GRA-12'],
+			['epic', '/epics/GRA-12']
+		] as const) {
+			const drawer = await open(
+				entry({ needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
+			);
+			const a = drawer.querySelector<HTMLAnchorElement>('.strip .needed a');
+			expect(a?.getAttribute('href')).toBe(href);
+			expect(words(drawer.querySelector('.strip .needed'))).toBe('Needed next sprint · GRA-12 is in discovery');
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
 	});
 
 	it('says just Closed for a closure with no kind (before kb/ADR-0013)', async () => {

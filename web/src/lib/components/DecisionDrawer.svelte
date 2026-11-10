@@ -6,12 +6,13 @@
 	import { api, ApiError, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, DecisionQueueEntry, NeededIn } from '#lib/api/types.ts';
 	import { COLUMN_LABEL } from '#lib/board.ts';
-	import { neededInText, neededLabel, nextStepText, shortSha } from '#lib/decisions.ts';
+	import { dateLine, neededLabel, nextStepText, REVERSIBILITY_TEXT, shortSha, today } from '#lib/decisions.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
 	import { safePrUrl } from '#lib/prs.ts';
 	import DecisionList from '#lib/components/DecisionList.svelte';
+	import NeededInReason from '#lib/components/NeededInReason.svelte';
 	import UrgentChip from '#lib/components/UrgentChip.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 
@@ -144,7 +145,8 @@
 		{@const d = e.decision}
 		{@const next = e.next_step}
 		{@const pr = d.pr_url ? safePrUrl(d.pr_url) : null}
-		{@const prFirst = next?.kind === 'review_record'}
+		{@const stripPr = next?.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
+		{@const when = dateLine(d, today(new Date(minuteClock.now)))}
 
 		{#if notice}
 			<Notice
@@ -160,26 +162,24 @@
 			<div class="strip" data-testid="strip">
 				{#if e.needed_in !== 'none'}
 					<p class="needed">
-						<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}{neededInText(e.needed_in_reason)}{/if}
+						<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}<NeededInReason reason={e.needed_in_reason} />{/if}
 					</p>
 				{:else if notNeeded(e)}
 					<p class="needed"><strong>{neededLabel('none')}</strong></p>
 				{/if}
 				{#if next}
-					{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
 					<p class="next-step">
-						{#if link}<a href={link} target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility, minuteClock.now)}</a>{:else}{nextStepText(next, d.reversibility, minuteClock.now)}{/if}
+						{#if stripPr}<a href={stripPr} target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility, minuteClock.now)}</a>{:else}{nextStepText(next, d.reversibility, minuteClock.now)}{/if}
 					</p>
 				{/if}
+				<p class="who muted" data-testid="who">
+					{short(d.decider)} decides · {when.text}{#if d.reversibility}{' · '}{REVERSIBILITY_TEXT[d.reversibility]}{/if}
+				</p>
 			</div>
 		{/if}
 
-		{#if d.record || pr || d.closed || d.check.kind === 'accepted'}
+		{#if d.record || (pr && !stripPr) || d.closed || d.check.kind === 'accepted'}
 			<div class="record-block" data-testid="record">
-				{#snippet prLink()}
-					{#if pr}<p><a href={pr} target="_blank" rel="noopener noreferrer">Linked PR</a></p>{/if}
-				{/snippet}
-				{#if prFirst}{@render prLink()}{/if}
 				{#if d.record}
 					{@const url = d.record.browse_url ? safePrUrl(d.record.browse_url) : null}
 					<p>
@@ -187,7 +187,8 @@
 						{#if url}<a class="mono" href={url} target="_blank" rel="noopener noreferrer">{d.record.repo}/{d.record.path}</a>{:else}<span class="mono">{d.record.repo}/{d.record.path}</span>{/if}
 					</p>
 				{/if}
-				{#if !prFirst}{@render prLink()}{/if}
+				<!-- The strip already links the PR of a record awaiting review. -->
+				{#if pr && !stripPr}<p><a href={pr} target="_blank" rel="noopener noreferrer">Linked PR</a></p>{/if}
 				{#if d.check.kind === 'accepted'}<p>Satisfied by its record ({shortSha(d.check.commit)})</p>{/if}
 				{#if d.closed}<p>Closed{#if d.closed.kind}{' · '}{d.closed.kind}{/if}</p>{/if}
 			</div>
@@ -196,7 +197,7 @@
 		<section class="held" aria-labelledby="held-{decisionId}">
 			<h3 id="held-{decisionId}">Held work</h3>
 			{#if !e.blocks.length && !e.under_way.length}
-				<p class="muted">Holds nothing yet</p>
+				<p class="muted">{d.closed || d.check.kind === 'accepted' ? 'Holds nothing' : 'Holds nothing yet'}</p>
 			{/if}
 			{#each grouped(e.blocks) as g (g.key)}
 				<h4>{g.label}</h4>

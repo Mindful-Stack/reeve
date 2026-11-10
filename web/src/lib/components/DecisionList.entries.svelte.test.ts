@@ -60,6 +60,23 @@ describe('DecisionList entries', () => {
 	}
 	const entryFor = (d: RequiredDecision, over: Parameters<typeof queueEntry>[0]) => new Map([[d.id, queueEntry({ decision: d, ...over })]]);
 
+	it('links the item in discovery to its initiative or epic page, by its level', () => {
+		for (const [level, href] of [
+			['initiative', '/initiatives/GRA-12'],
+			['epic', '/epics/GRA-12']
+		] as const) {
+			const d = decision(PR);
+			const { row } = mountWith(d, {
+				entries: entryFor(d, { needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
+			});
+			expect(row.querySelector('.needed a')?.getAttribute('href')).toBe(href);
+			expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 GRA-12 is in discovery');
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
+	});
+
 	it('shows the next step as a link to the linked PR, the sprint it is needed in and what it holds', () => {
 		const d = decision(PR);
 		const { row } = mountWith(d, {

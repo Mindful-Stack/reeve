@@ -6,7 +6,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
-	import { closeActions, dateLine, decisionStatus, neededInText, neededLabel, nextStepText, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
+	import { closeActions, dateLine, decisionStatus, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
@@ -15,6 +15,7 @@
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { safePrUrl } from '#lib/prs.ts';
 	import CommentBody from '#lib/components/CommentBody.svelte';
+	import NeededInReason from '#lib/components/NeededInReason.svelte';
 	import { followBase } from '#lib/editorBase.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { DECISION_SAME, decisionDraft, decisionEdit, fieldsText, mergeDraft, type DecisionDraft } from '#lib/forms.ts';
@@ -327,7 +328,6 @@
 	};
 	const closeForms: Record<number, HTMLFormElement | null> = {};
 	/** The chip's words for a classification (kb/ADR-0013 R1). */
-	const REVERSIBILITY_TEXT: Record<Reversibility, string> = { one_way: 'One-way', two_way: 'Two-way' };
 	/** The rows whose "Blocks N stories" disclosure is open. */
 	const blocksOpen = new SvelteSet<number>();
 
@@ -669,7 +669,7 @@
 			{#if next || entry.needed_in !== 'none'}
 				<div class="lines">
 					{#if entry.needed_in !== 'none'}
-						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}{neededInText(reason)}{/if}</p>
+						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}<NeededInReason {reason} />{/if}</p>
 					{/if}
 					{#if next}
 						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
