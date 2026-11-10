@@ -54,4 +54,23 @@ fail_at reeve-planning/src/handler/sub/x.rs 'self.ports.stories.set_delivery(tx,
 pass_at reeve-planning/src/handler/stories.rs '/// `self.ports.stories.set_delivery(` is the only mover'
 pass_at reeve-planning/src/handler/prs.rs '// never self.ports.decisions here'
 pass_at reeve-planning/src/handler/prs.rs 'self.ports.stories.get_story(k)'
+# A string literal holding `//` must not hide the rest of its line from the call-site rules.
+fail_at reeve-planning/src/handler/stories.rs 'let u = "https://x"; self.ports.stories.set_delivery(tx, s, 1, now)'
+pass_at reeve-planning/src/handler/stories.rs 'let u = "a \\"quoted\\" self.ports.stories.set_delivery(tx) str";'
+# prs.rs reaches the ports only as `ports.pull_requests.<method>` or `ports.stories.get_story`: no alias, no UFCS.
+fail_at reeve-planning/src/handler/prs.rs $'let st = &self.ports.stories;\nst.update_story(tx, s, None, 1, now)'
+fail_at reeve-planning/src/handler/prs.rs $'let p = &self.ports;\np.decisions.get_decision(1)'
+fail_at reeve-planning/src/handler/prs.rs 'StoryRepo::touch_story(&*self.ports.stories, tx, k, 1, now)'
+fail_at reeve-planning/src/handler/prs.rs 'let r = &self.ports.pull_requests;'
+# A method value is a call waiting to happen: naming set_delivery or move_to outside moves.rs is enough.
+fail_at reeve-planning/src/handler/stories.rs $'let f = StoryRepo::set_delivery;\nf(&*self.ports.stories, tx, s, 1, now)'
+fail_at reeve-planning/src/handler/stories.rs $'let f = Story::move_to;\nf(&mut s, m, true, t, a)'
+pass_at reeve-planning/src/handler/stories.rs 'self.set_delivery_x(t)'
+# With a handler/mod.rs, renaming moves.rs or prs.rs away must not silently switch their rules off.
+rm -rf "$tmp/crates"; mkdir -p "$tmp/crates/reeve-planning/src/handler"
+printf '%s\n' 'mod prs;' > "$tmp/crates/reeve-planning/src/handler/mod.rs"; printf '%s\n' '' > "$tmp/crates/reeve-planning/src/handler/prs.rs"
+s=$(status "$tmp"); if [ "$s" -ne 1 ]; then echo "lint exited $s, wanted 1, for a handler/mod.rs without moves.rs" >&2; exit 1; fi
+rm "$tmp/crates/reeve-planning/src/handler/prs.rs"; printf '%s\n' '' > "$tmp/crates/reeve-planning/src/handler/moves.rs"
+s=$(status "$tmp"); if [ "$s" -ne 1 ]; then echo "lint exited $s, wanted 1, for a handler/mod.rs without prs.rs" >&2; exit 1; fi
+printf '%s\n' '' > "$tmp/crates/reeve-planning/src/handler/prs.rs"; bash scripts/check-context-isolation.sh "$tmp" >/dev/null
 echo "isolation lint test ok"

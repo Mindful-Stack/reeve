@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # A crate may use another context crate only through its facade (`reeve_planning::Thing`), never a
 # submodule path (`reeve_planning::repo::PgPlanningRepo`), in `use` lines, brace groups or inline paths.
+#
+# The planning rules below are a tripwire over source text, not a proof. They read each handler file with
+# its string literals blanked and its `//` comments removed, so they catch the direct spellings of a forbidden
+# call (a method call, UFCS, a method value, a ports alias) but not, among others:
+#   - a call routed through another handler method, e.g. prs.rs calling `self.create_story` or any method that
+#     itself reaches a forbidden port;
+#   - macro-generated code, raw strings, char literals holding `"`, and string literals spanning lines.
+# The behaviour itself is pinned by tests: tests/handlers.rs
+# recording_a_pull_request_links_updates_and_never_moves_the_story, tests/rules.rs (move_story's rules) and
+# tests/sprints.rs moves_never_depend_on_goals.
+# The domain DTO rule judges comments too, deliberately: planning's domain docs must not name a wire DTO either.
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 [ -d crates ] || { echo "no crates/ directory under $PWD" >&2; exit 2; }
@@ -22,18 +33,27 @@ if [ -d "$planning/domain" ]; then
   fi
 fi
 if [ -d "$planning/handler" ]; then
-  # Judge each file without `//` comments and with its whitespace removed (rustfmt splits call chains over lines).
-  flat() { sed 's#//.*##' "$1" | tr -d '[:space:]'; }
+  # Judge each file with its string literals blanked (a "https://..." must not hide the rest of its line), then
+  # without `//` comments and with its whitespace removed (rustfmt splits call chains over lines).
+  flat() { sed -E 's/"([^"\\]|\\.)*"/""/g; s#//.*##' "$1" | tr -d '[:space:]'; }
   lb='(^|[^A-Za-z0-9_])'   # left boundary: a path or call, not the tail of a longer name
   bad=""
   moves="$planning/handler/moves.rs"
+  p="$planning/handler/prs.rs"
+  # The rules below name these two files; renaming either away must not switch its rules off silently.
+  if [ -f "$planning/handler/mod.rs" ]; then
+    for f in "$moves" "$p"; do
+      if [ ! -f "$f" ]; then bad+="$f: missing (the call-site rules below judge it by name)"$'\n'; fi
+    done
+  fi
   while IFS= read -r f; do
-    # kb/ADR-0002 R4: only move_story (handler/moves.rs) moves a story, however the call is spelled.
+    # kb/ADR-0002 R4: only move_story (handler/moves.rs) moves a story, however the call is spelled
+    # (a call, UFCS, or a method value bound to a name and called later).
     if [ "$f" != "$moves" ]; then
-      x=$(flat "$f" | g -oE "${lb}set_delivery\(")
+      x=$(flat "$f" | g -oE "${lb}set_delivery\b")
       if [ -n "$x" ]; then bad+="$f: set_delivery outside handler/moves.rs"$'\n'; fi
       # The delivery rule (Story::move_to) runs only inside move_story's transaction.
-      x=$(flat "$f" | g -oE "${lb}move_to\(")
+      x=$(flat "$f" | g -oE "${lb}move_to\b")
       if [ -n "$x" ]; then bad+="$f: move_to outside handler/moves.rs"$'\n'; fi
     fi
   done < <(find "$planning/handler" -name '*.rs' | sort)
@@ -42,15 +62,12 @@ if [ -d "$planning/handler" ]; then
     x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(")
     if [ -n "$x" ]; then bad+="$moves: reads sprints, goals or urgency"$'\n'; fi
   fi
-  p="$planning/handler/prs.rs"
-  # The webhook path reaches pull requests and story lookup (`get_story`) only, and never moves a story.
+  # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of
+  # `ports` in prs.rs must be exactly `ports.pull_requests.<method>` or `ports.stories.get_story`, so an alias
+  # (`let st = &self.ports.stories;`) or UFCS (`StoryRepo::touch_story(&*self.ports.stories, ..)`) fails.
   if [ -f "$p" ]; then
-    ports=$(flat "$p" | g -oE "${lb}ports\.[a-z_]+(\.[a-z_]+)?" | sed -E 's/^[^p]*//')
-    x=$(printf '%s\n' "$ports" | g -vE '^$|^ports\.pull_requests(\.[a-z_]+)?$|^ports\.stories(\.get_story)?$')
-    while IFS= read -r l; do
-      if [ -n "$l" ]; then bad+="$p: uses $l"$'\n'; fi
-    done <<< "$x"
-    x=$(printf '%s\n' "$ports" | g -E '^ports\.stories\.' | g -vE '^ports\.stories\.get_story$')
+    x=$(flat "$p" | g -oE "${lb}ports\b(\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?)?" | sed -E 's/^[^p]*//' \
+      | g -vE '^ports\.pull_requests\.[A-Za-z0-9_]+$|^ports\.stories\.get_story$')
     while IFS= read -r l; do
       if [ -n "$l" ]; then bad+="$p: uses $l"$'\n'; fi
     done <<< "$x"
