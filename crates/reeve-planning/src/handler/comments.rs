@@ -13,10 +13,11 @@ impl Handlers {
         if body.trim().is_empty() {
             return Err(HandlerError::Validation("empty comment".into()));
         }
-        self.repo.get_story(story).await?;
+        self.ports.stories.get_story(story).await?;
         let mut tx = self.pool.begin().await?;
         let (id, inserted) = self
-            .repo
+            .ports
+            .comments
             .insert_comment(
                 &mut tx,
                 Some(story),
@@ -59,10 +60,11 @@ impl Handlers {
         if body.trim().is_empty() {
             return Err(HandlerError::Validation("empty comment".into()));
         }
-        self.repo.get_decision(decision).await?;
+        self.ports.decisions.get_decision(decision).await?;
         let mut tx = self.pool.begin().await?;
         let (id, inserted) = self
-            .repo
+            .ports
+            .comments
             .insert_comment(
                 &mut tx,
                 None,
@@ -108,11 +110,11 @@ impl Handlers {
         let entity = match item {
             ItemType::Story => return self.comment_story(c, on, body, idem).await,
             ItemType::Initiative => {
-                self.repo.get_initiative(on).await?;
+                self.ports.initiatives.get_initiative(on).await?;
                 "initiative"
             }
             ItemType::Epic => {
-                self.repo.get_epic(on).await?;
+                self.ports.epics.get_epic(on).await?;
                 "epic"
             }
         };
@@ -121,7 +123,8 @@ impl Handlers {
         }
         let mut tx = self.pool.begin().await?;
         let (id, inserted) = self
-            .repo
+            .ports
+            .comments
             .insert_item_comment(&mut tx, item, on, &c.actor, body.trim(), idem, c.now)
             .await?;
         if !inserted {
@@ -149,14 +152,14 @@ impl Handlers {
         item: ItemType,
         on: &Key,
     ) -> Result<Vec<CommentDto>, HandlerError> {
-        Ok(self.repo.list_comments_for_item(item, on).await?)
+        Ok(self.ports.comments.list_comments_for_item(item, on).await?)
     }
 
     pub async fn comments_for_story(&self, story: &Key) -> Result<Vec<CommentDto>, HandlerError> {
-        Ok(self.repo.list_comments_for_story(story).await?)
+        Ok(self.ports.comments.list_comments_for_story(story).await?)
     }
 
     pub async fn comments_for_decision(&self, id: i64) -> Result<Vec<CommentDto>, HandlerError> {
-        Ok(self.repo.list_comments_for_decision(id).await?)
+        Ok(self.ports.comments.list_comments_for_decision(id).await?)
     }
 }

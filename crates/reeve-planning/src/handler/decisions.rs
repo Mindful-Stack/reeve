@@ -103,7 +103,8 @@ impl Handlers {
         let item = self.item_type_of(on).await?;
         let mut tx = self.pool.begin().await?;
         let (d, inserted) = self
-            .repo
+            .ports
+            .decisions
             .insert_decision(
                 &mut tx,
                 item,
@@ -153,7 +154,11 @@ impl Handlers {
         let path = &validate_reference(repo.trim(), path.trim())?;
         let pr_url = validate_pr_url(pr_url)?;
         let mut tx = self.pool.begin().await?;
-        let cur = self.repo.get_decision_for_update(&mut tx, id).await?;
+        let cur = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
         if cur.closed.is_some() {
             return Err(HandlerError::Validation("decision is closed".into()));
         }
@@ -165,7 +170,7 @@ impl Handlers {
             },
             pr_url,
         );
-        self.repo.save_decision(&mut tx, &d).await?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
         self.activity
             .record(
                 &mut tx,
@@ -179,7 +184,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// `for_record` and `observed_version` are what the CLI saw when it ran the check; a result for a reference or
@@ -210,7 +215,11 @@ impl Handlers {
             return Err(HandlerError::Forbidden);
         }
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
         if d.version != observed_version {
             return Err(HandlerError::Conflict { current: d.version });
         }
@@ -231,13 +240,16 @@ impl Handlers {
         // The scheduled check posts every open, linked decision every few minutes; logging and bumping an unchanged
         // result would bury people's entries in the activity log and refetch every client on each run.
         if same_outcome(&d.check, &check) {
-            self.repo.touch_decision_checked(&mut tx, id, c.now).await?;
+            self.ports
+                .decisions
+                .touch_decision_checked(&mut tx, id, c.now)
+                .await?;
             tx.commit().await?;
-            return Ok(self.repo.get_decision(id).await?);
+            return Ok(self.ports.decisions.get_decision(id).await?);
         }
         d.check = check;
         d.checked_at = Some(c.now);
-        self.repo.save_decision(&mut tx, &d).await?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
         self.activity
             .record(
                 &mut tx,
@@ -251,7 +263,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// Closes the decision as decided or withdrawn (kb/ADR-0013 R3). Every rule is the aggregate's
@@ -270,9 +282,13 @@ impl Handlers {
             Via::System => return Err(HandlerError::Forbidden),
         };
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
         d.close(kind, reason, &c.actor, via, c.now)?;
-        self.repo.save_decision(&mut tx, &d).await?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
         let reason = &d.closed.as_ref().expect("just closed").reason;
         self.activity
             .record(
@@ -287,7 +303,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// Edits the planner-side fields of an open decision (kb/ADR-0004 R2): title, decider, due and reversibility
@@ -313,7 +329,11 @@ impl Handlers {
             ));
         }
         let mut tx = self.pool.begin().await?;
-        let mut d = self.repo.get_decision_for_update(&mut tx, id).await?;
+        let mut d = self
+            .ports
+            .decisions
+            .get_decision_for_update(&mut tx, id)
+            .await?;
         if d.version != version {
             tx.rollback().await?;
             return Err(HandlerError::Conflict { current: d.version });
@@ -363,7 +383,7 @@ impl Handlers {
             tx.rollback().await?;
             return Ok(d);
         }
-        self.repo.save_decision(&mut tx, &d).await?;
+        self.ports.decisions.save_decision(&mut tx, &d).await?;
         self.activity
             .record(
                 &mut tx,
@@ -377,11 +397,11 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     pub async fn get_decision(&self, id: i64) -> Result<RequiredDecision, HandlerError> {
-        Ok(self.repo.get_decision(id).await?)
+        Ok(self.ports.decisions.get_decision(id).await?)
     }
 
     /// `open_with_record_only` keeps decisions that are open and carry a reference, whether or not `on` scopes the list.
@@ -392,9 +412,10 @@ impl Handlers {
         &self,
         initiative: &Key,
     ) -> Result<Vec<RequiredDecision>, HandlerError> {
-        self.repo.get_initiative(initiative).await?;
+        self.ports.initiatives.get_initiative(initiative).await?;
         Ok(self
-            .repo
+            .ports
+            .reads
             .list_decisions_under_initiative(initiative)
             .await?)
     }
@@ -407,7 +428,7 @@ impl Handlers {
     ) -> Result<Vec<RequiredDecision>, HandlerError> {
         Ok(match on {
             Some(k) => {
-                let mut ds = self.repo.list_decisions_on(k).await?;
+                let mut ds = self.ports.decisions.list_decisions_on(k).await?;
                 if open_with_record_only {
                     ds.retain(|d| {
                         d.closed.is_none()
@@ -420,7 +441,8 @@ impl Handlers {
             }
             None => {
                 let mut ds = self
-                    .repo
+                    .ports
+                    .decisions
                     .list_all_decisions(
                         include_closed && !open_with_record_only,
                         open_with_record_only,
@@ -476,11 +498,17 @@ impl Handlers {
     ) -> Result<(Vec<QueueEntry>, QueueSummary), HandlerError> {
         let ds = match scope {
             DecisionScope::All { include_closed } => {
-                self.repo.list_all_decisions_in(tx, *include_closed).await?
+                self.ports
+                    .decisions
+                    .list_all_decisions_in(tx, *include_closed)
+                    .await?
             }
-            DecisionScope::On(k) => self.repo.list_decisions_on_in(tx, k).await?,
+            DecisionScope::On(k) => self.ports.decisions.list_decisions_on_in(tx, k).await?,
             DecisionScope::Initiative(k) => {
-                self.repo.list_decisions_under_initiative_in(tx, k).await?
+                self.ports
+                    .reads
+                    .list_decisions_under_initiative_in(tx, k)
+                    .await?
             }
         };
         let todo = StoryFilter {

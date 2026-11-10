@@ -19,7 +19,8 @@ impl Handlers {
         let needle = q.to_lowercase();
         let has = |s: &str| s.to_lowercase().contains(&needle);
         Ok(self
-            .repo
+            .ports
+            .reads
             .search_items(q, key.as_ref(), LIMIT)
             .await?
             .into_iter()

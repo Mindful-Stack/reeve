@@ -35,7 +35,7 @@ impl MemSink {
 fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
     let sink = Arc::new(MemSink(Mutex::new(vec![])));
     let h = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: sink.clone(),
         pool,
         settings: Settings {

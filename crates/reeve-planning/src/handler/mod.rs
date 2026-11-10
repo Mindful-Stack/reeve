@@ -6,6 +6,7 @@ mod epics;
 mod export;
 mod import;
 mod initiatives;
+mod moves;
 mod plans;
 mod prs;
 mod search;
@@ -52,7 +53,7 @@ enum Scope {
 
 #[derive(Clone)]
 pub struct Handlers {
-    pub repo: Arc<dyn PlanningRepo>,
+    pub ports: PlanningPorts,
     pub activity: Arc<dyn ActivitySink>,
     pub pool: PgPool,
     pub settings: Settings,
@@ -126,12 +127,12 @@ impl Handlers {
             match scope {
                 Scope::One(t) if current => return Ok((t, k)),
                 Scope::One(t) => {
-                    if self.repo.key_exists(t, &k).await? {
+                    if self.ports.keys.key_exists(t, &k).await? {
                         return Ok((t, k));
                     }
                 }
                 Scope::Any => {
-                    if let Some(t) = self.repo.item_type_of_key(&k).await? {
+                    if let Some(t) = self.ports.keys.item_type_of_key(&k).await? {
                         return Ok((t, k));
                     }
                     // No external reference can start with the current prefix.
@@ -153,7 +154,7 @@ impl Handlers {
             Scope::Any => &[ItemType::Story, ItemType::Epic, ItemType::Initiative],
         };
         for &t in types {
-            if let Some(k) = self.repo.find_by_external_ref(t, raw).await? {
+            if let Some(k) = self.ports.keys.find_by_external_ref(t, raw).await? {
                 return Ok((t, k));
             }
         }

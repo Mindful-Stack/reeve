@@ -171,7 +171,7 @@ mod started_at {
     pub fn mk(pool: sqlx::PgPool) -> Handlers {
         let sink = Arc::new(MemSink(Mutex::new(vec![])));
         Handlers {
-            repo: make_planning_repo(pool.clone()),
+            ports: make_planning_ports(pool.clone()),
             activity: sink,
             pool,
             settings: settings(),
@@ -325,9 +325,10 @@ mod repository {
         let loose = mkstory("loose", None).await;
         let done = mkstory("done", None).await;
 
-        let repo = make_planning_repo(pool.clone());
+        let ports = make_planning_ports(pool.clone());
         let mut tx = pool.begin().await.unwrap();
-        let d = repo
+        let d = ports
+            .sprints
             .insert_draft(
                 &mut tx,
                 at(3, 0).date_naive(),
@@ -338,19 +339,23 @@ mod repository {
             .unwrap()
             .unwrap();
         assert!(
-            repo.insert_draft(
-                &mut tx,
-                at(3, 0).date_naive(),
-                at(17, 0).date_naive(),
-                at(3, 18)
-            )
-            .await
-            .unwrap()
-            .is_none(),
+            ports
+                .sprints
+                .insert_draft(
+                    &mut tx,
+                    at(3, 0).date_naive(),
+                    at(17, 0).date_naive(),
+                    at(3, 18)
+                )
+                .await
+                .unwrap()
+                .is_none(),
             "one draft only"
         );
         assert_eq!(
-            repo.sprint_in_state(&mut tx, SprintState::Draft)
+            ports
+                .sprints
+                .sprint_in_state(&mut tx, SprintState::Draft)
                 .await
                 .unwrap()
                 .unwrap()
@@ -358,18 +363,22 @@ mod repository {
             d.id
         );
         assert!(
-            repo.sprint_in_state(&mut tx, SprintState::Active)
+            ports
+                .sprints
+                .sprint_in_state(&mut tx, SprintState::Active)
                 .await
                 .unwrap()
                 .is_none()
         );
 
-        let (g, fresh) = repo
+        let (g, fresh) = ports
+            .sprints
             .insert_goal(&mut tx, d.id, "ship", "demo", "dan", "", "k1", at(3, 18))
             .await
             .unwrap();
         assert!(fresh);
-        let (again, fresh) = repo
+        let (again, fresh) = ports
+            .sprints
             .insert_goal(&mut tx, d.id, "other", "other", "x", "", "k1", at(3, 19))
             .await
             .unwrap();
@@ -379,39 +388,49 @@ mod repository {
         );
         for k in [init.key(), epic.key(), direct.key(), loose.key()] {
             assert!(
-                repo.insert_goal_link(&mut tx, g.id, k, "dan", at(3, 18))
+                ports
+                    .sprints
+                    .insert_goal_link(&mut tx, g.id, k, "dan", at(3, 18))
                     .await
                     .unwrap()
             );
         }
         assert!(
-            !repo
+            !ports
+                .sprints
                 .insert_goal_link(&mut tx, g.id, loose.key(), "dan", at(3, 18))
                 .await
                 .unwrap()
         );
-        let links = repo.links_of_in(&mut tx, &[g.id]).await.unwrap();
+        let links = ports.sprints.links_of_in(&mut tx, &[g.id]).await.unwrap();
         assert_eq!(links.len(), 4);
 
         // Not active yet: no goals served.
         assert!(
-            repo.active_goals_of_stories(&mut tx, &[direct.key().clone()])
+            ports
+                .reads
+                .active_goals_of_stories(&mut tx, &[direct.key().clone()])
                 .await
                 .unwrap()
                 .is_empty()
         );
-        let mut s = repo.sprint_for_update(&mut tx, d.id).await.unwrap();
+        let mut s = ports
+            .sprints
+            .sprint_for_update(&mut tx, d.id)
+            .await
+            .unwrap();
         s.state = SprintState::Active;
         s.opened_at = Some(at(3, 18));
-        repo.save_sprint(&mut tx, &s).await.unwrap();
+        ports.sprints.save_sprint(&mut tx, &s).await.unwrap();
         assert!(
             matches!(
-                repo.save_sprint(&mut tx, &s).await,
+                ports.sprints.save_sprint(&mut tx, &s).await,
                 Err(RepoError::Conflict { current: 2 })
             ),
             "stale version"
         );
-        let served = repo
+        let served = ports
+            .reads
             .active_goals_of_stories(
                 &mut tx,
                 &[
@@ -437,25 +456,38 @@ mod repository {
         assert!(!served.contains_key(done.key()));
 
         // Goal save keeps the CHECK pairs and bumps the version.
-        let mut goal = repo.goal_for_update(&mut tx, g.id).await.unwrap();
+        let mut goal = ports.sprints.goal_for_update(&mut tx, g.id).await.unwrap();
         goal.confidence = Some(reeve_protocol::Confidence::AtRisk);
         goal.confidence_at = Some(at(4, 9));
-        repo.save_goal(&mut tx, &goal).await.unwrap();
-        let back = repo.get_goal_in(&mut tx, g.id).await.unwrap();
+        ports.sprints.save_goal(&mut tx, &goal).await.unwrap();
+        let back = ports.sprints.get_goal_in(&mut tx, g.id).await.unwrap();
         assert_eq!(
             (back.version, back.confidence),
             (2, Some(reeve_protocol::Confidence::AtRisk))
         );
         assert!(matches!(
-            repo.save_goal(&mut tx, &goal).await,
+            ports.sprints.save_goal(&mut tx, &goal).await,
             Err(RepoError::Conflict { current: 2 })
         ));
         assert_eq!(
-            repo.goals_by_ids_in(&mut tx, &[g.id]).await.unwrap().len(),
+            ports
+                .sprints
+                .goals_by_ids_in(&mut tx, &[g.id])
+                .await
+                .unwrap()
+                .len(),
             1
         );
-        assert_eq!(repo.goals_of_in(&mut tx, &[d.id]).await.unwrap().len(), 1);
-        assert_eq!(repo.sprints_in(&mut tx).await.unwrap().len(), 1);
+        assert_eq!(
+            ports
+                .sprints
+                .goals_of_in(&mut tx, &[d.id])
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(ports.sprints.sprints_in(&mut tx).await.unwrap().len(), 1);
         tx.commit().await.unwrap();
 
         // Story rows: linked ones through any level, plus a completion inside the window.
@@ -481,7 +513,8 @@ mod repository {
         .await
         .unwrap();
         let mut tx = pool.begin().await.unwrap();
-        let rows = repo
+        let rows = ports
+            .reads
             .sprint_story_times(&mut tx, &[init.key().clone()], at(3, 18), at(17, 18))
             .await
             .unwrap();
@@ -505,7 +538,8 @@ mod repository {
         );
 
         // A story key and an epic key cover the story itself and the epic's stories.
-        let rows = repo
+        let rows = ports
+            .reads
             .sprint_story_times(
                 &mut tx,
                 &[loose.key().clone(), epic.key().clone()],
@@ -521,27 +555,30 @@ mod repository {
 
         // Removing the link and the goal.
         assert!(
-            repo.delete_goal_link(&mut tx, g.id, init.key())
-                .await
-                .unwrap()
-        );
-        assert!(
-            !repo
+            ports
+                .sprints
                 .delete_goal_link(&mut tx, g.id, init.key())
                 .await
                 .unwrap()
         );
-        repo.delete_goal(&mut tx, g.id).await.unwrap();
+        assert!(
+            !ports
+                .sprints
+                .delete_goal_link(&mut tx, g.id, init.key())
+                .await
+                .unwrap()
+        );
+        ports.sprints.delete_goal(&mut tx, g.id).await.unwrap();
         assert!(matches!(
-            repo.delete_goal(&mut tx, g.id).await,
+            ports.sprints.delete_goal(&mut tx, g.id).await,
             Err(RepoError::NotFound)
         ));
         assert!(matches!(
-            repo.get_goal_in(&mut tx, g.id).await,
+            ports.sprints.get_goal_in(&mut tx, g.id).await,
             Err(RepoError::NotFound)
         ));
         assert!(matches!(
-            repo.get_sprint_in(&mut tx, 9999).await,
+            ports.sprints.get_sprint_in(&mut tx, 9999).await,
             Err(RepoError::NotFound)
         ));
     }
@@ -563,9 +600,10 @@ mod locks_and_indexes {
     #[tokio::test]
     async fn sprint_and_goal_lookups_for_update_hold_the_row() {
         let (_c, pool) = super::common::pg().await;
-        let repo = make_planning_repo(pool.clone());
+        let ports = make_planning_ports(pool.clone());
         let mut setup = pool.begin().await.unwrap();
-        let d = repo
+        let d = ports
+            .sprints
             .insert_draft(
                 &mut setup,
                 at(3, 0).date_naive(),
@@ -575,32 +613,45 @@ mod locks_and_indexes {
             .await
             .unwrap()
             .unwrap();
-        let (g, _) = repo
+        let (g, _) = ports
+            .sprints
             .insert_goal(&mut setup, d.id, "o", "c", "dan", "", "k", at(3, 18))
             .await
             .unwrap();
         setup.commit().await.unwrap();
 
         let mut tx1 = pool.begin().await.unwrap();
-        repo.sprint_for_update(&mut tx1, d.id).await.unwrap();
+        ports
+            .sprints
+            .sprint_for_update(&mut tx1, d.id)
+            .await
+            .unwrap();
         let mut tx2 = pool.begin().await.unwrap();
         sqlx::query("SET LOCAL lock_timeout = '100ms'")
             .execute(&mut *tx2)
             .await
             .unwrap();
-        let e = repo.sprint_for_update(&mut tx2, d.id).await.unwrap_err();
+        let e = ports
+            .sprints
+            .sprint_for_update(&mut tx2, d.id)
+            .await
+            .unwrap_err();
         assert_eq!(sqlstate(e).as_deref(), Some("55P03"));
         drop(tx2);
         tx1.rollback().await.unwrap();
 
         let mut tx1 = pool.begin().await.unwrap();
-        repo.goal_for_update(&mut tx1, g.id).await.unwrap();
+        ports.sprints.goal_for_update(&mut tx1, g.id).await.unwrap();
         let mut tx2 = pool.begin().await.unwrap();
         sqlx::query("SET LOCAL lock_timeout = '100ms'")
             .execute(&mut *tx2)
             .await
             .unwrap();
-        let e = repo.goal_for_update(&mut tx2, g.id).await.unwrap_err();
+        let e = ports
+            .sprints
+            .goal_for_update(&mut tx2, g.id)
+            .await
+            .unwrap_err();
         assert_eq!(sqlstate(e).as_deref(), Some("55P03"));
     }
 
@@ -608,9 +659,10 @@ mod locks_and_indexes {
     #[tokio::test]
     async fn a_second_active_or_draft_sprint_names_its_index() {
         let (_c, pool) = super::common::pg().await;
-        let repo = make_planning_repo(pool.clone());
+        let ports = make_planning_ports(pool.clone());
         let mut tx = pool.begin().await.unwrap();
-        let a = repo
+        let a = ports
+            .sprints
             .insert_draft(
                 &mut tx,
                 at(3, 0).date_naive(),
@@ -620,11 +672,16 @@ mod locks_and_indexes {
             .await
             .unwrap()
             .unwrap();
-        let mut a = repo.sprint_for_update(&mut tx, a.id).await.unwrap();
+        let mut a = ports
+            .sprints
+            .sprint_for_update(&mut tx, a.id)
+            .await
+            .unwrap();
         a.state = SprintState::Active;
         a.opened_at = Some(at(3, 18));
-        repo.save_sprint(&mut tx, &a).await.unwrap();
-        let b = repo
+        ports.sprints.save_sprint(&mut tx, &a).await.unwrap();
+        let b = ports
+            .sprints
             .insert_draft(
                 &mut tx,
                 at(17, 0).date_naive(),
@@ -634,11 +691,15 @@ mod locks_and_indexes {
             .await
             .unwrap()
             .unwrap();
-        let mut b2 = repo.sprint_for_update(&mut tx, b.id).await.unwrap();
+        let mut b2 = ports
+            .sprints
+            .sprint_for_update(&mut tx, b.id)
+            .await
+            .unwrap();
         b2.state = SprintState::Active;
         b2.opened_at = Some(at(4, 18));
         sqlx::query("SAVEPOINT s").execute(&mut *tx).await.unwrap();
-        let e = repo.save_sprint(&mut tx, &b2).await.unwrap_err();
+        let e = ports.sprints.save_sprint(&mut tx, &b2).await.unwrap_err();
         let RepoError::Db(sqlx::Error::Database(d)) = e else {
             panic!("{e:?}")
         };
@@ -672,7 +733,7 @@ mod lifecycle {
     pub(super) fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
         let sink = Arc::new(MemSink(Mutex::new(vec![])));
         let h = Handlers {
-            repo: make_planning_repo(pool.clone()),
+            ports: make_planning_ports(pool.clone()),
             activity: sink.clone(),
             pool,
             settings: settings(),
@@ -1463,7 +1524,7 @@ mod lifecycle {
         let (_c, pool) = super::common::pg().await;
         let sink = Arc::new(ProbeSink(Mutex::new(vec![])));
         let h = Handlers {
-            repo: make_planning_repo(pool.clone()),
+            ports: make_planning_ports(pool.clone()),
             activity: sink.clone(),
             pool: pool.clone(),
             settings: settings(),

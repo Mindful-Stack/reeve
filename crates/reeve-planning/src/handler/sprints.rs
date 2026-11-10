@@ -42,21 +42,31 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,
     ) -> Result<Sprint, HandlerError> {
-        if let Some(d) = self.repo.sprint_in_state(tx, SprintState::Draft).await? {
+        if let Some(d) = self
+            .ports
+            .sprints
+            .sprint_in_state(tx, SprintState::Draft)
+            .await?
+        {
             return Ok(d);
         }
-        let active = self.repo.sprint_in_state(tx, SprintState::Active).await?;
+        let active = self
+            .ports
+            .sprints
+            .sprint_in_state(tx, SprintState::Active)
+            .await?;
         let (s, e) = sprint::draft_dates(
             active.map(|a| a.ends_on),
             now,
             self.settings.sprint_length_days,
         );
-        match self.repo.insert_draft(tx, s, e, now).await? {
+        match self.ports.sprints.insert_draft(tx, s, e, now).await? {
             Some(d) => Ok(d),
             // A concurrent first goal created it (sprints_one_draft_idx); ON CONFLICT DO NOTHING left ours out, and
             // this statement sees the committed one.
             None => self
-                .repo
+                .ports
+                .sprints
                 .sprint_in_state(tx, SprintState::Draft)
                 .await?
                 .ok_or(HandlerError::NotFound),
@@ -71,10 +81,10 @@ impl Handlers {
         op: Op,
     ) -> Result<(Sprint, Goal), HandlerError> {
         // A goal never changes sprint, so the unlocked read names the right row to lock.
-        let sprint_id = self.repo.get_goal_in(tx, id).await?.sprint_id;
-        let s = self.repo.sprint_for_update(tx, sprint_id).await?;
+        let sprint_id = self.ports.sprints.get_goal_in(tx, id).await?.sprint_id;
+        let s = self.ports.sprints.sprint_for_update(tx, sprint_id).await?;
         allowed(&s, op)?;
-        let g = self.repo.goal_for_update(tx, id).await?;
+        let g = self.ports.sprints.goal_for_update(tx, id).await?;
         Ok((s, g))
     }
 
@@ -113,7 +123,8 @@ impl Handlers {
         }
         let mut tx = self.pool.begin().await?;
         let target = if to_active {
-            self.repo
+            self.ports
+                .sprints
                 .sprint_in_state(&mut tx, SprintState::Active)
                 .await?
                 .ok_or(HandlerError::Refused(vec![Reason::SprintNotActive]))?
@@ -121,7 +132,11 @@ impl Handlers {
             self.draft_in(&mut tx, c.now).await?
         };
         // Recheck under the lock: a concurrent open may have made the draft active, or a close the active one closed.
-        let target = self.repo.sprint_for_update(&mut tx, target.id).await?;
+        let target = self
+            .ports
+            .sprints
+            .sprint_for_update(&mut tx, target.id)
+            .await?;
         allowed(&target, Op::AddGoal)?;
         match (to_active, target.state) {
             (false, SprintState::Draft) | (true, SprintState::Active) => {}
@@ -129,7 +144,8 @@ impl Handlers {
             (true, _) => return Err(HandlerError::Refused(vec![Reason::SprintNotActive])),
         }
         let (g, inserted) = self
-            .repo
+            .ports
+            .sprints
             .insert_goal(
                 &mut tx,
                 target.id,
@@ -141,7 +157,12 @@ impl Handlers {
                 c.now,
             )
             .await?;
-        let count = self.repo.goals_of_in(&mut tx, &[g.sprint_id]).await?.len();
+        let count = self
+            .ports
+            .sprints
+            .goals_of_in(&mut tx, &[g.sprint_id])
+            .await?
+            .len();
         if inserted {
             self.activity
                 .record(
@@ -171,13 +192,14 @@ impl Handlers {
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
-        let mut s = self.repo.sprint_for_update(&mut tx, id).await?;
+        let mut s = self.ports.sprints.sprint_for_update(&mut tx, id).await?;
         if s.version != version {
             return Err(HandlerError::Conflict { current: s.version });
         }
         allowed(&s, Op::Open)?;
         if self
-            .repo
+            .ports
+            .sprints
             .sprint_in_state(&mut tx, SprintState::Active)
             .await?
             .is_some()
@@ -190,7 +212,7 @@ impl Handlers {
         s.opened_at = Some(c.now);
         s.starts_on = starts;
         s.ends_on = ends;
-        if let Err(e) = self.repo.save_sprint(&mut tx, &s).await {
+        if let Err(e) = self.ports.sprints.save_sprint(&mut tx, &s).await {
             // Defensive: two opens of the one draft already meet at the version check above (FOR UPDATE, then the
             // version), so this fires only if an active row appeared some other way; the index is R1's last guard.
             return Err(if violates(&e, "sprints_one_active_idx") {
@@ -203,7 +225,8 @@ impl Handlers {
         // The draft being opened was the one draft (sprints_one_draft_idx) and is active now, so this insert cannot
         // meet another; None would mean a second draft appeared, which only a second open could make.
         let next = self
-            .repo
+            .ports
+            .sprints
             .insert_draft(&mut tx, ns, ne, c.now)
             .await?
             .ok_or(HandlerError::Refused(vec![Reason::SprintNotDraft]))?;
@@ -235,12 +258,12 @@ impl Handlers {
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
-        let mut s = self.repo.sprint_for_update(&mut tx, id).await?;
+        let mut s = self.ports.sprints.sprint_for_update(&mut tx, id).await?;
         allowed(&s, Op::Close)?;
         if s.version != version {
             return Err(HandlerError::Conflict { current: s.version });
         }
-        let mut goals = self.repo.goals_of_in(&mut tx, &[id]).await?;
+        let mut goals = self.ports.sprints.goals_of_in(&mut tx, &[id]).await?;
         let mut judged = Vec::new();
         for (gid, v, n) in verdicts {
             let g = goals.iter_mut().find(|g| g.id == gid).ok_or_else(|| {
@@ -264,11 +287,11 @@ impl Handlers {
         }
         let judged: Vec<&Goal> = goals.iter().filter(|g| judged.contains(&g.id)).collect();
         for g in &judged {
-            self.repo.save_goal(&mut tx, g).await?;
+            self.ports.sprints.save_goal(&mut tx, g).await?;
         }
         s.state = SprintState::Closed;
         s.closed_at = Some(c.now);
-        self.repo.save_sprint(&mut tx, &s).await?;
+        self.ports.sprints.save_sprint(&mut tx, &s).await?;
         // The counts at close (kb/ADR-0014 R6), over `[opened_at, closed_at)`, in this transaction and before any entry.
         // They live only in the `closed` entry; planning never reads them back (views derive their numbers on read).
         let summary = self
@@ -349,7 +372,7 @@ impl Handlers {
             tx.rollback().await?;
             return Ok(g);
         }
-        self.repo.save_goal(&mut tx, &g).await?;
+        self.ports.sprints.save_goal(&mut tx, &g).await?;
         self.activity
             .record(
                 &mut tx,
@@ -376,10 +399,10 @@ impl Handlers {
         if g.version != version {
             return Err(HandlerError::Conflict { current: g.version });
         }
-        let links = self.repo.links_of_in(&mut tx, &[id]).await?;
+        let links = self.ports.sprints.links_of_in(&mut tx, &[id]).await?;
         // On this transaction: it holds the row locks, so it must not wait for a second connection.
         let keys: Vec<Key> = links.iter().map(|l| l.item_key.clone()).collect();
-        let types = self.repo.item_types_in(&mut tx, &keys).await?;
+        let types = self.ports.keys.item_types_in(&mut tx, &keys).await?;
         let mut entries = Vec::with_capacity(links.len() + 1);
         for l in &links {
             let t = *types.get(&l.item_key).ok_or(HandlerError::NotFound)?;
@@ -391,7 +414,7 @@ impl Handlers {
                 serde_json::json!({"goal_id": id}),
             ));
         }
-        self.repo.delete_goal(&mut tx, id).await?;
+        self.ports.sprints.delete_goal(&mut tx, id).await?;
         entries.push(self.rec(
             c,
             "goal",
@@ -426,7 +449,7 @@ impl Handlers {
         g.suggested_note = None;
         g.suggested_at = None;
         g.suggested_by = None;
-        self.repo.save_goal(&mut tx, &g).await?;
+        self.ports.sprints.save_goal(&mut tx, &g).await?;
         self.activity
             .record(
                 &mut tx,
@@ -459,7 +482,7 @@ impl Handlers {
         g.suggested_note = note(note_text);
         g.suggested_at = Some(c.now);
         g.suggested_by = Some(reeve_protocol::normalise_email(&c.actor));
-        self.repo.save_goal(&mut tx, &g).await?;
+        self.ports.sprints.save_goal(&mut tx, &g).await?;
         self.activity
             .record(
                 &mut tx,
@@ -496,7 +519,8 @@ impl Handlers {
         let mut entries = Vec::new();
         for (t, k) in typed {
             if self
-                .repo
+                .ports
+                .sprints
                 .insert_goal_link(&mut tx, goal_id, k, &by, c.now)
                 .await?
             {
@@ -519,10 +543,19 @@ impl Handlers {
     pub async fn unlink_goal(&self, c: &Ctx, goal_id: i64, item: &Key) -> Result<(), HandlerError> {
         let t = self.item_type_of(item).await?;
         let mut tx = self.pool.begin().await?;
-        let g = self.repo.get_goal_in(&mut tx, goal_id).await?;
-        let s = self.repo.sprint_for_update(&mut tx, g.sprint_id).await?;
+        let g = self.ports.sprints.get_goal_in(&mut tx, goal_id).await?;
+        let s = self
+            .ports
+            .sprints
+            .sprint_for_update(&mut tx, g.sprint_id)
+            .await?;
         allowed(&s, Op::Unlink)?;
-        if !self.repo.delete_goal_link(&mut tx, goal_id, item).await? {
+        if !self
+            .ports
+            .sprints
+            .delete_goal_link(&mut tx, goal_id, item)
+            .await?
+        {
             tx.rollback().await?;
             return Ok(());
         }
@@ -557,11 +590,11 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,
     ) -> Result<Sprints, HandlerError> {
-        let all = self.repo.sprints_in(tx).await?;
+        let all = self.ports.sprints.sprints_in(tx).await?;
         let ids: Vec<i64> = all.iter().map(|s| s.id).collect();
-        let goals = self.repo.goals_of_in(tx, &ids).await?;
+        let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
         let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
-        let links = self.repo.links_of_in(tx, &goal_ids).await?;
+        let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
         let mut out = Sprints {
             active: None,
             draft: None,
@@ -622,10 +655,10 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
     ) -> Result<(Sprint, Vec<Goal>, Vec<GoalLink>), HandlerError> {
-        let s = self.repo.get_sprint_in(tx, id).await?;
-        let goals = self.repo.goals_of_in(tx, &[id]).await?;
+        let s = self.ports.sprints.get_sprint_in(tx, id).await?;
+        let goals = self.ports.sprints.goals_of_in(tx, &[id]).await?;
         let ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
-        let links = self.repo.links_of_in(tx, &ids).await?;
+        let links = self.ports.sprints.links_of_in(tx, &ids).await?;
         Ok((s, goals, links))
     }
 
@@ -636,8 +669,8 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let g = self.repo.get_goal_in(&mut tx, id).await?;
-            let links = self.repo.links_of_in(&mut tx, &[id]).await?;
+            let g = self.ports.sprints.get_goal_in(&mut tx, id).await?;
+            let links = self.ports.sprints.links_of_in(&mut tx, &[id]).await?;
             Ok((g, links))
         }
         .await;
@@ -652,9 +685,9 @@ impl Handlers {
         s: &Sprint,
         now: DateTime<Utc>,
     ) -> Result<Option<sprint::Summary>, HandlerError> {
-        let goals = self.repo.goals_of_in(tx, &[s.id]).await?;
+        let goals = self.ports.sprints.goals_of_in(tx, &[s.id]).await?;
         let ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
-        let links = self.repo.links_of_in(tx, &ids).await?;
+        let links = self.ports.sprints.links_of_in(tx, &ids).await?;
         self.summary_in(tx, s, &goals, &links, now).await
     }
 
@@ -685,13 +718,17 @@ impl Handlers {
             .cloned()
             .collect();
         let linked: Vec<Key> = links.iter().map(|l| l.item_key.clone()).collect();
-        let stories = self.repo.sprint_story_times(tx, &linked, from, to).await?;
+        let stories = self
+            .ports
+            .reads
+            .sprint_story_times(tx, &linked, from, to)
+            .await?;
         let unfinished: Vec<Key> = stories
             .iter()
             .filter(|st| st.delivery != reeve_protocol::DeliveryState::Done)
             .map(|st| st.key.clone())
             .collect();
-        let mut inputs = self.repo.readiness_inputs(tx, &unfinished).await?;
+        let mut inputs = self.ports.reads.readiness_inputs(tx, &unfinished).await?;
         let mut blocked = std::collections::HashMap::new();
         for (k, i) in inputs.iter_mut() {
             self.mark_configured(i);
@@ -716,7 +753,8 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = self
-            .repo
+            .ports
+            .sprints
             .get_sprint_in(&mut tx, id)
             .await
             .map_err(Into::into);

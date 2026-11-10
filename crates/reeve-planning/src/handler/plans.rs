@@ -370,11 +370,12 @@ impl Handlers {
                 continue;
             }
             let mine = self
-                .repo
+                .ports
+                .keys
                 .find_by_idempotency(t, &plan_key(id, name))
                 .await?;
             for holder in [ItemType::Initiative, ItemType::Epic, ItemType::Story] {
-                if let Some(k) = self.repo.find_by_external_ref(holder, r).await?
+                if let Some(k) = self.ports.keys.find_by_external_ref(holder, r).await?
                     && !(holder == t && mine.as_ref() == Some(&k))
                 {
                     errors.push(format!(

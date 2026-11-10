@@ -128,7 +128,7 @@ pub(crate) fn handlers_for(
     // The activity store implements planning's ActivitySink itself; upcast the Arc (Rust >= 1.86 trait upcasting).
     let sink: Arc<dyn reeve_planning::ActivitySink> = activity;
     Handlers {
-        repo: reeve_planning::make_planning_repo(pool.clone()),
+        ports: reeve_planning::make_planning_ports(pool.clone()),
         activity: sink,
         pool,
         settings: reeve_planning::Settings {

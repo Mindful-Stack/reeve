@@ -68,7 +68,7 @@ fn mk_probe(pool: sqlx::PgPool, sql: &'static str) -> (Handlers, Arc<ProbeSink>)
         seen: Mutex::new(vec![]),
     });
     let h = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: sink.clone(),
         pool,
         settings: settings(),
@@ -107,10 +107,10 @@ fn settings() -> Settings {
 #[tokio::test]
 async fn the_acceptance_flow_at_handler_level() {
     let (_c, pool) = common::pg().await;
-    let repo = make_planning_repo(pool.clone());
+    let ports = make_planning_ports(pool.clone());
     let sink = Arc::new(MemSink(Mutex::new(vec![])));
     let h = Handlers {
-        repo: repo.clone(),
+        ports: ports.clone(),
         activity: sink.clone(),
         pool: pool.clone(),
         settings: settings(),
@@ -418,7 +418,7 @@ async fn the_acceptance_flow_at_handler_level() {
 fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
     let sink = Arc::new(MemSink(Mutex::new(vec![])));
     let h = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: sink.clone(),
         pool,
         settings: settings(),
@@ -443,7 +443,7 @@ async fn create_replays_record_one_created_entry() {
 
     // A row that already exists under the key (inserted directly): create returns it and writes no entry.
     let mut tx = pool.begin().await.unwrap();
-    let key = h.repo.next_key(&mut tx, "ABC").await.unwrap();
+    let key = h.ports.keys.next_key(&mut tx, "ABC").await.unwrap();
     let pre = Story::new(
         key,
         "Pre-existing",
@@ -456,7 +456,8 @@ async fn create_replays_record_one_created_entry() {
     )
     .unwrap();
     assert!(
-        h.repo
+        h.ports
+            .stories
             .insert_story(&mut tx, &pre, "k-direct", dan.now)
             .await
             .unwrap()
@@ -2157,7 +2158,7 @@ async fn resolve_ref_resolves_keys_of_an_earlier_prefix_before_external_refs() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -2295,7 +2296,7 @@ async fn resolve_any_checks_native_keys_of_every_type_before_external_refs() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -3513,7 +3514,7 @@ async fn resolution_precedence_is_one_table() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let old = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: Arc::new(MemSink(Mutex::new(vec![]))),
         pool: pool.clone(),
         settings: Settings {
@@ -4667,7 +4668,7 @@ async fn a_details_edit_keeps_an_unlisted_horizon() {
     let mut s = settings();
     s.horizon_buckets = vec!["Soon".into(), "Later".into()];
     let h2 = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: h.activity.clone(),
         pool,
         settings: s,
@@ -4712,7 +4713,12 @@ async fn a_details_edit_keeps_an_unlisted_horizon() {
             .unwrap_err(),
         HandlerError::Validation(m) if m.contains("Someday")
     ));
-    let stored = h2.repo.get_initiative(ini.key()).await.unwrap();
+    let stored = h2
+        .ports
+        .initiatives
+        .get_initiative(ini.key())
+        .await
+        .unwrap();
     assert_eq!(stored.horizon(), "Now");
     assert_eq!(stored.version(), same.version());
     // A listed bucket is still accepted.
@@ -4858,7 +4864,7 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
     let mut configured = settings();
     configured.repos.push("infra".into());
     let h2 = Handlers {
-        repo: make_planning_repo(pool.clone()),
+        ports: make_planning_ports(pool.clone()),
         activity: std::sync::Arc::new(MemSink(std::sync::Mutex::new(vec![]))),
         pool,
         settings: configured,
@@ -5658,7 +5664,8 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
     // the repo variant on an unmarked row: None, and no change
     let mut tx = pool.begin().await.unwrap();
     assert_eq!(
-        h.repo
+        h.ports
+            .urgency
             .renew_urgent_mark(
                 &mut tx,
                 ItemType::Initiative,
@@ -5670,7 +5677,14 @@ async fn renew_dedupes_and_never_revives_a_cleared_mark() {
             .unwrap(),
         None
     );
-    assert!(h.repo.urgent_marks_in(&mut tx).await.unwrap().is_empty());
+    assert!(
+        h.ports
+            .urgency
+            .urgent_marks_in(&mut tx)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     tx.commit().await.unwrap();
     // and a renewal of an unmarked item through the handler writes nothing
     h.war_room_renew(&dan, &twice[..1]).await.unwrap();
@@ -6179,7 +6193,7 @@ async fn every_item_read_is_one_transaction_on_one_connection() {
         .unwrap();
     sqlx::query("SELECT 1").execute(&one).await.unwrap(); // the connection exists and is idle
     let h = Handlers {
-        repo: make_planning_repo(one.clone()),
+        ports: make_planning_ports(one.clone()),
         pool: one,
         ..h
     };

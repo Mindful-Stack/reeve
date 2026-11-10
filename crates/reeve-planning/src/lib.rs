@@ -3,8 +3,6 @@ mod domain;
 mod handler;
 mod ports;
 mod repo;
-mod repo_sprint;
-mod repo_urgent;
 pub use domain::{
     decision::{CloseError, Closed, RecordRef, RequiredDecision},
     delivery::{MoveEffect, MoveRefused, MoveRequest, validate_move},
@@ -21,11 +19,12 @@ pub use domain::{
 };
 pub use handler::*;
 pub use ports::{
-    ActivityRecord, ActivitySink, GoalFilter, PlanningRepo, RepoError, SearchRow, StoryCounts,
-    StoryFilter,
+    ActivityRecord, ActivitySink, CommentRepo, DecisionRepo, EpicRepo, GoalFilter, InitiativeRepo,
+    KeyRepo, PlanningPorts, PlanningReads, PullRequestRepo, RepoError, SearchRow, SprintRepo,
+    StoryCounts, StoryFilter, StoryRepo, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
-pub use repo::make_planning_repo;
+pub use repo::make_planning_ports;
 pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")
 }

@@ -29,11 +29,16 @@ impl Handlers {
         brief: &str,
         external_ref: Option<String>,
     ) -> Result<(Epic, bool), HandlerError> {
-        if let Some(k) = self.repo.find_by_idempotency(ItemType::Epic, idem).await? {
-            return Ok((self.repo.get_epic(&k).await?, false));
+        if let Some(k) = self
+            .ports
+            .keys
+            .find_by_idempotency(ItemType::Epic, idem)
+            .await?
+        {
+            return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
         if let Some(ik) = &initiative {
-            self.repo.get_initiative(ik).await?;
+            self.ports.initiatives.get_initiative(ik).await?;
         }
         let mut tx = self.pool.begin().await?;
         let r = match self
@@ -43,22 +48,29 @@ impl Handlers {
             Claim::Free(r) => r,
             Claim::Retried(k) => {
                 tx.rollback().await?;
-                return Ok((self.repo.get_epic(&k).await?, false));
+                return Ok((self.ports.epics.get_epic(&k).await?, false));
             }
         };
         let key = self
-            .repo
+            .ports
+            .keys
             .next_key(&mut tx, &self.settings.key_prefix)
             .await?;
         let e = Epic::new(key, title, initiative, brief)?.with_external_ref(r);
-        if !self.repo.insert_epic(&mut tx, &e, idem, c.now).await? {
+        if !self
+            .ports
+            .epics
+            .insert_epic(&mut tx, &e, idem, c.now)
+            .await?
+        {
             tx.rollback().await?;
             let k = self
-                .repo
+                .ports
+                .keys
                 .find_by_idempotency(ItemType::Epic, idem)
                 .await?
                 .ok_or(HandlerError::NotFound)?;
-            return Ok((self.repo.get_epic(&k).await?, false));
+            return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
         self.activity
             .record(
@@ -86,10 +98,10 @@ impl Handlers {
         initiative: Option<Option<Key>>,
         external_ref: Option<String>,
     ) -> Result<Epic, HandlerError> {
-        let cur = self.repo.get_epic(key).await?;
+        let cur = self.ports.epics.get_epic(key).await?;
         let ini = initiative.unwrap_or(cur.initiative().cloned());
         if let Some(ik) = &ini {
-            self.repo.get_initiative(ik).await?;
+            self.ports.initiatives.get_initiative(ik).await?;
         }
         let next = Epic::new(
             cur.key().clone(),
@@ -110,7 +122,8 @@ impl Handlers {
             r,
             cur.version(),
         );
-        self.repo
+        self.ports
+            .epics
             .update_epic(&mut tx, &next, version, c.now)
             .await?;
         self.activity
@@ -126,7 +139,7 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.repo.get_epic(key).await?)
+        Ok(self.ports.epics.get_epic(key).await?)
     }
 
     /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot.
@@ -137,7 +150,7 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            let e = self.repo.get_epic_in(&mut tx, key).await?;
+            let e = self.ports.epics.get_epic_in(&mut tx, key).await?;
             Ok(epic_dto_of(&e, &urg))
         }
         .await;
@@ -157,7 +170,7 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            let epics = self.repo.list_epics_in(&mut tx, initiative).await?;
+            let epics = self.ports.epics.list_epics_in(&mut tx, initiative).await?;
             Ok(epics.iter().map(|e| epic_dto_of(e, &urg)).collect())
         }
         .await;
