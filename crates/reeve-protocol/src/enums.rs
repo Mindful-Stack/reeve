@@ -107,8 +107,19 @@ pub enum NeededIn {
 pub enum NeededInReason {
     /// An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).
     Goal { goal_id: i64, outcome: String },
-    /// The decision's item, or an ancestor, is in discovery under the first horizon bucket.
-    Discovery { key: Key },
+    /// The decision's item, or an ancestor, is in discovery under the first horizon bucket. `level` says whether `key` is an
+    /// initiative or an epic, so a client can link to it. It defaults to `initiative` when absent, so a payload from before
+    /// the field existed still parses; a discovery item is never a story.
+    Discovery {
+        key: Key,
+        #[serde(default = "initiative_level")]
+        #[schema(required = true)]
+        level: ItemType,
+    },
+}
+
+fn initiative_level() -> ItemType {
+    ItemType::Initiative
 }
 
 /// What an open, unsatisfied decision needs next. The first that holds wins, in declaration order.
@@ -298,5 +309,30 @@ mod tests {
         for (got, want) in cases {
             assert_eq!(got, want);
         }
+    }
+
+    /// A discovery reason carries the item's level, and one without it (from before the field) reads as an initiative.
+    #[test]
+    fn discovery_reason_level_round_trips_and_defaults() {
+        use serde_json::json;
+        let epic = NeededInReason::Discovery {
+            key: "ABC-5".parse().unwrap(),
+            level: ItemType::Epic,
+        };
+        let v = serde_json::to_value(&epic).unwrap();
+        assert_eq!(
+            v,
+            json!({"kind": "discovery", "key": "ABC-5", "level": "epic"})
+        );
+        assert_eq!(serde_json::from_value::<NeededInReason>(v).unwrap(), epic);
+        let old: NeededInReason =
+            serde_json::from_value(json!({"kind": "discovery", "key": "ABC-4"})).unwrap();
+        assert_eq!(
+            old,
+            NeededInReason::Discovery {
+                key: "ABC-4".parse().unwrap(),
+                level: ItemType::Initiative
+            }
+        );
     }
 }

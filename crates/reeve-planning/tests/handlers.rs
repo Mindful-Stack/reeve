@@ -5513,7 +5513,8 @@ async fn queue_discovery_decision_counts_in_next_sprint_lane() {
     assert_eq!(
         of(d1.id()).needed_in_reason,
         Some(NeededInReason::Discovery {
-            key: now_ini.key().clone()
+            key: now_ini.key().clone(),
+            level: reeve_protocol::ItemType::Initiative
         })
     );
     assert_eq!(of(d2.id()).lane, QueueLane::Open);

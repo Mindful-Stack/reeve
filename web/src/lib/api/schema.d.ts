@@ -1699,6 +1699,7 @@ export interface components {
             key: components["schemas"]["Key"];
             /** @enum {string} */
             kind: "discovery";
+            level: components["schemas"]["ItemType"];
         };
         /** @description What an open, unsatisfied decision needs next. The first that holds wins, in declaration order. */
         NextStep: {

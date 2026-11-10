@@ -2176,7 +2176,7 @@
             "type": "object"
           },
           {
-            "description": "The decision's item, or an ancestor, is in discovery under the first horizon bucket.",
+            "description": "The decision's item, or an ancestor, is in discovery under the first horizon bucket. `level` says whether `key` is an\ninitiative or an epic, so a client can link to it. It defaults to `initiative` when absent, so a payload from before\nthe field existed still parses; a discovery item is never a story.",
             "properties": {
               "key": {
                 "$ref": "#/components/schemas/Key"
@@ -2186,10 +2186,14 @@
                   "discovery"
                 ],
                 "type": "string"
+              },
+              "level": {
+                "$ref": "#/components/schemas/ItemType"
               }
             },
             "required": [
               "key",
+              "level",
               "kind"
             ],
             "type": "object"

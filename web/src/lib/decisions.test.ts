@@ -194,7 +194,7 @@ describe('next step and needed-in wording', () => {
 
 	it('says why a decision is needed and in which sprint', () => {
 		expect(neededInText({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBe('for goal: Ship X');
-		expect(neededInText({ kind: 'discovery', key: 'GRA-12' })).toBe('GRA-12 is in discovery');
+		expect(neededInText({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('GRA-12 is in discovery');
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
 		expect(neededLabel('beyond')).toBe('Needed beyond');

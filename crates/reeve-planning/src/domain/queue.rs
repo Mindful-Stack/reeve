@@ -90,12 +90,14 @@ pub struct QueueSummary {
 /// The nearest lineage item in discovery under the first horizon bucket: unmarked, and an initiative in that bucket or
 /// an epic whose initiative is in it. Any ancestor counts (as readiness's `AncestorDiscoveryIncomplete` does). None when
 /// nothing qualifies or no bucket is configured.
-pub fn discovery_item(lineage: &[LineageItem], first_bucket: Option<&str>) -> Option<Key> {
+pub fn discovery_item<'a>(
+    lineage: &'a [LineageItem],
+    first_bucket: Option<&str>,
+) -> Option<&'a LineageItem> {
     let b = first_bucket?;
     lineage
         .iter()
         .find(|l| !l.discovery_marked && l.initiative_horizon.as_deref() == Some(b))
-        .map(|l| l.key.clone())
 }
 
 fn story_window(s: &AffectedStory) -> NeededIn {
@@ -113,7 +115,7 @@ fn story_window(s: &AffectedStory) -> NeededIn {
 pub fn needed_in(
     d: &RequiredDecision,
     affected: &[&AffectedStory],
-    discovery: Option<&Key>,
+    discovery: Option<&LineageItem>,
 ) -> (NeededIn, Option<NeededInReason>) {
     if d.closed().is_some() || d.is_satisfied() {
         return (NeededIn::None, None);
@@ -134,10 +136,13 @@ pub fn needed_in(
     if let Some(r) = goal(|s| &s.draft_goals) {
         return (NeededIn::NextSprint, Some(r));
     }
-    if let Some(k) = discovery {
+    if let Some(l) = discovery {
         return (
             NeededIn::NextSprint,
-            Some(NeededInReason::Discovery { key: k.clone() }),
+            Some(NeededInReason::Discovery {
+                key: l.key.clone(),
+                level: l.level,
+            }),
         );
     }
     if !affected.is_empty() {
@@ -281,7 +286,7 @@ pub fn order(
                     )
                 })
                 .flatten();
-            let (needed, needed_in_reason) = needed_in(&decision, &all, discovery.as_ref());
+            let (needed, needed_in_reason) = needed_in(&decision, &all, discovery);
             let step = next_step(&decision, inp.repos);
             QueueEntry {
                 group,
@@ -728,7 +733,10 @@ mod tests {
             got,
             (
                 NeededIn::NextSprint,
-                Some(NeededInReason::Discovery { key: key(5) })
+                Some(NeededInReason::Discovery {
+                    key: key(5),
+                    level: ItemType::Epic
+                })
             )
         );
         // A story decision: the epic is marked, the initiative above it is not.
@@ -754,7 +762,10 @@ mod tests {
             got,
             (
                 NeededIn::NextSprint,
-                Some(NeededInReason::Discovery { key: key(4) })
+                Some(NeededInReason::Discovery {
+                    key: key(4),
+                    level: ItemType::Initiative
+                })
             )
         );
     }
@@ -782,7 +793,10 @@ mod tests {
             got,
             (
                 NeededIn::NextSprint,
-                Some(NeededInReason::Discovery { key: key(1) })
+                Some(NeededInReason::Discovery {
+                    key: key(1),
+                    level: ItemType::Epic
+                })
             )
         );
         // With no bucket configured nothing is in discovery.
