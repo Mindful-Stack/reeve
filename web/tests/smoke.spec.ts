@@ -719,3 +719,55 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
 	});
 }
+
+// A 4×3 PNG, small enough to inline; every image assertion waits for it to really decode (a broken image is visible too).
+const PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADAQMAAACOOjyFAAAAA1BMVEUzZswgIiSpAAAAC0lEQVQI12NgAAEAAAYAAWb0yWwAAAAASUVORK5CYII=',
+	'base64'
+);
+const loaded = (img: Locator) => expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0), { timeout: 10_000 }).toBe(true);
+
+test('a screenshot added to a report shows in the story, a pasted one in a comment, and a deleted one becomes unavailable', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	await page.goto('/board');
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await dialog.getByLabel('Title').fill(`Screenshot smoke ${suffix}`);
+	await dialog.getByLabel("Something's broken").check();
+	await dialog.locator('input[type=file]').setInputFiles({ name: 'report.png', mimeType: 'image/png', buffer: PNG });
+	await expect(dialog.locator('.uploads li')).toContainText('added');
+	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
+	const notice = page.getByRole('status').filter({ hasText: 'Filed bug' });
+	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
+
+	await page.goto(`/board?story=${key}`);
+	const drawer = page.getByRole('complementary');
+	await loaded(drawer.locator('.brief img'));
+	await drawer.getByText('Attachments · 1').click();
+	await loaded(drawer.locator('.attachments img'));
+
+	// A paste of an image-only clipboard into the comment box (Chromium has DataTransfer and ClipboardEvent).
+	const box = drawer.getByLabel(`comment on ${key}`);
+	await box.click();
+	await box.evaluate((el, b64) => {
+		const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+		const dt = new DataTransfer();
+		dt.items.add(new File([bytes], 'image.png', { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+	}, PNG.toString('base64'));
+	await expect(box).toHaveValue(/!\[screenshot-[\d-]+\]\(\/api\/v1\/attachments\/[0-9a-f-]+\)/);
+	await drawer.getByRole('button', { name: 'Comment', exact: true }).click();
+	const commentImg = drawer.locator('.comment-body img');
+	await loaded(commentImg);
+	await expect(drawer.getByText('Attachments · 2')).toBeVisible();
+
+	// Delete the comment's image from the disclosure: the shown image becomes "image unavailable" without a reload.
+	page.once('dialog', (d) => d.accept());
+	await drawer.getByRole('button', { name: /^Delete attachment screenshot-/ }).click();
+	await expect(drawer.locator('.comment-body .image-unavailable')).toHaveText('image unavailable');
+	await expect(drawer.getByText('Attachments · 1')).toBeVisible();
+
+	// A file that is not an image is refused before it is uploaded.
+	await drawer.locator('form:has(textarea[aria-label^="comment"]) input[type=file]').setInputFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
+	await expect(drawer.locator('.uploads')).toContainText('only PNG, JPEG and WebP images can be attached');
+});
