@@ -77,6 +77,7 @@ async fn list(
         untriaged: q.untriaged,
         label: q.label,
         goal,
+        unfinished: false,
     };
     Ok(ok(s
         .handlers

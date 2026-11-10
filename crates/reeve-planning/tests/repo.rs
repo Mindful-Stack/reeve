@@ -1910,3 +1910,47 @@ async fn decision_lineage_in_costs_the_same_for_three_and_thirty() {
     let thirty = measure(keys).await;
     assert_eq!(three, thirty);
 }
+
+/// `unfinished` lists every story whose delivery is not done, and combines with the other filters. Catches a done story
+/// listed, a started story dropped, and the flag ignored.
+#[tokio::test]
+async fn unfinished_filter_excludes_done_and_keeps_started() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let e = h
+        .create_epic(&dan(), "e", "E", None, "", None)
+        .await
+        .unwrap();
+    let todo = story(&h, "t", Kind::Story, Some(e.key()), &["c"]).await;
+    let loose = story(&h, "l", Kind::Story, None, &[]).await;
+    let done = insert_imported_done(&pool).await;
+    let ports = h.ports.clone();
+    let list = |f: StoryFilter| {
+        let (ports, pool) = (ports.clone(), pool.clone());
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let got = ports.stories.list_stories(&mut tx, &f, None).await.unwrap();
+            tx.rollback().await.unwrap();
+            got.iter().map(|s| s.key().clone()).collect::<Vec<_>>()
+        }
+    };
+    let all = list(StoryFilter::default()).await;
+    assert!(
+        all.contains(&done),
+        "without the flag a done story is listed"
+    );
+    let un = list(StoryFilter {
+        unfinished: true,
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(un.len(), 2);
+    assert!(un.contains(todo.key()) && un.contains(loose.key()) && !un.contains(&done));
+    let in_epic = list(StoryFilter {
+        unfinished: true,
+        epic: Some(e.key().clone()),
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(in_epic, vec![todo.key().clone()]);
+}

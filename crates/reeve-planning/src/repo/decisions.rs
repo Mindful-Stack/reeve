@@ -38,6 +38,20 @@ impl DecisionRepo for PgPlanningRepo {
         .ok_or(RepoError::NotFound)?;
         Ok(decision_from(&r)?)
     }
+    async fn get_decision_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+    ) -> Result<RequiredDecision, RepoError> {
+        let r = sqlx::query(&format!(
+            "SELECT {DECISION_COLS} FROM required_decisions WHERE id = $1"
+        ))
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(RepoError::NotFound)?;
+        Ok(decision_from(&r)?)
+    }
     async fn get_decision_for_update(
         &self,
         tx: &mut Transaction<'_, Postgres>,

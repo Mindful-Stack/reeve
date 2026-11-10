@@ -41,6 +41,8 @@ pub struct StoryFilter {
     pub delivery: Option<DeliveryState>,
     /// Items of any kind without an epic that are not done (kb/ADR-0018 R4).
     pub untriaged: bool,
+    /// Stories whose delivery is not done (kb/ADR-0018 R5), of any state otherwise; combines with every other filter.
+    pub unfinished: bool,
     pub label: Option<String>,
     /// Goal membership, applied after the stories are read (`goal=<id>|any|none`); combines with every other filter.
     pub goal: Option<GoalFilter>,

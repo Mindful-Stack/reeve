@@ -2,8 +2,8 @@ use super::*;
 use crate::domain::decision::*;
 use crate::domain::queue::{self, QueueEntry, QueueSummary};
 use crate::domain::readiness::satisfies;
-use crate::domain::urgency::Urgency;
 use reeve_protocol::{CheckResult, ClosureKind, DeliveryState, Key, Reversibility, TokenKind, Via};
+use std::collections::HashSet;
 
 impl Handlers {
     pub async fn require_decision(
@@ -379,9 +379,39 @@ impl Handlers {
         end_read(tx, out).await
     }
 
-    /// The fold runs over every todo story whatever the scope: a decision's blocked stories can sit anywhere below its
-    /// item, and the board read costs the same fixed statements either way. `delivery: Todo` is what makes "blocked"
-    /// mean "cannot start"; `list_stories_in` is the board's own path, so the queue's readiness is the gate's.
+    /// One decision's queue entry, from the same code as the queue (scoped to the decision's item, which holds every
+    /// decision gating that item's stories), on one snapshot.
+    ///
+    /// This reads every unfinished story's readiness (a fixed number of statements, whatever the scope), because the
+    /// entry's held and under-way stories come from it. Do not turn it into a per-story read.
+    pub async fn decision_context(
+        &self,
+        id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<QueueEntry, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = async {
+            let d = self.ports.decisions.get_decision_in(&mut tx, id).await?;
+            let (entries, _) = self
+                .decision_queue_in(&mut tx, &DecisionScope::On(d.on().clone()), now)
+                .await?;
+            entries
+                .into_iter()
+                .find(|e| e.decision.id() == id)
+                .ok_or(HandlerError::NotFound)
+        }
+        .await;
+        end_read(tx, out).await
+    }
+
+    /// The reads run over every unfinished story whatever the scope: a decision's affected stories can sit anywhere
+    /// below its item, and the board read costs the same fixed statements either way. Unfinished (delivery not done,
+    /// kb/ADR-0018 R5) is what makes a todo story "held" and a started one "under way"; `list_stories_in` is the
+    /// board's own path, so the queue's readiness is the gate's. Goals (active on the stories, draft on one more read),
+    /// lineage and urgency are read on the same snapshot, with statement counts independent of how many there are.
     async fn decision_queue_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -403,33 +433,51 @@ impl Handlers {
                     .await?
             }
         };
-        let todo = StoryFilter {
-            delivery: Some(DeliveryState::Todo),
+        let unfinished = StoryFilter {
+            unfinished: true,
             ..Default::default()
         };
-        // The queue keeps only `BlockedStoryDto`s, which carry no urgency, so it reads none.
+        let urg = self.urgency_in(tx, now).await?;
         let stories = self
-            .list_stories_in(tx, &todo, false, None, &Urgency::default())
+            .list_stories_in(tx, &unfinished, false, None, &urg)
             .await?;
+        let keys: Vec<Key> = stories.iter().map(|s| s.story.key.clone()).collect();
+        let draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;
+        // `Key` is not `Ord`, so dedupe with a set; `unnest($1)` does not care about order.
+        let items: Vec<Key> = ds
+            .iter()
+            .map(|d| d.on().clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let lineage = self.ports.reads.decision_lineage_in(tx, &items).await?;
         let affected: Vec<queue::AffectedStory> = stories
             .into_iter()
+            .filter(|s| s.story.delivery != DeliveryState::Done)
             .map(|s| queue::AffectedStory {
+                draft_goals: draft
+                    .get(&s.story.key)
+                    .map(|g| g.iter().map(|(id, o, _)| (*id, o.clone())).collect())
+                    .unwrap_or_default(),
+                active_goals: s
+                    .story
+                    .goals
+                    .iter()
+                    .map(|g| (g.id, g.outcome.clone()))
+                    .collect(),
+                urgent: !s.story.urgent_sources.is_empty(),
                 key: s.story.key,
                 title: s.story.title,
                 kind: s.story.kind,
                 delivery: s.story.delivery,
                 owner: s.story.owner,
-                urgent: false,
-                active_goals: vec![],
-                draft_goals: vec![],
                 reasons: s.readiness.reasons,
             })
             .collect();
-        let lineage = std::collections::HashMap::new();
         let inp = queue::ClassifyInputs {
             stories: &affected,
             lineage: &lineage,
-            first_bucket: None,
+            first_bucket: self.settings.horizon_buckets.first().map(String::as_str),
             repos: &self.settings.repos,
         };
         Ok(queue::order(ds, &inp, now.date_naive()))
