@@ -71,6 +71,26 @@ pub enum Story {
         /// Only stories serving the active sprint's goals: a goal id, `any` (some goal) or `none` (upkeep).
         #[arg(long, value_name = "ID|any|none")]
         goal: Option<String>,
+        /// Only stories whose title, description or external reference contains this text (any case, 1 to 200
+        /// characters); a key-shaped text (`12`, `#12`, `ABC-12`) also finds that key.
+        #[arg(long)]
+        text: Option<String>,
+        /// Only stories of this kind.
+        #[arg(long, value_enum)]
+        kind: Option<KindArg>,
+        /// Only stories in this initiative's epics (a key or external reference).
+        #[arg(long)]
+        initiative: Option<KeyRef>,
+        /// Only stories shown as urgent.
+        #[arg(long)]
+        urgent: bool,
+        /// Only stories that are not done.
+        #[arg(long)]
+        open: bool,
+        /// The order: `rank` (the default) or `relevance` (needs --text: the exact key or external reference first,
+        /// then title matches).
+        #[arg(long, value_enum)]
+        sort: Option<SortArg>,
     },
     /// Stories with a similar title (fuzzy match on the title): open ones, and ones done recently with their resolution. Check before filing.
     Similar {
@@ -189,6 +209,27 @@ pub enum KindArg {
     Bug,
     Chore,
 }
+/// A query value as the server spells it: the serialised name of a unit enum variant.
+fn wire<T: serde::Serialize>(v: T) -> serde_json::Result<String> {
+    Ok(serde_json::to_value(v)?
+        .as_str()
+        .unwrap_or_default()
+        .to_string())
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum SortArg {
+    Rank,
+    Relevance,
+}
+impl From<SortArg> for StorySort {
+    fn from(s: SortArg) -> Self {
+        match s {
+            SortArg::Rank => StorySort::Rank,
+            SortArg::Relevance => StorySort::Relevance,
+        }
+    }
+}
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum StateArg {
     Todo,
@@ -301,6 +342,12 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             ready,
             mine,
             goal,
+            text,
+            kind,
+            initiative,
+            urgent,
+            open,
+            sort,
         } => {
             let owner = if mine {
                 match whoami(c).await? {
@@ -338,6 +385,24 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             }
             if let Some(g) = goal {
                 q.push(("goal", g));
+            }
+            if let Some(t) = text {
+                q.push(("q", t));
+            }
+            if let Some(k) = kind {
+                q.push(("kind", wire(Kind::from(k))?));
+            }
+            if let Some(i) = initiative {
+                q.push(("initiative", i.to_string()));
+            }
+            if urgent {
+                q.push(("urgent", "true".into()));
+            }
+            if open {
+                q.push(("done", wire(DoneFilter::None)?));
+            }
+            if let Some(s) = sort {
+                q.push(("sort", wire(StorySort::from(s))?));
             }
             finish(
                 c.get_query::<Vec<StoryWithReadiness>>("/stories", &q)
