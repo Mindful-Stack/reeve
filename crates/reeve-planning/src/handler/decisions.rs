@@ -409,7 +409,7 @@ impl Handlers {
         };
         // The queue keeps only `BlockedStoryDto`s, which carry no urgency, so it reads none.
         let stories = self
-            .list_stories_in(tx, &todo, false, None, &Urgency::default())
+            .list_stories_in(tx, &todo, false, DoneWindow::All, &Urgency::default())
             .await?;
         let todo: Vec<queue::TodoStory> = stories
             .into_iter()

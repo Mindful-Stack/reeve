@@ -39,10 +39,44 @@ impl StoryRepo for PgPlanningRepo {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         f: &StoryFilter,
-        done_since: Option<DateTime<Utc>>,
+        done: DoneWindow,
     ) -> Result<Vec<Story>, RepoError> {
-        let rows = sqlx::query(&format!("SELECT {STORY_COLS} FROM stories WHERE ($1::text IS NULL OR epic_key = $1) AND ($2::text IS NULL OR owner = $2) AND ($3::text IS NULL OR delivery = $3) AND (NOT $4 OR (epic_key IS NULL AND delivery <> 'done')) AND ($5::text IS NULL OR $5 = ANY(labels)) AND ($6::timestamptz IS NULL OR delivery <> 'done' OR done_at >= $6) ORDER BY CASE delivery WHEN 'todo' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'testing' THEN 3 ELSE 4 END, rank, length(key), key"))
-            .bind(f.epic.as_ref().map(|k| k.to_string())).bind(&f.owner).bind(f.delivery.map(delivery_str)).bind(f.untriaged).bind(&f.label).bind(done_since).fetch_all(&mut **tx).await?;
+        let (done_since, no_done) = match done {
+            DoneWindow::All => (None, false),
+            DoneWindow::Since(t) => (Some(t), false),
+            DoneWindow::None => (None, true),
+        };
+        let text = f.text.as_ref();
+        let relevance = if f.sort == StorySort::Relevance {
+            "CASE WHEN key = $9 THEN 0 WHEN lower(external_ref) = lower($10) THEN 1 \
+             WHEN title ILIKE $7 ESCAPE '\\' THEN 2 ELSE 3 END, "
+        } else {
+            ""
+        };
+        let rows = sqlx::query(&format!(
+            "SELECT {STORY_COLS} FROM stories WHERE ($1::text IS NULL OR epic_key = $1) AND ($2::text IS NULL OR owner = $2) \
+             AND ($3::text IS NULL OR delivery = $3) AND (NOT $4 OR (epic_key IS NULL AND delivery <> 'done')) \
+             AND ($5::text IS NULL OR $5 = ANY(labels)) AND ($6::timestamptz IS NULL OR delivery <> 'done' OR done_at >= $6) \
+             AND (NOT $12 OR delivery <> 'done') \
+             AND ($7::text IS NULL OR title ILIKE $7 ESCAPE '\\' OR description ILIKE $7 ESCAPE '\\' \
+               OR external_ref ILIKE $7 ESCAPE '\\' OR key = $9) \
+             AND ($8::text IS NULL OR kind = $8) AND ($11::text[] IS NULL OR epic_key = ANY($11)) \
+             ORDER BY {relevance}CASE delivery WHEN 'todo' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'testing' THEN 3 ELSE 4 END, rank, length(key), key"
+        ))
+        .bind(f.epic.as_ref().map(|k| k.to_string()))
+        .bind(&f.owner)
+        .bind(f.delivery.map(delivery_str))
+        .bind(f.untriaged)
+        .bind(&f.label)
+        .bind(done_since)
+        .bind(text.map(|t| like_pattern(&t.text)))
+        .bind(f.kind.map(kind_str))
+        .bind(text.and_then(|t| t.key.as_ref()).map(|k| k.to_string()))
+        .bind(text.map(|t| t.text.as_str()))
+        .bind(f.epics.as_ref().map(|v| v.iter().map(|k| k.to_string()).collect::<Vec<_>>()))
+        .bind(no_done)
+        .fetch_all(&mut **tx)
+        .await?;
         Ok(rows.iter().map(story_from).collect::<Result<Vec<_>, _>>()?)
     }
     async fn similar_stories(

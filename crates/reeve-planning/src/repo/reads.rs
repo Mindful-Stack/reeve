@@ -174,14 +174,7 @@ impl PlanningReads for PgPlanningRepo {
         exact: Option<&Key>,
         limit: i64,
     ) -> Result<Vec<SearchRow>, RepoError> {
-        let mut pattern = String::from("%");
-        for ch in text.chars() {
-            if matches!(ch, '%' | '_' | '\\') {
-                pattern.push('\\');
-            }
-            pattern.push(ch);
-        }
-        pattern.push('%');
+        let pattern = like_pattern(text);
         let rows = sqlx::query(
             "SELECT * FROM ( \
                SELECT 'initiative' AS t, key, NULL::text AS kind, title, brief AS text, external_ref, created_at FROM initiatives \

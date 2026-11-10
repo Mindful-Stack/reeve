@@ -269,11 +269,12 @@ impl Handlers {
         done: DoneFilter,
         now: DateTime<Utc>,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
-        let done_since = match done {
-            DoneFilter::All => None,
+        let done_window = match done {
+            DoneFilter::All => DoneWindow::All,
             // An absurd window reaches before the oldest representable date: list everything rather than panic.
             DoneFilter::Recent => chrono::Duration::try_days(self.settings.done_window_days.into())
-                .and_then(|window| now.checked_sub_signed(window)),
+                .and_then(|window| now.checked_sub_signed(window))
+                .map_or(DoneWindow::All, DoneWindow::Since),
         };
         let mut f = f.clone();
         f.owner = f.owner.map(|o| reeve_protocol::normalise_email(&o));
@@ -283,7 +284,7 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            self.list_stories_in(&mut tx, &f, ready_only, done_since, &urg)
+            self.list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
                 .await
         }
         .await;
@@ -295,10 +296,10 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         f: &StoryFilter,
         ready_only: bool,
-        done_since: Option<DateTime<Utc>>,
+        done: DoneWindow,
         urg: &Urgency,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
-        let stories = self.ports.stories.list_stories(tx, f, done_since).await?;
+        let stories = self.ports.stories.list_stories(tx, f, done).await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
         let mut inputs = self.ports.reads.readiness_inputs(tx, &keys).await?;
         for i in inputs.values_mut() {

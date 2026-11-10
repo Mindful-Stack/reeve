@@ -11,6 +11,17 @@ pub enum DoneFilter {
     All,
 }
 
+/// The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the
+/// story whose key or external reference equals the text first, then title matches, then the rest; within each,
+/// the `rank` order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StorySort {
+    #[default]
+    Rank,
+    Relevance,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
