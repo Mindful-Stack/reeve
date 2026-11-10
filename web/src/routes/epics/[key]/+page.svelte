@@ -70,7 +70,8 @@
 	let briefBase: EditorBase = { version: 0, text: '' };
 	let showClosed = $state(false);
 	/** Whether the decisions that block nothing (accepted, and closed ones when shown) are unfolded. */
-	let showAccepted = $state(false);
+	/** The user's choice for the accepted fold; null follows the default (open when nothing blocks). */
+	let accepted = $state<boolean | null>(null);
 	/** The open "New story" dialog's opening, or null: a create's answer closes only the dialog it was sent from. */
 	let creatingStory = $state<number | null>(null);
 	let storyOpenings = 0;
@@ -109,6 +110,7 @@
 	const blockingDecisions = $derived(blocking(decisions));
 	const blockingIds = $derived(new Set(blockingDecisions.map((d) => d.id)));
 	const acceptedCount = $derived(decisions.filter((d) => !d.closed && !blockingIds.has(d.id)).length);
+	const showAccepted = $derived(accepted ?? (blockingDecisions.length === 0 && acceptedCount > 0));
 	const closedCount = $derived(decisions.filter((d) => d.closed).length);
 	const shownDecisions = $derived(decisions.filter((d) => showClosed || (showAccepted && acceptedCount === 0) || !d.closed));
 	// Counted under the key the server returned: the URL may name the epic by an alias (an external reference).
@@ -237,7 +239,7 @@
 		initiativeDecisions = [];
 		epic = null;
 		showClosed = false;
-		showAccepted = false;
+		accepted = null;
 		creatingStory = null;
 		addingDecision = null;
 		decisionError = null;
@@ -458,7 +460,7 @@
 
 	/** Unfolds the decisions that block nothing; with no accepted ones, the fold is the closed ones alone (shownDecisions). */
 	function toggleRest() {
-		showAccepted = !showAccepted;
+		accepted = !showAccepted;
 	}
 
 	function toggleStory(k: string) {
@@ -654,7 +656,7 @@
 
 		<section id="decisions" aria-labelledby="decisions-h">
 			<div class="section-head">
-				<h2 id="decisions-h">Decisions <span class="count">{decisions.length - closedCount}</span></h2>
+				<h2 id="decisions-h">Decisions{#if blockingDecisions.length}<span class="count">{` · ${blockingDecisions.length} blocking`}</span>{/if}{#if acceptedCount}<span class="count">{` · ${acceptedCount} accepted`}</span>{/if}</h2>
 				<button type="button" onclick={() => (addingDecision = ++decisionOpenings)}>+ Add decision</button>
 			</div>
 			{#key key}
