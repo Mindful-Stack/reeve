@@ -3,7 +3,9 @@
 use crate::client::{Client, Outcome};
 use crate::tui::Options;
 use crate::tui::effect::{Completion, Ended, Failure, Reply, Request};
-use reeve_protocol::{EpicDto, ErrorCode, InstanceConfigDto, Me, StoryDto, StoryWithReadiness};
+use reeve_protocol::{
+    EpicDto, ErrorCode, InstanceConfigDto, MarkUrgent, Me, StoryDto, StoryWithReadiness,
+};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -97,6 +99,22 @@ impl Http {
                     Reply::Story,
                 )
             }
+            Request::MarkUrgent { key, reason } => {
+                let body =
+                    serde_json::to_value(MarkUrgent { reason }).expect("request bodies serialise");
+                conv(
+                    self.api
+                        .post::<StoryDto>(&format!("/stories/{key}/urgent"), body)
+                        .await,
+                    Reply::Story,
+                )
+            }
+            Request::ClearUrgent { key } => conv(
+                self.api
+                    .delete::<StoryDto>(&format!("/stories/{key}/urgent"))
+                    .await,
+                Reply::Story,
+            ),
         }
     }
 

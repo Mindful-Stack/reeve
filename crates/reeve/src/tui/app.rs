@@ -1,12 +1,13 @@
 //! The core (kb/ADR-0011 R2): composition, input mode and key routing, reply classification, the one-shot actions
-//! (take, copy, open), identity, and routing notes between owners. Free of I/O, like every update.
+//! (take, clearing an urgent mark, copy, open), identity, and routing notes between owners. Free of I/O, like every
+//! update.
 use crate::tui::effect::{Completion, Effect, Failure, Reply, Request, Route, Seq, Stamp};
 use crate::tui::generation::Gen;
 use crate::tui::keys::{self, Action};
 use crate::tui::note::{Note, Out, WriteOutcome};
 use crate::tui::{board, drawer, live, moves, set_epic, words};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use reeve_protocol::{EditItem, Key, Me, TokenKind, normalise_email};
+use reeve_protocol::{DeliveryState, EditItem, Key, Me, TokenKind, normalise_email};
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -17,6 +18,10 @@ pub const STATUS_FOR: Duration = Duration::from_secs(5);
 /// From this many terminal columns the board shows five columns.
 pub const WIDE: u16 = 120;
 pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
+/// Why `u` does nothing for a done story: a mark on it would make nothing urgent (kb/ADR-0017 R3).
+const NOT_WHEN_DONE: &str = "done stories cannot be urgent";
+/// Why `U` does nothing for a story without a mark of its own (one urgent through its lineage included).
+const NO_MARK: &str = "no urgent mark";
 
 #[derive(Debug)]
 pub struct Session {
@@ -135,6 +140,11 @@ pub enum Msg {
         stamp: Stamp,
         result: Completion,
     },
+    ClearUrgentDone {
+        key: Key,
+        stamp: Stamp,
+        result: Completion,
+    },
     /// From the runtime: an open or copy failed.
     Status(String),
     Tick,
@@ -157,6 +167,9 @@ impl fmt::Debug for Msg {
             Msg::MeLoaded(c) => write!(f, "MeLoaded({c:?})"),
             Msg::RetryMe(g) => write!(f, "RetryMe({g})"),
             Msg::TakeDone { key, result, .. } => write!(f, "TakeDone({key}, {result:?})"),
+            Msg::ClearUrgentDone { key, result, .. } => {
+                write!(f, "ClearUrgentDone({key}, {result:?})")
+            }
             Msg::Status(s) => write!(f, "Status({s})"),
             Msg::Tick => write!(f, "Tick"),
         }
@@ -526,6 +539,30 @@ impl State {
                     now,
                 )
             }
+            Msg::ClearUrgentDone { key, stamp, result } => {
+                let outcome = WriteOutcome::of(&result);
+                // Failures were worded by `classify`; it does not word a refusal, so this does.
+                match &result {
+                    Completion::Ok(_) => self.set_status(format!("{key} urgent mark cleared"), now),
+                    Completion::Refused { reasons, .. } => {
+                        let shorts = reasons
+                            .iter()
+                            .map(words::short)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        self.set_status(format!("{key}: {shorts}"), now);
+                    }
+                    Completion::Failed(_) => {}
+                }
+                self.notes(
+                    vec![Note::WriteFinished {
+                        key,
+                        stamp,
+                        outcome,
+                    }],
+                    now,
+                )
+            }
         }
     }
 
@@ -620,6 +657,19 @@ impl State {
             Action::MoveTo => self.moves_msg(moves::Msg::Pick, now),
             Action::SetEpic => self.set_epic_msg(set_epic::Msg::Open, now),
             Action::Take => self.take(now),
+            Action::ClearUrgent => self.clear_urgent(now),
+            // The guards only: the reason prompt that sends the mark comes with the urgent slice.
+            Action::MarkUrgent => {
+                match self.board.writable(self.session.read_only()) {
+                    Err(why) => self.set_status(why, now),
+                    Ok(e) if e.item.story.delivery == DeliveryState::Done => {
+                        let k = e.item.story.key.clone();
+                        self.set_status(format!("{k}: {NOT_WHEN_DONE}"), now);
+                    }
+                    Ok(_) => {}
+                }
+                Vec::new()
+            }
             Action::Yank => match self.selected_key() {
                 Some(k) => {
                     self.set_status(format!("copied {k}"), now);
@@ -707,6 +757,8 @@ impl State {
                     | Action::MoveTo
                     | Action::Take
                     | Action::SetEpic
+                    | Action::MarkUrgent
+                    | Action::ClearUrgent
                         if writable.is_some() =>
                     {
                         writable.clone()
@@ -718,6 +770,10 @@ impl State {
                         Some(format!("nothing after {}", words::state(at)))
                     }
                     Action::Take if mine => Some("already yours".into()),
+                    Action::MarkUrgent if story.delivery == DeliveryState::Done => {
+                        Some(NOT_WHEN_DONE.into())
+                    }
+                    Action::ClearUrgent if story.urgent_mark.is_none() => Some(NO_MARK.into()),
                     Action::OpenPr if story.prs.is_empty() => Some("no pull request".into()),
                     _ => None,
                 };
@@ -801,6 +857,32 @@ impl State {
         fx.push(Effect::http(
             Request::Edit { key, body },
             move |stamp, result| Msg::TakeDone {
+                key: k,
+                stamp,
+                result,
+            },
+        ));
+        fx
+    }
+
+    /// Clears the selected story's own mark. No version: marks do not take one (kb/ADR-0017 R5).
+    fn clear_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
+        let (key, marked) = match self.board.writable(self.session.read_only()) {
+            Ok(e) => (e.item.story.key.clone(), e.item.story.urgent_mark.is_some()),
+            Err(why) => {
+                self.set_status(why, now);
+                return Vec::new();
+            }
+        };
+        if !marked {
+            self.set_status(format!("{key}: {NO_MARK}"), now);
+            return Vec::new();
+        }
+        let mut fx = self.notes(vec![Note::WriteStarted(key.clone())], now);
+        let k = key.clone();
+        fx.push(Effect::http(
+            Request::ClearUrgent { key },
+            move |stamp, result| Msg::ClearUrgentDone {
                 key: k,
                 stamp,
                 result,

@@ -35,13 +35,29 @@ pub enum Request {
         key: Key,
         body: EditItem,
     },
+    /// `POST /stories/{key}/urgent`: mark the story urgent, or renew its mark. No version (kb/ADR-0017 R5).
+    #[expect(
+        dead_code,
+        reason = "the urgent slice's reason prompt sends it; until then nothing may send a mark"
+    )]
+    MarkUrgent {
+        key: Key,
+        reason: Option<String>,
+    },
+    /// `DELETE /stories/{key}/urgent`: clear the story's own mark. No version (kb/ADR-0017 R5).
+    ClearUrgent {
+        key: Key,
+    },
 }
 
 impl Request {
     /// The story a write is for; `None` for a read. The core words a write's lost answer and conflict by it.
     pub fn write_key(&self) -> Option<&Key> {
         match self {
-            Request::Move { key, .. } | Request::Edit { key, .. } => Some(key),
+            Request::Move { key, .. }
+            | Request::Edit { key, .. }
+            | Request::MarkUrgent { key, .. }
+            | Request::ClearUrgent { key } => Some(key),
             Request::Me | Request::Config | Request::Stories | Request::Epics => None,
         }
     }

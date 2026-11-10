@@ -1017,3 +1017,228 @@ fn another_envelope_error_on_an_identity_retry_is_shown_and_retried() {
         assert!(sim.has_pending(|r| matches!(r, Request::Me)), "{failure:?}");
     }
 }
+
+fn is_clear(r: &Request) -> bool {
+    matches!(r, Request::ClearUrgent { key: k } if *k == key("ABC-1"))
+}
+
+/// ABC-1, mine (so the default board shows it), urgent by its own mark.
+fn my_urgent_story(
+    state: reeve_protocol::DeliveryState,
+    version: i64,
+) -> reeve_protocol::StoryWithReadiness {
+    urgent(owned(story("ABC-1", state, version), "dan@example.com"))
+}
+
+#[test]
+fn clear_urgent_sends_delete_and_locks_without_changing_the_story() {
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![my_urgent_story(Todo, 3)]);
+    sim.char('U');
+    assert_eq!(
+        sim.pending.iter().filter(|(_, r, _)| is_clear(r)).count(),
+        1,
+        "one clear for ABC-1"
+    );
+    assert!(sim.s.board.locked(&key("ABC-1")));
+    let e = sim.s.board.get(&key("ABC-1")).unwrap();
+    assert_eq!(
+        e.item.story.urgent_mark,
+        Some(own_mark()),
+        "no optimistic write"
+    );
+    assert_eq!(e.item.story.urgent_sources.len(), 1);
+}
+
+#[test]
+fn every_clear_outcome_releases_the_lock() {
+    let mut cleared = owned(story("ABC-1", Todo, 3), "dan@example.com").story;
+    cleared.urgent_mark = None;
+    let cases: [(Completion, Option<&str>, bool); 4] = [
+        (
+            Completion::Ok(Reply::Story(cleared.clone())),
+            Some("ABC-1 urgent mark cleared"),
+            true,
+        ),
+        (
+            refused(vec![Reason::InteractiveOnly]),
+            Some("ABC-1: interactive only"),
+            false,
+        ),
+        (
+            Completion::Failed(Failure::Server("502 bad gateway".into())),
+            Some("502 bad gateway"),
+            true,
+        ),
+        (
+            Completion::Failed(Failure::Transport("timed out".into())),
+            Some("ABC-1: no answer — refreshing"),
+            true,
+        ),
+    ];
+    for (result, status, refetch) in cases {
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![my_urgent_story(Todo, 3)]);
+        sim.char('U');
+        assert!(sim.s.board.locked(&key("ABC-1")));
+        sim.reply(is_clear, result.clone());
+        assert!(!sim.s.board.locked(&key("ABC-1")), "{result:?}");
+        if let Some(status) = status {
+            assert_eq!(sim.status(), status, "{result:?}");
+        }
+        assert_eq!(
+            sim.pending.iter().filter(|(_, r, _)| is_stories(r)).count(),
+            usize::from(refetch),
+            "{result:?}"
+        );
+        assert!(!sim.has_pending(is_clear), "never sent again: {result:?}");
+        if let Completion::Ok(_) = result {
+            assert_eq!(
+                sim.s
+                    .board
+                    .get(&key("ABC-1"))
+                    .unwrap()
+                    .item
+                    .story
+                    .urgent_mark,
+                None,
+                "the reply of the same version is applied"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_read_started_during_the_clear_is_dropped() {
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![my_urgent_story(Todo, 3)]);
+    sim.char('U'); // the clear is sent
+    sim.char('r'); // a load is sent after the clear, before its completion
+    let mut cleared = owned(story("ABC-1", Todo, 3), "dan@example.com").story;
+    cleared.urgent_mark = None;
+    sim.reply(is_clear, Completion::Ok(Reply::Story(cleared)));
+    // That load's snapshot predates the clear: same version, mark still set, plus a story not on the board.
+    sim.reply(
+        is_stories,
+        stories(vec![
+            my_urgent_story(Todo, 3),
+            owned(story("ABC-9", Todo, 1), "dan@example.com"),
+        ]),
+    );
+    assert_eq!(
+        sim.s
+            .board
+            .get(&key("ABC-1"))
+            .unwrap()
+            .item
+            .story
+            .urgent_mark,
+        None,
+        "the post-write state is kept"
+    );
+    assert!(
+        sim.s.board.get(&key("ABC-9")).is_none(),
+        "the stale snapshot was applied"
+    );
+    assert!(
+        sim.has_pending(is_stories),
+        "a fresh load replaces the dropped one"
+    );
+}
+
+#[test]
+fn urgent_shortcuts_respect_the_disabled_reasons() {
+    let is_urgent_write =
+        |r: &Request| matches!(r, Request::MarkUrgent { .. } | Request::ClearUrgent { .. });
+
+    let mut sim = Sim::loaded(TokenKind::Automation, vec![my_urgent_story(Todo, 1)]);
+    for c in ['u', 'U'] {
+        sim.char(c);
+        assert_eq!(sim.status(), "read-only: automation token", "{c}");
+    }
+    assert!(!sim.has_pending(is_urgent_write));
+
+    let done = owned(story("ABC-1", Done, 1), "dan@example.com");
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![done]);
+    sim.char('u');
+    assert_eq!(sim.status(), "ABC-1: done stories cannot be urgent");
+    assert!(!sim.has_pending(is_urgent_write));
+
+    let unmarked = owned(story("ABC-1", Todo, 1), "dan@example.com");
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![unmarked]);
+    sim.char('U');
+    assert_eq!(sim.status(), "ABC-1: no urgent mark");
+    assert!(!sim.has_pending(is_urgent_write));
+    assert!(!sim.s.board.locked(&key("ABC-1")));
+
+    // Urgent only through its epic: no mark of its own to clear.
+    let via_epic = urgent_via_epic(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![via_epic]);
+    sim.char('U');
+    assert_eq!(sim.status(), "ABC-1: no urgent mark");
+    assert!(!sim.has_pending(is_urgent_write));
+}
+
+#[test]
+fn the_menu_words_the_urgent_actions_like_their_shortcuts() {
+    use crate::tui::keys::Action;
+    let why = |sim: &Sim, a: Action| {
+        sim.s
+            .menu_items()
+            .into_iter()
+            .find(|i| i.action == a)
+            .expect("listed")
+            .disabled
+    };
+    let sim = Sim::loaded(TokenKind::Automation, vec![my_urgent_story(Todo, 1)]);
+    for a in [Action::MarkUrgent, Action::ClearUrgent] {
+        assert_eq!(why(&sim, a).as_deref(), Some("read-only: automation token"));
+    }
+    let sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![done_marked(owned(
+            story("ABC-1", Todo, 1),
+            "dan@example.com",
+        ))],
+    );
+    assert_eq!(
+        why(&sim, Action::MarkUrgent).as_deref(),
+        Some("done stories cannot be urgent")
+    );
+    assert_eq!(
+        why(&sim, Action::ClearUrgent),
+        None,
+        "a done story's mark can go"
+    );
+    let sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![owned(story("ABC-1", Todo, 1), "dan@example.com")],
+    );
+    assert_eq!(why(&sim, Action::MarkUrgent), None);
+    assert_eq!(
+        why(&sim, Action::ClearUrgent).as_deref(),
+        Some("no urgent mark")
+    );
+
+    // The disabled row run from the menu gives the shortcut's wording and sends nothing.
+    let mut sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![owned(story("ABC-1", Todo, 1), "dan@example.com")],
+    );
+    sim.char(' ');
+    sim.char('U');
+    assert_eq!(sim.status(), "ABC-1: no urgent mark");
+    assert!(!sim.has_pending(|r| matches!(r, Request::ClearUrgent { .. })));
+}
+
+#[test]
+fn the_menu_lists_mark_and_clear_after_set_epic() {
+    use crate::tui::keys::Action;
+    let sim = Sim::loaded(TokenKind::Interactive, vec![my_urgent_story(Todo, 1)]);
+    let actions: Vec<Action> = sim.s.menu_items().iter().map(|i| i.action).collect();
+    let at = actions
+        .iter()
+        .position(|a| *a == Action::SetEpic)
+        .expect("set epic listed");
+    assert_eq!(
+        actions[at + 1..at + 3],
+        [Action::MarkUrgent, Action::ClearUrgent]
+    );
+}
