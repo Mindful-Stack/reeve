@@ -1278,6 +1278,18 @@ async fn flow() {
     );
     let zebra_story = filed("zs", &["--title", "Zebra stripes"]);
     let zebra_done = filed("zd", &["--title", "Zebra herd"]);
+    let started_ref = filed("zp", &["--title", "ZOO-7 started"]);
+    ok(reeve(&human)
+        .args([
+            "story",
+            "mv",
+            &started_ref,
+            "in-progress",
+            "--override",
+            "demo",
+        ])
+        .output()
+        .unwrap());
     let mentions_ref = filed("zt", &["--title", "About ZOO-7"]);
     let exact_ref = filed("zx", &["--title", "Imported", "--external-ref", "ZOO-7"]);
     ok(reeve(&human)
@@ -1333,13 +1345,13 @@ async fn flow() {
     );
     assert_eq!(
         ls(&["--text", "zoo-7"]),
-        vec![mentions_ref.clone(), exact_ref.clone()],
+        vec![mentions_ref.clone(), exact_ref.clone(), started_ref.clone()],
         "rank order by default"
     );
     assert_eq!(
         ls(&["--text", "zoo-7", "--sort", "relevance"]),
-        vec![exact_ref, mentions_ref],
-        "the exact reference first"
+        vec![exact_ref, mentions_ref, started_ref],
+        "the exact reference first, then the title matches in state order"
     );
     let no_text = reeve(&bot)
         .args(["story", "ls", "--sort", "relevance"])

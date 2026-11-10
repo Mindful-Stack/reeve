@@ -84,7 +84,8 @@ pub enum Story {
         /// Only stories shown as urgent.
         #[arg(long)]
         urgent: bool,
-        /// Only stories that are not done.
+        /// Only stories that are not done; combines with --delivery (both must hold, so with --delivery done it
+        /// lists nothing).
         #[arg(long)]
         open: bool,
         /// The order: `rank` (the default) or `relevance` (needs --text: the exact key or external reference first,
@@ -209,12 +210,13 @@ pub enum KindArg {
     Bug,
     Chore,
 }
-/// A query value as the server spells it: the serialised name of a unit enum variant.
-fn wire<T: serde::Serialize>(v: T) -> serde_json::Result<String> {
-    Ok(serde_json::to_value(v)?
-        .as_str()
-        .unwrap_or_default()
-        .to_string())
+/// A query value as the server spells it: the serialised name of a unit enum variant; anything that does not serialise
+/// to a string is an error, never an empty value.
+fn wire<T: serde::Serialize>(v: T) -> anyhow::Result<String> {
+    match serde_json::to_value(v)? {
+        serde_json::Value::String(s) => Ok(s),
+        other => anyhow::bail!("{other} is not a query value"),
+    }
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -366,13 +368,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                 q.push(("owner", o));
             }
             if let Some(d) = delivery {
-                q.push((
-                    "delivery",
-                    serde_json::to_value(DeliveryState::from(d))?
-                        .as_str()
-                        .unwrap()
-                        .to_string(),
-                ));
+                q.push(("delivery", wire(DeliveryState::from(d))?));
             }
             if let Some(l) = label {
                 q.push(("label", l));
@@ -597,6 +593,16 @@ fn render_similar(hits: &[SimilarStory]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A query value is the variant's wire name; a value that does not serialise to a string is refused, not sent
+    /// empty.
+    #[test]
+    fn wire_spells_variants_and_refuses_the_rest() {
+        assert_eq!(wire(DeliveryState::InProgress).unwrap(), "in_progress");
+        assert_eq!(wire(StorySort::Relevance).unwrap(), "relevance");
+        assert!(wire(7u8).is_err());
+        assert!(wire(Option::<Kind>::None).is_err());
+    }
 
     fn hit(key: &str, delivery: DeliveryState, resolution: Option<Resolution>) -> SimilarStory {
         SimilarStory {
