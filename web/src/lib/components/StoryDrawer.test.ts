@@ -78,8 +78,14 @@ afterEach(() => {
 });
 
 describe('StoryDrawer Report action', () => {
+	/** Waits until the drawer's load has sent its last request (the activity read is chained on the story read), so a
+	 *  request from this test never lands in the next test's `net.requested` after afterEach cleared it. */
+	const settled = () =>
+		vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
+
 	it('has a Report button that opens the dialog with no epic chip', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		await settled();
 		const b = [...document.body.querySelectorAll('header.top button')].find((x) => x.textContent === 'Report') as HTMLButtonElement;
 		expect(b).toBeDefined();
 		b.click();
@@ -91,6 +97,7 @@ describe('StoryDrawer Report action', () => {
 
 	it('says Resume report while a draft exists', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		await settled();
 		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
 		expect(btn().textContent).toBe('Report');
 		btn().click();
