@@ -659,9 +659,10 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(hit).toContainText(title); // "Already reported?" found it
 	await hit.click();
 	await expect(dialog).toBeHidden();
-	await expect(page.getByRole('complementary')).toContainText(title); // the drawer is usable, not inert
-	await page.getByRole('button', { name: `Close story ${existing.key}` }).click(); // the drawer covers the header's right edge
-	await page.getByRole('button', { name: 'Resume report' }).click();
+	const drawer = page.getByRole('complementary');
+	await expect(drawer.getByRole('heading', { name: new RegExp(existing.key) })).toBeVisible(); // loaded, not just mounted
+	await expect(drawer).toContainText(title); // the drawer is usable, not inert
+	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
 	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
 	await dialog.getByLabel("Something's broken").check();
 	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
@@ -685,7 +686,11 @@ for (const [width, height, phone] of [[320, 640, true], [1280, 800, false]] as c
 		const searchWidth = (await search.boundingBox())!.width;
 		expect(m.scroll).toBeLessThanOrEqual(m.client);
 		expect(searchWidth).toBeGreaterThanOrEqual(80);
-		if (!phone) await expect(report).toContainText('Report');
+		const word = report.locator('.word');
+		// Below 720px the word is clipped to 1x1 (still "visible" to Playwright), so measure it.
+		const wordWidth = (await word.boundingBox())?.width ?? 0;
+		if (phone) expect(wordWidth).toBeLessThanOrEqual(1);
+		else expect(wordWidth).toBeGreaterThan(20);
 		await report.click();
 		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
 	});
