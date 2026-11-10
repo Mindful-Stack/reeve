@@ -517,7 +517,7 @@ async fn flow() {
     let shown = show(&human);
     let line = shown.lines().nth(1).unwrap_or_default();
     assert!(
-        line.starts_with(&format!("urgent · via epic {epic_key}")),
+        line.starts_with(&format!("  urgent · via epic {epic_key}")),
         "{shown}"
     );
     let room = ok(reeve(&human).args(["war-room", "ls"]).output().unwrap());
@@ -535,10 +535,13 @@ async fn flow() {
     );
     assert_eq!(
         String::from_utf8_lossy(&emptied.stdout).trim(),
-        "The war room is empty."
+        "Cleared 1 mark.\nThe war room is empty."
     );
     let shown = show(&human);
-    assert!(!shown.lines().any(|l| l.starts_with("urgent")), "{shown}");
+    assert!(
+        !shown.lines().any(|l| l.trim_start().starts_with("urgent")),
+        "{shown}"
+    );
     assert_eq!(
         count("urgent_marked", Some(epic_key.clone())).await,
         before_marked + 1

@@ -11,14 +11,14 @@ pub enum WarRoom {
     Ls,
     /// Clear every listed mark; rehearses unless --yes (interactive tokens only).
     Clear {
-        /// Clear the listed marks; without it the run only rehearses.
+        /// Clear the listed marks; without it the run only rehearses (with --json, a rehearsal prints the war room as listed).
         #[arg(long)]
         yes: bool,
     },
     /// Re-mark every listed expired mark for another cycle (done stories left out); rehearses unless --yes (interactive tokens only).
     #[command(name = "re-mark", alias = "renew")]
     ReMark {
-        /// Re-mark the listed marks; without it the run only rehearses.
+        /// Re-mark the listed marks; without it the run only rehearses (with --json, a rehearsal prints the war room as listed).
         #[arg(long)]
         yes: bool,
     },
@@ -74,6 +74,14 @@ fn rehearsal_line(verb: Verb, n: usize, left: usize) -> String {
     }
 }
 
+/// The first line after a successful post: what was done, counted as posted.
+fn done_line(verb: Verb, n: usize) -> String {
+    match verb {
+        Verb::Clear => format!("Cleared {}.", marks(n)),
+        Verb::ReMark => format!("Re-marked {} for another cycle.", marks(n)),
+    }
+}
+
 pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
     let now = chrono::Utc::now();
     let listed = c.get::<Vec<WarRoomEntryDto>>("/war-room").await?;
@@ -110,8 +118,9 @@ pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
     let answer = c
         .post::<Vec<WarRoomEntryDto>>(path, serde_json::to_value(WarRoomItems { items })?)
         .await?;
+    let done = done_line(verb, selected.len());
     Ok(finish(answer, json, |rows| {
-        render::war_room_rows(rows, now)
+        format!("{done}\n{}", render::war_room_rows(rows, now))
     }))
 }
 
@@ -191,6 +200,16 @@ mod tests {
         assert_eq!(
             rehearsal_line(Verb::ReMark, 2, 2),
             "Would re-mark 2 marks for another cycle (2 on done stories left out); run again with --yes."
+        );
+    }
+
+    #[test]
+    fn done_lines_count_what_was_posted() {
+        assert_eq!(done_line(Verb::Clear, 1), "Cleared 1 mark.");
+        assert_eq!(done_line(Verb::Clear, 3), "Cleared 3 marks.");
+        assert_eq!(
+            done_line(Verb::ReMark, 2),
+            "Re-marked 2 marks for another cycle."
         );
     }
 

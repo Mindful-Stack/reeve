@@ -76,12 +76,17 @@ pub fn reasons(rs: &[Reason]) -> String {
         .join("\n")
 }
 
-/// Inserts `lines` right after the first line of `text`, keeping the rest; appends them when `text` is one line.
+/// Inserts `lines`, indented by two spaces like the detail lines, right after the first line of `text`, keeping the
+/// rest; appends them when `text` is one line.
 pub fn with_urgency(text: String, lines: Vec<String>) -> String {
     if lines.is_empty() {
         return text;
     }
-    let block = lines.join("\n");
+    let block = lines
+        .iter()
+        .map(|l| format!("  {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     match text.split_once('\n') {
         Some((first, rest)) => format!("{first}\n{block}\n{rest}"),
         None => format!("{text}\n{block}"),
@@ -1202,7 +1207,7 @@ mod tests {
         };
         let plain = story(&s);
         let mut want: Vec<&str> = plain.lines().collect();
-        want.insert(1, "urgent · marked by dana, 2 d ago · expires in 10 d");
+        want.insert(1, "  urgent · marked by dana, 2 d ago · expires in 10 d");
         assert_eq!(story_show(&s, now()), want.join("\n"));
         assert!(plain.contains("\n  [ ] It works"), "{plain}");
     }
@@ -1221,7 +1226,7 @@ mod tests {
         assert_eq!(
             out,
             format!(
-                "{} !\nurgent · marked by dana, 2 d ago · expires in 10 d",
+                "{} !\n  urgent · marked by dana, 2 d ago · expires in 10 d",
                 mark(Level::Story, &key)
             )
         );
@@ -1235,7 +1240,7 @@ mod tests {
         let out = urgent_answer(Level::Story, &key, Some(&m), &[], now());
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], mark(Level::Story, &key), "{out}");
-        assert_eq!(lines[1], "urgent mark · done · expires in 10 d", "{out}");
+        assert_eq!(lines[1], "  urgent mark · done · expires in 10 d", "{out}");
         assert_eq!(lines.len(), 2, "{out}");
     }
 
@@ -1293,10 +1298,10 @@ mod tests {
 
     #[test]
     fn with_urgency_appends_when_the_text_is_one_line_and_changes_nothing_without_lines() {
-        assert_eq!(with_urgency("a".into(), vec!["u".into()]), "a\nu");
+        assert_eq!(with_urgency("a".into(), vec!["u".into()]), "a\n  u");
         assert_eq!(
             with_urgency("a\nb".into(), vec!["u".into(), "v".into()]),
-            "a\nu\nv\nb"
+            "a\n  u\n  v\nb"
         );
         assert_eq!(with_urgency("a\nb".into(), vec![]), "a\nb");
     }
@@ -1309,7 +1314,7 @@ mod tests {
         };
         assert_eq!(
             initiative_show(&i, now()),
-            format!("{}\nurgent · via epic ABC-40", initiative(&i))
+            format!("{}\n  urgent · via epic ABC-40", initiative(&i))
         );
         let e = EpicDto {
             urgent_sources: vec![ref_("ABC-9", ItemType::Story)],
@@ -1317,7 +1322,7 @@ mod tests {
         };
         assert_eq!(
             epic_show(&e, now()),
-            format!("{}\nurgent · via story ABC-9", epic(&e))
+            format!("{}\n  urgent · via story ABC-9", epic(&e))
         );
     }
 
@@ -1342,7 +1347,7 @@ mod tests {
             .iter()
             .position(|l| l.contains("[todo] Match"))
             .unwrap();
-        assert_eq!(lines[at + 1], "urgent · via epic ABC-40", "{out}");
+        assert_eq!(lines[at + 1], "  urgent · via epic ABC-40", "{out}");
         assert!(lines[at].contains(" !"), "{out}");
     }
 

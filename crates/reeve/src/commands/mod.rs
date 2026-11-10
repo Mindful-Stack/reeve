@@ -142,29 +142,43 @@ pub async fn whoami(c: &Client) -> anyhow::Result<Result<String, Outcome<()>>> {
     })
 }
 
-/// `urgent` for all three levels: `--clear` is a bodiless DELETE of `path` and prints one fixed line; otherwise a POST
-/// with the reason trimmed (blank is `null`, as the web sends it) prints `answer`. No version is sent either way.
+/// `urgent` for all three levels, on the item at `item` (`/{initiatives|epics|stories}/{key}`): `--clear` is a bodiless
+/// DELETE of its `/urgent` route and prints one fixed line; otherwise a POST prints `answer`. The reason is trimmed and a
+/// blank one is `null`, as the web sends it; with no `--reason` at all the item is read first and its current reason
+/// (`reason_of`) resent, so marking again keeps it, as the TUI and the web do. A read that is not Ok is the outcome and
+/// nothing is posted. No version is sent either way.
+#[allow(clippy::too_many_arguments)]
 pub async fn urgent<T: Serialize + DeserializeOwned>(
     c: &Client,
-    path: String,
+    item: String,
     reason: Option<String>,
     clear: bool,
     json: bool,
     key: impl Fn(&T) -> &Key,
+    reason_of: impl Fn(&T) -> Option<String>,
     answer: impl Fn(&T, chrono::DateTime<chrono::Utc>) -> String,
 ) -> anyhow::Result<i32> {
-    Ok(if clear {
-        finish(c.delete::<T>(&path).await?, json, |v| {
+    let path = format!("{item}/urgent");
+    if clear {
+        return Ok(finish(c.delete::<T>(&path).await?, json, |v| {
             format!("urgent mark cleared on {}", key(v))
-        })
-    } else {
-        let now = chrono::Utc::now();
-        let reason = reason
-            .map(|r| r.trim().to_string())
-            .filter(|r| !r.is_empty());
-        let body = serde_json::to_value(MarkUrgent { reason })?;
-        finish(c.post::<T>(&path, body).await?, json, |v| answer(v, now))
-    })
+        }));
+    }
+    let reason = match reason {
+        Some(r) => Some(r),
+        None => match c.get::<T>(&item).await? {
+            Outcome::Ok(v) => reason_of(&v),
+            other => return Ok(finish(other, json, |_| String::new())),
+        },
+    };
+    let reason = reason
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty());
+    let now = chrono::Utc::now();
+    let body = serde_json::to_value(MarkUrgent { reason })?;
+    Ok(finish(c.post::<T>(&path, body).await?, json, |v| {
+        answer(v, now)
+    }))
 }
 
 /// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.

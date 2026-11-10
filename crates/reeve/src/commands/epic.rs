@@ -89,7 +89,7 @@ pub enum Epic {
     Urgent {
         /// Epic key.
         key: KeyRef,
-        /// Why it is urgent (optional, at most 200 characters); marking again replaces the mark, so leaving it out clears the reason (war-room re-mark keeps reasons).
+        /// Why it is urgent (at most 200 characters); left out, marking again keeps the current reason; --reason '' clears it.
         #[arg(long, conflicts_with = "clear")]
         reason: Option<String>,
         /// Remove the epic's urgent mark (clearing one with none changes nothing).
@@ -125,11 +125,12 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
         Epic::Urgent { key, reason, clear } => {
             super::urgent::<EpicDto>(
                 c,
-                format!("/epics/{key}/urgent"),
+                format!("/epics/{key}"),
                 reason,
                 clear,
                 json,
                 |s| &s.key,
+                |s| s.urgent_mark.as_ref().and_then(|m| m.reason.clone()),
                 |s, now| {
                     crate::render::urgent_answer(
                         Level::Epic,
