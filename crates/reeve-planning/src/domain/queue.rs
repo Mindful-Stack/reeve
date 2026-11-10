@@ -48,9 +48,9 @@ pub struct ClassifyInputs<'a> {
     pub repos: &'a [String],
 }
 
-/// A story a decision holds back (todo) or that is under way without it.
+/// A story a decision holds back (todo, in `held`) or that is under way without it (`under_way`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HeldStory {
+pub struct QueueStory {
     pub key: Key,
     pub title: String,
     pub kind: Kind,
@@ -61,8 +61,8 @@ pub struct HeldStory {
     pub needed_in: NeededIn,
 }
 
-/// One decision in the queue, with the todo stories it holds (`blocks`) and the started ones it affects
-/// (`under_way`); both empty outside the live lanes.
+/// One decision in the queue, with the todo stories it holds (`held`; the wire calls them `blocks`) and the started
+/// ones it affects (`under_way`); both empty outside the live lanes.
 #[derive(Debug)]
 pub struct QueueEntry {
     pub group: QueueGroup,
@@ -71,8 +71,8 @@ pub struct QueueEntry {
     pub needed_in_reason: Option<NeededInReason>,
     pub next_step: Option<NextStep>,
     pub decision: RequiredDecision,
-    pub blocks: Vec<HeldStory>,
-    pub under_way: Vec<HeldStory>,
+    pub held: Vec<QueueStory>,
+    pub under_way: Vec<QueueStory>,
 }
 
 /// Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once.
@@ -213,7 +213,7 @@ fn urgency(a: &QueueEntry, b: &QueueEntry, today: NaiveDate) -> Ordering {
                 Ordering::Equal
             }
         })
-        .then_with(|| b.blocks.len().cmp(&a.blocks.len()))
+        .then_with(|| b.held.len().cmp(&a.held.len()))
         .then_with(|| da.due().is_some().cmp(&db.due().is_some())) // undated first
         .then_with(|| match (da.due(), db.due()) {
             (Some(x), Some(y)) => x.cmp(&y),
@@ -222,8 +222,8 @@ fn urgency(a: &QueueEntry, b: &QueueEntry, today: NaiveDate) -> Ordering {
         .then_with(|| da.id().cmp(&db.id()))
 }
 
-fn held(s: &AffectedStory) -> HeldStory {
-    HeldStory {
+fn story_of(s: &AffectedStory) -> QueueStory {
+    QueueStory {
         key: s.key.clone(),
         title: s.title.clone(),
         kind: s.kind,
@@ -235,7 +235,7 @@ fn held(s: &AffectedStory) -> HeldStory {
 }
 
 /// Classifies, groups, orders and counts `ds`. Each decision's affected stories are the unfinished ones whose readiness
-/// reasons name it (deduplicated per story); the todo ones are `blocks`, the started ones `under_way`.
+/// reasons name it (deduplicated per story); the todo ones are `held`, the started ones `under_way`.
 pub fn order(
     ds: Vec<RequiredDecision>,
     inp: &ClassifyInputs,
@@ -259,7 +259,7 @@ pub fn order(
         .map(|decision| {
             let all = affected.remove(&decision.id()).unwrap_or_default();
             let live = decision.closed().is_none() && !decision.is_satisfied();
-            let (blocks, under_way): (Vec<_>, Vec<_>) = if live {
+            let (held, under_way): (Vec<_>, Vec<_>) = if live {
                 all.iter()
                     .copied()
                     .partition(|s| s.delivery == DeliveryState::Todo)
@@ -270,7 +270,7 @@ pub fn order(
                 QueueGroup::Closed
             } else if decision.is_satisfied() {
                 QueueGroup::Satisfied
-            } else if !blocks.is_empty() {
+            } else if !held.is_empty() {
                 QueueGroup::Blocking
             } else {
                 QueueGroup::Open
@@ -294,8 +294,8 @@ pub fn order(
                 needed_in: needed,
                 needed_in_reason,
                 next_step: step,
-                blocks: blocks.iter().map(|s| held(s)).collect(),
-                under_way: under_way.iter().map(|s| held(s)).collect(),
+                held: held.iter().map(|s| story_of(s)).collect(),
+                under_way: under_way.iter().map(|s| story_of(s)).collect(),
                 decision,
             }
         })
@@ -324,7 +324,7 @@ pub fn order(
     let stories: HashSet<&Key> = entries
         .iter()
         .filter(|e| e.group == QueueGroup::Blocking)
-        .flat_map(|e| e.blocks.iter().map(|b| &b.key))
+        .flat_map(|e| e.held.iter().map(|b| &b.key))
         .collect();
     let summary = QueueSummary {
         open: entries.iter().filter(live).count() as u32,
@@ -497,7 +497,7 @@ mod tests {
         es.iter().map(|e| (e.group, e.decision.id())).collect()
     }
     fn block_keys(e: &QueueEntry) -> Vec<Key> {
-        e.blocks.iter().map(|b| b.key.clone()).collect()
+        e.held.iter().map(|b| b.key.clone()).collect()
     }
     fn lineage_of(on: u64, items: Vec<LineageItem>) -> HashMap<Key, Vec<LineageItem>> {
         HashMap::from([(key(on), items)])
@@ -555,7 +555,7 @@ mod tests {
             ]
         );
         assert_eq!(block_keys(&es[0]), vec![key(11), key(12)]);
-        assert!(es[2..].iter().all(|e| e.blocks.is_empty()));
+        assert!(es[2..].iter().all(|e| e.held.is_empty()));
         assert_eq!(
             (s.open, s.blocking, s.blocked_stories, s.overdue),
             (3, 2, 3, 2)
@@ -613,6 +613,26 @@ mod tests {
                 (o, 8),
                 (o, 7)
             ]
+        );
+    }
+
+    /// Inside one lane the group comes before urgency: a decision that holds work sorts above an overdue one that holds
+    /// none. Both are needed next sprint (the held one by a draft goal, the other by discovery of epic ABC-1), so they
+    /// share the lane. Catches urgency compared across groups.
+    #[test]
+    fn group_orders_before_urgency_inside_a_lane() {
+        let mut s = story(7, DeliveryState::Todo, vec![unchecked(2)]);
+        s.draft_goals = vec![(1, "G".into())];
+        let l = lineage_of(1, vec![li(1, ItemType::Epic, false, Some("Now"))]);
+        let r = repos();
+        // Decision 1 is overdue and holds nothing; decision 2 is not due and holds story 7.
+        let ds = vec![dec(1, nov(1), oct(1)), dec(2, nov(20), oct(1))];
+        let stories = [s];
+        let (es, _) = order(ds, &inputs(&stories, &l, &r), today());
+        assert!(es.iter().all(|e| e.lane == QueueLane::NextSprint));
+        assert_eq!(
+            ids(&es),
+            vec![(QueueGroup::Blocking, 2), (QueueGroup::Open, 1)]
         );
     }
 
@@ -873,7 +893,7 @@ mod tests {
         let started = vec![story(2, DeliveryState::InProgress, vec![unchecked(1)])];
         let (es, _) = run(vec![dec(1, None, oct(1))], &started);
         assert_eq!(es[0].group, QueueGroup::Open);
-        assert!(es[0].blocks.is_empty());
+        assert!(es[0].held.is_empty());
         assert_eq!(es[0].under_way.len(), 1);
         assert_eq!(es[0].needed_in, NeededIn::Beyond);
     }

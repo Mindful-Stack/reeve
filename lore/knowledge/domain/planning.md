@@ -10,7 +10,7 @@ tags: [domain, planning]
 
 ## Ubiquitous language
 
-The words below are bound across API, database, CLI and UI (kb/ADR-0002 R6; sprint, goal, confidence, verdict and upkeep are trial names under kb/ADR-0014 R6; urgent is added by kb/ADR-0017). In the decision queue, an *affected* story is an unfinished story whose readiness reasons name the decision; it is *held* when todo and *under way* when started. `needed_in` (this sprint, next sprint, beyond, none) says when a decision is needed, the *next step* what it needs, and the *lane* where the queue lists it; all three are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
+The words below are bound across API, database, CLI and UI (kb/ADR-0002 R6; sprint, goal, confidence, verdict and upkeep are trial names under kb/ADR-0014 R6; urgent is added by kb/ADR-0017). In the decision queue, an *affected* story is an unfinished story whose readiness reasons name the decision; it is *held* when todo and *under way* when started. `needed_in` (this sprint, next sprint, beyond, none) says when a decision is needed, the *next step* what it needs, and the *lane* where the queue lists it; all three are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1). The queue orders entries by lane, then group (decisions that hold work above those that hold none), then urgency.
 
 - **Initiative, epic, story.** The three levels of the hierarchy; only stories are delivered. Keys come from one sequence (`ABC-12`, kb/ADR-0002 R5). An initiative has a **horizon** (a configured bucket) and an optional target month.
 - **Kind.** A story is a `story`, a `bug` or a `chore`. A story of kind `story` needs an epic; an **untriaged** story is one of kind `story` with no epic (`Story::is_untriaged`).
@@ -53,7 +53,7 @@ Each aggregate is a Rust type under `crates/reeve-planning/src/domain/`, persist
 
 Reads that join other aggregates' tables are on `PlanningReads`: `readiness_inputs` (the one five-statement loader), counts, the decision queue's inputs (`draft_goals_of_stories`, `decision_lineage_in`), search, the export readers and `urgency_lineage_in` (the epics and stories an urgent mark reaches). `KeyRepo` holds the one key sequence and every key or external-reference lookup across item types. Reason: a read across aggregates belongs to no single aggregate, and one sequence keeps keys unique across types.
 
-Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`Summary`, `HeldStory`, `QueueEntry`, `QueueSummary`; `AffectedStory` is the classifier's input). Reason: the domain must not change when the wire does, and the OpenAPI snapshot catches the wire side. Values are pinned by `crates/reeve-planning/tests/dto_values.rs`.
+Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`Summary`, `QueueStory`, `QueueEntry`, `QueueSummary`; `AffectedStory` is the classifier's input). Reason: the domain must not change when the wire does, and the OpenAPI snapshot catches the wire side. Values are pinned by `crates/reeve-planning/tests/dto_values.rs`.
 
 ## What the context never does
 

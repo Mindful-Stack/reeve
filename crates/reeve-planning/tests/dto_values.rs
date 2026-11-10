@@ -419,8 +419,8 @@ fn queue_entry_dto_carries_every_field() {
             pr_url: "https://github.com/acme/kb/pull/9".into(),
         }),
         decision: decision(),
-        blocks: vec![
-            HeldStory {
+        held: vec![
+            QueueStory {
                 kind: Kind::Bug,
                 delivery: DeliveryState::Todo,
                 owner: Some("o@x".into()),
@@ -429,7 +429,7 @@ fn queue_entry_dto_carries_every_field() {
                 key: k("ABC-31"),
                 title: "first".into(),
             },
-            HeldStory {
+            QueueStory {
                 kind: Kind::Story,
                 delivery: DeliveryState::Todo,
                 owner: None,
@@ -439,7 +439,7 @@ fn queue_entry_dto_carries_every_field() {
                 title: "second".into(),
             },
         ],
-        under_way: vec![HeldStory {
+        under_way: vec![QueueStory {
             kind: Kind::Chore,
             delivery: DeliveryState::InReview,
             owner: Some("p@x".into()),

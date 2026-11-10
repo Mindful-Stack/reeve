@@ -3,7 +3,7 @@ use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{HeldStory, QueueEntry, QueueSummary};
+use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use reeve_protocol::{
@@ -132,8 +132,8 @@ impl From<&PullRequest> for PullRequestDto {
     }
 }
 
-impl From<&HeldStory> for AffectedStoryDto {
-    fn from(b: &HeldStory) -> Self {
+impl From<&QueueStory> for AffectedStoryDto {
+    fn from(b: &QueueStory) -> Self {
         Self {
             key: b.key.clone(),
             title: b.title.clone(),
@@ -155,7 +155,7 @@ impl From<&QueueEntry> for DecisionQueueEntryDto {
             needed_in: e.needed_in,
             needed_in_reason: e.needed_in_reason.clone(),
             next_step: e.next_step.clone(),
-            blocks: e.blocks.iter().map(AffectedStoryDto::from).collect(),
+            blocks: e.held.iter().map(AffectedStoryDto::from).collect(),
             under_way: e.under_way.iter().map(AffectedStoryDto::from).collect(),
         }
     }

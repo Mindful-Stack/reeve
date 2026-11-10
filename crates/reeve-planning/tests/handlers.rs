@@ -5245,11 +5245,11 @@ async fn decision_queue_over_real_readiness() {
             (QueueGroup::Open, d_i2.id())
         ]
     );
-    let keys = |e: &QueueEntry| e.blocks.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
+    let keys = |e: &QueueEntry| e.held.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
     assert_eq!(keys(&all[0]), vec![s1.key().clone(), s2.key().clone()]);
-    assert_eq!(all[0].blocks[0].title, "S1");
+    assert_eq!(all[0].held[0].title, "S1");
     assert_eq!(keys(&all[1]), vec![s1.key().clone()]);
-    assert!(all[2].blocks.is_empty());
+    assert!(all[2].held.is_empty());
     assert_eq!(
         (summary.open, summary.blocking, summary.blocked_stories),
         (3, 2, 2)
@@ -5301,7 +5301,7 @@ async fn decision_queue_over_real_readiness() {
         .unwrap();
     let e1 = all.iter().find(|e| e.decision.id() == d1.id()).unwrap();
     assert_eq!(e1.group, QueueGroup::Satisfied);
-    assert!(e1.blocks.is_empty());
+    assert!(e1.held.is_empty());
     let e2 = all.iter().find(|e| e.decision.id() == d2.id()).unwrap();
     assert_eq!(
         (e2.group, keys(e2)),
@@ -5548,7 +5548,7 @@ async fn queue_under_way_story_counts() {
     sprints_serving(&h, &dan, "u", std::slice::from_ref(s.key()), &[]).await;
     let (es, _) = queue_all(&h, &dan).await;
     let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
-    assert!(e.blocks.is_empty());
+    assert!(e.held.is_empty());
     assert_eq!(
         e.under_way
             .iter()
@@ -5596,12 +5596,12 @@ async fn queue_held_story_urgency_is_lineage() {
         .await
         .unwrap();
     let (before, _) = queue_all(&h, &dan).await;
-    assert!(!before[0].blocks[0].urgent);
+    assert!(!before[0].held[0].urgent);
     h.mark_urgent(&dan, ItemType::Epic, &epic, None)
         .await
         .unwrap();
     let (after, _) = queue_all(&h, &dan).await;
-    assert!(after[0].blocks[0].urgent);
+    assert!(after[0].held[0].urgent);
 }
 
 /// The context is the queue's own entry for that decision. Catches a second implementation of the classifier.
@@ -5624,7 +5624,7 @@ async fn decision_context_returns_one_entry() {
     let (es, _) = queue_all(&h, &dan).await;
     let want = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
     let got = h.decision_context(d.id(), dan.now).await.unwrap();
-    let keys = |e: &QueueEntry| e.blocks.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
+    let keys = |e: &QueueEntry| e.held.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
     assert_eq!(
         (got.lane, got.needed_in, got.next_step.clone(), keys(&got)),
         (
