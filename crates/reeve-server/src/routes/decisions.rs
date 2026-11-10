@@ -45,10 +45,16 @@ pub(crate) fn decision_dto(s: &AppState, d: &RequiredDecision) -> RequiredDecisi
 /// `https://` URL.
 pub(crate) fn browse(s: &AppState, dto: &mut RequiredDecisionDto) {
     if let Some(r) = dto.record.as_mut() {
-        r.browse_url = s
-            .repo_urls
-            .get(&r.repo)
-            .map(|base| format!("{base}/blob/HEAD/{}", r.path.trim_start_matches('/')));
+        r.browse_url = s.repo_urls.get(&r.repo).map(|base| {
+            let path = r
+                .path
+                .trim_start_matches('/')
+                .split('/')
+                .map(|seg| urlencoding::encode(seg).into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            format!("{base}/blob/HEAD/{path}")
+        });
     }
 }
 

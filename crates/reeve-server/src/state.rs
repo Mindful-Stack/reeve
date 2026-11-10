@@ -34,20 +34,28 @@ pub struct AppState {
     pub repo_urls: Arc<HashMap<String, String>>,
 }
 
-/// The `https://` base URL of each `[[repos]]` entry that has one, trimmed and without a trailing `.git` or `/`. An
-/// `git@` or other-scheme URL cannot be browsed and is left out.
+/// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, query or fragment and without a
+/// trailing `.git` or `/`. A `git@`, `http://` or other-scheme URL cannot be browsed safely and is left out. Userinfo
+/// (`https://user:token@host/...`, a clone URL) is dropped so a credential never reaches an API caller.
 pub(crate) fn browsable_repo_urls(config: &ServerConfig) -> HashMap<String, String> {
     config
         .repos
         .iter()
         .filter_map(|r| {
-            let u = r.url.as_deref()?.trim();
-            if !u.starts_with("https://") {
+            let mut u = url::Url::parse(r.url.as_deref()?.trim()).ok()?;
+            if u.scheme() != "https" || u.host_str().is_none() {
                 return None;
             }
-            let u = u.trim_end_matches('/');
-            let u = u.strip_suffix(".git").unwrap_or(u).trim_end_matches('/');
-            (u.len() > "https://".len()).then(|| (r.name.clone(), u.to_string()))
+            u.set_username("").ok()?;
+            u.set_password(None).ok()?;
+            u.set_query(None);
+            u.set_fragment(None);
+            let base = u.as_str().trim_end_matches('/');
+            let base = base
+                .strip_suffix(".git")
+                .unwrap_or(base)
+                .trim_end_matches('/');
+            Some((r.name.clone(), base.to_string()))
         })
         .collect()
 }

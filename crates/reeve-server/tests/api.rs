@@ -2279,55 +2279,74 @@ async fn decision_context_route() {
     assert_eq!(st, 404, "{v}");
 }
 
-/// Spec A5.1: `browse_url` is derived from `[[repos]].url` on every response that carries a decision: the https URL
-/// loses its `.git`, a `git@` URL and a repository without a URL give none.
+/// Spec A5.1: `browse_url` is derived from `[[repos]].url` on every response that carries a decision. An `https://`
+/// URL loses `.git`, a trailing `/` and any credentials; `http://`, `git@` and a missing URL give none; each path
+/// segment is percent-encoded. The export keeps the field out.
 #[tokio::test]
 async fn browse_url_from_repo_config() {
     let h = harness_with(|cfg| {
         cfg.replace(
             "[[repos]]\nname = \"orion\"\nadr_dir = \"docs/adr\"",
             "[[repos]]\nname = \"orion\"\nadr_dir = \"docs/adr\"\nurl = \"https://github.com/acme/orion.git\"\n\
+             [[repos]]\nname = \"slash\"\nadr_dir = \"docs/adr\"\nurl = \"https://github.com/acme/slash/\"\n\
+             [[repos]]\nname = \"cred\"\nadr_dir = \"docs/adr\"\nurl = \"https://bot:SECRET-TOKEN@github.com/acme/cred.git\"\n\
+             [[repos]]\nname = \"plain\"\nadr_dir = \"docs/adr\"\nurl = \"http://git.example.com/acme/plain\"\n\
              [[repos]]\nname = \"ssh\"\nadr_dir = \"docs/adr\"\nurl = \"git@github.com:acme/ssh.git\"\n\
              [[repos]]\nname = \"bare\"\nadr_dir = \"docs/adr\"",
         )
     })
     .await;
-    assert!(
-        h.state.repo_urls.contains_key("orion"),
-        "the harness config must carry the repo urls: {:?}",
-        h.state.repo_urls
-    );
     let s = chore(&h, "b-s").await;
+    let cases: [(&str, &str, Option<&str>); 7] = [
+        (
+            "orion",
+            "docs/adr/0001.md",
+            Some("https://github.com/acme/orion/blob/HEAD/docs/adr/0001.md"),
+        ),
+        (
+            "slash",
+            "docs/adr/0002.md",
+            Some("https://github.com/acme/slash/blob/HEAD/docs/adr/0002.md"),
+        ),
+        (
+            "cred",
+            "docs/adr/0003.md",
+            Some("https://github.com/acme/cred/blob/HEAD/docs/adr/0003.md"),
+        ),
+        ("plain", "docs/adr/0004.md", None),
+        ("ssh", "docs/adr/0005.md", None),
+        ("bare", "docs/adr/0006.md", None),
+        // spaces, '#', '?' and '%' are encoded per segment; '/' stays
+        (
+            "orion",
+            "docs/a b/c#d?e%f.md",
+            Some("https://github.com/acme/orion/blob/HEAD/docs/a%20b/c%23d%3Fe%25f.md"),
+        ),
+    ];
     let mut ids = Vec::new();
-    for (repo, path) in [
-        ("orion", "docs/adr/0001.md"),
-        ("ssh", "docs/adr/0002.md"),
-        ("bare", "docs/adr/0003.md"),
-    ] {
-        let id = open_decision(&h, &format!("b-{repo}"), &s).await;
+    for (i, (repo, path, want)) in cases.iter().enumerate() {
+        let id = open_decision(&h, &format!("b-{i}"), &s).await;
         let linked = admin_post(
             &h,
             &format!("/api/v1/decisions/{id}/link"),
             json!({"repo":repo,"path":path,"record_id":"ADR-1","pr_url":null}),
         )
         .await;
-        // the link response itself carries it
-        let want = (repo == "orion")
-            .then(|| json!("https://github.com/acme/orion/blob/HEAD/docs/adr/0001.md"));
+        let want = want.map(|w| json!(w));
         assert_eq!(
             linked["record"].get("browse_url").cloned(),
             want,
-            "link {repo}: {linked}"
+            "link {i}: {linked}"
         );
-        ids.push((id, repo, want));
+        ids.push((id, i, want));
     }
-    for (id, repo, want) in &ids {
+    for (id, i, want) in &ids {
         let (st, one) = admin_get(&h, &format!("/api/v1/decisions/{id}")).await;
         assert_eq!(st, 200, "{one}");
         assert_eq!(
             one["value"]["record"].get("browse_url").cloned(),
             *want,
-            "get {repo}"
+            "get {i}"
         );
         let (_, ctx) = admin_get(&h, &format!("/api/v1/decisions/{id}/context")).await;
         assert_eq!(
@@ -2335,7 +2354,7 @@ async fn browse_url_from_repo_config() {
                 .get("browse_url")
                 .cloned(),
             *want,
-            "context {repo}"
+            "context {i}"
         );
         let check = admin_post(
             &h,
@@ -2346,14 +2365,32 @@ async fn browse_url_from_repo_config() {
         assert_eq!(
             check["record"].get("browse_url").cloned(),
             *want,
-            "check {repo}"
+            "check {i}"
+        );
+        let (_, one) = admin_get(&h, &format!("/api/v1/decisions/{id}")).await;
+        let (st, edited) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "PATCH",
+            &format!("/api/v1/decisions/{id}"),
+            Some(json!({"version":one["value"]["version"],"title":format!("edited {i}")})),
+        )
+        .await;
+        assert_eq!(st, 200, "{edited}");
+        assert_eq!(
+            edited["value"]["record"].get("browse_url").cloned(),
+            *want,
+            "edit {i}"
         );
     }
     let (_, list) = admin_get(&h, "/api/v1/decisions").await;
     let (_, queue) = admin_get(&h, "/api/v1/decisions/queue").await;
-    assert_eq!(list["value"].as_array().unwrap().len(), 3);
-    assert_eq!(queue["value"]["entries"].as_array().unwrap().len(), 3);
-    for (id, repo, want) in &ids {
+    assert_eq!(list["value"].as_array().unwrap().len(), cases.len());
+    assert_eq!(
+        queue["value"]["entries"].as_array().unwrap().len(),
+        cases.len()
+    );
+    for (id, i, want) in &ids {
         let in_list = list["value"]
             .as_array()
             .unwrap()
@@ -2363,7 +2400,7 @@ async fn browse_url_from_repo_config() {
         assert_eq!(
             in_list["record"].get("browse_url").cloned(),
             *want,
-            "list {repo}"
+            "list {i}"
         );
         let in_queue = queue["value"]["entries"]
             .as_array()
@@ -2374,19 +2411,49 @@ async fn browse_url_from_repo_config() {
         assert_eq!(
             in_queue["decision"]["record"].get("browse_url").cloned(),
             *want,
-            "queue {repo}"
+            "queue {i}"
         );
     }
-    // the story context's decisions carry it too
+    // the story context's decisions carry it too, each its own
     let (_, sctx) = admin_get(&h, &format!("/api/v1/stories/{s}/context")).await;
-    let urls: Vec<_> = sctx["value"]["required_decisions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|d| d["record"].get("browse_url").cloned())
-        .collect();
-    assert_eq!(urls.iter().filter(|u| u.is_some()).count(), 1, "{sctx}");
-    // a decision with no record has none, and the key is absent rather than null
+    let in_ctx = sctx["value"]["required_decisions"].as_array().unwrap();
+    assert_eq!(in_ctx.len(), cases.len(), "{sctx}");
+    for (id, i, want) in &ids {
+        let d = in_ctx.iter().find(|d| d["id"] == *id).unwrap();
+        assert_eq!(
+            d["record"].get("browse_url").cloned(),
+            *want,
+            "story context {i}"
+        );
+    }
+    // the export is a document of the planner's own facts: no derived link, and no credential from configuration
+    let (st, exp) = admin_get(&h, "/api/v1/export").await;
+    assert_eq!(st, 200);
+    let text = exp.to_string();
+    assert!(
+        text.contains("docs/adr/0001.md"),
+        "the export holds the decisions"
+    );
+    assert!(
+        !text.contains("browse_url"),
+        "the export must not carry browse_url"
+    );
+    assert!(!text.contains("SECRET-TOKEN"));
+    // close answers with it too
+    for (id, i, want) in &ids {
+        let closed = admin_post(
+            &h,
+            &format!("/api/v1/decisions/{id}/close"),
+            json!({"kind":"withdrawn","reason":"moot"}),
+        )
+        .await;
+        assert_eq!(
+            closed["record"].get("browse_url").cloned(),
+            *want,
+            "close {i}"
+        );
+    }
+    // a decision with no record has none
     let bare = open_decision(&h, "b-none", &s).await;
     let (_, one) = admin_get(&h, &format!("/api/v1/decisions/{bare}")).await;
     assert_eq!(one["value"]["record"], serde_json::Value::Null);
