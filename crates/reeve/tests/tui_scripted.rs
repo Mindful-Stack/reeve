@@ -11,8 +11,12 @@ use support::*;
 const WAIT: Duration = Duration::from_secs(5);
 
 async fn started(script: std::sync::Arc<Script>) -> Tui {
+    started_with(script, quick()).await
+}
+
+async fn started_with(script: std::sync::Arc<Script>, options: Options) -> Tui {
     let url = serve(script).await;
-    tui(&url, "t", Some(me(TokenKind::Interactive)), quick())
+    tui(&url, "t", Some(me(TokenKind::Interactive)), options)
 }
 
 #[tokio::test]
@@ -262,12 +266,14 @@ async fn yank_and_open_reach_the_io_sink() {
 
 /// Urgency writes wait for their reply: a request timeout far beyond any hold, so a held reply cannot end as "no answer".
 async fn started_patient(script: std::sync::Arc<Script>) -> Tui {
-    let url = serve(script).await;
-    let options = Options {
-        request_timeout: Duration::from_secs(30),
-        ..quick()
-    };
-    tui(&url, "t", Some(me(TokenKind::Interactive)), options)
+    started_with(
+        script,
+        Options {
+            request_timeout: Duration::from_secs(30),
+            ..quick()
+        },
+    )
+    .await
 }
 
 const TITLE: &str = "Title of ABC-1";
@@ -289,6 +295,64 @@ fn marked(d: &reeve::tui::Driver<ratatui::backend::TestBackend>) -> bool {
 
 fn dan_story() -> reeve_protocol::StoryWithReadiness {
     story("ABC-1", Todo, 1, Some("dan@example.com"))
+}
+
+/// The rest of a held urgency write on ABC-1, from the request reaching the server:
+/// - while held, and still after a pause: the card shows the pending `…`, the mark is as it was (`marked_before`, nothing
+///   optimistic), there is no completion status and no refetch;
+/// - then the server's rows become `now` and the reply is released with `now`'s story;
+/// - the reply causes exactly one refetch. The reply is applied at once (same version), so the `!` alone does not show the
+///   refetch landed; readiness stays pending (`…`) until it has. After it, the wait outlasts live's 500 ms debounce, so a
+///   second load scheduled through it would be counted.
+async fn held_write_then_one_refetch(
+    t: &mut Tui,
+    s: &Script,
+    held: Held,
+    before: usize,
+    marked_before: bool,
+    now: reeve_protocol::StoryWithReadiness,
+    status: &str,
+) {
+    t.until("the pending mark", WAIT, |d| card(d).contains('…'))
+        .await;
+    t.idle_for(Duration::from_millis(300)).await;
+    assert!(card(&t.d).contains('…'), "still pending:\n{}", t.d.screen());
+    assert_eq!(
+        marked(&t.d),
+        marked_before,
+        "the mark is as it was until the reply:\n{}",
+        t.d.screen()
+    );
+    assert!(!t.d.screen().contains(status), "{}", t.d.screen());
+    assert_eq!(s.seen(|x| x.stories_calls), before, "no refetch while held");
+
+    let marked_after = !now.story.urgent_sources.is_empty();
+    s.set_stories(vec![now.clone()]);
+    held.release(200, ok(now.story));
+
+    t.until("the refetch the reply causes", WAIT, |_| {
+        s.seen(|x| x.stories_calls) > before
+    })
+    .await;
+    t.until(
+        "the refetch landed (readiness no longer pending)",
+        WAIT,
+        |d| !card(d).contains('…'),
+    )
+    .await;
+    t.idle_for(Duration::from_secs(1)).await;
+    assert_eq!(
+        s.seen(|x| x.stories_calls),
+        before + 1,
+        "exactly one refetch"
+    );
+    assert_eq!(
+        marked(&t.d),
+        marked_after,
+        "the refetched board:\n{}",
+        t.d.screen()
+    );
+    assert!(t.d.screen().contains(status), "{}", t.d.screen());
 }
 
 #[tokio::test]
@@ -321,52 +385,14 @@ async fn marking_waits_for_the_reply_then_refetches_once() {
         json!({"reason": null})
     );
 
-    // Held: the request is still waiting. Nothing optimistic, no refetch, no completion.
-    t.until("the pending mark", WAIT, |d| card(d).contains('…'))
-        .await;
-    t.idle_for(Duration::from_millis(300)).await;
-    assert!(card(&t.d).contains('…'), "still pending:\n{}", t.d.screen());
-    assert!(!marked(&t.d), "no `!` before the reply:\n{}", t.d.screen());
-    assert!(!t.d.screen().contains("marked urgent"), "{}", t.d.screen());
-    assert_eq!(s.seen(|x| x.stories_calls), before, "no refetch while held");
-
-    let now_urgent = marked_urgent(dan_story(), None);
-    s.set_stories(vec![now_urgent.clone()]);
-    held.release(200, ok(now_urgent.story));
-
-    t.until("the refetch the reply causes", WAIT, |_| {
-        s.seen(|x| x.stories_calls) > before
-    })
-    .await;
-    t.until("the mark from the refetch", WAIT, marked).await;
-    t.idle_for(Duration::from_millis(300)).await;
-    assert_eq!(
-        s.seen(|x| x.stories_calls),
-        before + 1,
-        "exactly one refetch"
-    );
-    assert!(
-        marked(&t.d),
-        "the refetched board keeps the mark:\n{}",
-        t.d.screen()
-    );
-    assert!(
-        t.d.screen().contains("ABC-1 marked urgent"),
-        "{}",
-        t.d.screen()
-    );
-    assert!(
-        !card(&t.d).contains('…'),
-        "the pending mark is released:\n{}",
-        t.d.screen()
-    );
+    let now = marked_urgent(dan_story(), None);
+    held_write_then_one_refetch(&mut t, &s, held, before, false, now, "ABC-1 marked urgent").await;
 }
 
 #[tokio::test]
 async fn clearing_sends_delete_and_refetches() {
     let s = Script::new();
-    let was_urgent = marked_urgent(dan_story(), None);
-    s.set_stories(vec![was_urgent]);
+    s.set_stories(vec![marked_urgent(dan_story(), None)]);
     let held = s.hold_urgent();
     let mut t = started_patient(s.clone()).await;
     t.until("the marked board", WAIT, marked).await;
@@ -378,9 +404,8 @@ async fn clearing_sends_delete_and_refetches() {
         s.seen(|x| !x.urgent.is_empty())
     })
     .await;
-    let sent = s.seen(|x| x.urgent.clone());
     assert_eq!(
-        sent,
+        s.seen(|x| x.urgent.clone()),
         [Sent {
             method: "DELETE".into(),
             path: "/api/v1/stories/ABC-1/urgent".into(),
@@ -388,48 +413,16 @@ async fn clearing_sends_delete_and_refetches() {
         }]
     );
 
-    t.until("the pending mark", WAIT, |d| card(d).contains('…'))
-        .await;
-    t.idle_for(Duration::from_millis(300)).await;
-    assert!(
-        marked(&t.d),
-        "the mark stays until the reply:\n{}",
-        t.d.screen()
-    );
-    assert!(
-        !t.d.screen().contains("urgent mark cleared"),
-        "{}",
-        t.d.screen()
-    );
-    assert_eq!(s.seen(|x| x.stories_calls), before, "no refetch while held");
-
-    s.set_stories(vec![dan_story()]);
-    held.release(200, ok(dan_story().story));
-
-    t.until("the refetch the reply causes", WAIT, |_| {
-        s.seen(|x| x.stories_calls) > before
-    })
+    held_write_then_one_refetch(
+        &mut t,
+        &s,
+        held,
+        before,
+        true,
+        dan_story(),
+        "ABC-1 urgent mark cleared",
+    )
     .await;
-    t.until("the mark gone", WAIT, |d| {
-        !marked(d) && d.screen().contains(TITLE)
-    })
-    .await;
-    t.idle_for(Duration::from_millis(300)).await;
-    assert_eq!(
-        s.seen(|x| x.stories_calls),
-        before + 1,
-        "exactly one refetch"
-    );
-    assert!(
-        !marked(&t.d),
-        "the refetched board has no mark:\n{}",
-        t.d.screen()
-    );
-    assert!(
-        t.d.screen().contains("ABC-1 urgent mark cleared"),
-        "{}",
-        t.d.screen()
-    );
 }
 
 #[tokio::test]

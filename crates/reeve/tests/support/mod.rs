@@ -74,10 +74,12 @@ pub struct Sent {
 /// The release of one held urgency reply: until [`Held::release`] runs, the TUI's request waits for its answer.
 pub struct Held(oneshot::Sender<(u16, Value)>);
 impl Held {
+    /// Answers the held request. Released before any urgency write arrived, the reply is buffered and answers the next
+    /// one at once.
     pub fn release(self, status: u16, body: Value) {
         self.0
             .send((status, body))
-            .expect("the held request is still waiting (it was not dropped or timed out)");
+            .expect("the held reply's receiver is gone (the request was dropped)");
     }
 }
 
@@ -134,7 +136,8 @@ impl Script {
         Held(tx)
     }
     /// Sends `frame` on the open event-stream connection, which is not reconnected. Panics when no connection holds
-    /// the live channel (none opened yet, or it was dropped), so a test cannot pass by a reconnect instead.
+    /// the live channel (none opened yet, or it was dropped), so a test cannot pass by a reconnect instead. Delivery past
+    /// that is best effort: a frame lost in transit shows up as the test's wait timing out.
     pub fn push_live(&self, frame: String) {
         assert!(
             self.live_rx.lock().unwrap().is_none(),
@@ -388,6 +391,7 @@ async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
                         .await
                         .map(|f| (Ok::<_, Infallible>(Bytes::from(f)), rx))
                 })
+                // Defensive: `Script` keeps the sender, so the channel never ends; if it did, the connection stays open.
                 .chain(futures_util::stream::pending())
                 .boxed(),
                 (false, None) => futures_util::stream::pending().boxed(),

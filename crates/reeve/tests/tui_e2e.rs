@@ -255,8 +255,8 @@ async fn a_second_clients_write_arrives_live(t: &mut Tui, dan: &Api) {
     .await;
 }
 
-/// A story the TUI marks: the `!` arrives from the server's own answer (the TUI never draws it optimistically), and the
-/// server holds the reason the prompt sent.
+/// A story the TUI marks: the `!` appears once the server answered, and the server holds the reason the prompt sent.
+/// That the mark is never drawn optimistically is `tui_scripted`'s `marking_waits_for_the_reply_then_refetches_once`.
 async fn mark_urgent_with_a_reason(t: &mut Tui, dan: &Api) {
     let s = dan
         .own(&dan.story("urgent e2e").await, "dan@example.com")
