@@ -515,6 +515,7 @@ fn render_similar(hits: &[SimilarStory]) -> String {
         .map(|h| {
             let state = match (h.delivery, h.resolution) {
                 (DeliveryState::Done, Some(Resolution::Dropped)) => "done, dropped",
+                (DeliveryState::Done, Some(Resolution::Completed)) => "done, completed",
                 (d, _) => crate::render::state_word(d),
             };
             format!(
@@ -559,7 +560,10 @@ mod tests {
             lines[1].contains("TST-2\tdone, dropped\tBooking flow"),
             "{out}"
         );
-        assert!(lines[2].contains("TST-3\tdone\tBooking flow"), "{out}");
+        assert!(
+            lines[2].contains("TST-3\tdone, completed\tBooking flow"),
+            "{out}"
+        );
         assert_eq!(render_similar(&[]), "nothing similar");
     }
 
