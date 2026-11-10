@@ -126,6 +126,10 @@ impl View<'_> {
     pub fn locked(&self, k: &Key) -> bool {
         self.board.locked(k)
     }
+    /// The story `k` as the board holds it now, if it is still on the board.
+    pub fn story(&self, k: &Key) -> Option<&StoryDto> {
+        self.board.get(k).map(|e| &e.item.story)
+    }
 }
 
 /// A failure as the status line and the stale marker word it.

@@ -85,9 +85,10 @@ impl State {
         self.prompt.as_ref().map(|p| &p.key)
     }
 
-    /// Enter: one mark with the trimmed reason (none when blank), unless writes became disabled or another write on
-    /// the story started while the prompt was open (a pending move); either way the prompt closes. Otherwise a reason
-    /// over the server's cap keeps the prompt open and sends nothing (presentation, like the web's `maxlength`).
+    /// Enter: one mark with the trimmed reason (none when blank), unless writes became disabled, the story left the
+    /// board or became one `u` refuses (`blocked`, e.g. done by a live update), or another write on it started while
+    /// the prompt was open (a pending move); in each case the prompt closes. Otherwise a reason over the server's cap
+    /// keeps the prompt open and sends nothing (presentation, like the web's `maxlength`).
     fn submit(&mut self, cx: &Ctx) -> Out<Msg> {
         let mut o = Out::none();
         let Some(p) = self.prompt.take() else {
@@ -95,6 +96,14 @@ impl State {
         };
         if let Some(why) = cx.read_only {
             o.status(format!("read-only: {why}"));
+            return o;
+        }
+        let Some(story) = cx.board.story(&p.key) else {
+            o.status(format!("{} is no longer on the board", p.key));
+            return o;
+        };
+        if let Some(why) = blocked(story, Action::MarkUrgent) {
+            o.status(format!("{}: {why}", p.key));
             return o;
         }
         if cx.board.locked(&p.key) {
@@ -418,6 +427,47 @@ mod tests {
         assert!(o.effects.is_empty());
         assert!(!o.notes.iter().any(|n| matches!(n, Note::WriteStarted(_))));
         assert_eq!(statuses(&o), ["ABC-1: a change is still saving"]);
+        assert!(u.open().is_none());
+    }
+
+    /// The board as a live update leaves it: a refetch, then a load of `list`.
+    fn reload(b: &mut board::State, list: Vec<reeve_protocol::StoryWithReadiness>) {
+        let bcx = board::Ctx {
+            me: Some("dan@example.com"),
+            wide: true,
+            seq: 0,
+        };
+        let _ = b.on_note(&Note::Refetch, &bcx);
+        let _ = b.update(
+            board::Msg::Loaded {
+                stamp: stamp(2, 2),
+                result: stories(list),
+            },
+            &bcx,
+        );
+    }
+
+    #[test]
+    fn a_story_done_while_the_prompt_is_open_refuses_enter() {
+        let mut b = board_with(vec![story("ABC-1", Todo, 2)]);
+        let mut u = opened(&b, None);
+        reload(&mut b, vec![story("ABC-1", Done, 3)]);
+        let o = u.update(press(KeyCode::Enter), &cx(&b));
+        assert!(o.effects.is_empty());
+        assert!(!o.notes.iter().any(|n| matches!(n, Note::WriteStarted(_))));
+        assert_eq!(statuses(&o), ["ABC-1: done stories cannot be urgent"]);
+        assert!(u.open().is_none());
+    }
+
+    #[test]
+    fn a_story_gone_while_the_prompt_is_open_refuses_enter() {
+        let mut b = board_with(vec![story("ABC-1", Todo, 2), story("ABC-2", Todo, 1)]);
+        let mut u = opened(&b, None);
+        reload(&mut b, vec![story("ABC-2", Todo, 1)]);
+        let o = u.update(press(KeyCode::Enter), &cx(&b));
+        assert!(o.effects.is_empty());
+        assert!(!o.notes.iter().any(|n| matches!(n, Note::WriteStarted(_))));
+        assert_eq!(statuses(&o), ["ABC-1 is no longer on the board"]);
         assert!(u.open().is_none());
     }
 
