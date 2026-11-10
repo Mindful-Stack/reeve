@@ -6,15 +6,6 @@ use reeve_protocol::*;
 
 #[derive(Subcommand)]
 pub enum Story {
-    /// Stories with a title like the text: open ones, and ones done recently with their resolution. Check before filing.
-    Similar {
-        /// The text, 8 to 200 characters; several words are one text.
-        #[arg(required = true, num_args = 1..)]
-        text: Vec<String>,
-        /// At most this many, 1 to 10.
-        #[arg(long, default_value_t = 5)]
-        limit: i64,
-    },
     /// Create a story, bug or chore. A repeated --idempotency-key returns the same story.
     Create {
         /// Caller-chosen key that makes a retried create safe.
@@ -80,6 +71,15 @@ pub enum Story {
         /// Only stories serving the active sprint's goals: a goal id, `any` (some goal) or `none` (upkeep).
         #[arg(long, value_name = "ID|any|none")]
         goal: Option<String>,
+    },
+    /// Stories with a similar title (fuzzy match on the title): open ones, and ones done recently with their resolution. Check before filing.
+    Similar {
+        /// The text, 8 to 200 characters; several words are one text.
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        /// At most this many, 1 to 10.
+        #[arg(long, default_value_t = 5)]
+        limit: i64,
     },
     /// Edit a story; the --version must be the one you last read.
     Edit {

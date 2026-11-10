@@ -304,7 +304,7 @@ async fn flow() {
 
     // The duplicate check: a reworded title finds the story; a too short text is a failure (exit 1), not a refusal.
     let similar = reeve(&human)
-        .args(["story", "similar", "Booking", "flows"])
+        .args(["story", "similar", "Flow", "for", "booking"])
         .output()
         .unwrap();
     assert_eq!(similar.status.code(), Some(0), "{similar:?}");

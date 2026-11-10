@@ -85,6 +85,32 @@ async fn similar_finds_a_reworded_title_and_validates_its_query() {
 }
 
 #[tokio::test]
+async fn similar_defaults_to_five_hits() {
+    let h = harness().await;
+    for n in 1..=6 {
+        let (st, b) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/stories",
+            Some(json!({"idempotency_key":format!("d{n}"),"title":format!("Export to PDF shows a blank page {n}"),"kind":"bug","criteria":[],"labels":[]})),
+        )
+        .await;
+        assert_eq!(st, 200, "{b}");
+    }
+    let (st, b) = call(
+        &h.app,
+        Some(&h.victim_token),
+        "GET",
+        "/api/v1/stories/similar?q=Export+to+PDF+shows+a+blank+page",
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"].as_array().unwrap().len(), 5, "{b}");
+}
+
+#[tokio::test]
 async fn similar_accepts_the_boundaries_and_counts_code_points() {
     let h = harness().await;
     for q in [

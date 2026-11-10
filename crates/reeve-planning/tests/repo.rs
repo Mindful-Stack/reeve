@@ -1586,7 +1586,7 @@ async fn untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readi
 
 // Measured once with `SELECT title, similarity(title, 'PDF export shows a blank page') FROM stories`:
 // "The export PDF is blank" 0.47, "PDF export blank page" 0.72, "Export to PDF shows a blank page" 0.91,
-// "Login redirects twice" 0.0. So 0.3 straddles the reworded titles and the unrelated one.
+// "Login redirects twice" 0.0. So SIMILAR_MIN (0.3) straddles the reworded titles and the unrelated one.
 #[tokio::test]
 async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let (_c, pool) = common::pg().await;
@@ -1620,7 +1620,7 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
     let other = mk("4", "Login redirects twice").await;
     let old = mk("5", "Export PDF shows blank page").await;
     let imported = mk("6", "PDF export shows a blank page").await;
-    // `old` is dropped 30 days before the window's end, `first` 2 days before `now` (the window starts 14 days before).
+    // the window is 10-12 onwards; `old` was dropped on 09-26, before it, and `first` on 10-24, inside it
     c.now = Utc.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
     h.move_story(
         &c,
