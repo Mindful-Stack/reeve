@@ -1855,10 +1855,10 @@ async fn story_list_text_matches_title_description_and_ref_case_insensitively() 
     )
     .await;
     assert_eq!(
-        sorted(got.clone()),
-        sorted(vec![by_title, by_description, by_ref])
+        sorted(got),
+        sorted(vec![by_title, by_description, by_ref]),
+        "not {distractor}"
     );
-    assert!(!got.contains(&distractor));
 }
 
 /// `%`, `_` and `\` in the text are literal, as in search. Catches an unescaped pattern, which matches every row.
@@ -2307,4 +2307,104 @@ async fn story_list_relevance_orders_by_tier_then_rank_order() {
         .await,
         vec![target, mentions]
     );
+}
+
+/// A story whose external reference is another story's key text (a key under an earlier prefix, which a reference may
+/// name): the key tier comes before the exact-reference tier, though the default order puts the reference holder
+/// first.
+#[tokio::test]
+async fn story_list_relevance_puts_the_named_key_before_an_equal_reference() {
+    let (_c, pool) = common::pg().await;
+    let mut old = handlers(&pool);
+    old.settings.key_prefix = "OLD".into();
+    let target = story(&old, "target", Kind::Story, None, &[])
+        .await
+        .key()
+        .clone();
+    assert_eq!(target.to_string(), "OLD-1");
+    let h = handlers(&pool);
+    let ports = make_planning_ports(pool.clone());
+    let holder = spec_story(
+        &h,
+        "holder",
+        Spec {
+            title: "Imported",
+            external_ref: Some(&target.to_string()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut tx = pool.begin().await.unwrap();
+    ports
+        .stories
+        .set_ranks(&mut tx, &[(holder.clone(), 1), (target.clone(), 2)])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let f = |sort| StoryFilter {
+        text: text(&target.to_string(), Some(&target)),
+        sort,
+        ..Default::default()
+    };
+    assert_eq!(
+        listed(&pool, f(reeve_protocol::StorySort::Rank), DoneWindow::All).await,
+        vec![holder.clone(), target.clone()],
+        "rank order puts the holder first"
+    );
+    assert_eq!(
+        listed(
+            &pool,
+            f(reeve_protocol::StorySort::Relevance),
+            DoneWindow::All
+        )
+        .await,
+        vec![target, holder]
+    );
+}
+
+/// `epic_keys_in` reads the keys of one initiative's epics only: not another initiative's, not an unplaced epic's,
+/// and none for an initiative with no epics.
+#[tokio::test]
+async fn epic_keys_in_reads_one_initiatives_epic_keys() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let ports = make_planning_ports(pool.clone());
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let j = h
+        .create_initiative(&c, "j", "J", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let bare = h
+        .create_initiative(&c, "k", "K", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e1 = h
+        .create_epic(&c, "e1", "E1", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let e2 = h
+        .create_epic(&c, "e2", "E2", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let elsewhere = h
+        .create_epic(&c, "e3", "E3", Some(j.key().clone()), "", None)
+        .await
+        .unwrap();
+    let unplaced = h.create_epic(&c, "e4", "E4", None, "", None).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let under_i = ports.epics.epic_keys_in(&mut tx, i.key()).await.unwrap();
+    let under_bare = ports.epics.epic_keys_in(&mut tx, bare.key()).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        sorted(under_i),
+        sorted(vec![e1.key().clone(), e2.key().clone()]),
+        "not {} nor {}",
+        elsewhere.key(),
+        unplaced.key()
+    );
+    assert_eq!(under_bare, Vec::<Key>::new());
 }

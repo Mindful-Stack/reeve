@@ -676,7 +676,7 @@ async fn owners_are_normalised_on_write_and_on_the_list_filter() {
             ..Default::default()
         };
         let found = h
-            .list_stories(&f, None, false, DoneFilter::All, Utc::now())
+            .list_stories(&f, None, None, false, DoneFilter::All, Utc::now())
             .await
             .unwrap();
         assert_eq!(found.len(), 1, "filter {filter:?}");
@@ -1074,6 +1074,7 @@ async fn ready_filter_lists_only_pickable_work() {
         .list_stories(
             &StoryFilter::default(),
             None,
+            None,
             false,
             DoneFilter::All,
             Utc::now(),
@@ -1088,6 +1089,7 @@ async fn ready_filter_lists_only_pickable_work() {
     let ready: Vec<_> = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             None,
             true,
             DoneFilter::All,
@@ -1478,6 +1480,7 @@ async fn rank_story_renumbers_todo_in_one_write_and_bumps_only_the_moved_story()
                     delivery: Some(DeliveryState::Todo),
                     ..Default::default()
                 },
+                None,
                 None,
                 false,
                 DoneFilter::All,
@@ -3155,6 +3158,7 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
             h.list_stories(
                 &StoryFilter::default(),
                 None,
+                None,
                 false,
                 DoneFilter::All,
                 Utc::now(),
@@ -3170,6 +3174,7 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
         h.list_stories(
             &StoryFilter::default(),
             None,
+            None,
             false,
             DoneFilter::All,
             Utc::now()
@@ -3184,6 +3189,7 @@ async fn list_stories_costs_the_same_for_three_and_twelve_stories() {
     let board = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             None,
             false,
             DoneFilter::All,
@@ -3302,6 +3308,7 @@ async fn list_pairs_each_story_with_its_own_readiness() {
         .list_stories(
             &StoryFilter::default(),
             None,
+            None,
             false,
             DoneFilter::All,
             Utc::now(),
@@ -3334,6 +3341,7 @@ async fn list_pairs_each_story_with_its_own_readiness() {
     let list = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             None,
             false,
             DoneFilter::All,
@@ -3473,6 +3481,7 @@ async fn list_stories_reads_one_snapshot() {
             h.list_stories(
                 &StoryFilter::default(),
                 None,
+                None,
                 false,
                 DoneFilter::All,
                 Utc::now(),
@@ -3505,6 +3514,7 @@ async fn list_stories_reads_one_snapshot() {
     let after = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             None,
             false,
             DoneFilter::All,
@@ -3950,6 +3960,7 @@ async fn list_stories_with_an_absurd_done_window_lists_everything() {
     let all = h
         .list_stories(
             &StoryFilter::default(),
+            None,
             None,
             false,
             DoneFilter::Recent,
@@ -5906,7 +5917,14 @@ async fn every_item_dto_carries_its_urgency() {
         sk
     );
     let board = h
-        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
         .await
         .unwrap();
     let row = |k: &Key| {
@@ -6183,7 +6201,14 @@ async fn urgency_changes_no_readiness_delivery_or_progress() {
     );
     let facts = || async {
         let board = h
-            .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
+            .list_stories(
+                &StoryFilter::default(),
+                None,
+                None,
+                false,
+                DoneFilter::All,
+                now,
+            )
             .await
             .unwrap();
         let stories = board
@@ -6330,7 +6355,14 @@ async fn every_item_read_is_one_transaction_on_one_connection() {
         "story_dto"
     );
     let urgent = h
-        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
         .await
         .unwrap()[0]
         .story
@@ -6375,29 +6407,20 @@ async fn plain_story(h: &Handlers, c: &Ctx, idem: &str, title: &str, epic: Optio
     .clone()
 }
 
-/// The keys of the story list for `f` and `initiative`, every done story included, in order.
+/// The keys of the story list for `f`, `text` and `initiative`, every done story included, in order.
 async fn list_keys(
     h: &Handlers,
     f: &StoryFilter,
+    text: Option<&str>,
     initiative: Option<&Key>,
     now: chrono::DateTime<Utc>,
 ) -> Vec<Key> {
-    h.list_stories(f, initiative, false, DoneFilter::All, now)
+    h.list_stories(f, text, initiative, false, DoneFilter::All, now)
         .await
         .unwrap()
         .into_iter()
         .map(|s| s.story.key)
         .collect()
-}
-
-fn text_filter(t: &str) -> StoryFilter {
-    StoryFilter {
-        text: Some(StoryText {
-            text: t.into(),
-            key: None,
-        }),
-        ..Default::default()
-    }
 }
 
 /// Text is 1..=200 characters after trimming, counted as characters, not bytes; relevance needs text. Validation
@@ -6408,39 +6431,49 @@ async fn story_list_validates_text_and_sort() {
     let (h, _) = mk(pool);
     let c = ctx("dan@example.com", false);
     let s = plain_story(&h, &c, "s", &"é".repeat(200), None).await;
-    let refused = |f: StoryFilter| {
+    let refused = |f: StoryFilter, text: Option<String>| {
         let h = &h;
         async move {
             let r = h
-                .list_stories(&f, None, false, DoneFilter::All, c.now)
+                .list_stories(&f, text.as_deref(), None, false, DoneFilter::All, c.now)
                 .await;
             assert!(
                 matches!(r, Err(HandlerError::Validation(_))),
-                "{f:?}: {r:?}"
+                "{f:?} {text:?}: {r:?}"
             );
         }
     };
-    refused(text_filter("")).await;
-    refused(text_filter("   ")).await;
-    refused(text_filter(&"a".repeat(201))).await;
-    refused(StoryFilter {
-        epics: Some(vec![]),
-        ..text_filter(" ")
-    })
+    let none = StoryFilter::default;
+    refused(none(), Some("".into())).await;
+    refused(none(), Some("   ".into())).await;
+    refused(none(), Some("a".repeat(201))).await;
+    refused(
+        StoryFilter {
+            epics: Some(vec![]),
+            ..none()
+        },
+        Some(" ".into()),
+    )
     .await;
-    refused(StoryFilter {
-        sort: reeve_protocol::StorySort::Relevance,
-        ..Default::default()
-    })
+    refused(
+        StoryFilter {
+            sort: reeve_protocol::StorySort::Relevance,
+            ..none()
+        },
+        None,
+    )
     .await;
-    refused(StoryFilter {
-        sort: reeve_protocol::StorySort::Relevance,
-        epics: Some(vec![]),
-        ..Default::default()
-    })
+    refused(
+        StoryFilter {
+            sort: reeve_protocol::StorySort::Relevance,
+            epics: Some(vec![]),
+            ..none()
+        },
+        None,
+    )
     .await;
     assert_eq!(
-        list_keys(&h, &text_filter(&"é".repeat(200)), None, c.now).await,
+        list_keys(&h, &none(), Some(&"é".repeat(200)), None, c.now).await,
         vec![s.clone()],
         "200 two-byte characters are within the limit"
     );
@@ -6449,14 +6482,43 @@ async fn story_list_validates_text_and_sort() {
             &h,
             &StoryFilter {
                 sort: reeve_protocol::StorySort::Relevance,
-                ..text_filter(&format!("  {}  ", "é".repeat(200)))
+                ..none()
             },
+            Some(&format!("  {}  ", "é".repeat(200))),
             None,
             c.now
         )
         .await,
         vec![s],
         "the text is trimmed before it is counted and matched"
+    );
+}
+
+/// The handler derives the key from the text it is given and replaces whatever `f.text` held: a stale key there never
+/// matches (text `zzz` lists nothing though the stale key names a story), and with no text there is no text filter.
+#[tokio::test]
+async fn story_list_ignores_a_callers_story_text() {
+    let (_c, pool) = common::pg().await;
+    let (h, _) = mk(pool);
+    let c = ctx("dan@example.com", false);
+    let one = plain_story(&h, &c, "1", "First", None).await;
+    let two = plain_story(&h, &c, "2", "Second", None).await;
+    let stale = StoryFilter {
+        text: Some(StoryText {
+            text: "zzz".into(),
+            key: Some(one.clone()),
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        list_keys(&h, &stale, Some("zzz"), None, c.now).await,
+        Vec::<Key>::new(),
+        "zzz names no key, whatever f.text said"
+    );
+    assert_eq!(
+        list_keys(&h, &stale, None, None, c.now).await,
+        vec![one, two],
+        "no text, no text filter"
     );
 }
 
@@ -6495,10 +6557,10 @@ async fn story_list_initiative_expands_to_its_epics() {
     let s3 = plain_story(&h, &c, "s3", "S3", Some(e3.key())).await;
     let loose = plain_story(&h, &c, "s4", "S4", None).await;
     let f = StoryFilter::default();
-    let got = list_keys(&h, &f, Some(i.key()), c.now).await;
+    let got = list_keys(&h, &f, None, Some(i.key()), c.now).await;
     assert_eq!(got, vec![s1.clone(), s2], "not {s3} nor {loose}");
     assert_eq!(
-        list_keys(&h, &f, Some(empty.key()), c.now).await,
+        list_keys(&h, &f, None, Some(empty.key()), c.now).await,
         Vec::<Key>::new()
     );
     // With an epic set already given, the initiative narrows it.
@@ -6509,6 +6571,7 @@ async fn story_list_initiative_expands_to_its_epics() {
                 epics: Some(vec![e1.key().clone(), e3.key().clone()]),
                 ..Default::default()
             },
+            None,
             Some(i.key()),
             c.now
         )
@@ -6583,14 +6646,21 @@ async fn story_list_urgent_selects_the_rows_shown_urgent() {
         urgent: true,
         ..Default::default()
     };
-    let got = list_keys(&h, &urgent, None, now).await;
+    let got = list_keys(&h, &urgent, None, None, now).await;
     let expected = vec![a1, a2, marked];
     assert_eq!(
         got, expected,
         "not {sibling}, {done}, {expired}, {boundary} nor {calm}"
     );
     let shown_urgent: Vec<Key> = h
-        .list_stories(&StoryFilter::default(), None, false, DoneFilter::All, now)
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
         .await
         .unwrap()
         .into_iter()
@@ -6615,7 +6685,7 @@ async fn story_list_text_names_a_key() {
     assert_eq!(three.to_string(), "ABC-3");
     for t in ["#3", "3", "abc-3"] {
         assert_eq!(
-            list_keys(&h, &text_filter(t), None, c.now).await,
+            list_keys(&h, &StoryFilter::default(), Some(t), None, c.now).await,
             vec![three.clone()],
             "{t}"
         );

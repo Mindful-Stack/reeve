@@ -259,35 +259,38 @@ impl Handlers {
         }
     }
 
+    /// The story list for `f`, read in one `REPEATABLE READ READ ONLY` snapshot: stories, readiness facts, blockers,
+    /// pull requests and urgency, in a number of statements that does not depend on the number of stories.
     /// Readiness is computed for every story whatever its delivery state, but `ready_only` means pickable work: ready
-    /// stories that are still in todo. One `REPEATABLE READ READ ONLY` snapshot: stories, readiness facts, blockers and
-    /// pull requests, in a number of statements that does not depend on the number of stories.
-    /// The story list for `f`, read in one snapshot. Validates first, so a filter that would list nothing is still
-    /// refused when its text or sort is invalid: the text is trimmed and must be 1..=200 characters, and
-    /// `StorySort::Relevance` needs text. The key the text names is derived here (`key_named_by`), whatever the caller
-    /// set. `initiative` narrows `f.epics` to that initiative's epics; `f.urgent` keeps the rows whose computed
-    /// urgency has a source (kb/ADR-0021 R4).
+    /// stories that are still in todo.
+    ///
+    /// `text` is the caller's raw text: it is trimmed and must be 1..=200 characters, and the key it names
+    /// (`key_named_by`) is derived here, so `f.text` is ignored and replaced. `StorySort::Relevance` needs text. Both
+    /// are validated before anything is read, so a filter that would list nothing is still refused when invalid.
+    /// `initiative` narrows `f.epics` to that initiative's epics; `f.urgent` keeps the rows whose computed urgency has
+    /// a source (kb/ADR-0021 R4).
     pub async fn list_stories(
         &self,
         f: &StoryFilter,
+        text: Option<&str>,
         initiative: Option<&Key>,
         ready_only: bool,
         done: DoneFilter,
         now: DateTime<Utc>,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
         let mut f = f.clone();
-        if let Some(t) = f.text.take() {
-            let text = t.text.trim();
-            if text.is_empty() || text.chars().count() > 200 {
+        f.text = match text.map(str::trim) {
+            None => None,
+            Some(t) if t.is_empty() || t.chars().count() > 200 => {
                 return Err(HandlerError::Validation(
                     "story text must be 1..=200 characters".into(),
                 ));
             }
-            f.text = Some(StoryText {
-                key: self.key_named_by(text),
-                text: text.to_string(),
-            });
-        }
+            Some(t) => Some(StoryText {
+                key: self.key_named_by(t),
+                text: t.to_string(),
+            }),
+        };
         if f.sort == StorySort::Relevance && f.text.is_none() {
             return Err(HandlerError::Validation(
                 "sort=relevance needs text (q)".into(),
@@ -308,34 +311,23 @@ impl Handlers {
             .await?;
         let out = async {
             if let Some(i) = initiative {
-                let under: Vec<Key> = self
-                    .ports
-                    .epics
-                    .list_epics_in(&mut tx, Some(i))
-                    .await?
-                    .iter()
-                    .map(|e| e.key().clone())
-                    .collect();
+                let under = self.ports.epics.epic_keys_in(&mut tx, i).await?;
                 f.epics = Some(match f.epics.take() {
                     Some(given) => given.into_iter().filter(|k| under.contains(k)).collect(),
                     None => under,
                 });
             }
             let urg = self.urgency_in(&mut tx, now).await?;
-            let mut out = self
-                .list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
-                .await?;
-            // Urgency is computed once per snapshot (`urgency_in`) and shown on every row; the filter keeps exactly the
-            // rows shown urgent rather than restating kb/ADR-0017 R3 in SQL.
-            if f.urgent {
-                out.retain(|s| !s.story.urgent_sources.is_empty());
-            }
-            Ok(out)
+            self.list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
+                .await
         }
         .await;
         end_read(tx, out).await
     }
 
+    /// The story list for `f` on the caller's transaction, with `urg` as every row's urgency. `f.goal` and `f.urgent`
+    /// filter after the read; `f.urgent` keeps the rows `urg` shows urgent, so a default `Urgency` (a caller that
+    /// computed none) yields nothing under `f.urgent` rather than an unfiltered list.
     pub(super) async fn list_stories_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -376,6 +368,11 @@ impl Handlers {
                 GoalFilter::Any => !s.story.goals.is_empty(),
                 GoalFilter::None => s.story.goals.is_empty(),
             });
+        }
+        // Urgency is computed once per snapshot (`urgency_in`) and shown on every row; the filter keeps exactly the
+        // rows shown urgent rather than restating kb/ADR-0017 R3 in SQL.
+        if f.urgent {
+            out.retain(|s| !s.story.urgent_sources.is_empty());
         }
         Ok(out)
     }

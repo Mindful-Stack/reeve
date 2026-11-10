@@ -5,7 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{GoalFilter, StoryFilter, StoryText};
+use reeve_planning::{GoalFilter, StoryFilter};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -108,7 +108,7 @@ async fn list(
         untriaged: q.untriaged,
         label: q.label,
         goal,
-        text: q.q.map(|text| StoryText { text, key: None }),
+        text: None,
         kind: q.kind,
         epics,
         urgent: q.urgent,
@@ -116,7 +116,14 @@ async fn list(
     };
     Ok(ok(s
         .handlers
-        .list_stories(&f, initiative.as_ref(), q.ready, q.done, c.ctx().now)
+        .list_stories(
+            &f,
+            q.q.as_deref(),
+            initiative.as_ref(),
+            q.ready,
+            q.done,
+            c.ctx().now,
+        )
         .await?))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]

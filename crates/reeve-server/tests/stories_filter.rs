@@ -150,6 +150,15 @@ async fn every_new_parameter_narrows_the_story_list() {
         vec![invoice_bug.clone()]
     );
     assert_eq!(keys(&h, "initiative=JPD-404").await, Vec::<String>::new());
+    // epic and initiative combine: an epic outside the initiative keeps nothing, one inside keeps its stories
+    assert_eq!(
+        keys(&h, &format!("epic={other_epic}&initiative={ini}")).await,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        keys(&h, &format!("epic={epic}&initiative={ini}")).await,
+        vec![invoice_bug.clone()]
+    );
     // urgent: only the row shown urgent
     let (st, b) = get(&h, "urgent=true").await;
     assert_eq!(st, 200, "{b}");
@@ -207,10 +216,18 @@ async fn the_story_list_refuses_bad_text_sort_and_values() {
 }
 
 /// Under `sort=relevance` an exact external reference comes first, then title matches, then the rest, each in rank
-/// order; the default order is today's (rank).
+/// order (state first: a started title match follows the todo one though it was filed first); the default order is
+/// today's (rank).
 #[tokio::test]
 async fn relevance_puts_the_exact_reference_then_titles_first() {
     let h = harness().await;
+    let started = new_story(&h, "s", json!({"title":"SCRUM-77 started"})).await;
+    post(
+        &h,
+        &format!("/api/v1/stories/{started}/move"),
+        json!({"version":1,"to":"in_progress","override_reason":"the test starts it"}),
+    )
+    .await;
     let mention = new_story(
         &h,
         "m",
@@ -237,12 +254,13 @@ async fn relevance_puts_the_exact_reference_then_titles_first() {
             mention.clone(),
             in_title.clone(),
             exact.clone(),
-            longer.clone()
+            longer.clone(),
+            started.clone()
         ],
         "rank order by default"
     );
     assert_eq!(
         keys(&h, "q=scrum-77&sort=relevance").await,
-        vec![exact, in_title, mention, longer]
+        vec![exact, in_title, started, mention, longer]
     );
 }
