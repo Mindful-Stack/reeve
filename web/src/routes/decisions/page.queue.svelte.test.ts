@@ -129,7 +129,7 @@ describe('decisions queue page', () => {
 	const NEXT = { kind: 'write_record' } as const;
 	it('groups by lane under the lane headings, with anchors on the first three', async () => {
 		net.queue = queue([
-			entry('review', dec(1, 'Reviewing'), [], { next_step: { kind: 'review_record', pr_url: null } }),
+			entry('review', dec(1, 'Reviewing'), [], { next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/3' } }),
 			entry('this_sprint', dec(2, 'Now'), [], { next_step: NEXT, needed_in: 'this_sprint' }),
 			entry('next_sprint', dec(3, 'Soon')),
 			entry('beyond', dec(4, 'Later')),
