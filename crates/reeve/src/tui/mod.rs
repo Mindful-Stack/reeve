@@ -20,6 +20,7 @@ mod scenarios;
 mod set_epic;
 mod sse;
 mod term;
+mod urgent;
 mod view;
 mod words;
 

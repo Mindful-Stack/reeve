@@ -5,9 +5,9 @@ use crate::tui::effect::{Completion, Effect, Failure, Reply, Request, Route, Seq
 use crate::tui::generation::Gen;
 use crate::tui::keys::{self, Action};
 use crate::tui::note::{Note, Out, WriteOutcome};
-use crate::tui::{board, drawer, live, moves, set_epic, words};
+use crate::tui::{board, drawer, live, moves, set_epic, urgent, words};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use reeve_protocol::{DeliveryState, EditItem, Key, Me, TokenKind, normalise_email};
+use reeve_protocol::{DeliveryState, EditItem, Key, Me, StoryDto, TokenKind, normalise_email};
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -22,6 +22,16 @@ pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
 const NOT_WHEN_DONE: &str = "done stories cannot be urgent";
 /// Why `U` does nothing for a story without a mark of its own (one urgent through its lineage included).
 const NO_MARK: &str = "no urgent mark";
+
+/// Why `u` or `U` would do nothing for `story` (the token aside): the one place the done and no-mark conditions are
+/// written, for the shortcuts and the menu alike. Presentation only; the server decides (kb/ADR-0011 R9).
+fn urgent_blocked(story: &StoryDto, a: Action) -> Option<&'static str> {
+    match a {
+        Action::MarkUrgent if story.delivery == DeliveryState::Done => Some(NOT_WHEN_DONE),
+        Action::ClearUrgent if story.urgent_mark.is_none() => Some(NO_MARK),
+        _ => None,
+    }
+}
 
 #[derive(Debug)]
 pub struct Session {
@@ -81,6 +91,7 @@ pub enum Overlay {
     MovePrompt,
     MovePicker,
     EpicPicker,
+    UrgentPrompt,
     Search,
     FilterMenu,
 }
@@ -98,6 +109,7 @@ pub struct State {
     pub board: board::State,
     pub moves: moves::State,
     pub set_epic: set_epic::State,
+    pub urgent: urgent::State,
     pub live: live::State,
     pub ui: Ui,
     pub quit: bool,
@@ -124,6 +136,7 @@ pub enum Msg {
     Board(board::Msg),
     Move(moves::Msg),
     SetEpic(set_epic::Msg),
+    Urgent(urgent::Msg),
     Live(live::Msg),
     /// A finished request, before the core stamps and classifies it. `write`: the story a write was for
     /// (`Request::write_key`), so the core words its lost answer or conflict once, for every owner.
@@ -157,6 +170,7 @@ impl fmt::Debug for Msg {
             Msg::Board(m) => write!(f, "Board({m:?})"),
             Msg::Move(m) => write!(f, "Move({m:?})"),
             Msg::SetEpic(m) => write!(f, "SetEpic({m:?})"),
+            Msg::Urgent(m) => write!(f, "Urgent({m:?})"),
             Msg::Live(m) => write!(f, "Live({m:?})"),
             Msg::Done {
                 sent,
@@ -198,6 +212,7 @@ impl State {
             board: board::State::default(),
             moves: moves::State::default(),
             set_epic: set_epic::State::default(),
+            urgent: urgent::State::default(),
             live: live::State::with_backoff(start.backoff.clone()),
             ui: Ui {
                 width: start.width,
@@ -291,6 +306,15 @@ impl State {
         self.absorb(o, Msg::SetEpic, now)
     }
 
+    fn urgent_msg(&mut self, m: urgent::Msg, now: Instant) -> Vec<Effect<Msg>> {
+        let cx = urgent::Ctx {
+            board: self.board.view(),
+            read_only: self.session.read_only(),
+        };
+        let o = self.urgent.update(m, &cx);
+        self.absorb(o, Msg::Urgent, now)
+    }
+
     fn live_msg(&mut self, m: live::Msg, now: Instant) -> Vec<Effect<Msg>> {
         let o = self.live.update(m, &live::Ctx { now });
         self.absorb(o, Msg::Live, now)
@@ -336,6 +360,7 @@ impl State {
         // Every follow-up, picker and prompt goes, so no late reply can start a write (kb/ADR-0015 R5).
         let mut fx = self.moves_msg(moves::Msg::Reset, now);
         fx.extend(self.set_epic_msg(set_epic::Msg::Reset, now));
+        fx.extend(self.urgent_msg(urgent::Msg::Reset, now));
         fx.extend(self.live_msg(live::Msg::Stop, now));
         self.set_status(SIGNED_OUT, now);
         fx
@@ -384,6 +409,7 @@ impl State {
             (self.moves.prompt().is_some(), Overlay::MovePrompt),
             (self.moves.picker().is_some(), Overlay::MovePicker),
             (self.set_epic.picker().is_some(), Overlay::EpicPicker),
+            (self.urgent.open().is_some(), Overlay::UrgentPrompt),
             (self.board.search().is_some(), Overlay::Search),
             (self.board.filter_menu().is_some(), Overlay::FilterMenu),
         ]
@@ -410,6 +436,7 @@ impl State {
             }
             Overlay::MovePrompt | Overlay::MovePicker => self.moves_msg(moves::Msg::Close, now),
             Overlay::EpicPicker => self.set_epic_msg(set_epic::Msg::Close, now),
+            Overlay::UrgentPrompt => self.urgent_msg(urgent::Msg::Close, now),
             Overlay::FilterMenu | Overlay::Search => self.board_msg(board::Msg::CloseOverlays, now),
         }
     }
@@ -483,6 +510,7 @@ impl State {
             Msg::Board(m) => self.board_msg(m, now),
             Msg::Move(m) => self.moves_msg(m, now),
             Msg::SetEpic(m) => self.set_epic_msg(m, now),
+            Msg::Urgent(m) => self.urgent_msg(m, now),
             Msg::Live(m) => self.live_msg(m, now),
             Msg::Status(t) => {
                 self.set_status(t, now);
@@ -593,6 +621,7 @@ impl State {
             Some(Overlay::MovePrompt) => self.moves_msg(moves::Msg::PromptKey(k), now),
             Some(Overlay::MovePicker) => self.moves_msg(moves::Msg::PickerKey(k), now),
             Some(Overlay::EpicPicker) => self.set_epic_msg(set_epic::Msg::Key(k), now),
+            Some(Overlay::UrgentPrompt) => self.urgent_msg(urgent::Msg::Key(k), now),
             Some(Overlay::FilterMenu) => self.board_msg(board::Msg::FilterKey(k), now),
             Some(Overlay::Search) => self.board_msg(board::Msg::SearchKey(k), now),
             None => match keys::action(&k) {
@@ -658,18 +687,7 @@ impl State {
             Action::SetEpic => self.set_epic_msg(set_epic::Msg::Open, now),
             Action::Take => self.take(now),
             Action::ClearUrgent => self.clear_urgent(now),
-            // The guards only: the reason prompt that sends the mark comes with the urgent slice.
-            Action::MarkUrgent => {
-                match self.board.writable(self.session.read_only()) {
-                    Err(why) => self.set_status(why, now),
-                    Ok(e) if e.item.story.delivery == DeliveryState::Done => {
-                        let k = e.item.story.key.clone();
-                        self.set_status(format!("{k}: {NOT_WHEN_DONE}"), now);
-                    }
-                    Ok(_) => {}
-                }
-                Vec::new()
-            }
+            Action::MarkUrgent => self.mark_urgent(now),
             Action::Yank => match self.selected_key() {
                 Some(k) => {
                     self.set_status(format!("copied {k}"), now);
@@ -770,10 +788,9 @@ impl State {
                         Some(format!("nothing after {}", words::state(at)))
                     }
                     Action::Take if mine => Some("already yours".into()),
-                    Action::MarkUrgent if story.delivery == DeliveryState::Done => {
-                        Some(NOT_WHEN_DONE.into())
+                    Action::MarkUrgent | Action::ClearUrgent => {
+                        urgent_blocked(story, action).map(String::from)
                     }
-                    Action::ClearUrgent if story.urgent_mark.is_none() => Some(NO_MARK.into()),
                     Action::OpenPr if story.prs.is_empty() => Some("no pull request".into()),
                     _ => None,
                 };
@@ -865,19 +882,42 @@ impl State {
         fx
     }
 
-    /// Clears the selected story's own mark. No version: marks do not take one (kb/ADR-0017 R5).
-    fn clear_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
-        let (key, marked) = match self.board.writable(self.session.read_only()) {
-            Ok(e) => (e.item.story.key.clone(), e.item.story.urgent_mark.is_some()),
+    /// The selected story's key when `a` may run on it now; otherwise its reason is in the status line.
+    fn urgent_target(&mut self, a: Action, now: Instant) -> Option<Key> {
+        let (key, blocked) = match self.board.writable(self.session.read_only()) {
+            Ok(e) => (e.item.story.key.clone(), urgent_blocked(&e.item.story, a)),
             Err(why) => {
                 self.set_status(why, now);
-                return Vec::new();
+                return None;
             }
         };
-        if !marked {
-            self.set_status(format!("{key}: {NO_MARK}"), now);
-            return Vec::new();
+        match blocked {
+            Some(why) => {
+                self.set_status(format!("{key}: {why}"), now);
+                None
+            }
+            None => Some(key),
         }
+    }
+
+    /// Opens the reason prompt, prefilled with the story's current reason; the `urgent` slice sends the mark.
+    fn mark_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
+        let Some(key) = self.urgent_target(Action::MarkUrgent, now) else {
+            return Vec::new();
+        };
+        let reason = self
+            .board
+            .get(&key)
+            .and_then(|e| e.item.story.urgent_mark.as_ref())
+            .and_then(|m| m.reason.clone());
+        self.urgent_msg(urgent::Msg::Open { key, reason }, now)
+    }
+
+    /// Clears the selected story's own mark. No version: marks do not take one (kb/ADR-0017 R5).
+    fn clear_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
+        let Some(key) = self.urgent_target(Action::ClearUrgent, now) else {
+            return Vec::new();
+        };
         let mut fx = self.notes(vec![Note::WriteStarted(key.clone())], now);
         let k = key.clone();
         fx.push(Effect::http(

@@ -37,10 +37,6 @@ pub enum Request {
     },
     /// `POST /stories/{key}/urgent`: mark the story urgent, or mark it again (the new mark replaces
     /// the old). No version (kb/ADR-0017 R5).
-    #[expect(
-        dead_code,
-        reason = "the urgent slice's reason prompt sends it; until then nothing may send a mark"
-    )]
     MarkUrgent {
         key: Key,
         reason: Option<String>,

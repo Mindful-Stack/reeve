@@ -1,7 +1,7 @@
 //! The screen: a header line, the body (board or empty state, with the drawer and any overlay on top), a status line.
 use crate::tui::app::State;
 use crate::tui::live::Conn;
-use crate::tui::{board, drawer, keys, moves, set_epic, words};
+use crate::tui::{board, drawer, keys, moves, set_epic, urgent, words};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -240,6 +240,7 @@ pub fn draw(f: &mut Frame, s: &State, now: Instant) {
     }
     moves::view::draw(f, body, &s.moves, &s.board);
     set_epic::view::draw(f, body, &s.set_epic, &s.board);
+    urgent::view::draw(f, body, &s.urgent, &s.board);
     if let Some(row) = s.ui.menu {
         menu(f, body, s, row);
     }
@@ -950,6 +951,22 @@ mod tests {
         sim.char('e');
         let (rows, _) = sim.render(120, 30);
         assert!(has(&rows, "epic for ● ABC-1 story"), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_urgent_prompt_is_titled_with_the_tagged_key_and_prefilled() {
+        let mut marked = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        marked.story.urgent_mark.as_mut().unwrap().reason = Some("old".into());
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![marked]);
+        sim.char('u');
+        let (rows, _) = sim.render(120, 30);
+        let title = format!(
+            " mark {} urgent ",
+            crate::tui::moves::view::tagged(&sim.s.board, &key("ABC-1"))
+        );
+        assert_eq!(title, " mark ● ABC-1 story urgent ");
+        assert!(has(&rows, &title), "{rows:#?}");
+        assert!(has(&rows, "reason (optional): old"), "{rows:#?}");
     }
 
     #[test]

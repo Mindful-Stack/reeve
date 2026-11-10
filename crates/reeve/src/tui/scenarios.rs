@@ -451,8 +451,8 @@ fn two_identity_answers_start_the_session_once() {
 
 #[test]
 fn sign_out_closes_every_prompt_and_picker() {
-    // The resolution prompt (a move into done), the state picker, the epic picker.
-    for open in [&['L'][..], &['m'], &['e']] {
+    // The resolution prompt (a move into done), the state picker, the epic picker, the urgent reason prompt.
+    for open in [&['L'][..], &['m'], &['e'], &['u']] {
         let mut sim = Sim::loaded(
             TokenKind::Interactive,
             vec![owned(story("ABC-1", Testing, 1), "dan@example.com")],
@@ -464,7 +464,8 @@ fn sign_out_closes_every_prompt_and_picker() {
         assert!(
             sim.s.moves.prompt().is_some()
                 || sim.s.moves.picker().is_some()
-                || sim.s.set_epic.picker().is_some(),
+                || sim.s.set_epic.picker().is_some()
+                || sim.s.urgent.open().is_some(),
             "{open:?}"
         );
         // The overlay owns the keys, so the sign-out comes from the stream.
@@ -473,6 +474,7 @@ fn sign_out_closes_every_prompt_and_picker() {
         assert!(sim.s.moves.prompt().is_none(), "{open:?}");
         assert!(sim.s.moves.picker().is_none(), "{open:?}");
         assert!(sim.s.set_epic.picker().is_none(), "{open:?}");
+        assert!(sim.s.urgent.open().is_none(), "{open:?}");
     }
 }
 
@@ -533,6 +535,21 @@ fn after_a_sign_out_nothing_reaches_the_network() {
     let mut sim = signed_out_with_a_move_in_flight(false);
     sim.char('r');
     quiet(&sim, "r");
+
+    // The reason prompt open when the sign-out lands: its Enter can no longer send a mark.
+    let mut sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![owned(story("ABC-1", Todo, 1), "dan@example.com")],
+    );
+    sim.char('u');
+    sim.char('x');
+    assert!(sim.s.urgent.open().is_some());
+    sim.stream(StreamEvent::Ended(Ended::Unauthorized));
+    sim.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert!(
+        !sim.has_pending(|r| matches!(r, Request::MarkUrgent { .. })),
+        "a mark was sent after the sign-out"
+    );
 }
 
 #[test]
@@ -843,6 +860,9 @@ fn open_overlays(s: &crate::tui::app::State) -> Vec<&'static str> {
     if s.set_epic.picker().is_some() {
         v.push("epic picker");
     }
+    if s.urgent.open().is_some() {
+        v.push("urgent prompt");
+    }
     if s.board.filter_menu().is_some() {
         v.push("filter menu");
     }
@@ -887,11 +907,21 @@ fn at_most_one_overlay_is_open_after_every_message() {
             &[Key('L'), Key('j'), Key('e'), Refuse],
             "move prompt",
         ),
+        (
+            "refusal over the urgent prompt",
+            &[Key('L'), Key('j'), Key('u'), Refuse],
+            "move prompt",
+        ),
         // On a board of ABC-3 and ABC-4 (in review), ABC-3 moves and is steered into done: the reply's follow-up opens
         // the resolution prompt.
         (
             "follow-up over the epic picker",
             &[Key('L'), Key('L'), Key('j'), Key('e'), Moved],
+            "move prompt",
+        ),
+        (
+            "follow-up over the urgent prompt",
+            &[Key('L'), Key('L'), Key('j'), Key('u'), Moved],
             "move prompt",
         ),
         (
@@ -1252,4 +1282,143 @@ fn the_menu_lists_mark_and_clear_after_set_epic() {
         actions[at + 1..at + 3],
         [Action::MarkUrgent, Action::ClearUrgent]
     );
+}
+
+fn is_mark(r: &Request) -> bool {
+    matches!(r, Request::MarkUrgent { key: k, .. } if *k == key("ABC-1"))
+}
+
+#[test]
+fn u_opens_the_prompt_and_enter_sends_one_mark_with_the_reason() {
+    let mut sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![owned(story("ABC-1", Todo, 3), "dan@example.com")],
+    );
+    sim.char('u');
+    assert_eq!(
+        sim.s.overlay(),
+        Some(crate::tui::app::Overlay::UrgentPrompt)
+    );
+    assert!(
+        !sim.has_pending(is_mark),
+        "opening the prompt sends nothing"
+    );
+    for c in "on fire".chars() {
+        sim.char(c);
+    }
+    sim.press(KeyCode::Enter, KeyModifiers::NONE);
+    let marks: Vec<_> = sim
+        .pending
+        .iter()
+        .filter_map(|(_, r, _)| match r {
+            Request::MarkUrgent { key, reason } => Some((key.clone(), reason.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks, [(key("ABC-1"), Some("on fire".to_string()))]);
+    assert!(
+        sim.s.board.locked(&key("ABC-1")),
+        "the story shows its pending mark"
+    );
+    assert_eq!(sim.s.overlay(), None);
+
+    // A re-mark opens with the current reason.
+    let mut marked = urgent(owned(story("ABC-1", Todo, 3), "dan@example.com"));
+    marked.story.urgent_mark.as_mut().unwrap().reason = Some("old".into());
+    let mut sim = Sim::loaded(TokenKind::Interactive, vec![marked]);
+    sim.char('u');
+    sim.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert!(sim.has_pending(|r| matches!(
+        r,
+        Request::MarkUrgent { reason: Some(x), .. } if x == "old"
+    )));
+}
+
+#[test]
+fn every_mark_outcome_releases_the_lock() {
+    let marked = my_urgent_story(Todo, 3).story;
+    let cases: [(Completion, &str, bool); 4] = [
+        (
+            Completion::Ok(Reply::Story(marked.clone())),
+            "ABC-1 marked urgent",
+            true,
+        ),
+        (
+            refused(vec![Reason::InteractiveOnly]),
+            "ABC-1: interactive only",
+            false,
+        ),
+        (
+            Completion::Failed(Failure::Server("502 bad gateway".into())),
+            "502 bad gateway",
+            true,
+        ),
+        (
+            Completion::Failed(Failure::Transport("timed out".into())),
+            "ABC-1: no answer — refreshing",
+            true,
+        ),
+    ];
+    for (result, status, refetch) in cases {
+        let mut sim = Sim::loaded(
+            TokenKind::Interactive,
+            vec![owned(story("ABC-1", Todo, 3), "dan@example.com")],
+        );
+        sim.char('u');
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(sim.s.board.locked(&key("ABC-1")));
+        sim.reply(is_mark, result.clone());
+        assert!(!sim.s.board.locked(&key("ABC-1")), "{result:?}");
+        assert_eq!(sim.status(), status, "{result:?}");
+        // R8: a committed or unknown write leaves readiness pending until the refetch lands; a refusal changed nothing.
+        assert_eq!(
+            sim.s.board.get(&key("ABC-1")).unwrap().readiness_pending,
+            refetch,
+            "{result:?}"
+        );
+        assert_eq!(
+            sim.pending.iter().filter(|(_, r, _)| is_stories(r)).count(),
+            usize::from(refetch),
+            "{result:?}"
+        );
+        assert!(!sim.has_pending(is_mark), "never sent again: {result:?}");
+        if let Completion::Ok(_) = result {
+            assert!(
+                sim.s
+                    .board
+                    .get(&key("ABC-1"))
+                    .unwrap()
+                    .item
+                    .story
+                    .urgent_mark
+                    .is_some(),
+                "the reply of the same version is applied"
+            );
+        }
+    }
+}
+
+#[test]
+fn while_the_prompt_is_open_h_types_instead_of_moving() {
+    let mut sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![
+            owned(story("ABC-1", Todo, 1), "dan@example.com"),
+            owned(story("ABC-2", Todo, 1), "dan@example.com"),
+        ],
+    );
+    sim.char('u');
+    for c in ['h', 'H', 'L', 'j', 'q', 'U'] {
+        sim.char(c);
+    }
+    sim.fire_timers();
+    assert!(!sim.s.quit);
+    assert!(!sim.has_pending(is_move), "a move leaked to the board");
+    assert!(!sim.has_pending(|r| matches!(r, Request::ClearUrgent { .. })));
+    assert_eq!(sim.s.board.selected(), Some(&key("ABC-1")));
+    sim.press(KeyCode::Enter, KeyModifiers::NONE);
+    assert!(sim.has_pending(|r| matches!(
+        r,
+        Request::MarkUrgent { reason: Some(x), .. } if x == "hHLjqU"
+    )));
 }
