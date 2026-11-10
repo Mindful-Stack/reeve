@@ -83,8 +83,10 @@ fn done_line(verb: Verb, n: usize) -> String {
 }
 
 pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
-    let now = chrono::Utc::now();
+    // The clock is read after each answer it measures: the server stamps a re-mark when it handles the POST, and a
+    // clock read before that would say a fresh mark "expires in 15 d".
     let listed = c.get::<Vec<WarRoomEntryDto>>("/war-room").await?;
+    let now = chrono::Utc::now();
     let (verb, yes) = match cmd {
         WarRoom::Ls => {
             return Ok(finish(listed, json, |rows| {
@@ -118,6 +120,7 @@ pub async fn run(c: &Client, cmd: WarRoom, json: bool) -> anyhow::Result<i32> {
     let answer = c
         .post::<Vec<WarRoomEntryDto>>(path, serde_json::to_value(WarRoomItems { items })?)
         .await?;
+    let now = chrono::Utc::now();
     let done = done_line(verb, selected.len());
     Ok(finish(answer, json, |rows| {
         format!("{done}\n{}", render::war_room_rows(rows, now))

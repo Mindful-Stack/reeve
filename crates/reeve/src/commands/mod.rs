@@ -174,11 +174,12 @@ pub async fn urgent<T: Serialize + DeserializeOwned>(
     let reason = reason
         .map(|r| r.trim().to_string())
         .filter(|r| !r.is_empty());
-    let now = chrono::Utc::now();
     let body = serde_json::to_value(MarkUrgent { reason })?;
-    Ok(finish(c.post::<T>(&path, body).await?, json, |v| {
-        answer(v, now)
-    }))
+    let out = c.post::<T>(&path, body).await?;
+    // Read the clock after the answer: the server stamps the mark when it handles the POST, so a clock read before it
+    // would measure a fresh 14-day mark as just over 14 days and say "expires in 15 d".
+    let now = chrono::Utc::now();
+    Ok(finish(out, json, |v| answer(v, now)))
 }
 
 /// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.

@@ -54,6 +54,26 @@ fn read_request(stream: &std::net::TcpStream) -> (String, String) {
 fn serve(
     answers: Vec<(&'static str, u16, serde_json::Value)>,
 ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    serve_lazy(
+        answers
+            .into_iter()
+            .map(|(want, status, body)| (want, status, lazy(move || body)))
+            .collect(),
+    )
+}
+
+/// An answer body built when its request is handled, not when the test starts.
+type Lazy = Box<dyn FnOnce() -> serde_json::Value + Send>;
+
+fn lazy(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
+    Box::new(f)
+}
+
+/// `serve`, with each body built when its request arrives: a mark the fake server answers is timestamped as the real
+/// server would stamp it, after the CLI sent its request.
+fn serve_lazy(
+    answers: Vec<(&'static str, u16, Lazy)>,
+) -> (String, std::thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
@@ -68,7 +88,7 @@ fn serve(
                 continue;
             }
             let (status, body) = if expected {
-                (status, body.to_string())
+                (status, body().to_string())
             } else {
                 (
                     500,
@@ -2594,13 +2614,14 @@ fn marked_story_json(key: &str, reason: Option<&str>) -> serde_json::Value {
 }
 
 /// Marking posts the trimmed reason to the story's urgent route and prints the mark line then the urgent line; a CLI
-/// that sends the reason untrimmed, or prints the whole story, fails.
+/// that sends the reason untrimmed, or prints the whole story, fails. The fake server stamps the mark when it handles
+/// the POST, as the real one does, so a CLI that measures the expiry from a clock read before the request says 15 d.
 #[test]
 fn story_urgent_posts_the_trimmed_reason() {
-    let (url, server) = serve(vec![(
+    let (url, server) = serve_lazy(vec![(
         "POST /api/v1/stories/TST-1/urgent",
         200,
-        ok(marked_story_json("TST-1", Some("Customer X blocked"))),
+        lazy(|| ok(marked_story_json("TST-1", Some("Customer X blocked")))),
     )]);
     let out = reeve_at(
         &url,
@@ -2623,7 +2644,10 @@ fn story_urgent_posts_the_trimmed_reason() {
         format!("{} !", glyph(reeve::glyphs::Level::Story, "TST-1")),
         "{text}"
     );
-    assert!(lines[1].starts_with("  urgent · marked by"), "{text}");
+    assert_eq!(
+        lines[1], "  urgent · marked by dana, today · 'Customer X blocked' · expires in 14 d",
+        "{text}"
+    );
 }
 
 /// A blank reason is no reason: `null`, as the web sends it. Epics use their own path, and the answer's first line is
@@ -3038,14 +3062,28 @@ fn story_urgent_json_prints_the_envelope() {
     assert_eq!(env["value"]["key"], "TST-1");
 }
 
-/// `re-mark --yes` (not the alias) posts to the renew route and prints the server's answer like `ls`.
+/// `re-mark --yes` (not the alias) posts to the renew route and prints the server's answer like `ls`. The fake server
+/// stamps the renewed mark when it handles the POST, so a CLI that measures the expiry from a clock read before its
+/// requests says 15 d.
 #[test]
 fn war_room_re_mark_yes_prints_the_servers_answer_like_ls() {
     let rows = serde_json::json!([wr_expired("ABC-2")]);
-    let answer = serde_json::json!([wr_active("ABC-2", "story")]);
-    let (url, server) = serve(vec![
-        ("GET /api/v1/war-room", 200, ok(rows)),
-        ("POST /api/v1/war-room/renew", 200, ok(answer)),
+    let (url, server) = serve_lazy(vec![
+        ("GET /api/v1/war-room", 200, lazy(move || ok(rows))),
+        (
+            "POST /api/v1/war-room/renew",
+            200,
+            lazy(|| {
+                ok(serde_json::json!([wr_row(
+                    "ABC-2",
+                    "story",
+                    None,
+                    (0.0, 14.0),
+                    true,
+                    false
+                )]))
+            }),
+        ),
     ]);
     let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
     let bodies = server.join().unwrap();
@@ -3058,7 +3096,7 @@ fn war_room_re_mark_yes_prints_the_servers_answer_like_ls() {
     assert_eq!(
         out_text(&out),
         format!(
-            "Re-marked 1 mark for another cycle.\n{} T ABC-2 · marked by dana, 2 d ago · expires in 10 d\n",
+            "Re-marked 1 mark for another cycle.\n{} T ABC-2 · marked by dana, today · expires in 14 d\n",
             glyph(reeve::glyphs::Level::Story, "ABC-2"),
         )
     );
