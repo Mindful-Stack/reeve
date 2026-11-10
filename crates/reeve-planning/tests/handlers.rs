@@ -426,6 +426,19 @@ fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
     (h, sink)
 }
 
+/// An epic that is discovery-complete under no initiative: a story placed under it is ready when its own checks pass.
+/// Call once per test (fixed idempotency key).
+async fn ready_epic(h: &Handlers, c: &Ctx) -> reeve_protocol::Key {
+    let epic = h
+        .create_epic(c, "ready-epic", "E", None, "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(c, ItemType::Epic, epic.key(), epic.version(), true)
+        .await
+        .unwrap();
+    epic.key().clone()
+}
+
 fn count(sink: &MemSink, action: &str, key: &str) -> usize {
     sink.0
         .lock()
@@ -583,13 +596,14 @@ async fn concurrent_moves_with_one_version_have_one_winner() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let s = h
         .create_story(
             &dan,
             "s",
             "Race",
             Kind::Chore,
-            None,
+            Some(epic.clone()),
             "",
             vec!["ok".into()],
             vec![],
@@ -1018,6 +1032,7 @@ async fn ready_filter_lists_only_pickable_work() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let mut keys = vec![];
     for k in ["todo", "active", "done"] {
         keys.push(
@@ -1026,7 +1041,7 @@ async fn ready_filter_lists_only_pickable_work() {
                 k,
                 k,
                 Kind::Chore,
-                None,
+                Some(epic.clone()),
                 "",
                 vec!["ok".into()],
                 vec![],
@@ -1340,13 +1355,14 @@ async fn done_to_done_with_a_new_resolution_changes_it_and_logs_it() {
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let s = h
         .create_story(
             &dan,
             "s",
             "S",
             Kind::Chore,
-            None,
+            Some(epic.clone()),
             "",
             vec!["ok".into()],
             vec![],
@@ -1418,6 +1434,7 @@ async fn rank_story_renumbers_todo_in_one_write_and_bumps_only_the_moved_story()
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let mut keys = Vec::new();
     for (i, t) in ["A", "B", "C", "D"].iter().enumerate() {
         let s = h
@@ -1426,7 +1443,7 @@ async fn rank_story_renumbers_todo_in_one_write_and_bumps_only_the_moved_story()
                 &format!("r{i}"),
                 t,
                 Kind::Chore,
-                None,
+                Some(epic.clone()),
                 "",
                 vec!["ok".into()],
                 vec![],
@@ -3887,14 +3904,15 @@ async fn list_stories_with_an_absurd_done_window_lists_everything() {
     assert_eq!(all.len(), 2);
 }
 
-/// kb/ADR-0003 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
+/// kb/ADR-0018 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
 /// nothing about versions, closure or existence) and writes nothing; a member's other results are stored; an admin's
-/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0003 R2).
+/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0018 R2).
 #[tokio::test]
 async fn only_an_admins_check_stores_accepted() {
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let dan_bot = ctx("dan@example.com", true);
     let mia_bot = ctx("mia@example.com", true);
     let s = h
@@ -3903,7 +3921,7 @@ async fn only_an_admins_check_stores_accepted() {
             "s",
             "S",
             Kind::Chore,
-            None,
+            Some(epic.clone()),
             "",
             vec!["works".into()],
             vec![],
@@ -4337,14 +4355,15 @@ async fn remove_block_deletes_one_edge_and_logs_unblocked_last() {
     let (_c, pool) = common::pg().await;
     let (h, probe) = mk_probe(pool, BLOCKERS);
     let dan = ctx("dan@example.com", false);
-    // A bug needs no epic, so with one criterion its only possible reasons are its blockers.
+    let epic = ready_epic(&h, &dan).await;
+    // Under a discovery-complete epic with one criterion, the only possible reasons are its blockers.
     let s = h
         .create_story(
             &dan,
             "s",
             "Blocked",
             Kind::Bug,
-            None,
+            Some(epic.clone()),
             "",
             vec!["works".into()],
             vec![],
@@ -4451,13 +4470,14 @@ async fn edit_decision_changes_planner_fields_only() {
     let (_c, pool) = common::pg().await;
     let (h, probe) = mk_probe(pool, DECISION);
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let s = h
         .create_story(
             &dan,
             "s",
             "Gated",
             Kind::Bug,
-            None,
+            Some(epic.clone()),
             "",
             vec!["works".into()],
             vec![],
@@ -4816,13 +4836,14 @@ async fn a_record_in_an_unconfigured_repository_is_kept_until_the_repository_is_
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let dan = ctx("dan@example.com", false);
+    let epic = ready_epic(&h, &dan).await;
     let s = h
         .create_story(
             &dan,
             "s",
             "Ship",
             Kind::Chore,
-            None,
+            Some(epic.clone()),
             "",
             vec!["ok".into()],
             vec![],
@@ -5907,6 +5928,7 @@ async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
     let now = dan.now;
+    let epic = ready_epic(&h, &dan).await;
     // A story: read, then marked by someone else, then edited and moved with the version that was read.
     let s = h
         .create_story(
@@ -5914,7 +5936,7 @@ async fn a_mark_never_conflicts_with_an_edit_or_a_move_and_survives_both() {
             "s",
             "S",
             Kind::Chore,
-            None,
+            Some(epic),
             "",
             vec!["works".into()],
             vec![],

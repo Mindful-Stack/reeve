@@ -301,6 +301,22 @@ async fn flow() {
         .output()
         .unwrap());
     let key = story["value"]["key"].as_str().unwrap().to_string();
+
+    // The duplicate check: a reworded title finds the story; a too short text is a failure (exit 1), not a refusal.
+    let similar = reeve(&human)
+        .args(["story", "similar", "Flow", "for", "booking"])
+        .output()
+        .unwrap();
+    assert_eq!(similar.status.code(), Some(0), "{similar:?}");
+    let hits: serde_json::Value = serde_json::from_slice(&similar.stdout).unwrap();
+    assert_eq!(hits["value"][0]["key"], key.as_str(), "{hits}");
+    let short = reeve(&human)
+        .args(["story", "similar", "short"])
+        .output()
+        .unwrap();
+    assert_eq!(short.status.code(), Some(1), "a too short text fails");
+    let body: serde_json::Value = serde_json::from_slice(&short.stdout).unwrap();
+    assert_eq!(body["code"], "validation", "{body}");
     ok(reeve(&human)
         .args([
             "initiative",
@@ -776,7 +792,7 @@ async fn flow() {
     );
 
     // 9. A member links a record that is accepted on the default branch. The link succeeds and its immediate check runs
-    // (kb/ADR-0004 R3), but only an admin's check stores accepted (kb/ADR-0003 R3): it is held, exit 0, and the story
+    // (kb/ADR-0004 R3), but only an admin's check stores accepted (kb/ADR-0018 R3): it is held, exit 0, and the story
     // waits for the scheduled run, which uses an admin's automation token. The scheduled script tells the two apart
     // through `auth status`; pin the field it reads.
     let status_of = |t: &str| {
@@ -792,6 +808,31 @@ async fn flow() {
         "{}",
         status_of(&member)
     );
+    // The chore sits under a discovery-complete epic: an item without an epic is untriaged, and this step is about the
+    // decision's check, so the decision must be the chore's only reason.
+    let broker_epic = ok(reeve(&member)
+        .args([
+            "epic",
+            "create",
+            "--idempotency-key",
+            "m-e",
+            "--title",
+            "Messaging",
+        ])
+        .output()
+        .unwrap());
+    let broker_epic_key = broker_epic["value"]["key"].as_str().unwrap().to_string();
+    ok(reeve(&human)
+        .args([
+            "epic",
+            "discovery",
+            &broker_epic_key,
+            "--version",
+            "1",
+            "--complete",
+        ])
+        .output()
+        .unwrap());
     let chore = ok(reeve(&member)
         .args([
             "story",
@@ -802,6 +843,8 @@ async fn flow() {
             "Wire the broker",
             "--kind",
             "chore",
+            "--epic",
+            &broker_epic_key,
             "--criterion",
             "messages arrive",
         ])

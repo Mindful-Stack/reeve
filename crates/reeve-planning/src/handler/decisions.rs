@@ -115,7 +115,7 @@ impl Handlers {
     /// relink-A-to-B-to-A hole that comparing the record id alone leaves open.
     ///
     /// `is_admin` is the caller's current role, decided by the route (kb/ADR-0010 R2). Only an admin may store the
-    /// satisfying result (kb/ADR-0003 R3), from any token kind (storing a result is not an override). A non-admin's is
+    /// satisfying result (kb/ADR-0018 R3), from any token kind (storing a result is not an override). A non-admin's is
     /// refused before the decision is read, so the answer says nothing about its version, reference, closure or
     /// existence, and nothing is written. Unchecked is refused from anyone (422); every other non-satisfying result is
     /// stored from any caller: it can only add a reason. A result that says the same as the stored one

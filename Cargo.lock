@@ -3101,7 +3101,7 @@ dependencies = [
 
 [[package]]
 name = "reeve"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-activity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3149,7 +3149,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-identity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3175,7 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-planning"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3190,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-protocol"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3201,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3242,7 +3242,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-testdb"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hex",
  "sha2 0.10.9",

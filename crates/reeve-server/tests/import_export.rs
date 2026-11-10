@@ -228,6 +228,49 @@ async fn import_on_admits_only_an_interactive_admin_and_creates_readable_items()
     );
 }
 
+/// An epic-less bug (untriaged by kb/ADR-0018 R4) in an active state is created in that state, logged `imported`, and
+/// never as an `override`: the importer does not go through the readiness gate.
+#[tokio::test]
+async fn an_imported_epicless_bug_keeps_its_active_state_with_no_override_entry() {
+    let h = harness_with(|cfg| format!("{cfg}\n[import]\nenabled = true")).await;
+    let got = post(
+        &h,
+        "/api/v1/import/stories",
+        json!({"external_ref": "SCRUM-90", "title": "Crash on save", "kind": "bug", "epic": null,
+                "description": null, "criteria": [], "owner": "bob@example.com", "labels": [],
+                "delivery": "in_progress", "resolution": null}),
+    )
+    .await;
+    assert_eq!(got["created"], true, "{got}");
+    let key = got["key"].as_str().unwrap().to_string();
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        &format!("/api/v1/stories/{key}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    assert_eq!(story["value"]["kind"], "bug");
+    assert_eq!(story["value"]["delivery"], "in_progress");
+    assert_eq!(story["value"]["epic"], serde_json::Value::Null);
+    let (_, act) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        &format!("/api/v1/activity?entity_key={key}"),
+        None,
+    )
+    .await;
+    let actions: Vec<&str> = act["value"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|e| e["action"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(actions.contains(&"imported"), "{act}");
+    assert!(!actions.contains(&"override"), "{act}");
+}
+
 // ---- A hand-migrated item records its Jira origin on create, and a later import sees it as existing.
 
 #[tokio::test]

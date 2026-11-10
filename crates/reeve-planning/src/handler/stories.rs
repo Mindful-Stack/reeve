@@ -498,7 +498,7 @@ impl Handlers {
     }
 
     /// Removes "`blocker` blocks `story`". Both stories must exist (NotFound otherwise, as for `add_block`); an edge that does
-    /// not exist is a no-op that writes nothing. Readiness is computed from facts on read (kb/ADR-0003 R1), so the next read
+    /// not exist is a no-op that writes nothing. Readiness is computed from facts on read (kb/ADR-0018 R1), so the next read
     /// drops the reason; no story version moves, as with `add_block`.
     pub async fn remove_block(
         &self,

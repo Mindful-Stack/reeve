@@ -171,13 +171,13 @@ describe('backlog page', () => {
 		expect(form.querySelector('button[type="submit"]')!.textContent).toBe('Create story');
 	});
 
-	it('groups by epic: untriaged first, an empty initiative says "No epics", an unloaded epic still shows its stories', async () => {
+	it('groups by epic: No epic in rank order, an empty initiative says "No epics", an unloaded epic still shows its stories', async () => {
 		data.initiatives = [initiative({ key: 'I-1', title: 'Quiet one', horizon: 'Now' })];
-		data.stories = [row('S-3', 3, null, true, 'chore'), row('S-1', 1, 'E-1', false), row('S-2', 2, null, false, 'story', true), row('S-4', 4, 'E-9')];
+		data.stories = [row('S-3', 3, null, false, 'chore', true), row('S-1', 1, 'E-1', false), row('S-2', 2, null, false, 'story', true), row('S-4', 4, 'E-9')];
 		await open('Quiet one');
 		const none = section('No epic');
 		expect(keys(none)).toEqual(['S-2', 'S-3']);
-		expect(none.textContent).toContain('1 untriaged');
+		expect(none.textContent).toContain('2 untriaged');
 		expect(section('Quiet one').textContent).toContain('No epics');
 		expect(keys(section('No initiative'))).toEqual(['S-1']);
 		expect(section('No initiative').textContent).toContain('0 of 1 ready');
@@ -358,20 +358,20 @@ describe('backlog page', () => {
 		});
 	});
 
-	it('by epic: rows rank within their run of "No epic"; Move down past a run ends before the next story', async () => {
+	it('by epic: "No epic" is one rank run; Move down past its end ends before the next story', async () => {
 		data.stories = [
-			row('S-1', 1, null, true, 'bug'),
+			row('S-1', 1, null, false, 'bug', true),
 			row('S-2', 2, null, false, 'story', true),
 			row('S-3', 3, null, false, 'story', true),
 			row('S-4', 4, 'E-1')
 		];
 		await open('Title S-4');
-		expect(keys(section('No epic'))).toEqual(['S-2', 'S-3', 'S-1']);
-		expect(choose('S-3', 'Move down').disabled).toBe(true); // last of the untriaged run
+		expect(keys(section('No epic'))).toEqual(['S-1', 'S-2', 'S-3']);
+		expect(choose('S-3', 'Move down').disabled).toBe(true); // last of the run
 		closeMenu();
-		expect(choose('S-1', 'Move up').disabled).toBe(true); // alone in its run
+		expect(choose('S-1', 'Move up').disabled).toBe(true); // first of the run
 		closeMenu();
-		// The run [S-2, S-3] ends before S-4 in the full list, so S-2 goes there (after S-3, still inside its run).
+		// The run ends before S-4 in the full list, so S-2 goes there (after S-3, still inside the run).
 		choose('S-2', 'Move down').click();
 		await vi.waitFor(() => expect(data.posts).toHaveLength(1));
 		expect(data.posts[0]).toEqual({ path: '/api/v1/stories/{key}/rank', key: 'S-2', body: { version: 1, before: 'S-4' } });

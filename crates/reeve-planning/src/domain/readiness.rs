@@ -23,6 +23,7 @@ pub struct AncestorFact {
 /// Everything readiness needs, loaded by the repo in one query batch.
 #[derive(Debug, Clone)]
 pub struct ReadinessInput {
+    /// Readiness deliberately ignores the kind: any kind without an epic is untriaged (kb/ADR-0018 R4).
     pub kind: Kind,
     pub has_epic: bool,
     pub criteria_count: usize,
@@ -72,19 +73,19 @@ fn decision_reason(d: &DecisionFact) -> Option<Reason> {
     })
 }
 
-/// The one check result that satisfies a required decision (kb/ADR-0003 R3). The check endpoint lets only an admin
+/// The one check result that satisfies a required decision (kb/ADR-0018 R3). The check endpoint lets only an admin
 /// store it; a test pins it against `decision_reason`, so the two cannot drift.
 pub(crate) fn satisfies(check: &CheckResult) -> bool {
     matches!(check, CheckResult::Accepted { .. })
 }
 
-/// Reasons are ordered: untriaged; then ancestors in the order given (nearest first,
-/// each with its discovery reason then its decisions); then own decisions; then
-/// no-criteria; then blockers. Duplicates are not removed, so the repo must supply
-/// unique ancestors and blockers.
+/// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0018 R4); then ancestors
+/// in the order given (nearest first, each with its discovery reason then its decisions);
+/// then own decisions; then no-criteria; then blockers. Duplicates are not removed, so the
+/// repo must supply unique ancestors and blockers.
 pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
     let mut reasons = Vec::new();
-    if i.kind == Kind::Story && !i.has_epic {
+    if !i.has_epic {
         reasons.push(Reason::Untriaged);
     }
     for a in &i.ancestors {
@@ -155,13 +156,30 @@ mod tests {
         assert!(compute_readiness(&base()).ready);
     }
     #[test]
-    fn story_kind_without_epic_is_untriaged() {
-        let mut i = base();
-        i.has_epic = false;
-        i.ancestors.clear();
-        assert_eq!(compute_readiness(&i).reasons, vec![Reason::Untriaged]);
-        i.kind = Kind::Bug;
-        assert!(compute_readiness(&i).ready, "bugs may stand alone");
+    fn any_kind_without_epic_is_untriaged_first() {
+        for kind in [Kind::Story, Kind::Bug, Kind::Chore] {
+            let mut i = base();
+            i.kind = kind;
+            i.has_epic = false;
+            i.ancestors.clear();
+            assert_eq!(
+                compute_readiness(&i).reasons,
+                vec![Reason::Untriaged],
+                "{kind:?}"
+            );
+            i.criteria_count = 0;
+            assert_eq!(
+                compute_readiness(&i).reasons,
+                vec![Reason::Untriaged, Reason::NoCriteria],
+                "{kind:?}: untriaged stays first"
+            );
+            i.has_epic = true;
+            i.criteria_count = 1;
+            assert!(
+                compute_readiness(&i).ready,
+                "{kind:?} with an epic is not untriaged"
+            );
+        }
     }
     #[test]
     fn missing_criteria_blocks() {

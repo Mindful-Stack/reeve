@@ -755,6 +755,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stories/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open stories, and stories done within `[board] done_window_days`, whose title is similar to `q` (pg_trgm), most
+         *     similar first. A duplicate check: advice only.
+         */
+        get: operations["similar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stories/{key}": {
         parameters: {
             query?: never;
@@ -1375,7 +1395,7 @@ export interface components {
         };
         /**
          * @description Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
-         *     a move (kb/ADR-0003 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
+         *     a move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
          */
         Finding: {
             /** @enum {string} */
@@ -2869,6 +2889,38 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_Vec_SimilarStory: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                delivery: components["schemas"]["DeliveryState"];
+                epic?: null | components["schemas"]["Key"];
+                key: components["schemas"]["Key"];
+                kind: components["schemas"]["Kind"];
+                resolution?: null | components["schemas"]["Resolution"];
+                title: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_Vec_StoryWithReadiness: {
             /** @enum {string} */
             outcome: "ok";
@@ -3015,6 +3067,15 @@ export interface components {
             key: components["schemas"]["Key"];
             kind?: null | components["schemas"]["Kind"];
             matched: string[];
+            title: string;
+        };
+        /** @description One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only. */
+        SimilarStory: {
+            delivery: components["schemas"]["DeliveryState"];
+            epic?: null | components["schemas"]["Key"];
+            key: components["schemas"]["Key"];
+            kind: components["schemas"]["Kind"];
+            resolution?: null | components["schemas"]["Resolution"];
             title: string;
         };
         /**
@@ -7030,6 +7091,7 @@ export interface operations {
                 epic?: components["schemas"]["KeyRef"];
                 owner?: string;
                 delivery?: components["schemas"]["DeliveryState"];
+                /** @description Items of any kind with no epic that are not done (kb/ADR-0018 R4). */
                 untriaged?: boolean;
                 label?: string;
                 ready?: boolean;
@@ -7121,6 +7183,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_StoryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    similar: {
+        parameters: {
+            query: {
+                /** @description The title being written, 8 to 200 characters. */
+                q: string;
+                /** @description 1 to 10; default 5. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_SimilarStory"];
                 };
             };
             /** @description validation error */

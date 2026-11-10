@@ -26,6 +26,7 @@ function sw(key: string, over: Partial<Story> = {}, reasons: Reason[] = []): Sto
 describe('reason labels', () => {
 	it('renders untriaged, a proposed decision with its title and a blocker with its key', () => {
 		expect(shortLabel({ reason: 'untriaged' })).toBe('untriaged');
+		expect(fullLabel({ reason: 'untriaged' })).toBe('untriaged: no epic yet; triage places it');
 
 		const proposed: Reason = { reason: 'decision_proposed_pr_open', decision_id: 7, title: 'Use Postgres' };
 		expect(shortLabel(proposed)).toBe('decision: proposed, PR open');
@@ -73,19 +74,21 @@ describe('applyFilters', () => {
 		sw('ABC-2', { owner: 'ana@x.se', kind: 'bug' }),
 		sw('ABC-3', { owner: 'bo@x.se', epic: 'ABC-7' }),
 		sw('ABC-4', { epic: null }, [{ reason: 'untriaged' }]),
-		sw('ABC-5', { epic: null, kind: 'chore' }),
-		// No untriaged reason from the server: not untriaged, whatever its kind and epic say.
-		sw('ABC-6', { epic: null })
+		sw('ABC-5', { epic: null, kind: 'chore' }, [{ reason: 'untriaged' }]),
+		// The client must not re-derive it: no epic but no untriaged reason from the server, so not untriaged.
+		sw('ABC-6', { epic: null }),
+		// Done items leave the filter even if they carry the reason (kb/ADR-0018 R4: epic-less and not done).
+		sw('ABC-8', { epic: null, delivery: 'done' }, [{ reason: 'untriaged' }])
 	];
 	const keys = (f: Parameters<typeof applyFilters>[1]) => applyFilters(all, f).map((s) => s.story.key);
 
 	it('filters by owner, epic, kind and untriaged, and combines them', () => {
-		expect(keys({})).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5', 'ABC-6']);
+		expect(keys({})).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5', 'ABC-6', 'ABC-8']);
 		expect(keys({ mine: 'ana@x.se' })).toEqual(['ABC-2']);
 		expect(keys({ epic: 'ABC-7' })).toEqual(['ABC-3']);
 		expect(keys({ kind: 'bug' })).toEqual(['ABC-2']);
-		// Only the server's untriaged reason counts (a chore without an epic never gets one).
-		expect(keys({ untriaged: true })).toEqual(['ABC-4']);
+		// Only the server's untriaged reason counts, whatever the kind (the client never re-derives it from kind and epic).
+		expect(keys({ untriaged: true })).toEqual(['ABC-4', 'ABC-5']);
 		expect(keys({ mine: 'ana@x.se', kind: 'story' })).toEqual([]);
 	});
 

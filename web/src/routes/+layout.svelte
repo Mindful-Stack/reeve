@@ -3,7 +3,7 @@
 	import '@fontsource-variable/instrument-sans/index.css';
 	import '@fontsource/jetbrains-mono/400.css';
 	import '@fontsource/jetbrains-mono/500.css';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { goto, onNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
@@ -11,6 +11,11 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { isCurrent, links, reportContext } from '#lib/nav.ts';
+	import { discardDraft, hasDraft, openReport, persist, report, reportLabel, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
+	import type { Story } from '#lib/api/types.ts';
+	import Notice from '#lib/ui/Notice.svelte';
+	import ReportDialog from '#lib/components/ReportDialog.svelte';
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
@@ -22,13 +27,6 @@
 	// /auth/* renders signed out: loading the session there would 401 and redirect to next=/auth/signin forever.
 	const signedOutPage = $derived(page.url.pathname.startsWith('/auth/'));
 
-	const links = [
-		{ href: '/', label: 'Planning' },
-		{ href: '/backlog', label: 'Backlog' },
-		{ href: '/board', label: 'Board' },
-		{ href: '/sprint', label: 'Sprint' },
-		{ href: '/decisions', label: 'Decisions' }
-	];
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
 		{ label: 'Activity', onselect: () => goto('/activity') },
@@ -63,10 +61,27 @@
 	// the user moved elsewhere is theirs). A drawer opened by loading its URL has no opener.
 	let opener: HTMLElement | null = null;
 	onNavigate(({ from, to }) => {
+		// A filed-report notice outlives the dialog; only opening its story (a drawer-only change) keeps it.
+		if (!(from && to && sameApartFromStory(from.url, to.url))) {
+			notice = null;
+			restoredNotice = false;
+		}
 		if (!to?.url.searchParams.has('story') || from?.url.searchParams.has('story')) return;
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
 	});
+	function sameApartFromStory(a: URL, b: URL): boolean {
+		const strip = (u: URL) => {
+			const c = new URL(u.href);
+			c.searchParams.delete('story');
+			c.hash = '';
+			return c.href;
+		};
+		return strip(a) === strip(b);
+	}
+	// A hit viewed from the report dialog unmounts with the dialog, so the recorded opener is gone: the header's Report
+	// button takes the focus instead of letting it drop to the body.
+	let reportButton: HTMLButtonElement | undefined = $state();
 	let drawerWasOpen = false;
 	$effect.pre(() => {
 		const open = drawerKey !== null;
@@ -74,7 +89,9 @@
 			const o = opener;
 			opener = null;
 			tick().then(() => {
-				if (o?.isConnected && focusIsFree(null)) o.focus();
+				if (!focusIsFree(null)) return;
+				if (o?.isConnected) o.focus();
+				else if (o) reportButton?.focus();
 			});
 		}
 		drawerWasOpen = open;
@@ -118,11 +135,74 @@
 		};
 	});
 
-	function current(href: string): boolean {
-		return href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	// Report from anywhere: the draft lives in #lib/report.svelte.ts; this is its button, notice and sign-in restore.
+	let notice = $state<{ story: Story; epicTitle: string | null } | null>(null);
+	const label = $derived(reportLabel());
+	let restoredNotice = $state(false);
+	let restoredFor: string | null = null;
+	const noticeHref = $derived.by(() => {
+		if (!notice) return '';
+		const url = new URL(page.url.href);
+		url.searchParams.set('story', notice.story.key);
+		return url.pathname + url.search;
+	});
+
+	let opening = $state(false);
+	async function openFromHere() {
+		if (opening) return;
+		const from = page.url.href;
+		const { epicKey, ...ctx } = reportContext(page.url);
+		let epic: EpicRef | null = null;
+		// The chip is for epic pages only, and only a new draft needs it (a kept draft keeps its own context).
+		if (epicKey && !hasDraft()) {
+			opening = true;
+			try {
+				const e = await unwrap(api.GET('/api/v1/epics/{key}', { params: { path: { key: epicKey } } }));
+				epic = { key: e.key, title: e.title };
+			} catch {
+				// no chip: the report goes to triage
+			} finally {
+				opening = false;
+			}
+			// The reporter moved on while the epic was read: the context no longer matches the page.
+			if (page.url.href !== from) return;
+		}
+		openReport({ ...ctx, epic });
 	}
 
+	function filed(s: Story, epicTitle: string | null) {
+		restoredNotice = false;
+		notice = { story: s, epicTitle };
+	}
+
+	function viewStory(k: string) {
+		const url = new URL(page.url.href);
+		url.searchParams.set('story', k);
+		goto(url, { reset: false });
+	}
+
+	// Sign-in: bring back this tab's draft once per account; then keep it saved while it changes. Declared in this
+	// order so the restore runs before the first save can clear what is stored.
+	$effect(() => {
+		const email = session.me?.email;
+		if (!email || restoredFor === email) return;
+		restoredFor = email;
+		untrack(() => {
+			if (restoreDraft(email)) restoredNotice = true;
+		});
+	});
+	// The restored line is about the draft: it goes with it.
+	$effect(() => {
+		if (!report.draft) restoredNotice = false;
+	});
+	$effect(() => {
+		const email = session.me?.email;
+		JSON.stringify(report.draft);
+		if (email && restoredFor === email) persist(email);
+	});
+
 	async function signOut() {
+		discardDraft(); // a deliberate sign-out ends the draft; a session expiry (401) keeps it
 		await fetch('/auth/logout', { method: 'POST', headers: { 'X-Reeve-Client': 'web' } });
 		location.href = '/auth/signin';
 	}
@@ -140,11 +220,14 @@
 			<a class="brand" href="/">Reeve</a>
 			<nav aria-label="Main">
 				{#each links as link (link.href)}
-					<a href={link.href} aria-current={current(link.href) ? 'page' : undefined}>{link.label}</a>
+					<a href={link.href} aria-current={isCurrent(page.url, link.href) ? 'page' : undefined}>{link.label}</a>
 				{/each}
 			</nav>
 			<div class="right">
 				<GoalPicker />
+				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
+					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
+				</button>
 				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
 					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />
 					<kbd aria-hidden="true">/</kbd>
@@ -157,7 +240,20 @@
 				</ActionsMenu>
 			</div>
 		</header>
+		{#if restoredNotice}
+			<div class="notices"><Notice ondismiss={() => (restoredNotice = false)}>Your report draft was restored.</Notice></div>
+		{/if}
+		{#if notice}
+			{@const n = notice}
+			<div class="notices">
+				<Notice ondismiss={() => (notice = null)}>
+					Filed {n.story.kind} <a href={noticeHref}>{n.story.key}</a>{#if n.story.epic}{' '}under {n.story.epic}{#if n.epicTitle}&nbsp;{n.epicTitle}{/if}.{:else}. It's waiting for the team to place it; you won't get a notification, so check {n.story.key} for updates.{/if}
+					<button type="button" onclick={openFromHere}>Report another</button>
+				</Notice>
+			</div>
+		{/if}
 		<main>{@render children()}</main>
+		<ReportDialog oncreated={filed} onviewstory={viewStory} />
 		{#if drawerKey}
 			{#key drawerKey}
 				<StoryDrawer storyKey={drawerKey} onclose={closeDrawer} />
@@ -224,6 +320,41 @@
 		color: var(--muted);
 		font-family: var(--mono);
 		font-size: 13px;
+	}
+	.notices {
+		padding: 12px 20px 0;
+	}
+	.report .plus {
+		display: none;
+	}
+	@media (max-width: 720px) {
+		.notices {
+			padding: 12px 16px 0;
+		}
+		nav {
+			flex-wrap: wrap;
+			min-width: 0;
+		}
+		.right {
+			flex-wrap: wrap;
+			gap: 8px 12px;
+		}
+		form[role='search'] {
+			flex: 1 1 120px;
+			min-width: 80px;
+		}
+		.report .plus {
+			display: inline;
+			font-weight: 700;
+		}
+		.report .word {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
 	}
 	.live {
 		display: grid;

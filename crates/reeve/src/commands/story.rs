@@ -17,7 +17,7 @@ pub enum Story {
         /// Kind of work.
         #[arg(long, value_enum, default_value = "story")]
         kind: KindArg,
-        /// Epic key (e.g. ABC-12). Without one the story is untriaged.
+        /// Epic key (e.g. ABC-12). Without one the item is untriaged until triage places it.
         #[arg(long)]
         epic: Option<KeyRef>,
         /// Longer description.
@@ -59,7 +59,7 @@ pub enum Story {
         /// Only stories with this label.
         #[arg(long)]
         label: Option<String>,
-        /// Only stories with no epic.
+        /// Only items with no epic that are not done.
         #[arg(long)]
         untriaged: bool,
         /// Only pickable work: ready stories still in todo.
@@ -71,6 +71,15 @@ pub enum Story {
         /// Only stories serving the active sprint's goals: a goal id, `any` (some goal) or `none` (upkeep).
         #[arg(long, value_name = "ID|any|none")]
         goal: Option<String>,
+    },
+    /// Stories with a similar title (fuzzy match on the title): open ones, and ones done recently with their resolution. Check before filing.
+    Similar {
+        /// The text, 8 to 200 characters; several words are one text.
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        /// At most this many, 1 to 10.
+        #[arg(long, default_value_t = 5)]
+        limit: i64,
     },
     /// Edit a story; the --version must be the one you last read.
     Edit {
@@ -257,6 +266,15 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             .await?,
             json,
             crate::render::story,
+        ),
+        Story::Similar { text, limit } => finish(
+            c.get_query::<Vec<SimilarStory>>(
+                "/stories/similar",
+                &[("q", text.join(" ")), ("limit", limit.to_string())],
+            )
+            .await?,
+            json,
+            |hits| render_similar(hits),
         ),
         Story::Urgent { key, reason, clear } => {
             super::urgent::<StoryDto>(c, format!("/stories/{key}"), reason, clear, json, |s| {
@@ -489,9 +507,65 @@ fn replace_criteria(current: &[CriterionDto], texts: &[String]) -> Vec<Criterion
         .collect()
 }
 
+fn render_similar(hits: &[SimilarStory]) -> String {
+    if hits.is_empty() {
+        return "nothing similar".into();
+    }
+    hits.iter()
+        .map(|h| {
+            let state = match (h.delivery, h.resolution) {
+                (DeliveryState::Done, Some(Resolution::Dropped)) => "done, dropped",
+                (DeliveryState::Done, Some(Resolution::Completed)) => "done, completed",
+                (d, _) => crate::render::state_word(d),
+            };
+            format!(
+                "{}\t{}\t{}",
+                crate::glyphs::mark(crate::glyphs::Level::of_kind(h.kind), &h.key),
+                state,
+                h.title
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hit(key: &str, delivery: DeliveryState, resolution: Option<Resolution>) -> SimilarStory {
+        SimilarStory {
+            key: key.parse().unwrap(),
+            kind: Kind::Story,
+            title: "Booking flow".into(),
+            epic: None,
+            delivery,
+            resolution,
+        }
+    }
+
+    #[test]
+    fn similar_prints_state_and_marks_a_dropped_duplicate() {
+        let out = render_similar(&[
+            hit("TST-1", DeliveryState::InProgress, None),
+            hit("TST-2", DeliveryState::Done, Some(Resolution::Dropped)),
+            hit("TST-3", DeliveryState::Done, Some(Resolution::Completed)),
+        ]);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(
+            lines[0].contains("TST-1\tin-progress\tBooking flow"),
+            "{out}"
+        );
+        assert!(
+            lines[1].contains("TST-2\tdone, dropped\tBooking flow"),
+            "{out}"
+        );
+        assert!(
+            lines[2].contains("TST-3\tdone, completed\tBooking flow"),
+            "{out}"
+        );
+        assert_eq!(render_similar(&[]), "nothing similar");
+    }
 
     #[test]
     fn replacing_criteria_keeps_done_where_the_text_is_unchanged_at_the_same_index() {

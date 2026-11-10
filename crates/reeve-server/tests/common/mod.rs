@@ -204,6 +204,31 @@ pub async fn call(
     )
 }
 
+/// Creates an epic under no initiative and marks its discovery complete, as the admin; returns its key. A story placed
+/// under it is ready when its own checks pass (an item without an epic is untriaged, so most fixtures want one).
+pub async fn ready_epic(h: &Harness, idem: &str) -> String {
+    let (st, e) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/epics",
+        Some(serde_json::json!({"idempotency_key": idem, "title": "Ready epic"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{e}");
+    let key = e["value"]["key"].as_str().unwrap().to_string();
+    let (st, d) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/epics/{key}/discovery"),
+        Some(serde_json::json!({"version": e["value"]["version"], "complete": true})),
+    )
+    .await;
+    assert_eq!(st, 200, "{d}");
+    key
+}
+
 /// Sends a request as is and returns the raw response (status, headers, body untouched).
 pub async fn call_raw(
     app: &axum::Router,

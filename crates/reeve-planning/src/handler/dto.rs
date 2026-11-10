@@ -314,3 +314,17 @@ impl From<&WarRoomEntry> for reeve_protocol::WarRoomEntryDto {
         }
     }
 }
+
+/// One duplicate-check hit: what a reporter needs to recognise the story, and whether it was dropped.
+impl From<&Story> for reeve_protocol::SimilarStory {
+    fn from(s: &Story) -> Self {
+        Self {
+            key: s.key().clone(),
+            kind: s.kind(),
+            title: s.title().to_string(),
+            epic: s.epic().cloned(),
+            delivery: s.delivery(),
+            resolution: s.resolution(),
+        }
+    }
+}

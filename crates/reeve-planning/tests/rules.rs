@@ -60,14 +60,25 @@ fn dan() -> Ctx {
     ctx("dan@example.com", Via::Interactive)
 }
 
-/// A chore with no epic. `criteria` empty makes it not ready.
+/// A chore under a discovery-complete epic of its own, so its readiness turns on its own facts only: an item without
+/// an epic is untriaged (kb/ADR-0018 R4). The epic is set up through a second handler with its own sink, so the
+/// test's sink holds only the chore's entries. `criteria` empty makes it not ready.
 async fn chore(h: &Handlers, idem: &str, criteria: &[&str], owner: Option<&str>) -> Story {
+    let (setup, _) = mk(h.pool.clone());
+    let epic = setup
+        .create_epic(&dan(), &format!("epic-{idem}"), "E", None, "", None)
+        .await
+        .unwrap();
+    setup
+        .mark_discovery(&dan(), ItemType::Epic, epic.key(), 1, true)
+        .await
+        .unwrap();
     h.create_story(
         &dan(),
         idem,
         idem,
         Kind::Chore,
-        None,
+        Some(epic.key().clone()),
         "",
         criteria.iter().map(|c| c.to_string()).collect(),
         vec![],

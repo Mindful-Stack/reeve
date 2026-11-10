@@ -36,7 +36,8 @@ fn keys(v: &serde_json::Value) -> Vec<String> {
 #[tokio::test]
 async fn a_sprint_cycle_over_the_wire() {
     let h = harness().await;
-    let story = |idem: &'static str| json!({"idempotency_key": idem, "title": idem, "kind": "chore", "criteria": ["x"], "labels": []});
+    let epic = ready_epic(&h, "ready-epic").await;
+    let story = |idem: &'static str| json!({"idempotency_key": idem, "title": idem, "kind": "chore", "epic": epic, "criteria": ["x"], "labels": []});
     let s1 = ok_value(&h, "POST", "/api/v1/stories", Some(story("s1"))).await;
     let s1_key = s1["key"].as_str().unwrap().to_string();
     let s2 = ok_value(&h, "POST", "/api/v1/stories", Some(story("s2"))).await;

@@ -41,8 +41,33 @@ impl StoryRepo for PgPlanningRepo {
         f: &StoryFilter,
         done_since: Option<DateTime<Utc>>,
     ) -> Result<Vec<Story>, RepoError> {
-        let rows = sqlx::query(&format!("SELECT {STORY_COLS} FROM stories WHERE ($1::text IS NULL OR epic_key = $1) AND ($2::text IS NULL OR owner = $2) AND ($3::text IS NULL OR delivery = $3) AND (NOT $4 OR (kind = 'story' AND epic_key IS NULL)) AND ($5::text IS NULL OR $5 = ANY(labels)) AND ($6::timestamptz IS NULL OR delivery <> 'done' OR done_at >= $6) ORDER BY CASE delivery WHEN 'todo' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'testing' THEN 3 ELSE 4 END, rank, length(key), key"))
+        let rows = sqlx::query(&format!("SELECT {STORY_COLS} FROM stories WHERE ($1::text IS NULL OR epic_key = $1) AND ($2::text IS NULL OR owner = $2) AND ($3::text IS NULL OR delivery = $3) AND (NOT $4 OR (epic_key IS NULL AND delivery <> 'done')) AND ($5::text IS NULL OR $5 = ANY(labels)) AND ($6::timestamptz IS NULL OR delivery <> 'done' OR done_at >= $6) ORDER BY CASE delivery WHEN 'todo' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'testing' THEN 3 ELSE 4 END, rank, length(key), key"))
             .bind(f.epic.as_ref().map(|k| k.to_string())).bind(&f.owner).bind(f.delivery.map(delivery_str)).bind(f.untriaged).bind(&f.label).bind(done_since).fetch_all(&mut **tx).await?;
+        Ok(rows.iter().map(story_from).collect::<Result<Vec<_>, _>>()?)
+    }
+    async fn similar_stories(
+        &self,
+        text: &str,
+        min: f32,
+        done_since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<Story>, RepoError> {
+        let mut tx = self.pool.begin().await?;
+        // set_config(.., true) is SET LOCAL with a bindable value: the `%` operator reads this threshold.
+        sqlx::query("SELECT set_config('pg_trgm.similarity_threshold', $1, true)")
+            .bind(min.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {STORY_COLS} FROM stories WHERE title % $1 AND (delivery <> 'done' OR done_at >= $2) \
+             ORDER BY similarity(title, $1) DESC, created_at DESC, length(key) DESC, key DESC LIMIT $3"
+        ))
+        .bind(text)
+        .bind(done_since)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.rollback().await?;
         Ok(rows.iter().map(story_from).collect::<Result<Vec<_>, _>>()?)
     }
     async fn update_story(

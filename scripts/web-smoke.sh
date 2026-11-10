@@ -122,7 +122,9 @@ SMOKE_BLOCKED_STORY="$(cli story create --idempotency-key smoke-blocked --epic "
 	field key)"
 SMOKE_DECISION_STORY="$(cli story create --idempotency-key smoke-decision-story --epic "$epic_b" \
 	--title 'Smoke story behind a decision' --criterion 'it is decided' | field key)"
-export REEVE_URL="$url" SMOKE_MEMBER_TOKEN SMOKE_STORY SMOKE_BLOCKED_STORY SMOKE_DECISION_STORY
+# The discovery-complete epic the smoke's chores sit under: an item without an epic is untriaged, not ready.
+SMOKE_EPIC="$epic_a"
+export REEVE_URL="$url" SMOKE_MEMBER_TOKEN SMOKE_STORY SMOKE_BLOCKED_STORY SMOKE_DECISION_STORY SMOKE_EPIC
 echo "seeded $ini: $SMOKE_STORY (ready), $SMOKE_BLOCKED_STORY (no criteria), $SMOKE_DECISION_STORY (decision)" >&2
 
 log "running the Playwright smoke against $url"

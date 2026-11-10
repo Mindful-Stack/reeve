@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use reeve_protocol::*;
 use std::fmt::Write;
 
-fn state_word(s: DeliveryState) -> &'static str {
+pub fn state_word(s: DeliveryState) -> &'static str {
     match s {
         DeliveryState::Todo => "todo",
         DeliveryState::InProgress => "in-progress",
@@ -17,7 +17,7 @@ fn state_word(s: DeliveryState) -> &'static str {
 
 pub fn reason(r: &Reason) -> String {
     match r {
-        Reason::Untriaged => "untriaged: the story has no epic".into(),
+        Reason::Untriaged => "untriaged: no epic yet; triage places it".into(),
         Reason::NoCriteria => "no acceptance criteria".into(),
         Reason::AncestorDiscoveryIncomplete { item } => format!("discovery incomplete on {item}"),
         Reason::DecisionNoRecord { decision_id, title } => {
@@ -1003,6 +1003,10 @@ mod tests {
                 story: "ABC-4".parse().unwrap()
             }),
             "blocked by ● ABC-4"
+        );
+        assert_eq!(
+            reason(&Reason::Untriaged),
+            "untriaged: no epic yet; triage places it"
         );
     }
 

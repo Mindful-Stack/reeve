@@ -871,8 +871,11 @@ async fn batched_readiness_equals_one_key_at_a_time() {
         ]
     );
     assert_eq!(reasons_of(s3.key()), vec![Reason::Untriaged]);
-    assert_eq!(reasons_of(b1.key()), vec![]);
-    assert_eq!(reasons_of(c1.key()), vec![Reason::NoCriteria]);
+    assert_eq!(reasons_of(b1.key()), vec![Reason::Untriaged]);
+    assert_eq!(
+        reasons_of(c1.key()),
+        vec![Reason::Untriaged, Reason::NoCriteria]
+    );
     assert_eq!(
         reasons_of(s4.key()),
         vec![Reason::BlockedBy {
@@ -1497,4 +1500,237 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
             .await
             .unwrap();
     assert_eq!(before, after, "clearing leaves the item alone too");
+}
+
+#[tokio::test]
+async fn untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readiness() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let s = story(&h, "S", Kind::Story, None, &["c"]).await;
+    let b = story(&h, "B", Kind::Bug, None, &["c"]).await;
+    let ch = story(&h, "C", Kind::Chore, None, &["c"]).await;
+    let placed = story(&h, "P", Kind::Bug, Some(e.key()), &["c"]).await;
+    let dropped = story(&h, "D", Kind::Bug, None, &["c"]).await;
+    let dropped = h
+        .move_story(
+            &c,
+            dropped.key(),
+            dropped.version(),
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+            None,
+        )
+        .await
+        .unwrap();
+    let active = story(&h, "A", Kind::Bug, None, &["c"]).await;
+    let active = h
+        .move_story(
+            &c,
+            active.key(),
+            active.version(),
+            DeliveryState::InProgress,
+            None,
+            Some("hotfix".into()),
+        )
+        .await
+        .unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    let listed: Vec<String> = h
+        .ports
+        .stories
+        .list_stories(
+            &mut tx,
+            &StoryFilter {
+                untriaged: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.key().to_string())
+        .collect();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        listed,
+        [s.key(), b.key(), ch.key(), active.key()].map(|k| k.to_string())
+    );
+
+    let all = [&s, &b, &ch, &placed, &dropped, &active];
+    let keys = all.map(|x| x.key().clone());
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let inputs = h
+        .ports
+        .reads
+        .readiness_inputs(&mut tx, &keys)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    for x in all {
+        let k = x.key();
+        let untriaged = compute_readiness(&inputs[k]).reasons.first() == Some(&Reason::Untriaged);
+        assert_eq!(
+            listed.contains(&k.to_string()),
+            untriaged && x.delivery() != DeliveryState::Done,
+            "filter and readiness disagree on {k}"
+        );
+    }
+}
+
+// Measured once with `SELECT title, similarity(title, 'PDF export shows a blank page') FROM stories`:
+// "The export PDF is blank" 0.47, "PDF export blank page" 0.72, "Export to PDF shows a blank page" 0.91,
+// "Login redirects twice" 0.0. So SIMILAR_MIN (0.3) straddles the reworded titles and the unrelated one.
+#[tokio::test]
+async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let mut c = dan();
+    c.now = Utc.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let mk = |idem: &'static str, title: &'static str| {
+        let (h, c, e) = (&h, &c, e.key().clone());
+        async move {
+            h.create_story(
+                c,
+                idem,
+                title,
+                Kind::Bug,
+                Some(e),
+                "",
+                vec!["c".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    // Created in this order, so neither creation order nor its reverse is the similarity order (0.72, 0.91, 0.47).
+    let second = mk("1", "PDF export blank page").await;
+    let first = mk("2", "Export to PDF shows a blank page").await;
+    let third = mk("3", "The export PDF is blank").await;
+    let other = mk("4", "Login redirects twice").await;
+    let old = mk("5", "Export PDF shows blank page").await;
+    let imported = mk("6", "PDF export shows a blank page").await;
+    // the window is 10-12 onwards; `old` was dropped on 09-26, before it, and `first` on 10-24, inside it
+    c.now = Utc.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    h.move_story(
+        &c,
+        old.key(),
+        old.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+    let done_in_window = Utc.with_ymd_and_hms(2026, 10, 24, 9, 0, 0).unwrap();
+    c.now = done_in_window;
+    h.move_story(
+        &c,
+        first.key(),
+        first.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+    // An imported done story keeps no done_at; it never counts as recent.
+    sqlx::query("UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = NULL WHERE key = $1")
+        .bind(imported.key().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let since = Utc.with_ymd_and_hms(2026, 10, 12, 9, 0, 0).unwrap();
+
+    let text = "PDF export shows a blank page";
+    let keys = |v: Vec<Story>| v.iter().map(|s| s.key().to_string()).collect::<Vec<_>>();
+    let got = keys(
+        h.ports
+            .stories
+            .similar_stories(text, reeve_planning::SIMILAR_MIN, since, 5)
+            .await
+            .unwrap(),
+    );
+    let want: Vec<String> = [&first, &second, &third]
+        .iter()
+        .map(|s| s.key().to_string())
+        .collect();
+    assert_eq!(
+        got, want,
+        "similar titles, most similar first; not the old done, the imported done or the unrelated"
+    );
+    // The exclusions are not vacuous: the old story and the unrelated one differ only by the window and the threshold.
+    let wide = keys(
+        h.ports
+            .stories
+            .similar_stories(
+                text,
+                reeve_planning::SIMILAR_MIN,
+                Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                9,
+            )
+            .await
+            .unwrap(),
+    );
+    assert!(
+        wide.contains(&old.key().to_string()),
+        "old is similar enough: {wide:?}"
+    );
+    assert!(
+        !wide.contains(&other.key().to_string()),
+        "an unrelated title is below the threshold: {wide:?}"
+    );
+    // The window is inclusive at its start.
+    let edge = keys(
+        h.ports
+            .stories
+            .similar_stories(text, reeve_planning::SIMILAR_MIN, done_in_window, 5)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(edge, want, "done exactly at `done_since` is kept");
+    let after = keys(
+        h.ports
+            .stories
+            .similar_stories(
+                text,
+                reeve_planning::SIMILAR_MIN,
+                done_in_window + chrono::Duration::seconds(1),
+                5,
+            )
+            .await
+            .unwrap(),
+    );
+    assert!(
+        !after.contains(&first.key().to_string()),
+        "done just before `done_since` is not: {after:?}"
+    );
+    assert_eq!(
+        keys(
+            h.ports
+                .stories
+                .similar_stories(text, reeve_planning::SIMILAR_MIN, since, 1)
+                .await
+                .unwrap()
+        ),
+        vec![first.key().to_string()]
+    );
+    assert!(
+        h.ports
+            .stories
+            .similar_stories(text, 0.99, since, 5)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

@@ -1,6 +1,6 @@
 // web/src/lib/backlog.ts
-// The backlog's "by epic" view: epic-less stories first, then every epic under its initiative in planning
-// order, then epics with no initiative. Readiness is the server's (kb/ADR-0003 R1).
+// The backlog's "by epic" view: epic-less stories (all untriaged, one rank run) first, then every epic under its initiative in planning
+// order, then epics with no initiative. Readiness is the server's (kb/ADR-0018 R1).
 import type { Epic, Initiative, StoryWithReadiness } from '#lib/api/types.ts';
 import { isUntriaged } from '#lib/board.ts';
 import { groupEpics } from '#lib/planning.ts';
@@ -18,8 +18,7 @@ const byRank = (a: StoryWithReadiness, b: StoryWithReadiness) => a.story.rank - 
 
 export function groupBacklog(buckets: string[], initiatives: Initiative[], epics: Epic[], todo: StoryWithReadiness[]): Backlog {
 	const ranked = [...todo].sort(byRank);
-	const loose = ranked.filter((s) => !s.story.epic);
-	const noEpic = [...loose.filter(isUntriaged), ...loose.filter((s) => !isUntriaged(s))];
+	const noEpic = ranked.filter((s) => !s.story.epic);
 	const byEpic = new Map<string, StoryWithReadiness[]>();
 	for (const s of ranked) {
 		if (!s.story.epic) continue;

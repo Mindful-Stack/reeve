@@ -40,7 +40,7 @@ export function columnHeading(col: Column, doneWindowDays: number | undefined): 
 }
 
 /** Up next: the todo column, ready stories first; both parts keep the column's rank order. Readiness is the
- *  server's answer, never recomputed (kb/ADR-0003 R1). */
+ *  server's answer, never recomputed (kb/ADR-0018 R1). */
 export function splitUpNext(todo: StoryWithReadiness[]): {
 	ready: StoryWithReadiness[];
 	notReady: StoryWithReadiness[];
@@ -87,7 +87,7 @@ export const SHORT = {
 
 /** The full sentence: the badge's title attribute, the override prompt and refusal notices. */
 export const FULL = {
-	untriaged: () => 'untriaged: the story has no epic',
+	untriaged: () => 'untriaged: no epic yet; triage places it',
 	no_criteria: () => 'no acceptance criteria',
 	ancestor_discovery_incomplete: (r) => `discovery incomplete on ${r.item}`,
 	decision_no_record: (r) => `decision "${r.title}" has no record linked`,
@@ -128,7 +128,7 @@ export function shortReason(r: Readiness): string {
 export type StoryStatus = { word: string; tone: 'ready' | 'warn' | 'muted' };
 
 /** A story's status word and dot tone, as board cards and the epic page's rows show it: a done story its resolution,
- *  else the server's readiness rendered short (kb/ADR-0003 R1). */
+ *  else the server's readiness rendered short (kb/ADR-0018 R1). */
 export function storyStatus(item: StoryWithReadiness): StoryStatus {
 	const s = item.story;
 	if (s.delivery === 'done') return { word: s.resolution ?? 'done', tone: 'muted' };
@@ -163,10 +163,10 @@ function byKey(a: string, b: string): number {
  *  filters nothing. */
 export type Filters = { mine?: string; epic?: string; kind?: Kind; untriaged?: boolean; goal?: number | 'none' | null };
 
-/** Untriaged as the server reports it (kb/ADR-0002 R2: a story-kind item without an epic): a readiness reason, never
- *  re-derived from kind and epic on the client (kb/ADR-0003 R1). */
+/** Untriaged (kb/ADR-0018 R4: an item of any kind without an epic that is not done): the server's readiness reason,
+ *  never re-derived from kind and epic on the client (kb/ADR-0018 R1), and not a finished item. */
 export function isUntriaged(s: StoryWithReadiness): boolean {
-	return s.readiness.reasons.some((r) => r.reason === 'untriaged');
+	return s.story.delivery !== 'done' && s.readiness.reasons.some((r) => r.reason === 'untriaged');
 }
 
 /** `mine` is the caller's email; `untriaged` keeps the stories the server calls untriaged (`isUntriaged`); `goal` reads

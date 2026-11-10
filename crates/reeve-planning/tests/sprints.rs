@@ -180,6 +180,18 @@ mod started_at {
     pub fn at(day: u32, h: u32) -> chrono::DateTime<chrono::Utc> {
         chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, day, h, 0, 0).unwrap()
     }
+    /// An epic that is discovery-complete under no initiative: a story placed under it is ready when its own checks
+    /// pass (an item without an epic is untriaged). Call once per test (fixed idempotency key).
+    pub async fn ready_epic(h: &Handlers, c: &Ctx) -> reeve_protocol::Key {
+        let epic = h
+            .create_epic(c, "ready-epic", "E", None, "", None)
+            .await
+            .unwrap();
+        h.mark_discovery(c, ItemType::Epic, epic.key(), epic.version(), true)
+            .await
+            .unwrap();
+        epic.key().clone()
+    }
     pub fn ctx(via: Via, day: u32) -> Ctx {
         Ctx {
             actor: "dan@example.com".into(),
@@ -194,13 +206,14 @@ mod started_at {
         let (_c, pool) = super::common::pg().await;
         let h = mk(pool.clone());
         let c = ctx(Via::Interactive, 3);
+        let ready_epic = ready_epic(&h, &c).await;
         let s = h
             .create_story(
                 &c,
                 "s",
                 "S",
                 Kind::Chore,
-                None,
+                Some(ready_epic.clone()),
                 "",
                 vec!["x".into()],
                 vec![],
@@ -281,7 +294,7 @@ mod started_at {
 }
 
 mod repository {
-    use super::started_at::{at, ctx, mk};
+    use super::started_at::{at, ctx, mk, ready_epic};
     use reeve_planning::*;
     use reeve_protocol::{DeliveryState, GoalVia, Kind, Resolution, SprintState, Via};
 
@@ -323,7 +336,8 @@ mod repository {
         let direct = mkstory("direct", Some(epic.key().clone())).await;
         let third = mkstory("third", Some(epic.key().clone())).await;
         let loose = mkstory("loose", None).await;
-        let done = mkstory("done", None).await;
+        let ready_epic = ready_epic(&h, &c).await;
+        let done = mkstory("done", Some(ready_epic.clone())).await;
 
         let ports = make_planning_ports(pool.clone());
         let mut tx = pool.begin().await.unwrap();
@@ -1575,7 +1589,7 @@ mod lifecycle {
 /// The sprint view, story goals, the goal filter and story context.
 mod views {
     use super::lifecycle::{goal, mk};
-    use super::started_at::{MemSink, at, ctx};
+    use super::started_at::{MemSink, at, ctx, ready_epic};
     use reeve_planning::*;
     use reeve_protocol::{DeliveryState, GoalProgressDto, Kind, Resolution, SprintCountsDto, Via};
 
@@ -1613,13 +1627,14 @@ mod views {
         let (h, sink) = mk(pool.clone());
         let c = ctx(Via::Automation, 3);
         let me = ctx(Via::Interactive, 3);
+        let ready_epic = ready_epic(&h, &me).await;
         let s = h
             .create_story(
                 &me,
                 "s",
                 "S",
                 Kind::Chore,
-                None,
+                Some(ready_epic.clone()),
                 "",
                 vec!["x".into()],
                 vec![],
@@ -1782,8 +1797,10 @@ mod views {
         };
         let a = mk_story("a", Kind::Story, Some(e.key().clone())).await; // serves via the initiative, not ready
         let c = mk_story("c", Kind::Chore, Some(e.key().clone())).await; // serves via the initiative, started below
-        let b = mk_story("b", Kind::Chore, None).await; // serves directly, ready
-        let u = mk_story("u", Kind::Chore, None).await; // upkeep, ready
+        // A discovery-complete epic under no initiative keeps `b` and `u` ready (an epic-less item is untriaged).
+        let ready_epic = ready_epic(&h, &me).await;
+        let b = mk_story("b", Kind::Chore, Some(ready_epic.clone())).await; // serves directly, ready
+        let u = mk_story("u", Kind::Chore, Some(ready_epic.clone())).await; // upkeep, ready
         let g = goal(&h, &me, "g1").await;
         h.link_goal(&me, g.id, &[i.key().clone(), b.key().clone()])
             .await

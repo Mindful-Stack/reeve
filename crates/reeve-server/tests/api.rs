@@ -130,6 +130,98 @@ async fn auth_envelope_gate_and_automation_rule() {
     assert_eq!(call(&h.app, None, "GET", "/health", None).await.0, 200);
 }
 
+/// An item of any kind without an epic is untriaged (proposed kb/ADR-0018). The override rule: automation never gets
+/// past a refusal (kb/ADR-0015 R7, kb/ADR-0018 R2) and a refusal writes nothing; only an interactive caller's
+/// override moves it, logged once with its reason (kb/ADR-0018 R2).
+#[tokio::test]
+async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
+    let h = harness().await;
+    let admin = Some(h.admin_token.as_str());
+    let (st, s) = call(
+        &h.app,
+        admin,
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key":"u","title":"Crash on save","kind":"bug","criteria":["it saves"],"labels":[]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{s}");
+    let key = s["value"]["key"].as_str().unwrap().to_string();
+    let move_path = format!("/api/v1/stories/{key}/move");
+    let activity_len = || async {
+        let (st, feed) = call(
+            &h.app,
+            admin,
+            "GET",
+            &format!("/api/v1/activity?entity_key={key}"),
+            None,
+        )
+        .await;
+        assert_eq!(st, 200, "{feed}");
+        feed["value"].as_array().unwrap().len()
+    };
+    let before = activity_len().await;
+
+    let (st, body) = call(
+        &h.app,
+        Some(&h.bot_token),
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress"})),
+    )
+    .await;
+    assert_eq!(st, 422, "{body}");
+    assert_eq!(body_reasons(&body), vec!["untriaged"], "{body}");
+    let (st, body) = call(
+        &h.app,
+        Some(&h.bot_token),
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress","override_reason":"urgent"})),
+    )
+    .await;
+    assert_eq!(st, 422, "{body}");
+    assert!(
+        body_reasons(&body)
+            .iter()
+            .any(|r| r == "automation_cannot_override"),
+        "{body}"
+    );
+    assert_eq!(activity_len().await, before, "a refusal writes nothing");
+
+    let (st, moved) = call(
+        &h.app,
+        admin,
+        "POST",
+        &move_path,
+        Some(json!({"version":1,"to":"in_progress","override_reason":"urgent"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{moved}");
+    assert_eq!(moved["value"]["delivery"], "in_progress");
+    let (_, feed) = call(
+        &h.app,
+        admin,
+        "GET",
+        "/api/v1/activity?action=override",
+        None,
+    )
+    .await;
+    let entries = feed["value"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{feed}");
+    assert_eq!(entries[0]["via"], "interactive");
+    assert_eq!(entries[0]["entity_key"], key.as_str(), "{feed}");
+    assert_eq!(entries[0]["payload"]["reason"], "urgent", "{feed}");
+    assert!(
+        entries[0]["payload"]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["reason"] == "untriaged"),
+        "{feed}"
+    );
+}
+
 fn body_reasons(b: &serde_json::Value) -> Vec<String> {
     b["reasons"]
         .as_array()
@@ -1068,7 +1160,7 @@ async fn list_filters_tolerate_unknown_references_and_remaining_inputs_resolve()
     assert_eq!((st, v["code"].as_str()), (404, Some("not_found")));
 }
 
-/// Only an admin's check stores `accepted`, the one result that satisfies a decision (kb/ADR-0003 R3), whatever the token
+/// Only an admin's check stores `accepted`, the one result that satisfies a decision (kb/ADR-0018 R3), whatever the token
 /// kind; every other result is stored from any caller; readiness follows the stored results only.
 #[tokio::test]
 async fn only_an_admin_stores_an_accepted_check() {
@@ -1092,12 +1184,13 @@ async fn only_an_admin_stores_an_accepted_check() {
     .await
     .unwrap()
     .secret;
+    let epic = ready_epic(&h, "ready-epic").await;
     let (st, s) = call(
         &h.app,
         admin,
         "POST",
         "/api/v1/stories",
-        Some(json!({"idempotency_key":"s","title":"Wire the queue","kind":"chore","criteria":["messages arrive"],"labels":[]})),
+        Some(json!({"idempotency_key":"s","title":"Wire the queue","kind":"chore","epic":epic,"criteria":["messages arrive"],"labels":[]})),
     )
     .await;
     assert_eq!(st, 200, "{s}");

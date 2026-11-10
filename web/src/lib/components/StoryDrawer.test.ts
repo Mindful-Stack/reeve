@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
+import { discardDraft, report } from '#lib/report.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
 vi.mock('$app/state', async () => ({
 	page: (await import('#lib/test/net.ts')).fakePage({ url: '/board?story=SCRUM-11' }).page
 }));
-// A person at the keyboard: a refusal the server marks overridable raises the override prompt (kb/ADR-0003 R2).
+// A person at the keyboard: a refusal the server marks overridable raises the override prompt (kb/ADR-0018 R2).
 vi.mock('#lib/me.svelte.ts', async (orig) => ({
 	...(await orig<typeof import('#lib/me.svelte.ts')>()),
 	isInteractive: () => true
@@ -73,6 +74,38 @@ afterEach(() => {
 	net.sent.length = 0;
 	net.bodies.length = 0;
 	net.answers.of = answer;
+	discardDraft();
+});
+
+describe('StoryDrawer Report action', () => {
+	/** Waits until the drawer's load has sent its last request (the activity read is chained on the story read), so a
+	 *  request from this test never lands in the next test's `net.requested` after afterEach cleared it. */
+	const settled = () =>
+		vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
+
+	it('has a Report button that opens the dialog with no epic chip', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		await settled();
+		const b = [...document.body.querySelectorAll('header.top button')].find((x) => x.textContent === 'Report') as HTMLButtonElement;
+		expect(b).toBeDefined();
+		b.click();
+		flushSync();
+		expect(report.open).toBe(true);
+		expect(report.draft!.epic).toBeNull();
+		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
+	});
+
+	it('says Resume report while a draft exists', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		await settled();
+		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
+		expect(btn().textContent).toBe('Report');
+		btn().click();
+		flushSync();
+		report.draft!.title = 'a draft in progress';
+		flushSync();
+		expect(btn().textContent).toBe('Resume report');
+	});
 });
 
 describe('StoryDrawer opened by an external reference', () => {

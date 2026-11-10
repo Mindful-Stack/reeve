@@ -32,6 +32,7 @@ pub struct StoryQuery {
     pub epic: Option<KeyRef>,
     pub owner: Option<String>,
     pub delivery: Option<DeliveryState>,
+    /// Items of any kind with no epic that are not done (kb/ADR-0018 R4).
     #[serde(default)]
     pub untriaged: bool,
     pub label: Option<String>,
@@ -269,10 +270,34 @@ async fn clear_urgent(
     s.handlers.clear_urgent(&ctx, ItemType::Story, &key).await?;
     Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
 }
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct SimilarQuery {
+    /// The title being written, 8 to 200 characters.
+    pub q: String,
+    /// 1 to 10; default 5.
+    pub limit: Option<i64>,
+}
+
+/// Open stories, and stories done within `[board] done_window_days`, whose title is similar to `q` (pg_trgm), most
+/// similar first. A duplicate check: advice only.
+#[utoipa::path(get, path = "/stories/similar", params(SimilarQuery), responses((status = 200, body = Response<Vec<SimilarStory>>)))]
+async fn similar(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiQuery(q): ApiQuery<SimilarQuery>,
+) -> Result<Json<Response<Vec<SimilarStory>>>, AppError> {
+    Ok(ok(s
+        .handlers
+        .similar_stories(&q.q, q.limit, c.ctx().now)
+        .await?))
+}
+
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(mark_urgent, clear_urgent))
         .routes(routes!(list, create))
+        .routes(routes!(similar))
         .routes(routes!(get, edit))
         .routes(routes!(mv))
         .routes(routes!(rank))

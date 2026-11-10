@@ -81,7 +81,7 @@
 			StoryWithReadiness[]
 		>;
 	});
-	/** Up next: the shown todo cards, ready first (the server's readiness, kb/ADR-0003 R1). */
+	/** Up next: the shown todo cards, ready first (the server's readiness, kb/ADR-0018 R1). */
 	const upNext = $derived(visible ? splitUpNext(visible.todo) : null);
 	/** The "Not ready" disclosure is open when the query string says so, so it survives a reload. */
 	const showNotReady = $derived(query.get('notready') === '1');

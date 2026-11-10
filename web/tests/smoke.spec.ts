@@ -11,6 +11,8 @@ function env(name: string): string {
 const STORY = env('SMOKE_STORY');
 const BLOCKED = env('SMOKE_BLOCKED_STORY');
 const DECISION_STORY = env('SMOKE_DECISION_STORY');
+// A discovery-complete epic: a chore under it is ready when its checks pass (an item without an epic is untriaged).
+const EPIC = env('SMOKE_EPIC');
 
 const headers = { 'X-Reeve-Client': 'web' };
 
@@ -27,8 +29,8 @@ async function post<T>(page: Page, path: string, data: unknown): Promise<T> {
 	expect(res.ok() && body.outcome, `POST ${path}: ${res.status()} ${text}`).toBe('ok');
 	return body.value;
 }
-const chore = (page: Page, title: string) =>
-	post<{ key: string }>(page, '/api/v1/stories', { idempotency_key: crypto.randomUUID(), title, kind: 'chore', criteria: [], labels: [] });
+const chore = (page: Page, title: string, epic: string | null = EPIC) =>
+	post<{ key: string }>(page, '/api/v1/stories', { idempotency_key: crypto.randomUUID(), title, kind: 'chore', epic, criteria: [], labels: [] });
 
 // Sign in through the real browser flow against the static provider: /auth/login → provider → /auth/callback sets the
 // cookie.
@@ -51,7 +53,7 @@ test('planning view shows the seeded initiative in Now', async ({ page }) => {
 test('board shows ready and blocked stories and the drawer opens by url', async ({ page }) => {
 	await page.goto('/board');
 	await expect(page.getByTestId(`card-${STORY}`)).toContainText('ready');
-	// Untriaged and blocked cards sit in the collapsed "Not ready" disclosure.
+	// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
 	await page.getByText(/^Not ready · \d+$/).click();
 	await expect(page.getByTestId(`card-${BLOCKED}`)).toContainText('no criteria');
 	await expect(page.getByTestId(`card-${DECISION_STORY}`)).toContainText('decision: no record');
@@ -323,8 +325,8 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 });
 
 test('the backlog lists epic-less work under No epic and moves a row up through its menu', async ({ page }) => {
-	const a = await chore(page, 'Smoke backlog first');
-	const b = await chore(page, 'Smoke backlog second');
+	const a = await chore(page, 'Smoke backlog first', null);
+	const b = await chore(page, 'Smoke backlog second', null);
 	await page.goto('/backlog?group=rank');
 	const order = async () => await page.locator('ol.rows li').evaluateAll((li) => li.map((x) => x.getAttribute('data-key')));
 	// The list loads after the page mounts: wait for both rows before reading the order.
@@ -358,7 +360,7 @@ test('the backlog lists epic-less work under No epic and moves a row up through 
 
 test('the client loads nothing from outside the server', async ({ page }) => {
 	// Its own epic-less chore, so the No epic heading below exists when this test runs alone.
-	const own = await chore(page, 'Smoke foreign chore');
+	const own = await chore(page, 'Smoke foreign chore', null);
 	const origin = new URL(env('REEVE_URL')).origin;
 	const foreign: string[] = [];
 	page.on('request', (r) => {
@@ -401,7 +403,7 @@ for (const view of ['board', 'backlog'] as const) {
 		await page.goto('/' + view);
 		let link: Locator;
 		if (view === 'board') {
-			// Untriaged and blocked cards sit in the collapsed "Not ready" disclosure.
+			// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
 			await page.getByText(/^Not ready · \d+$/).click();
 			link = page.getByTestId(`card-${opener.key}`).getByRole('link', { name: `Smoke ${view} focus opener` });
 		} else {
@@ -448,9 +450,9 @@ for (const view of ['board', 'backlog'] as const) {
 }
 
 test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, close and history', async ({ page }) => {
-	// A ready chore (criteria, no epic needed) that serves no goal yet: moving it into progress asks for its goal.
+	// A ready chore (criteria, under a discovery-complete epic) that serves no goal yet: moving it into progress asks for its goal.
 	const work = await post<{ key: string }>(page, '/api/v1/stories', {
-		idempotency_key: crypto.randomUUID(), title: 'Smoke sprint chore', kind: 'chore', criteria: ['it ships'], labels: []
+		idempotency_key: crypto.randomUUID(), title: 'Smoke sprint chore', kind: 'chore', epic: EPIC, criteria: ['it ships'], labels: []
 	});
 	// Under 40 characters, so the nudge and the card show it whole.
 	const outcome = 'The smoke runs a sprint end to end';
@@ -644,3 +646,76 @@ test("a member's open tab gains and loses the Access link as an admin grants and
 	expect(navigations).toBe(loaded);
 	await member.close();
 });
+
+test('report a bug from the board: it lands in triage, and a similar story can be checked without losing the draft', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const title = `Smoke export PDF is blank ${suffix}`;
+	const existing = await chore(page, title); // an existing item to be found as similar (under SMOKE_EPIC)
+	await page.goto('/board');
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
+	const hit = dialog.locator(`[data-hit="${existing.key}"]`);
+	await expect(hit).toContainText(title); // "Already reported?" found it
+	await hit.click();
+	await expect(dialog).toBeHidden();
+	const drawer = page.getByRole('complementary');
+	await expect(drawer).toContainText(title); // the drawer is usable, not inert
+	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
+	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
+	await dialog.getByLabel("Something's broken").check();
+	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
+	const notice = page.getByRole('status').filter({ hasText: 'Filed bug' });
+	await expect(notice).toContainText('waiting for the team to place it');
+	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
+	await page.goto('/board?untriaged=1');
+	await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeChecked();
+	await page.getByText(/^Not ready · \d+$/).click();
+	await expect(page.getByTestId(`card-${key}`)).toContainText('untriaged');
+	// The filter really filters: the similar story sits under an epic, so it is not listed here.
+	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
+});
+
+test('the story drawer header fits at 320px with a draft: Close stays on screen beside Resume report', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 640 });
+	const s = await chore(page, `Smoke drawer header ${crypto.randomUUID().slice(0, 6)}`);
+	await page.goto('/board');
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await dialog.getByLabel('Title').fill('A draft that outlives the dialog');
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeHidden();
+	await page.goto(`/board?story=${s.key}`);
+	const drawer = page.getByRole('complementary');
+	const resume = drawer.getByRole('button', { name: 'Resume report' });
+	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
+	await expect(resume).toBeVisible();
+	await expect(close).toBeVisible();
+	const r = (await resume.boundingBox())!;
+	const c = (await close.boundingBox())!;
+	expect(c.x + c.width).toBeLessThanOrEqual(320);
+	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
+});
+
+for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
+	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {
+		await page.setViewportSize({ width, height });
+		await page.goto('/board');
+		await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeVisible(); // the board has rendered
+		const report = page.getByRole('button', { name: 'Report', exact: true });
+		await expect(report).toBeVisible();
+		const search = page.getByRole('search', { name: 'Site search' }).getByRole('searchbox');
+		await expect(search).toBeVisible();
+		const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+		expect(m.scroll).toBeLessThanOrEqual(m.client);
+		expect((await search.boundingBox())!.width).toBeGreaterThanOrEqual(80);
+		// Below 720px the word is clipped to 1x1 (still "visible" to Playwright), so measure it.
+		const wordWidth = (await report.locator('.word').boundingBox())?.width ?? 0;
+		if (phone) expect(wordWidth).toBeLessThanOrEqual(1);
+		else expect(wordWidth).toBeGreaterThan(20);
+		if (phone) await expect(report.locator('.plus')).toBeVisible();
+		else await expect(report.locator('.plus')).toBeHidden();
+		await report.click();
+		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
+	});
+}
