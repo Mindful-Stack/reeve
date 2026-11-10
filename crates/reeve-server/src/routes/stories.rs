@@ -5,7 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{GoalFilter, StoryFilter};
+use reeve_planning::{GoalFilter, StoryFilter, StoryText};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -38,12 +38,27 @@ pub struct StoryQuery {
     pub label: Option<String>,
     #[serde(default)]
     pub ready: bool,
-    /// `recent`: done stories only when they entered done within `[board] done_window_days`; default `all`.
+    /// `recent`: done stories only when they entered done within `[board] done_window_days`; `none`: no done
+    /// stories; default `all`.
     #[serde(default)]
     pub done: DoneFilter,
     /// Stories serving the active sprint's goals: a goal id, `any` (serving some goal) or `none` (upkeep). Combines
     /// with every other filter.
     pub goal: Option<String>,
+    /// Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external
+    /// reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly.
+    pub q: Option<String>,
+    pub kind: Option<Kind>,
+    /// An initiative key or external reference: stories whose epic belongs to it. A reference that matches nothing,
+    /// or an initiative with no epics, yields an empty list, not 404.
+    pub initiative: Option<KeyRef>,
+    /// Only stories shown as urgent (non-empty `urgent_sources`).
+    #[serde(default)]
+    pub urgent: bool,
+    /// `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
+    /// reference equals `q` first, then title matches, then the rest, each in `rank` order.
+    #[serde(default)]
+    pub sort: StorySort,
 }
 
 /// `goal=<id>|any|none`.
@@ -65,11 +80,27 @@ async fn list(
     ApiQuery(q): ApiQuery<StoryQuery>,
 ) -> Result<Json<Response<Vec<StoryWithReadiness>>>, AppError> {
     let goal = goal_filter(q.goal.as_deref())?;
+    // A reference that names nothing lists nothing, through the handler, so validation still runs (kb/ADR-0021).
+    let mut epics = None;
     let epic = match super::resolve_filter(&s.handlers, q.epic.as_ref(), ItemType::Epic).await? {
-        super::FilterRef::Nothing => return Ok(ok(Vec::new())),
+        super::FilterRef::Nothing => {
+            epics = Some(Vec::new());
+            None
+        }
         super::FilterRef::Is(k) => Some(k),
         super::FilterRef::Unset => None,
     };
+    let initiative =
+        match super::resolve_filter(&s.handlers, q.initiative.as_ref(), ItemType::Initiative)
+            .await?
+        {
+            super::FilterRef::Nothing => {
+                epics = Some(Vec::new());
+                None
+            }
+            super::FilterRef::Is(k) => Some(k),
+            super::FilterRef::Unset => None,
+        };
     let f = StoryFilter {
         epic,
         owner: q.owner,
@@ -77,11 +108,15 @@ async fn list(
         untriaged: q.untriaged,
         label: q.label,
         goal,
-        ..Default::default()
+        text: q.q.map(|text| StoryText { text, key: None }),
+        kind: q.kind,
+        epics,
+        urgent: q.urgent,
+        sort: q.sort,
     };
     Ok(ok(s
         .handlers
-        .list_stories(&f, None, q.ready, q.done, c.ctx().now)
+        .list_stories(&f, initiative.as_ref(), q.ready, q.done, c.ctx().now)
         .await?))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]

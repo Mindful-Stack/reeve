@@ -299,6 +299,7 @@ impl Handlers {
             DoneFilter::Recent => chrono::Duration::try_days(self.settings.done_window_days.into())
                 .and_then(|window| now.checked_sub_signed(window))
                 .map_or(DoneWindow::All, DoneWindow::Since),
+            DoneFilter::None => DoneWindow::None,
         };
         f.owner = f.owner.map(|o| reeve_protocol::normalise_email(&o));
         let mut tx = self

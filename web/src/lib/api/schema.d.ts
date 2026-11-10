@@ -1297,11 +1297,11 @@ export interface components {
             by: string;
         };
         /**
-         * @description Which done stories `GET /stories` lists: every one (the default), or only those that entered done within the
-         *     instance's `[board] done_window_days`. Stories in other states are always listed.
+         * @description Which done stories `GET /stories` lists: every one (the default), only those that entered done within the
+         *     instance's `[board] done_window_days`, or none. Stories in other states are always listed.
          * @enum {string}
          */
-        DoneFilter: "recent" | "all";
+        DoneFilter: "recent" | "all" | "none";
         /**
          * @description Edits a required decision's planner-side fields (kb/ADR-0004 R2). The record reference is set with `link`, the check
          *     result by the checker; neither is accepted here, and any field not listed is refused rather than ignored.
@@ -3180,6 +3180,13 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        /**
+         * @description The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the
+         *     story whose key or external reference equals the text first, then title matches, then the rest; within each,
+         *     the `rank` order).
+         * @enum {string}
+         */
+        StorySort: "rank" | "relevance";
         /** @description One row of `GET /stories`. */
         StoryWithReadiness: {
             readiness: components["schemas"]["Readiness"];
@@ -7095,13 +7102,34 @@ export interface operations {
                 untriaged?: boolean;
                 label?: string;
                 ready?: boolean;
-                /** @description `recent`: done stories only when they entered done within `[board] done_window_days`; default `all`. */
+                /**
+                 * @description `recent`: done stories only when they entered done within `[board] done_window_days`; `none`: no done
+                 *     stories; default `all`.
+                 */
                 done?: components["schemas"]["DoneFilter"];
                 /**
                  * @description Stories serving the active sprint's goals: a goal id, `any` (serving some goal) or `none` (upkeep). Combines
                  *     with every other filter.
                  */
                 goal?: string;
+                /**
+                 * @description Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external
+                 *     reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly.
+                 */
+                q?: string;
+                kind?: components["schemas"]["Kind"];
+                /**
+                 * @description An initiative key or external reference: stories whose epic belongs to it. A reference that matches nothing,
+                 *     or an initiative with no epics, yields an empty list, not 404.
+                 */
+                initiative?: components["schemas"]["KeyRef"];
+                /** @description Only stories shown as urgent (non-empty `urgent_sources`). */
+                urgent?: boolean;
+                /**
+                 * @description `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
+                 *     reference equals `q` first, then title matches, then the rest, each in `rank` order.
+                 */
+                sort?: components["schemas"]["StorySort"];
             };
             header?: never;
             path?: never;
