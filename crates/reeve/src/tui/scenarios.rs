@@ -536,7 +536,8 @@ fn after_a_sign_out_nothing_reaches_the_network() {
     sim.char('r');
     quiet(&sim, "r");
 
-    // The reason prompt open when the sign-out lands: its Enter can no longer send a mark.
+    // The reason prompt open when the sign-out lands: nothing reaches the network afterwards, Enter included.
+    // (`sign_out_closes_every_prompt_and_picker` pins that the prompt itself is reset.)
     let mut sim = Sim::loaded(
         TokenKind::Interactive,
         vec![owned(story("ABC-1", Todo, 1), "dan@example.com")],
@@ -954,6 +955,13 @@ fn at_most_one_overlay_is_open_after_every_message() {
         };
         let mut sim = Sim::loaded(TokenKind::Interactive, list);
         for (i, step) in steps.iter().enumerate() {
+            if !matches!(step, Key(_)) {
+                assert_eq!(
+                    open_overlays(&sim.s).len(),
+                    1,
+                    "{case}: the overlay under test is open before the reply"
+                );
+            }
             match *step {
                 Key(c) => sim.char(c),
                 Moved => sim.reply(

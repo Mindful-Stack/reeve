@@ -111,12 +111,7 @@ impl State {
                 match &result {
                     Completion::Ok(_) => o.status(format!("{key} marked urgent")),
                     Completion::Refused { reasons, .. } => {
-                        let shorts = reasons
-                            .iter()
-                            .map(words::short)
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        o.status(format!("{key}: {shorts}"));
+                        o.status(format!("{key}: {}", words::shorts(reasons)));
                     }
                     Completion::Failed(_) => {}
                 }
@@ -216,9 +211,83 @@ mod tests {
     #[test]
     fn a_re_mark_keeps_the_current_reason() {
         let b = board_with(vec![story("ABC-1", Todo, 2)]);
-        let mut u = opened(&b, Some("old"));
+        let mut u = opened(&b, Some("Åsa"));
+        let _ = u.update(press(KeyCode::Char('!')), &cx(&b));
         let o = u.update(press(KeyCode::Enter), &cx(&b));
-        assert_eq!(the_mark(&o), (key("ABC-1"), Some("old".into())));
+        assert_eq!(the_mark(&o), (key("ABC-1"), Some("Åsa!".into())));
+    }
+
+    #[test]
+    fn done_finishes_its_own_write_once_whatever_the_prompt_holds() {
+        use crate::tui::effect::{Failure, Reply};
+        use crate::tui::note::WriteOutcome;
+        use reeve_protocol::Reason;
+        let b = board_with(vec![story("ABC-1", Todo, 2), story("ABC-2", Todo, 1)]);
+        let marked = story("ABC-1", Todo, 2).story;
+        let finished = |o: &Out<Msg>| -> Vec<(Key, WriteOutcome)> {
+            o.notes
+                .iter()
+                .filter_map(|n| match n {
+                    Note::WriteFinished { key, outcome, .. } => {
+                        Some((key.clone(), outcome.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let cases: [(Completion, WriteOutcome, &[&str]); 3] = [
+            (
+                Completion::Ok(Reply::Story(marked.clone())),
+                WriteOutcome::Applied(marked.clone()),
+                &["ABC-1 marked urgent"],
+            ),
+            (
+                refused(vec![Reason::NoCriteria]),
+                WriteOutcome::Unchanged,
+                &["ABC-1: no criteria"],
+            ),
+            (
+                Completion::Failed(Failure::Transport("t".into())),
+                WriteOutcome::Unknown,
+                &[],
+            ),
+        ];
+        let mut u = State::default();
+        let _ = u.update(
+            Msg::Open {
+                key: key("ABC-2"),
+                reason: None,
+            },
+            &cx(&b),
+        );
+        for (result, outcome, status) in cases {
+            let o = u.update(
+                Msg::Done {
+                    key: key("ABC-1"),
+                    stamp: stamp(1, 1),
+                    result: result.clone(),
+                },
+                &cx(&b),
+            );
+            assert_eq!(finished(&o), [(key("ABC-1"), outcome)], "{result:?}");
+            assert_eq!(statuses(&o), status, "{result:?}");
+            assert!(o.effects.is_empty(), "{result:?}");
+            assert_eq!(u.open(), Some(&key("ABC-2")), "{result:?}");
+        }
+        let _ = u.update(Msg::Reset, &cx(&b));
+        let o = u.update(
+            Msg::Done {
+                key: key("ABC-1"),
+                stamp: stamp(2, 2),
+                result: Completion::Failed(Failure::Transport("t".into())),
+            },
+            &cx(&b),
+        );
+        assert_eq!(
+            finished(&o),
+            [(key("ABC-1"), WriteOutcome::Unknown)],
+            "a write finishes after a sign-out too"
+        );
     }
 
     #[test]

@@ -320,11 +320,7 @@ impl State {
                         {
                             op.target = t;
                         }
-                        let shorts = reasons
-                            .iter()
-                            .map(words::short)
-                            .collect::<Vec<_>>()
-                            .join(", ");
+                        let shorts = words::shorts(&reasons);
                         if op.override_reason.is_none()
                             && cx.read_only.is_none()
                             // The server's word on whether an override can get past these reasons.

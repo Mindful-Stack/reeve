@@ -12,6 +12,11 @@ pub const STATES: [DeliveryState; 5] = [
     DeliveryState::Done,
 ];
 
+/// Reasons in their short wording, comma-separated: how a refusal reads in the status line.
+pub fn shorts(rs: &[Reason]) -> String {
+    rs.iter().map(short).collect::<Vec<_>>().join(", ")
+}
+
 pub fn short(r: &Reason) -> String {
     match r {
         Reason::Untriaged => "untriaged".into(),

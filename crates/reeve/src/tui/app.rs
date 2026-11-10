@@ -573,12 +573,7 @@ impl State {
                 match &result {
                     Completion::Ok(_) => self.set_status(format!("{key} urgent mark cleared"), now),
                     Completion::Refused { reasons, .. } => {
-                        let shorts = reasons
-                            .iter()
-                            .map(words::short)
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        self.set_status(format!("{key}: {shorts}"), now);
+                        self.set_status(format!("{key}: {}", words::shorts(reasons)), now);
                     }
                     Completion::Failed(_) => {}
                 }

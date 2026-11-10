@@ -99,8 +99,8 @@ pub struct Selected {
     pub version: i64,
 }
 
-/// What the workflow slices (moves, set_epic, urgent) may read of the board, and nothing more: read-only, so every change
-/// to the board still goes through its own messages (kb/ADR-0011 R2).
+/// What the workflow slices (moves, set_epic, urgent) may read of the board, and nothing more: read-only, so every
+/// change to the board still goes through its own messages (kb/ADR-0011 R2).
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     board: &'a State,
