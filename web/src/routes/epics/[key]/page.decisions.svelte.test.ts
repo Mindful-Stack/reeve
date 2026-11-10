@@ -79,4 +79,12 @@ describe('decisions heading and accepted fold', () => {
 		flushSync();
 		expect(fold().getAttribute('aria-expanded')).toBe('true');
 	});
+
+	it('opens a decision in the drawer from its title, over this page', async () => {
+		net.decisions = [decision({ id: 2, on: 'ABC-5', on_type: 'epic', title: 'Pick a queue' })];
+		await open();
+		const title = document.querySelector<HTMLAnchorElement>('#decisions a.title')!;
+		expect(title.textContent).toBe('Pick a queue');
+		expect(title.getAttribute('href')).toBe('/epics/ABC-5?decision=2');
+	});
 });

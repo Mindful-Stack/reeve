@@ -695,7 +695,7 @@
 			{#if closedCount > 0}
 				<label class="toggle"><input type="checkbox" bind:checked={showClosed} /> show closed ({closedCount})</label>
 			{/if}
-			<DecisionList decisions={shownDecisions} onchanged={reload} />
+			<DecisionList decisions={shownDecisions} decisionHref={(id) => decisionHref(page.url, id)} onchanged={reload} />
 			{#if editing.has('decision')}
 				<form class="inline-form" id="drawer-decision-form" onsubmit={requireDecision} onkeydown={cancelOnEscape('decision')}>
 					<h4>Require a decision</h4>

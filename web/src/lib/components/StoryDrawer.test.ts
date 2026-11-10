@@ -6,7 +6,7 @@ import { page } from '$app/state';
 import { decisionHref } from '#lib/drawer.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
-import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
+import { activity, decision, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
 import { discardDraft, report } from '#lib/report.svelte.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
@@ -130,6 +130,23 @@ describe('StoryDrawer decision readiness reasons', () => {
 		expect(a?.getAttribute('href')).toBe('/board?decision=7');
 		expect(a?.textContent).toContain('Use Postgres');
 		expect(items[1].querySelector('a')).toBeNull();
+	});
+});
+
+describe('StoryDrawer required decisions', () => {
+	it('opens a decision in its drawer from its title', async () => {
+		net.answers.of = (url, method) =>
+			url.pathname === '/api/v1/decisions' ? [decision({ id: 7, on: 'RV-5', on_type: 'story', title: 'Use Postgres' })] : answer(url, method);
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const title = await vi.waitFor(() => {
+			flushSync();
+			const a = document.body.querySelector<HTMLAnchorElement>('.decisions a.title');
+			expect(a).not.toBeNull();
+			return a!;
+		});
+		expect(title.textContent).toBe('Use Postgres');
+		expect(title.getAttribute('href')).toBe(decisionHref(page.url, 7));
+		expect(title.getAttribute('href')).toBe('/board?decision=7');
 	});
 });
 

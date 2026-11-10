@@ -9,6 +9,7 @@
 	import { fullLabel } from '#lib/board.ts';
 	import Brief from '#lib/components/Brief.svelte';
 	import DecisionList from '#lib/components/DecisionList.svelte';
+	import { decisionHref } from '#lib/drawer.ts';
 	import { blocking, itemHref } from '#lib/decisions.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
@@ -584,6 +585,7 @@
 				<!-- One list over both groups: a decision that moves between them keeps its editor, draft and thread. -->
 				<DecisionList
 					decisions={shownDecisions}
+					decisionHref={(id) => decisionHref(page.url, id)}
 					itemHref={(key) => itemHref(key, new Set([i.key]), epicKeys)}
 					onchanged={reload}
 					poll={false}

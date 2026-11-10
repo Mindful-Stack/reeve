@@ -29,7 +29,7 @@
 	import { epicStripDecisions, pollsChecks } from '#lib/epic.ts';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { errorMessage, short } from '#lib/format.ts';
-	import { storyHref } from '#lib/drawer.ts';
+	import { decisionHref, storyHref } from '#lib/drawer.ts';
 	import { draftKey, newDraftKey } from '#lib/idempotency.ts';
 	import { followBase, rebase, type EditorBase } from '#lib/editorBase.ts';
 	import { EPIC_SAME, epicDetails, epicEdit, fieldsText, mergeDraft, type EpicDetails } from '#lib/forms.ts';
@@ -664,6 +664,7 @@
 				<!-- One list over both groups: a decision that moves between them keeps its editor, draft and thread. -->
 				<DecisionList
 					decisions={shownDecisions}
+					decisionHref={(id) => decisionHref(page.url, id)}
 					onchanged={reload}
 					poll={false}
 					rest={(d) => !blockingIds.has(d.id)}
