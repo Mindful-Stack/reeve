@@ -3,7 +3,7 @@ use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{BlockedStory, QueueEntry, QueueSummary};
+use crate::domain::queue::{HeldStory, QueueEntry, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use reeve_protocol::{
@@ -130,8 +130,8 @@ impl From<&PullRequest> for PullRequestDto {
     }
 }
 
-impl From<&BlockedStory> for BlockedStoryDto {
-    fn from(b: &BlockedStory) -> Self {
+impl From<&HeldStory> for BlockedStoryDto {
+    fn from(b: &HeldStory) -> Self {
         Self {
             key: b.key.clone(),
             title: b.title.clone(),

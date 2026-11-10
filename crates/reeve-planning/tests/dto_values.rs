@@ -409,13 +409,28 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
 fn queue_entry_dto_carries_decision_group_and_blocked_stories() {
     let e = QueueEntry {
         group: QueueGroup::Blocking,
+        lane: QueueLane::Beyond,
+        needed_in: NeededIn::Beyond,
+        needed_in_reason: None,
+        next_step: None,
+        under_way: vec![],
         decision: decision(),
         blocks: vec![
-            BlockedStory {
+            HeldStory {
+                kind: Kind::Story,
+                delivery: DeliveryState::Todo,
+                owner: None,
+                urgent: false,
+                needed_in: NeededIn::Beyond,
                 key: k("ABC-31"),
                 title: "first".into(),
             },
-            BlockedStory {
+            HeldStory {
+                kind: Kind::Story,
+                delivery: DeliveryState::Todo,
+                owner: None,
+                urgent: false,
+                needed_in: NeededIn::Beyond,
                 key: k("ABC-32"),
                 title: "second".into(),
             },
@@ -437,6 +452,9 @@ fn queue_summary_dto_carries_every_count() {
         blocking: 3,
         blocked_stories: 2,
         overdue: 1,
+        review: 0,
+        this_sprint: 0,
+        next_sprint: 0,
     };
     assert_eq!(
         v!(DecisionQueueSummaryDto::from(s)),

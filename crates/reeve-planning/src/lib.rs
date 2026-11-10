@@ -13,7 +13,7 @@ pub use domain::{
     },
     progress::progress,
     pull_request::{PrChange, PullRequest},
-    queue::{BlockedStory, QueueEntry, QueueSummary},
+    queue::{HeldStory, QueueEntry, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
         DemoStory, Goal, GoalLink, GoalProgress, Sprint, SprintCounts, StoryTimes, Summary,

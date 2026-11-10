@@ -411,14 +411,27 @@ impl Handlers {
         let stories = self
             .list_stories_in(tx, &todo, false, None, &Urgency::default())
             .await?;
-        let todo: Vec<queue::TodoStory> = stories
+        let affected: Vec<queue::AffectedStory> = stories
             .into_iter()
-            .map(|s| queue::TodoStory {
+            .map(|s| queue::AffectedStory {
                 key: s.story.key,
                 title: s.story.title,
+                kind: s.story.kind,
+                delivery: s.story.delivery,
+                owner: s.story.owner,
+                urgent: false,
+                active_goals: vec![],
+                draft_goals: vec![],
                 reasons: s.readiness.reasons,
             })
             .collect();
-        Ok(queue::order(ds, queue::blocks(&todo), now.date_naive()))
+        let lineage = std::collections::HashMap::new();
+        let inp = queue::ClassifyInputs {
+            stories: &affected,
+            lineage: &lineage,
+            first_bucket: None,
+            repos: &self.settings.repos,
+        };
+        Ok(queue::order(ds, &inp, now.date_naive()))
     }
 }

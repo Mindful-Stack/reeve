@@ -1,3 +1,4 @@
+use crate::ids::Key;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -71,6 +72,62 @@ pub enum ClosureKind {
 #[serde(rename_all = "snake_case")]
 pub enum QueueGroup {
     Blocking,
+    Open,
+    Satisfied,
+    Closed,
+}
+
+/// When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NeededIn {
+    ThisSprint,
+    NextSprint,
+    Beyond,
+    None,
+}
+
+/// Why a decision is needed this sprint or next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NeededInReason {
+    /// An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).
+    Goal { goal_id: i64, outcome: String },
+    /// The decision's item, or an ancestor, is in discovery under the first horizon bucket.
+    Discovery { key: Key },
+}
+
+/// What an open, unsatisfied decision needs next. The first that holds wins, in declaration order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NextStep {
+    WriteRecord,
+    ConfigureRepo {
+        repo: String,
+    },
+    FixRecord {
+        result: CheckResult,
+    },
+    ReviewRecord {
+        pr_url: String,
+    },
+    AwaitCheck {
+        checked_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+}
+
+/// The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueLane {
+    Review,
+    ThisSprint,
+    NextSprint,
+    Beyond,
     Open,
     Satisfied,
     Closed,
