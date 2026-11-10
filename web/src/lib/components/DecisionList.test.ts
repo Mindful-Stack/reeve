@@ -4,6 +4,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AffectedStory, RequiredDecision } from '#lib/api/types.ts';
 import { blockedStory, decision as decisionDto } from '#lib/test/fixtures.ts';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import DecisionList from './DecisionList.svelte';
 
 const net = vi.hoisted(() => ({ calls: [] as { method: string; path: string; body: unknown }[] }));
@@ -38,6 +39,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
+	resetDecisionDraftsForTests();
 });
 
 function render(pr_url: string): HTMLElement {
@@ -253,7 +255,7 @@ describe('DecisionList row', () => {
 		document.body.innerHTML = '';
 		const proposed = rowOf({});
 		expect(dot(proposed).classList).toContain('warn');
-		expect(proposed.querySelector('.status-dot')?.textContent).toBe('proposed, PR open');
+		expect(proposed.querySelector('.status-dot')?.textContent).toBe('proposed (PR linked)');
 		unmount(app!);
 		document.body.innerHTML = '';
 		const shut = rowOf({ closed: { at: '2026-10-02T00:00:00Z', by: 'dan@example.com', reason: 'moot' } });

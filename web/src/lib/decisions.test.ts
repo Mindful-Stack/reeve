@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { RequiredDecision } from '#lib/api/types.ts';
 import {
+	LANE_LABEL,
+	LANE_ORDER,
 	blocking,
 	checkLabel,
 	closeActions,
@@ -9,6 +11,9 @@ import {
 	decisionStatus,
 	filterDecisions,
 	itemHref,
+	neededInText,
+	neededLabel,
+	nextStepText,
 	overdue,
 	recordMismatch,
 	sameEmail,
@@ -54,7 +59,7 @@ describe('checkLabel', () => {
 
 	it('renders every other kind, and a not-accepted status as reported', () => {
 		expect(checkLabel({ kind: 'unchecked' })).toBe('unchecked');
-		expect(checkLabel({ kind: 'proposed_pr_open' })).toBe('proposed, PR open');
+		expect(checkLabel({ kind: 'proposed_pr_open' })).toBe('proposed (PR linked)');
 		expect(checkLabel({ kind: 'not_found' })).toBe('not found');
 		expect(checkLabel({ kind: 'not_accepted', status: 'id mismatch', commit: 'abc' })).toBe('id mismatch');
 	});
@@ -172,5 +177,31 @@ describe('recordMismatch', () => {
 	it('never warns on an id mismatch', () => {
 		const check = { kind: 'not_accepted', status: 'id mismatch', commit: 'a' } as const;
 		expect(recordMismatch({ reversibility: 'one_way', check })).toBeNull();
+	});
+});
+
+describe('next step and needed-in wording', () => {
+	it('says what each next step needs', () => {
+		expect(nextStepText({ kind: 'write_record' }, null)).toBe('Write a record, or close it');
+		expect(nextStepText({ kind: 'write_record' }, 'one_way')).toBe('Write a record');
+		expect(nextStepText({ kind: 'configure_repo', repo: 'infra' }, null)).toBe("Repository infra is not checked: an admin adds it to the server's repos");
+		expect(nextStepText({ kind: 'fix_record', result: { kind: 'not_accepted', status: 'superseded', superseded_by: 'kb/ADR-9', commit: 'abc' } }, null)).toBe('superseded by kb/ADR-9, re-point');
+		expect(nextStepText({ kind: 'review_record', pr_url: 'https://github.com/x/y/pull/1' }, null)).toBe('Linked PR \u00b7 not accepted yet');
+		expect(nextStepText({ kind: 'await_check' }, null)).toBe('Waiting for the check (never ran)');
+		const now = Date.parse('2026-11-10T12:00:00Z');
+		expect(nextStepText({ kind: 'await_check', checked_at: '2026-11-10T09:00:00Z' }, null, now)).toBe('Waiting for the check (last ran 3h ago)');
+	});
+
+	it('says why a decision is needed and in which sprint', () => {
+		expect(neededInText({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBe('for goal: Ship X');
+		expect(neededInText({ kind: 'discovery', key: 'GRA-12' })).toBe('GRA-12 is in discovery');
+		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
+		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
+		expect(neededLabel('beyond')).toBe('Needed beyond');
+	});
+
+	it('orders and labels every lane', () => {
+		expect(LANE_ORDER).toHaveLength(7);
+		for (const l of LANE_ORDER) expect(LANE_LABEL[l]).toBeTruthy();
 	});
 });

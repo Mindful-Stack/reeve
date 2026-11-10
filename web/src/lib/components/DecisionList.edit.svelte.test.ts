@@ -5,6 +5,7 @@ import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AffectedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
 import { blockedStory, decision } from '#lib/test/fixtures.ts';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import DecisionList from './DecisionList.svelte';
 
 type Sent = { method: string; path: string; body: unknown };
@@ -60,6 +61,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
+	resetDecisionDraftsForTests();
 	net.sent.length = 0;
 	net.replies.reply = net.replies.unexpected;
 	net.replies.gate = null;
@@ -863,6 +865,46 @@ describe('DecisionList row', () => {
 		});
 		expect(net.sent).toEqual([{ method: 'GET', path: '/api/v1/decisions/1/comments', body: null }]);
 		expect(row.querySelector('textarea[aria-label="comment on Pick a queue"]')).not.toBeNull();
+	});
+
+	it('keeps an unsent comment and its idempotency key across an unmount and remount', async () => {
+		let fail = true;
+		net.replies.reply = (r) => {
+			if (r.method === 'POST' && fail) return { status: 500, body: { outcome: 'error', code: 'internal', message: 'boom' } };
+			return net.replies.ok(r.method === 'POST' ? [] : []);
+		};
+		const comment = () => rows()[0].querySelector<HTMLTextAreaElement>('textarea[data-field="comment"]')!;
+		const posts = () => net.sent.filter((r) => r.method === 'POST').map((r) => (r.body as { body: string; idempotency_key: string }));
+		const write = (text: string) => {
+			comment().value = text;
+			comment().dispatchEvent(new Event('input', { bubbles: true }));
+			flushSync();
+		};
+		const send = async (n: number) => {
+			rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!.click();
+			await vi.waitFor(() => expect(posts()).toHaveLength(n));
+			await vi.waitFor(() => {
+				flushSync();
+				expect(rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!.disabled).toBe(false);
+			});
+		};
+		show([open]);
+		discussion(rows()[0]).click();
+		flushSync();
+		write('draft text');
+		await send(1);
+		// A drawer swap and Back: the list is destroyed and mounted again.
+		unmount(app!);
+		app = null;
+		show([open]);
+		discussion(rows()[0]).click();
+		flushSync();
+		expect(comment().value).toBe('draft text');
+		await send(2);
+		expect(posts()[1].idempotency_key).toBe(posts()[0].idempotency_key);
+		write('draft text, edited');
+		await send(3);
+		expect(posts()[2].idempotency_key).not.toBe(posts()[0].idempotency_key);
 	});
 
 	it('gives every focusable control in the row a data-field', () => {

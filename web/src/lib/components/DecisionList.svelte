@@ -8,7 +8,8 @@
 	import { fullLabel } from '#lib/board.ts';
 	import { closeActions, dateLine, decisionStatus, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
-	import { draftKey, newDraftKey, type DraftKey } from '#lib/idempotency.ts';
+	import { draftKey } from '#lib/idempotency.ts';
+	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
 	import { tick as nextRender, untrack, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
@@ -112,10 +113,7 @@
 		untrack(restoreFocus);
 	});
 
-	type Draft = { body: string; id: DraftKey };
-
 	let threads = $state<Record<number, Comment[]>>({});
-	let drafts = $state<Record<number, Draft>>({});
 	let reasons = $state<Record<number, string>>({});
 	/** A row's thread, comment and close failures, shown at the top of its body. */
 	let errors = $state<Record<number, string>>({});
@@ -216,7 +214,7 @@
 
 	/** One idempotency key per comment being written; `draftKey` keeps it across retries of the same text only. */
 	function write(id: number, body: string) {
-		drafts[id] = { body, id: drafts[id]?.id ?? newDraftKey() };
+		draftFor(id).body = body;
 	}
 
 	/** Writes the failure's text into `into` (the row's errors unless the editor's); a conflict also reloads the list. */
@@ -229,7 +227,7 @@
 		else into[id] = errorMessage(e);
 	}
 
-	/** Loads (or reloads) one discussion. Drafts live in `drafts`, which this never touches, so an unsent comment and its
+	/** Loads (or reloads) one discussion. Drafts live in `decisionDrafts`, which this never touches, so an unsent comment and its
 	 *  idempotency key survive every refetch. */
 	async function loadThread(id: number) {
 		const seq = (generation[id] = (generation[id] ?? 0) + 1);
@@ -262,7 +260,7 @@
 
 	async function post(e: SubmitEvent, id: number) {
 		e.preventDefault();
-		const d = drafts[id];
+		const d = decisionDrafts[id];
 		const body = d?.body.trim();
 		if (!d || !body || busy !== null) return;
 		busy = id;
@@ -278,7 +276,7 @@
 			generation[id] = (generation[id] ?? 0) + 1;
 			threads[id] = thread;
 			// Only if the composer still holds what was sent (it is disabled while posting, so this is a guard, not a race).
-			if (drafts[id]?.body.trim() === body) delete drafts[id];
+			if (decisionDrafts[id]?.body.trim() === body) delete decisionDrafts[id];
 		} catch (err) {
 			await failed(id, err);
 		} finally {
@@ -774,11 +772,11 @@
 								data-field="comment"
 								placeholder="Add to the discussion"
 								aria-label="comment on {d.title}"
-								value={drafts[d.id]?.body ?? ''}
+								value={decisionDrafts[d.id]?.body ?? ''}
 								disabled={busy === d.id}
 								oninput={(e) => write(d.id, e.currentTarget.value)}
 							></textarea>
-							<button type="submit" data-field="comment-submit" disabled={busy !== null || !drafts[d.id]?.body.trim()}>Comment</button>
+							<button type="submit" data-field="comment-submit" disabled={busy !== null || !decisionDrafts[d.id]?.body.trim()}>Comment</button>
 						</form>
 					</section>
 				{/if}
