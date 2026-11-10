@@ -2,6 +2,8 @@
 // Opened by an external reference (`/board?story=SCRUM-11`), the drawer reads the activity log by the story's canonical
 // key: the story endpoints resolve a reference, the activity log is keyed by the canonical key only.
 import { flushSync, mount, tick, unmount } from 'svelte';
+import { page } from '$app/state';
+import { decisionHref } from '#lib/drawer.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
@@ -105,6 +107,27 @@ describe('StoryDrawer Report action', () => {
 		report.draft!.title = 'a draft in progress';
 		flushSync();
 		expect(btn().textContent).toBe('Resume report');
+	});
+});
+
+describe('StoryDrawer decision readiness reasons', () => {
+	it('links a decision reason to the decision drawer and leaves other reasons as text', async () => {
+		net.answers.of = (url, method) =>
+			url.pathname.endsWith('/ready')
+				? { ready: false, reasons: [{ reason: 'decision_unchecked', decision_id: 7, title: 'Use Postgres' }, { reason: 'no_criteria' }] }
+				: answer(url, method);
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const items = await vi.waitFor(() => {
+			flushSync();
+			const li = [...document.body.querySelectorAll('.readiness .reasons li')];
+			expect(li).toHaveLength(2);
+			return li;
+		});
+		const a = items[0].querySelector('a');
+		expect(a?.getAttribute('href')).toBe(decisionHref(page.url, 7));
+		expect(a?.getAttribute('href')).toBe('/board?decision=7');
+		expect(a?.textContent).toContain('Use Postgres');
+		expect(items[1].querySelector('a')).toBeNull();
 	});
 });
 

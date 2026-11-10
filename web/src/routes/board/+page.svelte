@@ -5,7 +5,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import { storyHref } from '#lib/drawer.ts';
-	import type { Epic, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
+	import type { DecisionQueue, Epic, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
 	import {
 		accepts,
 		afterPart,
@@ -30,6 +30,7 @@
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { rankStory } from '#lib/rank.ts';
 	import { goalFilter, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
+	import DecisionBanner from '#lib/components/DecisionBanner.svelte';
 	import GoalsStrip from '#lib/components/GoalsStrip.svelte';
 	import NudgeBar from '#lib/components/NudgeBar.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
@@ -47,6 +48,11 @@
 	/** The sprints as the server last reported them; only the active one shows here (the strip, the nudge). */
 	let sprints = $state<Sprints | null>(null);
 	const active = $derived(sprints?.active ?? null);
+	/** The decision queue's counts as last loaded. A failed refetch keeps the last good ones (`queueStale`); a failed first
+	 *  load has none (`queueFailed`). The decisions are an extra: the cards never wait for them or depend on them. */
+	let queueSummary = $state<DecisionQueue['summary'] | null>(null);
+	let queueStale = $state(false);
+	let queueFailed = $state(false);
 	/** The card that just started serving no goal (the move's reply said so), asking which goal it serves. */
 	let nudge = $state<{ key: string } | null>(null);
 	let loadError = $state<string | null>(null);
@@ -85,6 +91,8 @@
 	const upNext = $derived(visible ? splitUpNext(visible.todo) : null);
 	/** The "Not ready" disclosure is open when the query string says so, so it survives a reload. */
 	const showNotReady = $derived(query.get('notready') === '1');
+	/** How many of the shown not-ready cards fail on a decision (a decision reason carries `decision_id`). */
+	const waitsOnDecision = $derived(upNext?.notReady.filter((s) => s.readiness.reasons.some((r) => 'decision_id' in r)).length ?? 0);
 
 	function setFilter(name: string, value: string | null): Promise<void> {
 		const url = new URL(page.url.href);
@@ -102,10 +110,27 @@
 
 	let latest = 0;
 
+	let latestQueue = 0;
+	async function loadQueue() {
+		const seq = ++latestQueue;
+		try {
+			const q = await unwrap(api.GET('/api/v1/decisions/queue'));
+			if (seq !== latestQueue) return;
+			queueSummary = q.summary;
+			queueStale = false;
+			queueFailed = false;
+		} catch {
+			if (seq !== latestQueue) return;
+			if (queueSummary) queueStale = true;
+			else queueFailed = true;
+		}
+	}
+
 	/** A write's own reload and a live refetch can overlap; only the latest request's answer (or failure) lands, so an
 	 *  older response arriving last never puts a moved card back in its old column. */
 	async function reload() {
 		const seq = ++latest;
+		void loadQueue();
 		try {
 			const [stories, list, sprintList] = await Promise.all([
 				unwrap(api.GET('/api/v1/stories', { params: { query: { done: 'recent' } } })),
@@ -348,6 +373,13 @@
 
 <GoalsStrip view={active} selected={filters.goal} onselect={(g) => setFilter('goal', g === null ? null : String(g))} />
 
+{#if queueSummary}
+	<DecisionBanner summary={queueSummary} />
+	{#if queueStale}<p class="queue-note muted">Decisions may be out of date.</p>{/if}
+{:else if queueFailed}
+	<p class="queue-note muted" role="status">Could not load decisions · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
+{/if}
+
 {#if loadError}
 	<!-- Above a loaded board the notice can be dismissed; a failed first load has nothing to fall back to, so Retry only. -->
 	<Notice tone="error" onretry={reload} ondismiss={visible ? () => (loadError = null) : undefined}
@@ -397,7 +429,7 @@
 					{/if}
 					{#if upNext.notReady.length}
 						<details class="not-ready" open={showNotReady} ontoggle={toggleNotReady}>
-							<summary>Not ready · {upNext.notReady.length}</summary>
+							<summary>Not ready · {upNext.notReady.length}{#if waitsOnDecision}{' · '}{waitsOnDecision} {waitsOnDecision === 1 ? 'waits' : 'wait'} on decisions{/if}</summary>
 							<ol class="not-ready-list">
 								{#each upNext.notReady as item (item.story.key)}
 									<li data-key={item.story.key}>
@@ -483,6 +515,9 @@
 {/if}
 
 <style>
+	.queue-note {
+		margin: 0 0 12px;
+	}
 	.inline {
 		display: flex;
 		align-items: center;
@@ -530,7 +565,8 @@
 		font-size: 14px;
 		cursor: pointer;
 	}
-	.empty .link {
+	.empty .link,
+	.queue-note .link {
 		height: auto;
 		padding: 0;
 		border: 0;

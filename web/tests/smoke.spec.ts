@@ -54,7 +54,8 @@ test('board shows ready and blocked stories and the drawer opens by url', async 
 	await page.goto('/board');
 	await expect(page.getByTestId(`card-${STORY}`)).toContainText('ready');
 	// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
-	await page.getByText(/^Not ready · \d+$/).click();
+	await expect(page.locator('details.not-ready > summary')).toContainText(/\b(waits|wait) on decisions$/);
+	await page.locator('details.not-ready > summary').click();
 	await expect(page.getByTestId(`card-${BLOCKED}`)).toContainText('no criteria');
 	await expect(page.getByTestId(`card-${DECISION_STORY}`)).toContainText('decision: no record');
 	await page.goto('/board?story=' + STORY);
@@ -404,7 +405,7 @@ for (const view of ['board', 'backlog'] as const) {
 		let link: Locator;
 		if (view === 'board') {
 			// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
-			await page.getByText(/^Not ready · \d+$/).click();
+			await page.locator('details.not-ready > summary').click();
 			link = page.getByTestId(`card-${opener.key}`).getByRole('link', { name: `Smoke ${view} focus opener` });
 		} else {
 			link = page.locator(`li[data-key="${opener.key}"]`).getByRole('link', { name: `Smoke ${view} focus opener` });
@@ -670,7 +671,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
 	await page.goto('/board?untriaged=1');
 	await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeChecked();
-	await page.getByText(/^Not ready · \d+$/).click();
+	await page.locator('details.not-ready > summary').click();
 	await expect(page.getByTestId(`card-${key}`)).toContainText('untriaged');
 	// The filter really filters: the similar story sits under an epic, so it is not listed here.
 	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);

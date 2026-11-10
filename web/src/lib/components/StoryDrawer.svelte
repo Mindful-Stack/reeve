@@ -29,7 +29,7 @@
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
-	import { storyHref } from '#lib/drawer.ts';
+	import { decisionHref, storyHref } from '#lib/drawer.ts';
 	import { expiry } from '#lib/urgency.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
@@ -646,7 +646,13 @@
 			{#if !r.ready && r.reasons.length > 0}
 				<ul class="reasons">
 					{#each r.reasons as reason, i (i)}
-						<li>{fullLabel(reason)}</li>
+						<li>
+							{#if 'decision_id' in reason}
+								<a href={decisionHref(page.url, reason.decision_id)}>{fullLabel(reason)}</a>
+							{:else}
+								{fullLabel(reason)}
+							{/if}
+						</li>
 					{/each}
 				</ul>
 			{/if}
