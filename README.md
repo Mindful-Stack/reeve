@@ -1,3 +1,5 @@
+<img src="assets/brand/reeve-seal-512.png" width="96" height="96" alt="Reeve">
+
 # Reeve
 
 Reeve is a planning tool for small software teams that work with coding agents.
