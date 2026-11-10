@@ -62,7 +62,7 @@ fn kind_str(k: Kind) -> &'static str {
         Kind::Chore => "chore",
     }
 }
-pub(crate) fn bad(what: &str, s: &str) -> sqlx::Error {
+fn bad(what: &str, s: &str) -> sqlx::Error {
     sqlx::Error::Decode(format!("unknown {what} {s:?}").into())
 }
 fn kind_of(s: &str) -> Result<Kind, sqlx::Error> {
@@ -82,7 +82,7 @@ fn delivery_str(d: DeliveryState) -> &'static str {
         DeliveryState::Done => "done",
     }
 }
-pub(crate) fn delivery_of(s: &str) -> Result<DeliveryState, sqlx::Error> {
+fn delivery_of(s: &str) -> Result<DeliveryState, sqlx::Error> {
     match s {
         "todo" => Ok(DeliveryState::Todo),
         "in_progress" => Ok(DeliveryState::InProgress),
@@ -98,7 +98,7 @@ fn resolution_str(r: Resolution) -> &'static str {
         Resolution::Dropped => "dropped",
     }
 }
-pub(crate) fn resolution_of(s: Option<&str>) -> Result<Option<Resolution>, sqlx::Error> {
+fn resolution_of(s: Option<&str>) -> Result<Option<Resolution>, sqlx::Error> {
     match s {
         None => Ok(None),
         Some("completed") => Ok(Some(Resolution::Completed)),
@@ -155,7 +155,7 @@ fn item_type_str(t: ItemType) -> &'static str {
         ItemType::Story => "story",
     }
 }
-pub(crate) fn key(s: &str) -> Key {
+fn key(s: &str) -> Key {
     s.parse().expect("stored keys are valid")
 }
 fn mark(at: Option<DateTime<Utc>>, by: Option<String>) -> Option<DiscoveryMark> {

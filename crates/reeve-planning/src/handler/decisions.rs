@@ -143,6 +143,8 @@ impl Handlers {
             .decisions
             .get_decision_for_update(&mut tx, id)
             .await?;
+        // The version is the handler's to compare; the aggregate owns the remaining refusals, in this order: no record,
+        // a stale reference, closed.
         if d.version() != observed_version {
             return Err(HandlerError::Conflict {
                 current: d.version(),
@@ -296,9 +298,6 @@ impl Handlers {
         Ok(self.ports.decisions.get_decision(id).await?)
     }
 
-    /// `open_with_record_only` keeps decisions that are open and carry a reference, whether or not `on` scopes the list.
-    /// Without `on`, closed decisions are left out unless `include_closed`; a list scoped by `on` always has them (unless
-    /// `open_with_record_only`, which wins over `include_closed`).
     /// Every decision under an initiative: on it, its epics and their stories.
     pub async fn decisions_under_initiative(
         &self,
@@ -312,6 +311,9 @@ impl Handlers {
             .await?)
     }
 
+    /// `open_with_record_only` keeps decisions that are open and carry a reference, whether or not `on` scopes the list.
+    /// Without `on`, closed decisions are left out unless `include_closed`; a list scoped by `on` always has them (unless
+    /// `open_with_record_only`, which wins over `include_closed`).
     pub async fn list_decisions(
         &self,
         on: Option<&Key>,

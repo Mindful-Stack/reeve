@@ -1,7 +1,7 @@
 use super::*;
 use crate::domain::items::*;
 use crate::ports::RepoError;
-use reeve_protocol::{DeliveryState, Key, Reason, Resolution, TokenKind};
+use reeve_protocol::{DeliveryState, Key, Reason, Resolution, TokenKind, Via};
 
 impl Handlers {
     /// The gate. Readiness, the two rules, the state change and the activity entry all happen inside one transaction.
@@ -21,7 +21,7 @@ impl Handlers {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
             .await?;
-        let cur = match self.ports.stories.get_story_for_update(&mut tx, key).await {
+        let mut story = match self.ports.stories.get_story_for_update(&mut tx, key).await {
             Ok(s) => s,
             Err(RepoError::Db(e))
                 if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("40001") =>
@@ -32,15 +32,14 @@ impl Handlers {
             }
             Err(e) => return Err(e.into()),
         };
-        if cur.version() != version {
+        if story.version() != version {
             tx.rollback().await?;
             return Err(HandlerError::Conflict {
-                current: cur.version(),
+                current: story.version(),
             });
         }
         let readiness = self.readiness_in(&mut tx, key).await?;
-        let mut story = cur;
-        let token = if c.via != reeve_protocol::Via::Interactive {
+        let token = if c.via != Via::Interactive {
             TokenKind::Automation
         } else {
             TokenKind::Interactive
@@ -68,12 +67,12 @@ impl Handlers {
             Err(e) => {
                 tx.rollback().await?;
                 return Err(HandlerError::Refused(match e {
-                    MoveRefused::NotReady => readiness.reasons.clone(),
-                    MoveRefused::AutomationCannotOverride => [
-                        readiness.reasons.clone(),
-                        vec![Reason::AutomationCannotOverride],
-                    ]
-                    .concat(),
+                    MoveRefused::NotReady => readiness.reasons,
+                    MoveRefused::AutomationCannotOverride => {
+                        let mut reasons = readiness.reasons;
+                        reasons.push(Reason::AutomationCannotOverride);
+                        reasons
+                    }
                     MoveRefused::OverrideNeedsReason => vec![Reason::OverrideNeedsReason],
                     MoveRefused::ResolutionRequired => vec![Reason::ResolutionRequired],
                     MoveRefused::CompletedNeedsActiveOrigin => {

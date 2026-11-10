@@ -443,3 +443,66 @@ fn queue_summary_dto_carries_every_count() {
         json!({"open": 4, "blocking": 3, "blocked_stories": 2, "overdue": 1})
     );
 }
+
+fn mark_state(item: ItemType) -> MarkState {
+    MarkState {
+        item,
+        mark: UrgentMark {
+            at: t(3),
+            by: "marker@x".into(),
+            reason: Some("outage".into()),
+        },
+        expires_at: day(23),
+        active: true,
+        done: false,
+    }
+}
+
+fn mark_json() -> Value {
+    json!({
+        "at": "2026-11-09T03:00:00Z", "by": "marker@x", "reason": "outage",
+        "expires_at": "2026-11-23T12:00:00Z", "active": true, "done": false
+    })
+}
+
+#[test]
+fn urgent_mark_dto_carries_every_field() {
+    assert_eq!(
+        v!(UrgentMarkDto::from(&mark_state(ItemType::Story))),
+        mark_json()
+    );
+}
+
+#[test]
+fn war_room_entry_dto_carries_every_field() {
+    let with = WarRoomEntry {
+        item: ItemType::Epic,
+        key: k("ABC-5"),
+        title: "Epic title".into(),
+        initiative: Some(WarRoomInitiative {
+            key: k("ABC-4"),
+            title: "Initiative title".into(),
+            horizon: "now".into(),
+        }),
+        state: mark_state(ItemType::Epic),
+    };
+    assert_eq!(
+        v!(WarRoomEntryDto::from(&with)),
+        json!({
+            "item": {"key": "ABC-5", "item": "epic"}, "title": "Epic title",
+            "initiative": {"key": "ABC-4", "title": "Initiative title", "horizon": "now"},
+            "mark": mark_json()
+        })
+    );
+    let without = WarRoomEntry {
+        initiative: None,
+        ..with
+    };
+    assert_eq!(
+        v!(WarRoomEntryDto::from(&without)),
+        json!({
+            "item": {"key": "ABC-5", "item": "epic"}, "title": "Epic title", "initiative": null,
+            "mark": mark_json()
+        })
+    );
+}

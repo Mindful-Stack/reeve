@@ -365,7 +365,7 @@ fn story_times_from(r: &sqlx::postgres::PgRow) -> Result<StoryTimes, sqlx::Error
     })
 }
 
-pub(crate) async fn active_goals_of_stories(
+async fn active_goals_of_stories(
     tx: Tx<'_, '_>,
     stories: &[Key],
 ) -> Result<HashMap<Key, Vec<(i64, String, GoalVia)>>, RepoError> {
@@ -392,7 +392,7 @@ pub(crate) async fn active_goals_of_stories(
     Ok(out)
 }
 
-pub(crate) async fn sprint_story_times(
+async fn sprint_story_times(
     tx: Tx<'_, '_>,
     linked: &[Key],
     from: DateTime<Utc>,
@@ -417,7 +417,7 @@ pub(crate) async fn sprint_story_times(
         .collect::<Result<_, _>>()?)
 }
 
-pub(crate) async fn urgency_lineage_in(
+async fn urgency_lineage_in(
     tx: Tx<'_, '_>,
     epics: &[Key],
     initiatives: &[Key],

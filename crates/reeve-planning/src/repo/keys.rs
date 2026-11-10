@@ -134,10 +134,7 @@ impl KeyRepo for PgPlanningRepo {
     }
 }
 
-pub(crate) async fn item_types_in(
-    tx: Tx<'_, '_>,
-    keys: &[Key],
-) -> Result<HashMap<Key, ItemType>, RepoError> {
+async fn item_types_in(tx: Tx<'_, '_>, keys: &[Key]) -> Result<HashMap<Key, ItemType>, RepoError> {
     let keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
     let rows = sqlx::query(
         "SELECT DISTINCT ON (key) key, t FROM (\

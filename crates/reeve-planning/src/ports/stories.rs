@@ -2,7 +2,6 @@ use super::*;
 
 /// The story rows, their ranks and their blocking edges. Mutations take the caller's transaction.
 #[async_trait]
-#[allow(clippy::too_many_arguments)]
 pub trait StoryRepo: Send + Sync {
     async fn insert_story(
         &self,
@@ -34,8 +33,10 @@ pub trait StoryRepo: Send + Sync {
         expected_version: i64,
         now: DateTime<Utc>,
     ) -> Result<(), RepoError>;
-    /// Writes a story's delivery, resolution and owner after `Story::move_to` (the stored owner wins if one is set),
-    /// stamping `started_at`/`done_at` from the locked row's state, guarded by `expected_version`. The version is a
+    /// Writes a story's delivery and resolution after `Story::move_to`, stamping `started_at`/`done_at` from the locked
+    /// row's state, guarded by `expected_version`. The owner is written as `COALESCE(owner, story.owner())`: a non-null
+    /// stored owner is kept and `story.owner()` lands only when the row has none, so an owner change must not rely on
+    /// this method. The version is a
     /// separate argument, not `story.version()`: it is the version the caller observed and checked, and the UPDATE
     /// matches the row only at that version, so a write that raced the caller is a conflict rather than overwritten.
     async fn set_delivery(

@@ -1,7 +1,6 @@
 use super::*;
 
 #[async_trait]
-#[allow(clippy::too_many_arguments)]
 impl StoryRepo for PgPlanningRepo {
     async fn insert_story(
         &self,

@@ -31,8 +31,6 @@ pub trait PlanningReads: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         stories: &[Key],
     ) -> Result<HashMap<Key, Vec<PullRequest>>, RepoError>;
-    /// The same lookup inside the caller's transaction (the import reads it under `lock_external_ref`).
-    /// `find_by_idempotency` on the caller's transaction: a check made while it holds a lock takes no second connection.
     /// Initiatives, epics and stories whose title, brief or description, or external reference contains `text`
     /// (case-insensitive, taken literally: `%` and `_` are not wildcards), or whose key is `exact`; at most `limit`,
     /// in tiers: that key, an exact external reference, title matches, the rest; newest first within a tier.

@@ -47,7 +47,7 @@ fn table(item: ItemType) -> &'static str {
     }
 }
 
-pub(crate) async fn urgent_marks_in(tx: Tx<'_, '_>) -> Result<Vec<MarkFact>, RepoError> {
+async fn urgent_marks_in(tx: Tx<'_, '_>) -> Result<Vec<MarkFact>, RepoError> {
     let rows = sqlx::query(
         "SELECT 'initiative' AS item, key, urgent_at, urgent_by, urgent_reason, NULL::text AS parent, false AS done
            FROM initiatives WHERE urgent_at IS NOT NULL
@@ -83,7 +83,7 @@ pub(crate) async fn urgent_marks_in(tx: Tx<'_, '_>) -> Result<Vec<MarkFact>, Rep
         .collect()
 }
 
-pub(crate) async fn set_urgent_mark(
+async fn set_urgent_mark(
     tx: Tx<'_, '_>,
     item: ItemType,
     k: &Key,
@@ -102,7 +102,7 @@ pub(crate) async fn set_urgent_mark(
     Ok(r.rows_affected() == 1)
 }
 
-pub(crate) async fn renew_urgent_mark(
+async fn renew_urgent_mark(
     tx: Tx<'_, '_>,
     item: ItemType,
     k: &Key,
@@ -121,11 +121,7 @@ pub(crate) async fn renew_urgent_mark(
     Ok(r.map(|(reason,)| reason))
 }
 
-pub(crate) async fn clear_urgent_mark(
-    tx: Tx<'_, '_>,
-    item: ItemType,
-    k: &Key,
-) -> Result<bool, RepoError> {
+async fn clear_urgent_mark(tx: Tx<'_, '_>, item: ItemType, k: &Key) -> Result<bool, RepoError> {
     let r = sqlx::query(&format!(
         "UPDATE {} SET urgent_at = NULL, urgent_by = NULL, urgent_reason = NULL WHERE key = $1 AND urgent_at IS NOT NULL",
         table(item)

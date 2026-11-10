@@ -59,7 +59,7 @@ pub struct StoryCounts {
     pub total: u32,
 }
 
-// StoryRepo, DecisionRepo, CommentRepo and SprintRepo each carry `#[allow(clippy::too_many_arguments)]` by design:
+// DecisionRepo, CommentRepo and SprintRepo each carry `#[allow(clippy::too_many_arguments)]` by design:
 // some methods take the transaction, the key, the version and every field of the item, which is more than seven.
 mod comments;
 mod decisions;

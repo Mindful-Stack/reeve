@@ -4,7 +4,6 @@ use super::*;
 #[async_trait]
 #[allow(clippy::too_many_arguments)]
 pub trait SprintRepo: Send + Sync {
-    // Sprints, goals and links (kb/ADR-0014). Every mutation takes the caller's transaction and the handler's timestamp.
     /// The sprint in this state, if any (at most one draft and one active exist).
     async fn sprint_in_state(
         &self,

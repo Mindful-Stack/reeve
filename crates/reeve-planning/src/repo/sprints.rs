@@ -215,10 +215,7 @@ fn goal_from(r: &sqlx::postgres::PgRow) -> Result<Goal, sqlx::Error> {
         version: r.get("version"),
     })
 }
-pub(crate) async fn sprint_in_state(
-    tx: Tx<'_, '_>,
-    state: SprintState,
-) -> Result<Option<Sprint>, RepoError> {
+async fn sprint_in_state(tx: Tx<'_, '_>, state: SprintState) -> Result<Option<Sprint>, RepoError> {
     let row = sqlx::query(&format!(
         "SELECT {SPRINT_COLS} FROM sprints WHERE state = $1"
     ))
@@ -228,7 +225,7 @@ pub(crate) async fn sprint_in_state(
     Ok(row.as_ref().map(sprint_from).transpose()?)
 }
 
-pub(crate) async fn sprint_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Sprint, RepoError> {
+async fn sprint_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Sprint, RepoError> {
     let row = sqlx::query(&format!(
         "SELECT {SPRINT_COLS} FROM sprints WHERE id = $1 FOR UPDATE"
     ))
@@ -241,7 +238,7 @@ pub(crate) async fn sprint_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Sprint,
         .ok_or(RepoError::NotFound)
 }
 
-pub(crate) async fn get_sprint_in(tx: Tx<'_, '_>, id: i64) -> Result<Sprint, RepoError> {
+async fn get_sprint_in(tx: Tx<'_, '_>, id: i64) -> Result<Sprint, RepoError> {
     let row = sqlx::query(&format!("SELECT {SPRINT_COLS} FROM sprints WHERE id = $1"))
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -252,7 +249,7 @@ pub(crate) async fn get_sprint_in(tx: Tx<'_, '_>, id: i64) -> Result<Sprint, Rep
         .ok_or(RepoError::NotFound)
 }
 
-pub(crate) async fn sprints_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError> {
+async fn sprints_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError> {
     let rows = sqlx::query(&format!(
         "SELECT {SPRINT_COLS} FROM sprints ORDER BY id DESC"
     ))
@@ -261,7 +258,7 @@ pub(crate) async fn sprints_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError>
     Ok(rows.iter().map(sprint_from).collect::<Result<_, _>>()?)
 }
 
-pub(crate) async fn insert_draft(
+async fn insert_draft(
     tx: Tx<'_, '_>,
     starts_on: NaiveDate,
     ends_on: NaiveDate,
@@ -279,7 +276,7 @@ pub(crate) async fn insert_draft(
     Ok(row.as_ref().map(sprint_from).transpose()?)
 }
 
-pub(crate) async fn save_sprint(tx: Tx<'_, '_>, s: &Sprint) -> Result<(), RepoError> {
+async fn save_sprint(tx: Tx<'_, '_>, s: &Sprint) -> Result<(), RepoError> {
     let res = sqlx::query(
         "UPDATE sprints SET state=$2, starts_on=$3, ends_on=$4, opened_at=$5, closed_at=$6, version=version+1 \
          WHERE id=$1 AND version=$7",
@@ -312,7 +309,7 @@ async fn conflict_or_missing(tx: Tx<'_, '_>, table: &str, id: i64) -> Result<(),
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn insert_goal(
+async fn insert_goal(
     tx: Tx<'_, '_>,
     sprint_id: i64,
     outcome: &str,
@@ -347,7 +344,7 @@ pub(crate) async fn insert_goal(
     Ok((goal_from(&r)?, false))
 }
 
-pub(crate) async fn goal_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Goal, RepoError> {
+async fn goal_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Goal, RepoError> {
     let row = sqlx::query(&format!(
         "SELECT {GOAL_COLS} FROM goals WHERE id = $1 FOR UPDATE"
     ))
@@ -360,7 +357,7 @@ pub(crate) async fn goal_for_update(tx: Tx<'_, '_>, id: i64) -> Result<Goal, Rep
         .ok_or(RepoError::NotFound)
 }
 
-pub(crate) async fn get_goal_in(tx: Tx<'_, '_>, id: i64) -> Result<Goal, RepoError> {
+async fn get_goal_in(tx: Tx<'_, '_>, id: i64) -> Result<Goal, RepoError> {
     let row = sqlx::query(&format!("SELECT {GOAL_COLS} FROM goals WHERE id = $1"))
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -371,7 +368,7 @@ pub(crate) async fn get_goal_in(tx: Tx<'_, '_>, id: i64) -> Result<Goal, RepoErr
         .ok_or(RepoError::NotFound)
 }
 
-pub(crate) async fn save_goal(tx: Tx<'_, '_>, g: &Goal) -> Result<(), RepoError> {
+async fn save_goal(tx: Tx<'_, '_>, g: &Goal) -> Result<(), RepoError> {
     let res = sqlx::query(
         "UPDATE goals SET outcome=$2, check_text=$3, owner=$4, notes=$5, confidence=$6, confidence_note=$7, \
          confidence_at=$8, suggested_confidence=$9, suggested_note=$10, suggested_at=$11, suggested_by=$12, \
@@ -400,7 +397,7 @@ pub(crate) async fn save_goal(tx: Tx<'_, '_>, g: &Goal) -> Result<(), RepoError>
     conflict_or_missing(tx, "goals", g.id).await
 }
 
-pub(crate) async fn delete_goal(tx: Tx<'_, '_>, id: i64) -> Result<(), RepoError> {
+async fn delete_goal(tx: Tx<'_, '_>, id: i64) -> Result<(), RepoError> {
     let res = sqlx::query("DELETE FROM goals WHERE id = $1")
         .bind(id)
         .execute(&mut **tx)
@@ -411,10 +408,7 @@ pub(crate) async fn delete_goal(tx: Tx<'_, '_>, id: i64) -> Result<(), RepoError
     Ok(())
 }
 
-pub(crate) async fn goals_of_in(
-    tx: Tx<'_, '_>,
-    sprint_ids: &[i64],
-) -> Result<Vec<Goal>, RepoError> {
+async fn goals_of_in(tx: Tx<'_, '_>, sprint_ids: &[i64]) -> Result<Vec<Goal>, RepoError> {
     let rows = sqlx::query(&format!(
         "SELECT {GOAL_COLS} FROM goals WHERE sprint_id = ANY($1) ORDER BY sprint_id, id"
     ))
@@ -424,7 +418,7 @@ pub(crate) async fn goals_of_in(
     Ok(rows.iter().map(goal_from).collect::<Result<_, _>>()?)
 }
 
-pub(crate) async fn goals_by_ids_in(tx: Tx<'_, '_>, ids: &[i64]) -> Result<Vec<Goal>, RepoError> {
+async fn goals_by_ids_in(tx: Tx<'_, '_>, ids: &[i64]) -> Result<Vec<Goal>, RepoError> {
     let rows = sqlx::query(&format!(
         "SELECT {GOAL_COLS} FROM goals WHERE id = ANY($1) ORDER BY id"
     ))
@@ -434,7 +428,7 @@ pub(crate) async fn goals_by_ids_in(tx: Tx<'_, '_>, ids: &[i64]) -> Result<Vec<G
     Ok(rows.iter().map(goal_from).collect::<Result<_, _>>()?)
 }
 
-pub(crate) async fn insert_goal_link(
+async fn insert_goal_link(
     tx: Tx<'_, '_>,
     goal_id: i64,
     item: &Key,
@@ -454,11 +448,7 @@ pub(crate) async fn insert_goal_link(
     Ok(res.rows_affected() == 1)
 }
 
-pub(crate) async fn delete_goal_link(
-    tx: Tx<'_, '_>,
-    goal_id: i64,
-    item: &Key,
-) -> Result<bool, RepoError> {
+async fn delete_goal_link(tx: Tx<'_, '_>, goal_id: i64, item: &Key) -> Result<bool, RepoError> {
     let res = sqlx::query("DELETE FROM goal_links WHERE goal_id = $1 AND item_key = $2")
         .bind(goal_id)
         .bind(item.to_string())
@@ -467,10 +457,7 @@ pub(crate) async fn delete_goal_link(
     Ok(res.rows_affected() == 1)
 }
 
-pub(crate) async fn links_of_in(
-    tx: Tx<'_, '_>,
-    goal_ids: &[i64],
-) -> Result<Vec<GoalLink>, RepoError> {
+async fn links_of_in(tx: Tx<'_, '_>, goal_ids: &[i64]) -> Result<Vec<GoalLink>, RepoError> {
     let rows = sqlx::query(
         "SELECT goal_id, item_key FROM goal_links WHERE goal_id = ANY($1) \
          ORDER BY goal_id, length(item_key), item_key",

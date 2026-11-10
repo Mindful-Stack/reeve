@@ -13,6 +13,7 @@ pub trait KeyRepo: Send + Sync {
         item: ItemType,
         idem: &str,
     ) -> Result<Option<Key>, RepoError>;
+    /// `find_by_idempotency` on the caller's transaction: a check made while it holds a lock takes no second connection.
     async fn find_by_idempotency_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -38,6 +39,7 @@ pub trait KeyRepo: Send + Sync {
         item: ItemType,
         external_ref: &str,
     ) -> Result<Option<Key>, RepoError>;
+    /// `find_by_external_ref` inside the caller's transaction (the import reads it under `lock_external_ref`).
     async fn find_by_external_ref_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

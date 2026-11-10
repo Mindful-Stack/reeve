@@ -26,7 +26,7 @@ pub enum DecisionError {
     BlankEditField,
     #[error("{0}")]
     InvalidReference(String),
-    /// Today's `pr_url` message, verbatim.
+    /// A `pr_url` that is not a pull request's web address; carries the message naming what is wrong with it.
     #[error("{0}")]
     InvalidPrUrl(String),
 }
@@ -912,7 +912,7 @@ mod tests {
         );
         assert_eq!((d.check(), d.checked_at()), (&acc("a"), Some(t(2))));
 
-        // Today's order: no record, then a stale reference, then closed. A closed decision without a record says
+        // The refusal order: no record, then a stale reference, then closed. A closed decision without a record says
         // NoRecord, and a closed one linked elsewhere says StaleReference; only a closed, matching one says Closed.
         let mut c = closed_linked_decision();
         let before = c.clone();
