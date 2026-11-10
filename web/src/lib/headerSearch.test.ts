@@ -40,8 +40,11 @@ describe('headerTarget', () => {
 		// The legacy group=rank is a view.
 		expect((await headerTarget('lion', at('/backlog?group=rank'), never))?.href).toBe('/backlog?group=rank&q=lion');
 	});
-	it('empty text goes nowhere', async () => {
+	it('empty text goes nowhere off the backlog; on it, it drops the text and relevance with it', async () => {
 		expect(await headerTarget('   ', at('/board'), never)).toBeNull();
+		expect(await headerTarget('', at('/backlog?kind=bug'), never)).toBeNull();
+		expect(await headerTarget(' ', at('/backlog?q=zebra&kind=bug&view=relevance'), never)).toEqual({ href: '/backlog?kind=bug', kind: 'filter' });
+		expect((await headerTarget('', at('/backlog?q=zebra&view=rank'), never))?.href).toBe('/backlog?view=rank');
 	});
 });
 
@@ -51,7 +54,7 @@ describe('headerSearch', () => {
 		const lookup = (_: string) => new Promise<SearchHit[]>((resolve) => answers.push(resolve));
 		const navigate = vi.fn(async () => {});
 		const busy: boolean[] = [];
-		const submit = headerSearch(lookup, navigate, (b) => busy.push(b));
+		const submit = headerSearch(lookup, navigate, (b) => busy.push(b), () => 'http://localhost/board');
 		const first = submit('GRA-1', at('/board'));
 		const second = submit('GRA-2', at('/board'));
 		answers[1]([hit('GRA-2', 'epic')]);
@@ -64,11 +67,33 @@ describe('headerSearch', () => {
 	it('a text submitted while a key lookup is pending wins over the lookup', async () => {
 		let answer: (h: SearchHit[]) => void = () => {};
 		const navigate = vi.fn(async () => {});
-		const submit = headerSearch(() => new Promise((resolve) => (answer = resolve)), navigate, () => {});
+		const submit = headerSearch(() => new Promise((resolve) => (answer = resolve)), navigate, () => {}, () => 'http://localhost/board');
 		const key = submit('GRA-1', at('/board'));
 		await submit('zebra', at('/board'));
 		answer([hit('GRA-1', 'epic')]);
 		await key;
 		expect(navigate.mock.calls).toEqual([[{ href: '/backlog?q=zebra&state=open&view=relevance', kind: 'filter' }]]);
+	});
+	it('drops an answer once the page has moved on since the submit, jump and fall-through alike', async () => {
+		const answers: ((h: SearchHit[]) => void)[] = [];
+		const navigate = vi.fn(async () => {});
+		let href = 'http://localhost/board';
+		const busy: boolean[] = [];
+		const submit = headerSearch(() => new Promise((resolve) => answers.push(resolve)), navigate, (b) => busy.push(b), () => href);
+		const jump = submit('GRA-1', at('/board'));
+		href = 'http://localhost/sprint';
+		answers[0]([hit('GRA-1', 'epic')]);
+		await jump;
+		const fallThrough = submit('GRA-2', at('/sprint'));
+		href = 'http://localhost/sprint?story=GRA-9';
+		answers[1]([]);
+		await fallThrough;
+		expect(navigate).not.toHaveBeenCalled();
+		expect(busy).toEqual([true, false, true, false]);
+		// Unchanged, it navigates.
+		const kept = submit('GRA-3', at('/sprint?story=GRA-9'));
+		answers[2]([hit('GRA-3', 'epic')]);
+		await kept;
+		expect(navigate.mock.calls).toEqual([[{ href: '/epics/GRA-3', kind: 'item' }]]);
 	});
 });

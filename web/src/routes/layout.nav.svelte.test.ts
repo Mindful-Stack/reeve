@@ -9,14 +9,22 @@ import { me, story } from '#lib/test/fixtures.ts';
 import { goto } from '$app/navigation';
 import Layout from './+layout.svelte';
 
-const route = vi.hoisted(() => ({ path: '/epics', admin: false }));
-vi.mock('$app/state', () => ({
-	page: {
-		get url() {
-			return new URL(`http://localhost${route.path}`);
-		}
+// The URL is reactive (a SvelteURL), as in the browser: setting `route.path` is a navigation the layout sees.
+const route = vi.hoisted(() => ({
+	url: null as URL | null,
+	admin: false,
+	get path() {
+		return this.url!.pathname + this.url!.search;
+	},
+	set path(p: string) {
+		this.url!.href = `http://localhost${p}`;
 	}
 }));
+vi.mock('$app/state', async () => {
+	const { SvelteURL } = await import('svelte/reactivity');
+	route.url = new SvelteURL('http://localhost/epics');
+	return { page: { url: route.url } };
+});
 const router = vi.hoisted(() => ({ onNavigate: [] as ((n: unknown) => void)[] }));
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(),
@@ -261,6 +269,55 @@ describe('top bar search field', () => {
 		input.focus();
 		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 		expect(document.activeElement).not.toBe(input);
+	});
+	it("Escape restores the page's text instead of clearing the field", async () => {
+		await open('/backlog?q=zebra');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.focus();
+		input.value = 'lio';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+		input.dispatchEvent(esc);
+		flushSync();
+		expect(esc.defaultPrevented).toBe(true);
+		expect(input.value).toBe('zebra');
+		expect(document.activeElement).not.toBe(input);
+	});
+	it('the placeholder says a key jumps', async () => {
+		await open('/board');
+		expect(document.body.querySelector('input[type="search"]')!.getAttribute('placeholder')).toBe('Search or jump to a key');
+	});
+	it('text typed on the backlog survives a filter change and the drawer; a new text in the URL replaces it', async () => {
+		await open('/backlog?q=zebra');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.value = 'lion';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		route.path = '/backlog?q=zebra&kind=bug';
+		flushSync();
+		expect(input.value).toBe('lion');
+		route.path = '/backlog?q=zebra&kind=bug&story=S-1';
+		flushSync();
+		expect(input.value).toBe('lion');
+		route.path = '/backlog?q=tiger';
+		flushSync();
+		expect(input.value).toBe('tiger');
+	});
+	it('text on a filtered backlog keeps its filters, sorts by relevance and edits the URL in place', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/backlog?kind=bug');
+		submit('zebra');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?kind=bug&q=zebra&view=relevance', { replace: true, reset: false }));
+	});
+	it("after a key jump the field shows the page's own text again, not the key", async () => {
+		vi.mocked(goto).mockClear();
+		await open('/backlog?q=zebra');
+		submit('12');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?q=zebra&story=ABC-12', { reset: false }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('zebra');
+		});
 	});
 });
 

@@ -39,29 +39,36 @@
 	let q = $state('');
 	// On /backlog and /search the field shows the URL's text, trimmed as those pages read it, so a reload keeps it. Only
 	// when that text changes: toggling a filter or opening the drawer never rewrites what is being typed.
+	/** The text the box mirrors on `url`: the URL's `q` on /backlog and /search, null elsewhere. */
+	const mirrorOf = (url: { readonly pathname: string; readonly searchParams: Pick<URLSearchParams, 'get'> }) => (url.pathname === '/backlog' || url.pathname === '/search' ? (url.searchParams.get('q')?.trim() ?? '') : null);
 	let mirrored: string | null = null;
 	$effect(() => {
-		const path = page.url.pathname;
-		const text = path === '/backlog' || path === '/search' ? (page.url.searchParams.get('q')?.trim() ?? '') : null;
+		const text = mirrorOf(page.url);
 		if (text !== null && text !== mirrored) q = text;
 		mirrored = text;
 	});
 
 	// The one text box (kb/ADR-0021): a key jumps to the item it names, any other text filters the backlog
-	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup.
+	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup, and a lookup whose page moved on is dropped.
 	let searching = $state(false);
 	const submitSearch = headerSearch(
 		(text) => unwrap(api.GET('/api/v1/search', { params: { query: { q: text } } })),
-		(to) => {
-			// A story opens over the current view; text on the backlog edits its URL in place, as its filters do.
-			if (to.kind === 'story') return goto(to.href, { reset: false });
-			if (to.kind === 'filter' && page.url.pathname === '/backlog') return goto(to.href, { replace: true, reset: false });
-			return goto(to.href);
+		async (to) => {
+			// Text on the backlog edits its URL in place, as its filters do.
+			if (to.kind === 'filter') return page.url.pathname === '/backlog' ? goto(to.href, { replace: true, reset: false }) : goto(to.href);
+			// A story opens over the current view. After a jump the key is spent: the box shows the page's own text again.
+			await (to.kind === 'story' ? goto(to.href, { reset: false }) : goto(to.href));
+			q = mirrorOf(page.url) ?? '';
 		},
-		(busy) => (searching = busy)
+		(busy) => (searching = busy),
+		() => page.url.href
 	);
+	/** Escape gives the box back its mirrored text (a search field would clear itself) and leaves it. */
 	function searchKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') search?.blur();
+		if (e.key !== 'Escape') return;
+		e.preventDefault();
+		q = mirrorOf(page.url) ?? '';
+		search?.blur();
 	}
 
 	/** "/" focuses search, except where it is typed as text or a dialog is open. */
@@ -253,7 +260,7 @@
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
 				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void submitSearch(q, new URL(page.url.href)); }}>
-					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" onkeydown={searchKey} />
+					<input bind:this={search} bind:value={q} type="search" placeholder="Search or jump to a key" aria-label="Search" onkeydown={searchKey} />
 					<kbd aria-hidden="true">/</kbd>
 				</form>
 				<a class="live" class:on={live.connected} href="/activity" title={live.connected ? 'Live: changes appear as they happen' : 'Not connected: reconnecting'}>
@@ -335,6 +342,11 @@
 	form[role='search'] input {
 		width: 100%;
 		padding-right: 28px;
+	}
+	/* A key lookup is pending: the box stays usable (a new submit supersedes it) but reads as working. */
+	form[role='search'][aria-busy='true'] input {
+		color: var(--muted);
+		cursor: progress;
 	}
 	kbd {
 		position: absolute;
