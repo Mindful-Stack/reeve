@@ -6,6 +6,7 @@ import type { Story } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
 import { me, story } from '#lib/test/fixtures.ts';
+import { goto } from '$app/navigation';
 import Layout from './+layout.svelte';
 
 const route = vi.hoisted(() => ({ path: '/epics', admin: false }));
@@ -40,6 +41,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	installFetch(({ method, path }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
+		if (path === '/api/v1/search') return [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }];
 		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
 		return failure('unexpected', 404);
 	});
@@ -222,6 +224,43 @@ describe('top bar search field', () => {
 	it('trims the query of /search as the page does', async () => {
 		await open('/search?q=%20%20northcloud%20');
 		expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('northcloud');
+	});
+	it("shows the backlog's text filter", async () => {
+		await open('/backlog?q=zebra&state=open');
+		expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('zebra');
+	});
+	const submit = (text: string) => {
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.value = text;
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		(input.form as HTMLFormElement).requestSubmit();
+	};
+	it('text filters the open backlog by relevance, without a lookup', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/board');
+		submit('zebra crossing');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?q=zebra+crossing&state=open&view=relevance'));
+		expect(net.gets.filter((g) => g.includes('/search'))).toEqual([]);
+	});
+	it('a key opens its story over the current page; the form is busy while the lookup is pending', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/board?mine=1');
+		submit('12');
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('true');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/board?mine=1&story=ABC-12', { reset: false }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
+		});
+	});
+	it('Escape leaves the field', async () => {
+		await open('/board');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.focus();
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		expect(document.activeElement).not.toBe(input);
 	});
 });
 

@@ -11,6 +11,7 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { headerSearch } from '#lib/headerSearch.ts';
 	import { isCurrent, links, reportContext } from '#lib/nav.ts';
 	import { discardDraft, hasDraft, openReport, persist, report, reportLabel, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
 	import type { Story } from '#lib/api/types.ts';
@@ -36,10 +37,32 @@
 	]);
 	let search: HTMLInputElement | undefined = $state();
 	let q = $state('');
-	// On /search the field shows the query in the URL, trimmed as the page searches it, so a reload keeps it.
+	// On /backlog and /search the field shows the URL's text, trimmed as those pages read it, so a reload keeps it. Only
+	// when that text changes: toggling a filter or opening the drawer never rewrites what is being typed.
+	let mirrored: string | null = null;
 	$effect(() => {
-		if (page.url.pathname === '/search') q = page.url.searchParams.get('q')?.trim() ?? '';
+		const path = page.url.pathname;
+		const text = path === '/backlog' || path === '/search' ? (page.url.searchParams.get('q')?.trim() ?? '') : null;
+		if (text !== null && text !== mirrored) q = text;
+		mirrored = text;
 	});
+
+	// The one text box (kb/ADR-0021): a key jumps to the item it names, any other text filters the backlog
+	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup.
+	let searching = $state(false);
+	const submitSearch = headerSearch(
+		(text) => unwrap(api.GET('/api/v1/search', { params: { query: { q: text } } })),
+		(to) => {
+			// A story opens over the current view; text on the backlog edits its URL in place, as its filters do.
+			if (to.kind === 'story') return goto(to.href, { reset: false });
+			if (to.kind === 'filter' && page.url.pathname === '/backlog') return goto(to.href, { replace: true, reset: false });
+			return goto(to.href);
+		},
+		(busy) => (searching = busy)
+	);
+	function searchKey(e: KeyboardEvent) {
+		if (e.key === 'Escape') search?.blur();
+	}
 
 	/** "/" focuses search, except where it is typed as text or a dialog is open. */
 	function shortcut(e: KeyboardEvent) {
@@ -229,8 +252,8 @@
 				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
-				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
-					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />
+				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void submitSearch(q, new URL(page.url.href)); }}>
+					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" onkeydown={searchKey} />
 					<kbd aria-hidden="true">/</kbd>
 				</form>
 				<a class="live" class:on={live.connected} href="/activity" title={live.connected ? 'Live: changes appear as they happen' : 'Not connected: reconnecting'}>
