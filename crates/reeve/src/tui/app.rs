@@ -7,7 +7,7 @@ use crate::tui::keys::{self, Action};
 use crate::tui::note::{Note, Out, WriteOutcome};
 use crate::tui::{board, drawer, live, moves, set_epic, urgent, words};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use reeve_protocol::{DeliveryState, EditItem, Key, Me, StoryDto, TokenKind, normalise_email};
+use reeve_protocol::{EditItem, Key, Me, TokenKind, normalise_email};
 use std::{
     fmt,
     time::{Duration, Instant},
@@ -18,20 +18,6 @@ pub const STATUS_FOR: Duration = Duration::from_secs(5);
 /// From this many terminal columns the board shows five columns.
 pub const WIDE: u16 = 120;
 pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
-/// Why `u` does nothing for a done story: a mark on it would make nothing urgent (kb/ADR-0017 R3).
-const NOT_WHEN_DONE: &str = "done stories cannot be urgent";
-/// Why `U` does nothing for a story without a mark of its own (one urgent through its lineage included).
-const NO_MARK: &str = "no urgent mark";
-
-/// Why `u` or `U` would do nothing for `story` (the token aside): the one place the done and no-mark conditions are
-/// written, for the shortcuts and the menu alike. Presentation only; the server decides (kb/ADR-0011 R9).
-fn urgent_blocked(story: &StoryDto, a: Action) -> Option<&'static str> {
-    match a {
-        Action::MarkUrgent if story.delivery == DeliveryState::Done => Some(NOT_WHEN_DONE),
-        Action::ClearUrgent if story.urgent_mark.is_none() => Some(NO_MARK),
-        _ => None,
-    }
-}
 
 #[derive(Debug)]
 pub struct Session {
@@ -783,9 +769,7 @@ impl State {
                         Some(format!("nothing after {}", words::state(at)))
                     }
                     Action::Take if mine => Some("already yours".into()),
-                    Action::MarkUrgent | Action::ClearUrgent => {
-                        urgent_blocked(story, action).map(String::from)
-                    }
+                    Action::MarkUrgent | Action::ClearUrgent => urgent::blocked(story, action),
                     Action::OpenPr if story.prs.is_empty() => Some("no pull request".into()),
                     _ => None,
                 };
@@ -880,7 +864,7 @@ impl State {
     /// The selected story's key when `a` may run on it now; otherwise its reason is in the status line.
     fn urgent_target(&mut self, a: Action, now: Instant) -> Option<Key> {
         let (key, blocked) = match self.board.writable(self.session.read_only()) {
-            Ok(e) => (e.item.story.key.clone(), urgent_blocked(&e.item.story, a)),
+            Ok(e) => (e.item.story.key.clone(), urgent::blocked(&e.item.story, a)),
             Err(why) => {
                 self.set_status(why, now);
                 return None;

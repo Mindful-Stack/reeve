@@ -1217,11 +1217,11 @@ fn urgent_shortcuts_respect_the_disabled_reasons() {
     assert!(!sim.has_pending(is_urgent_write));
     assert!(!sim.s.board.locked(&key("ABC-1")));
 
-    // Urgent only through its epic: no mark of its own to clear.
+    // Urgent only through its epic: no mark of its own to clear, and the status says where the `!` comes from.
     let via_epic = urgent_via_epic(owned(story("ABC-1", Todo, 1), "dan@example.com"));
     let mut sim = Sim::loaded(TokenKind::Interactive, vec![via_epic]);
     sim.char('U');
-    assert_eq!(sim.status(), "ABC-1: no urgent mark");
+    assert_eq!(sim.status(), "ABC-1: no own mark: urgent via epic ABC-100");
     assert!(!sim.has_pending(is_urgent_write));
 }
 
@@ -1264,6 +1264,18 @@ fn the_menu_words_the_urgent_actions_like_their_shortcuts() {
     assert_eq!(
         why(&sim, Action::ClearUrgent).as_deref(),
         Some("no urgent mark")
+    );
+
+    let sim = Sim::loaded(
+        TokenKind::Interactive,
+        vec![urgent_via_epic(owned(
+            story("ABC-1", Todo, 1),
+            "dan@example.com",
+        ))],
+    );
+    assert_eq!(
+        why(&sim, Action::ClearUrgent).as_deref(),
+        Some("no own mark: urgent via epic ABC-100")
     );
 
     // The disabled row run from the menu gives the shortcut's wording and sends nothing.

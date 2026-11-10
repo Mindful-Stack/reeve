@@ -141,7 +141,7 @@ pub const BINDINGS: &[Binding] = &[
         pats: &[C('u')],
         action: A::MarkUrgent,
         keys: "u",
-        help: "mark urgent… (again: renews)",
+        help: "mark urgent… (again: re-marks)",
     },
     Binding {
         pats: &[C('U')],
@@ -340,6 +340,13 @@ mod tests {
         let help = help_lines();
         assert_eq!(help.len(), BINDINGS.len());
         assert!(help.iter().any(|l| l.contains("earlier state")));
+    }
+
+    #[test]
+    fn the_mark_urgent_help_says_re_marks_never_renews() {
+        let b = BINDINGS.iter().find(|b| b.action == A::MarkUrgent).unwrap();
+        assert_eq!(b.help, "mark urgent… (again: re-marks)");
+        assert!(help_lines().iter().all(|l| !l.contains("renew")));
     }
 
     #[test]

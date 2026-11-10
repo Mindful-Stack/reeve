@@ -3,13 +3,42 @@
 //! nothing in the prompt can go stale while it is open.
 pub mod view;
 
+use crate::glyphs::Level;
 use crate::tui::board;
 use crate::tui::effect::{Completion, Effect, Request, Stamp};
+use crate::tui::keys::Action;
 use crate::tui::line::{LineEditor, LineEvent};
 use crate::tui::note::{Note, Out, WriteOutcome};
 use crate::tui::words;
 use crossterm::event::KeyEvent;
-use reeve_protocol::Key;
+use reeve_protocol::{DeliveryState, Key, StoryDto};
+
+/// Why `u` does nothing for a done story: a mark on it would make nothing urgent (kb/ADR-0017 R3).
+const NOT_WHEN_DONE: &str = "done stories cannot be urgent";
+/// Why `U` does nothing for a story with neither a mark of its own nor a source.
+const NO_MARK: &str = "no urgent mark";
+/// The server's cap on a reason, in characters; the prompt keeps a longer one, as the web's `maxlength` does.
+const REASON_MAX: usize = 200;
+
+/// Why `u` or `U` would do nothing for `story` (the token aside): the one place the done and no-mark conditions are
+/// written, for the core's shortcuts and menu alike. Presentation only; the server decides (kb/ADR-0011 R9).
+pub fn blocked(story: &StoryDto, a: Action) -> Option<String> {
+    match a {
+        Action::MarkUrgent if story.delivery == DeliveryState::Done => Some(NOT_WHEN_DONE.into()),
+        // Urgent through its lineage only: the card shows `!`, so say where it comes from.
+        Action::ClearUrgent if story.urgent_mark.is_none() => Some(
+            match story.urgent_sources.iter().find(|s| s.key != story.key) {
+                Some(src) => format!(
+                    "no own mark: urgent via {} {}",
+                    Level::of_item(src.item).name(),
+                    src.key
+                ),
+                None => NO_MARK.into(),
+            },
+        ),
+        _ => None,
+    }
+}
 
 #[derive(Debug)]
 struct Prompt {
@@ -57,7 +86,8 @@ impl State {
     }
 
     /// Enter: one mark with the trimmed reason (none when blank), unless writes became disabled or another write on
-    /// the story started while the prompt was open (a pending move). Either way the prompt closes.
+    /// the story started while the prompt was open (a pending move); either way the prompt closes. Otherwise a reason
+    /// over the server's cap keeps the prompt open and sends nothing (presentation, like the web's `maxlength`).
     fn submit(&mut self, cx: &Ctx) -> Out<Msg> {
         let mut o = Out::none();
         let Some(p) = self.prompt.take() else {
@@ -72,6 +102,14 @@ impl State {
             return o;
         }
         let text = p.line.text().trim();
+        if text.chars().count() > REASON_MAX {
+            o.status(format!(
+                "{}: reason must be at most {REASON_MAX} characters",
+                p.key
+            ));
+            self.prompt = Some(p);
+            return o;
+        }
         let reason = (!text.is_empty()).then(|| text.to_string());
         o.tell(Note::WriteStarted(p.key.clone()));
         let key = p.key.clone();
@@ -242,9 +280,9 @@ mod tests {
                 &["ABC-1 marked urgent"],
             ),
             (
-                refused(vec![Reason::NoCriteria]),
+                refused(vec![Reason::InteractiveOnly]),
                 WriteOutcome::Unchanged,
-                &["ABC-1: no criteria"],
+                &["ABC-1: interactive only"],
             ),
             (
                 Completion::Failed(Failure::Transport("t".into())),
@@ -288,6 +326,69 @@ mod tests {
             [(key("ABC-1"), WriteOutcome::Unknown)],
             "a write finishes after a sign-out too"
         );
+    }
+
+    #[test]
+    fn a_reason_over_200_characters_keeps_the_prompt_and_sends_nothing() {
+        let b = board_with(vec![story("ABC-1", Todo, 2)]);
+        // 201 characters, 402 bytes: the limit counts characters, and the surrounding blanks are trimmed first.
+        let long = format!(" {} ", "å".repeat(201));
+        let mut u = opened(&b, Some(&long));
+        let o = u.update(press(KeyCode::Enter), &cx(&b));
+        assert!(o.effects.is_empty());
+        assert!(!o.notes.iter().any(|n| matches!(n, Note::WriteStarted(_))));
+        assert_eq!(
+            statuses(&o),
+            ["ABC-1: reason must be at most 200 characters"]
+        );
+        assert_eq!(u.open(), Some(&key("ABC-1")), "the prompt stays open");
+        // Deleting one character brings it to 200, and Enter sends it.
+        let _ = u.update(press(KeyCode::End), &cx(&b));
+        let _ = u.update(press(KeyCode::Backspace), &cx(&b));
+        let _ = u.update(press(KeyCode::Backspace), &cx(&b));
+        let o = u.update(press(KeyCode::Enter), &cx(&b));
+        assert_eq!(the_mark(&o), (key("ABC-1"), Some("å".repeat(200))));
+        assert!(u.open().is_none());
+    }
+
+    #[test]
+    fn blocked_words_why_u_or_capital_u_does_nothing() {
+        use crate::tui::keys::Action;
+        let plain = story("ABC-1", Todo, 2).story;
+        assert_eq!(blocked(&plain, Action::MarkUrgent), None);
+        assert_eq!(
+            blocked(&plain, Action::ClearUrgent).as_deref(),
+            Some("no urgent mark")
+        );
+        let done = done_marked(story("ABC-1", Todo, 2)).story;
+        assert_eq!(
+            blocked(&done, Action::MarkUrgent).as_deref(),
+            Some("done stories cannot be urgent")
+        );
+        assert_eq!(blocked(&done, Action::ClearUrgent), None);
+        let via = urgent_via_epic(story("ABC-1", Todo, 2)).story;
+        assert_eq!(
+            blocked(&via, Action::ClearUrgent).as_deref(),
+            Some("no own mark: urgent via epic ABC-100")
+        );
+        // The story itself listed first is skipped: the source named is the first one that is not the story.
+        let mut both = urgent_via_epic(story("ABC-1", Todo, 2)).story;
+        both.urgent_sources.insert(
+            0,
+            reeve_protocol::ItemRefDto {
+                key: key("ABC-1"),
+                item: reeve_protocol::ItemType::Story,
+            },
+        );
+        assert_eq!(
+            blocked(&both, Action::ClearUrgent).as_deref(),
+            Some("no own mark: urgent via epic ABC-100")
+        );
+        assert_eq!(
+            blocked(&urgent(story("ABC-1", Todo, 2)).story, Action::ClearUrgent),
+            None
+        );
+        assert_eq!(blocked(&plain, Action::Take), None);
     }
 
     #[test]
