@@ -1011,6 +1011,6 @@ describe('epic page: brief images', () => {
 		document.body.querySelector<HTMLFormElement>('form.brief-edit')!.requestSubmit();
 		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
 		expect(net.patches[0]).toMatchObject({ attachments: ['img-b'] });
-		expect((net.patches[0] as { brief: string }).brief).toContain('![shot](/api/v1/attachments/img-b)');
+		expect((net.patches[0] as unknown as { brief: string }).brief).toContain('![shot](/api/v1/attachments/img-b)');
 	});
 });
