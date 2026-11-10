@@ -2280,7 +2280,7 @@ async fn decision_context_route() {
 }
 
 /// Spec A5.1: `browse_url` is derived from `[[repos]].url` on every response that carries a decision. An `https://`
-/// URL loses `.git`, a trailing `/` and any credentials; `http://`, `git@` and a missing URL give none; each path
+/// URL loses `.git`, a trailing `/` and any credentials; an scp-style `git@host:org/repo` and an `ssh://git@host:port/org/repo` URL give the https form; `http://` and a missing URL give none; each path
 /// segment is percent-encoded. The export keeps the field out.
 #[tokio::test]
 async fn browse_url_from_repo_config() {
@@ -2292,12 +2292,13 @@ async fn browse_url_from_repo_config() {
              [[repos]]\nname = \"cred\"\nadr_dir = \"docs/adr\"\nurl = \"https://bot:SECRET-TOKEN@github.com/acme/cred.git\"\n\
              [[repos]]\nname = \"plain\"\nadr_dir = \"docs/adr\"\nurl = \"http://git.example.com/acme/plain\"\n\
              [[repos]]\nname = \"ssh\"\nadr_dir = \"docs/adr\"\nurl = \"git@github.com:acme/ssh.git\"\n\
+             [[repos]]\nname = \"sshurl\"\nadr_dir = \"docs/adr\"\nurl = \"ssh://git:SECRET@github.com:2222/acme/sshurl.git\"\n\
              [[repos]]\nname = \"bare\"\nadr_dir = \"docs/adr\"",
         )
     })
     .await;
     let s = chore(&h, "b-s").await;
-    let cases: [(&str, &str, Option<&str>); 7] = [
+    let cases: [(&str, &str, Option<&str>); 8] = [
         (
             "orion",
             "docs/adr/0001.md",
@@ -2314,8 +2315,17 @@ async fn browse_url_from_repo_config() {
             Some("https://github.com/acme/cred/blob/HEAD/docs/adr/0003.md"),
         ),
         ("plain", "docs/adr/0004.md", None),
-        ("ssh", "docs/adr/0005.md", None),
+        (
+            "ssh",
+            "docs/adr/0005.md",
+            Some("https://github.com/acme/ssh/blob/HEAD/docs/adr/0005.md"),
+        ),
         ("bare", "docs/adr/0006.md", None),
+        (
+            "sshurl",
+            "docs/adr/0007.md",
+            Some("https://github.com/acme/sshurl/blob/HEAD/docs/adr/0007.md"),
+        ),
         // spaces, '#', '?' and '%' are encoded per segment; '/' stays
         (
             "orion",

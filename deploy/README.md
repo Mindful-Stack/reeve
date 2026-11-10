@@ -286,7 +286,7 @@ Add `/etc/reeve/ssh/knowledge-base.pub` to the repository as a deploy key withou
       StrictHostKeyChecking yes
       UserKnownHostsFile /var/lib/reeve/ssh/known_hosts
 
-and use the alias in the url: `url = "git@github-knowledge-base:Acme/knowledge-base.git"`. Mount the directory and name the config in `docker-compose.override.yml` next to `docker-compose.yml` (compose merges it on `up`), then `docker compose up -d`:
+and use the alias in the url: `url = "git@github-knowledge-base:Acme/knowledge-base.git"`. The web client's link to a record is built from this url too (`https://<host>/<org>/<repo>/blob/HEAD/<path>`, GitHub's layout; it works for `https://`, scp-style `git@host:org/repo` and `ssh://git@host/org/repo` urls), so the link carries the url's host: an ssh host alias like `github-knowledge-base` is not a web host, and the link then does not resolve. Records in such a repository show without a working link. Mount the directory and name the config in `docker-compose.override.yml` next to `docker-compose.yml` (compose merges it on `up`), then `docker compose up -d`:
 
     services:
       server:

@@ -3,6 +3,11 @@ use serde::Deserialize;
 /// A repository of the team's household. `name` is the allowlist a record reference must match and the clone's directory
 /// under the household; `url` is what the scheduled check clones (`reeve-server repos`); `adr_dir` is instance
 /// configuration kb/ADR-0016 R2 requires, read by nothing yet.
+///
+/// A record's browse link (`browse_url`) is derived from `url`: it must be an `https://host/org/repo` URL, an scp-style
+/// `git@host:org/repo` or an `ssh://git@host[:port]/org/repo` one; the link is `https://host/org/repo/blob/HEAD/<path>`
+/// (user, port and `.git` dropped), GitHub's layout, so a host that lays out its web pages differently gets links that
+/// do not resolve. Any other URL gives no link.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoConfig {
     pub name: String,
