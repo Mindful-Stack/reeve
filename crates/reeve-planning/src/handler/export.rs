@@ -109,4 +109,18 @@ impl Handlers {
     ) -> Result<Vec<CommentDto>, HandlerError> {
         Ok(self.ports.reads.comments_in(tx).await?)
     }
+
+    pub async fn export_attachments(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<reeve_protocol::AttachmentDto>, HandlerError> {
+        Ok(self
+            .ports
+            .reads
+            .attachments_in(tx)
+            .await?
+            .iter()
+            .map(super::dto::attachment_dto)
+            .collect())
+    }
 }

@@ -328,3 +328,24 @@ impl From<&Story> for reeve_protocol::SimilarStory {
         }
     }
 }
+
+/// The one place an `AttachmentDto` is built, its `url` included (kb/ADR-0023 R4: served by the server only).
+pub fn attachment_dto(a: &crate::domain::attachment::Attachment) -> reeve_protocol::AttachmentDto {
+    use crate::domain::attachment::AttachmentOwner;
+    reeve_protocol::AttachmentDto {
+        id: a.id(),
+        url: format!("/api/v1/attachments/{}", a.id()),
+        filename: a.filename().to_string(),
+        content_type: a.image_type().mime().to_string(),
+        byte_size: a.byte_size(),
+        uploaded_by: a.uploaded_by().to_string(),
+        uploaded_at: a.uploaded_at(),
+        owner: match a.owner() {
+            AttachmentOwner::Item(item, key) => Some(reeve_protocol::AttachmentOwnerDto {
+                item: *item,
+                key: key.clone(),
+            }),
+            AttachmentOwner::Unclaimed => None,
+        },
+    }
+}

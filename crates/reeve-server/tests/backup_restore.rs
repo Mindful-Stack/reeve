@@ -145,11 +145,32 @@ async fn seed(h: &Harness) -> Seeded {
         json!({"record_id":"ADR-0001","version":linked["version"],"check":{"kind":"accepted","commit":"abc"}}),
     )
     .await;
+    // An attachment of three chunks (kb/ADR-0022): its bytes travel in the dump, its metadata in the export.
+    let image = {
+        let img = image::RgbaImage::from_fn(1100, 800, |x, y| {
+            let v = (x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503)).to_le_bytes();
+            image::Rgba([v[0], v[1], v[2], 255])
+        });
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    assert!(image.len() > 2 << 20);
+    let res = call_raw(
+        app,
+        axum::http::Request::post("/api/v1/attachments?filename=restore.png")
+            .header("authorization", format!("Bearer {t}"))
+            .body(axum::body::Body::from(image))
+            .unwrap(),
+    )
+    .await;
+    let uploaded = body_json(res).await;
+    let attachment = uploaded["value"]["id"].as_str().unwrap().to_string();
     post(
         app,
         t,
         &format!("/api/v1/stories/{todo}/comments"),
-        json!({"body":"first","idempotency_key":"c1"}),
+        json!({"body":"first","idempotency_key":"c1","attachments":[attachment]}),
     )
     .await;
     post(
@@ -441,6 +462,8 @@ async fn a_dump_restores_into_a_fresh_database_with_everything_an_export_lacks()
     assert!(
         !before.decisions.is_empty() && !before.comments.is_empty() && !before.activity.is_empty()
     );
+    assert_eq!(before.attachments.len(), 1);
+    assert_eq!(before.attachments[0].filename, "restore.png");
     assert!(before.users.len() >= 2);
     assert!(
         before

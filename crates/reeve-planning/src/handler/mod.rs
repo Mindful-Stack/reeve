@@ -20,7 +20,7 @@ pub use attachments::MAX_CLAIM;
 use attachments::attachment_ids;
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
-pub use dto::{goal_dto, sprint_dto, sprint_view_dto};
+pub use dto::{attachment_dto, goal_dto, sprint_dto, sprint_view_dto};
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;
 pub use sprints::Sprints;

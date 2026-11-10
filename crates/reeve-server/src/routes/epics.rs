@@ -43,13 +43,14 @@ async fn create(
 ) -> Result<Json<Response<EpicDto>>, AppError> {
     let e = s
         .handlers
-        .create_epic(
+        .create_epic_attaching(
             &c.ctx(),
             &b.idempotency_key,
             &b.title,
             super::resolve_opt(&s.handlers, b.initiative.as_ref(), ItemType::Initiative).await?,
             b.brief.as_deref().unwrap_or(""),
             b.external_ref,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))
@@ -73,7 +74,7 @@ async fn edit(
     let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
     let e = s
         .handlers
-        .edit_epic(
+        .edit_epic_attaching(
             &c.ctx(),
             &key,
             b.version,
@@ -81,6 +82,7 @@ async fn edit(
             b.brief,
             super::resolve_edit(&s.handlers, b.initiative, ItemType::Initiative).await?,
             b.external_ref,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))

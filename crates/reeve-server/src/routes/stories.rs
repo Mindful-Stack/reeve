@@ -91,7 +91,7 @@ async fn create(
 ) -> Result<Json<Response<StoryDto>>, AppError> {
     let st = s
         .handlers
-        .create_story(
+        .create_story_attaching(
             &c.ctx(),
             &b.idempotency_key,
             &b.title,
@@ -102,6 +102,7 @@ async fn create(
             b.labels,
             b.external_ref,
             allowed_owner(c.policy(), b.owner)?,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
@@ -133,7 +134,7 @@ async fn edit(
     });
     let st = s
         .handlers
-        .edit_story(
+        .edit_story_attaching(
             &c.ctx(),
             &key,
             b.version,
@@ -149,6 +150,7 @@ async fn edit(
             b.labels,
             b.rank,
             b.external_ref,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))

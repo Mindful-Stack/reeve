@@ -3336,6 +3336,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]
@@ -3346,12 +3347,15 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "clap",
  "futures-util",
  "hex",
  "hmac",
  "http-body-util",
+ "image",
+ "img-parts",
  "mime_guess",
  "rand 0.8.8",
  "reeve-activity",
@@ -3377,6 +3381,7 @@ dependencies = [
  "urlencoding",
  "utoipa",
  "utoipa-axum",
+ "uuid",
 ]
 
 [[package]]

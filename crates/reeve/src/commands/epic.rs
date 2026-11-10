@@ -116,6 +116,7 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
                     initiative,
                     brief: super::text_arg(brief, brief_file)?,
                     external_ref,
+                    attachments: vec![],
                 })?,
             )
             .await?,

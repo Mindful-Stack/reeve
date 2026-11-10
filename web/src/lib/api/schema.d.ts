@@ -100,6 +100,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Uploads an image, not yet the item's: the write that saves the text showing it claims it. */
+        post: operations["upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attachments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The image, streamed one stored chunk at a time; 304 for a matching `If-None-Match`, only after the access check. */
+        get: operations["attachments_id_get"];
+        put?: never;
+        post?: never;
+        /** Deletes an attachment for good: any member's for a claimed one, only the uploader's otherwise. */
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/config": {
         parameters: {
             query?: never;
@@ -590,6 +625,23 @@ export interface paths {
         put?: never;
         post: operations["initiatives_key_urgent_mark_urgent"];
         delete: operations["initiatives_key_urgent_clear_urgent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An item's attachments, oldest first. */
+        get: operations["items_key_attachments_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1101,6 +1153,11 @@ export interface components {
             via: components["schemas"]["Via"];
         };
         AddComment: {
+            /**
+             * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+             *     that is gone is ignored; one that belongs to another item or person refuses the write.
+             */
+            attachments?: string[];
             body: string;
             /** @description Caller-chosen key that makes a retried comment safe: a repeat returns the thread with the first comment only. */
             idempotency_key?: string | null;
@@ -1123,6 +1180,26 @@ export interface components {
             id: string;
             initiatives?: components["schemas"]["PlanInitiative"][];
             stories?: components["schemas"]["PlanStory"][];
+        };
+        AttachmentDto: {
+            /** Format: int64 */
+            byte_size: number;
+            /** @description The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`. */
+            content_type: string;
+            filename: string;
+            /** Format: uuid */
+            id: string;
+            owner?: null | components["schemas"]["AttachmentOwnerDto"];
+            /** Format: date-time */
+            uploaded_at: string;
+            uploaded_by: string;
+            /** @description Where the image is served; the one source of its path. */
+            url: string;
+        };
+        /** @description The item an attachment belongs to. */
+        AttachmentOwnerDto: {
+            item: components["schemas"]["ItemType"];
+            key: components["schemas"]["Key"];
         };
         BlockEdge: {
             blocker: components["schemas"]["KeyRef"];
@@ -1196,6 +1273,11 @@ export interface components {
         /** @enum {string} */
         Confidence: "on_track" | "at_risk" | "off_track";
         CreateEpic: {
+            /**
+             * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+             *     that is gone is ignored; one that belongs to another item or person refuses the write.
+             */
+            attachments?: string[];
             brief?: string | null;
             /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
@@ -1217,6 +1299,11 @@ export interface components {
         };
         /** @description Every create request carries a caller-supplied idempotency key; a repeat returns the same item. */
         CreateInitiative: {
+            /**
+             * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+             *     that is gone is ignored; one that belongs to another item or person refuses the write.
+             */
+            attachments?: string[];
             brief?: string | null;
             /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
@@ -1230,6 +1317,11 @@ export interface components {
             title: string;
         };
         CreateStory: {
+            /**
+             * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+             *     that is gone is ignored; one that belongs to another item or person refuses the write.
+             */
+            attachments?: string[];
             criteria: string[];
             description?: string | null;
             epic?: null | components["schemas"]["KeyRef"];
@@ -1330,6 +1422,11 @@ export interface components {
             version: number;
         };
         EditItem: {
+            /**
+             * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+             *     that is gone is ignored; one that belongs to another item or person refuses the write.
+             */
+            attachments?: string[];
             brief?: string | null;
             criteria?: components["schemas"]["CriterionDto"][] | null;
             description?: string | null;
@@ -1377,6 +1474,11 @@ export interface components {
          */
         ExportDto: {
             activity: components["schemas"]["ActivityEntryDto"][];
+            /**
+             * @description Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump
+             *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
+             */
+            attachments?: components["schemas"]["AttachmentDto"][];
             comments: components["schemas"]["CommentDto"][];
             decisions: components["schemas"]["RequiredDecisionDto"][];
             epics: components["schemas"]["EpicDto"][];
@@ -1904,6 +2006,45 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_AttachmentDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: int64 */
+                byte_size: number;
+                /** @description The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`. */
+                content_type: string;
+                filename: string;
+                /** Format: uuid */
+                id: string;
+                owner?: null | components["schemas"]["AttachmentOwnerDto"];
+                /** Format: date-time */
+                uploaded_at: string;
+                uploaded_by: string;
+                /** @description Where the image is served; the one source of its path. */
+                url: string;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_CreatedGoalDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -2038,6 +2179,11 @@ export interface components {
              */
             value: {
                 activity: components["schemas"]["ActivityEntryDto"][];
+                /**
+                 * @description Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump
+                 *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
+                 */
+                attachments?: components["schemas"]["AttachmentDto"][];
                 comments: components["schemas"]["CommentDto"][];
                 decisions: components["schemas"]["RequiredDecisionDto"][];
                 epics: components["schemas"]["EpicDto"][];
@@ -2625,6 +2771,45 @@ export interface components {
                 id: number;
                 payload: unknown;
                 via: components["schemas"]["Via"];
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_AttachmentDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: int64 */
+                byte_size: number;
+                /** @description The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`. */
+                content_type: string;
+                filename: string;
+                /** Format: uuid */
+                id: string;
+                owner?: null | components["schemas"]["AttachmentOwnerDto"];
+                /** Format: date-time */
+                uploaded_at: string;
+                uploaded_by: string;
+                /** @description Where the image is served; the one source of its path. */
+                url: string;
             }[];
         } | {
             /** @enum {string} */
@@ -3654,6 +3839,231 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_ActivityEntryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    upload: {
+        parameters: {
+            query: {
+                /** @description The file's name, as the person's device gave it; the server keeps only a safe last segment. */
+                filename: string;
+                /**
+                 * @description Caller-chosen key that makes a retried upload safe: a repeat returns the first upload. In the query, not the
+                 *     body, because the body is the file.
+                 */
+                idempotency_key?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_AttachmentDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description larger than 10 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    attachments_id_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description not modified */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
                 };
             };
             /** @description validation error */
@@ -6427,6 +6837,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_InitiativeDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    items_key_attachments_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_AttachmentDto"];
                 };
             };
             /** @description validation error */

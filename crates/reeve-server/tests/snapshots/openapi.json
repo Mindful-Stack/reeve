@@ -126,6 +126,14 @@
       },
       "AddComment": {
         "properties": {
+          "attachments": {
+            "description": "Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id\nthat is gone is ignored; one that belongs to another item or person refuses the write.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "body": {
             "type": "string"
           },
@@ -198,6 +206,73 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "AttachmentDto": {
+        "properties": {
+          "byte_size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "content_type": {
+            "description": "The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`.",
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "owner": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AttachmentOwnerDto",
+                "description": "None while it is an upload not yet saved with any text (only its uploader sees it then)."
+              }
+            ]
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uploaded_by": {
+            "type": "string"
+          },
+          "url": {
+            "description": "Where the image is served; the one source of its path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "filename",
+          "content_type",
+          "byte_size",
+          "uploaded_by",
+          "uploaded_at"
+        ],
+        "type": "object"
+      },
+      "AttachmentOwnerDto": {
+        "description": "The item an attachment belongs to.",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          }
+        },
+        "required": [
+          "item",
+          "key"
         ],
         "type": "object"
       },
@@ -508,6 +583,14 @@
       },
       "CreateEpic": {
         "properties": {
+          "attachments": {
+            "description": "Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id\nthat is gone is ignored; one that belongs to another item or person refuses the write.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "brief": {
             "type": [
               "string",
@@ -582,6 +665,14 @@
       "CreateInitiative": {
         "description": "Every create request carries a caller-supplied idempotency key; a repeat returns the same item.",
         "properties": {
+          "attachments": {
+            "description": "Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id\nthat is gone is ignored; one that belongs to another item or person refuses the write.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "brief": {
             "type": [
               "string",
@@ -626,6 +717,14 @@
       },
       "CreateStory": {
         "properties": {
+          "attachments": {
+            "description": "Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id\nthat is gone is ignored; one that belongs to another item or person refuses the write.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "criteria": {
             "items": {
               "type": "string"
@@ -947,6 +1046,14 @@
       },
       "EditItem": {
         "properties": {
+          "attachments": {
+            "description": "Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id\nthat is gone is ignored; one that belongs to another item or person refuses the write.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
           "brief": {
             "type": [
               "string",
@@ -1152,6 +1259,13 @@
           "activity": {
             "items": {
               "$ref": "#/components/schemas/ActivityEntryDto"
+            },
+            "type": "array"
+          },
+          "attachments": {
+            "description": "Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump\n(kb/ADR-0022 R5). Uploads not yet saved with any text are left out.",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentDto"
             },
             "type": "array"
           },
@@ -3134,6 +3248,133 @@
           }
         ]
       },
+      "Response_AttachmentDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "properties": {
+                  "byte_size": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "content_type": {
+                    "description": "The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`.",
+                    "type": "string"
+                  },
+                  "filename": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "owner": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/AttachmentOwnerDto",
+                        "description": "None while it is an upload not yet saved with any text (only its uploader sees it then)."
+                      }
+                    ]
+                  },
+                  "uploaded_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "uploaded_by": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "description": "Where the image is served; the one source of its path.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "url",
+                  "filename",
+                  "content_type",
+                  "byte_size",
+                  "uploaded_by",
+                  "uploaded_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_CreatedGoalDto": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -3567,6 +3808,13 @@
                   "activity": {
                     "items": {
                       "$ref": "#/components/schemas/ActivityEntryDto"
+                    },
+                    "type": "array"
+                  },
+                  "attachments": {
+                    "description": "Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump\n(kb/ADR-0022 R5). Uploads not yet saved with any text are left out.",
+                    "items": {
+                      "$ref": "#/components/schemas/AttachmentDto"
                     },
                     "type": "array"
                   },
@@ -5575,6 +5823,136 @@
                     "entity_key",
                     "action",
                     "payload"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_Vec_AttachmentDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "properties": {
+                    "byte_size": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "content_type": {
+                      "description": "The type its bytes identify: `image/png`, `image/jpeg` or `image/webp`.",
+                      "type": "string"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "owner": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AttachmentOwnerDto",
+                          "description": "None while it is an upload not yet saved with any text (only its uploader sees it then)."
+                        }
+                      ]
+                    },
+                    "uploaded_at": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "uploaded_by": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "description": "Where the image is served; the one source of its path.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "url",
+                    "filename",
+                    "content_type",
+                    "byte_size",
+                    "uploaded_by",
+                    "uploaded_at"
                   ],
                   "type": "object"
                 },
@@ -8377,6 +8755,292 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/api/v1/attachments": {
+      "post": {
+        "operationId": "upload",
+        "parameters": [
+          {
+            "description": "The file's name, as the person's device gave it; the server keeps only a safe last segment.",
+            "in": "query",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Caller-chosen key that makes a retried upload safe: a repeat returns the first upload. In the query, not the\nbody, because the body is the file.",
+            "in": "query",
+            "name": "idempotency_key",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "description": "The raw bytes of a PNG, JPEG or WebP image; the server identifies the type from the bytes, whatever the\nrequest's `Content-Type` says.",
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_AttachmentDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "larger than 10 MiB"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Uploads an image, not yet the item's: the write that saves the text showing it claims it."
+      }
+    },
+    "/api/v1/attachments/{id}": {
+      "delete": {
+        "operationId": "delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deletes an attachment for good: any member's for a claimed one, only the uploader's otherwise."
+      },
+      "get": {
+        "operationId": "attachments_id_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "The raw bytes of a PNG, JPEG or WebP image; the server identifies the type from the bytes, whatever the\nrequest's `Content-Type` says.",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the image"
+          },
+          "304": {
+            "description": "not modified"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The image, streamed one stored chunk at a time; 304 for a matching `If-None-Match`, only after the access check."
       }
     },
     "/api/v1/config": {
@@ -11866,6 +12530,89 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/api/v1/items/{key}/attachments": {
+      "get": {
+        "operationId": "items_key_attachments_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_AttachmentDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "An item's attachments, oldest first."
       }
     },
     "/api/v1/items/{key}/comments": {
