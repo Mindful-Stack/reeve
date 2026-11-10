@@ -53,7 +53,7 @@ Each aggregate is a Rust type under `crates/reeve-planning/src/domain/`, persist
 
 Reads that join other aggregates' tables are on `PlanningReads`: `readiness_inputs` (the one five-statement loader), counts, the decision queue's inputs (`draft_goals_of_stories`, `decision_lineage_in`), search, the export readers and `urgency_lineage_in` (the epics and stories an urgent mark reaches). `KeyRepo` holds the one key sequence and every key or external-reference lookup across item types. Reason: a read across aggregates belongs to no single aggregate, and one sequence keeps keys unique across types.
 
-Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`Summary`, `HeldStory`, `QueueEntry`; `AffectedStory` is the classifier's input). Reason: the domain must not change when the wire does, and the OpenAPI snapshot catches the wire side. Values are pinned by `crates/reeve-planning/tests/dto_values.rs`.
+Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`Summary`, `HeldStory`, `QueueEntry`, `QueueSummary`; `AffectedStory` is the classifier's input). Reason: the domain must not change when the wire does, and the OpenAPI snapshot catches the wire side. Values are pinned by `crates/reeve-planning/tests/dto_values.rs`.
 
 ## What the context never does
 
