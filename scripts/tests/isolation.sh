@@ -74,4 +74,18 @@ s=$(status "$tmp"); if [ "$s" -ne 1 ]; then echo "lint exited $s, wanted 1, for 
 rm "$tmp/crates/reeve-planning/src/handler/prs.rs"; printf '%s\n' '' > "$tmp/crates/reeve-planning/src/handler/moves.rs"
 s=$(status "$tmp"); if [ "$s" -ne 1 ]; then echo "lint exited $s, wanted 1, for a handler/mod.rs without prs.rs" >&2; exit 1; fi
 printf '%s\n' '' > "$tmp/crates/reeve-planning/src/handler/prs.rs"; bash scripts/check-context-isolation.sh "$tmp" >/dev/null
+# A handler file the lint cannot list must stop it (exit 2), not pass it unread. Root reads any directory, so skip there.
+if [ "$(id -u)" -ne 0 ]; then
+  at reeve-planning/src/handler/sub/x.rs 'self.ports.stories.set_delivery(tx, s, 1, now)'
+  chmod 000 "$tmp/crates/reeve-planning/src/handler/sub"
+  s=$(status "$tmp"); chmod 755 "$tmp/crates/reeve-planning/src/handler/sub"
+  if [ "$s" -ne 2 ]; then echo "lint exited $s, wanted 2, for an unreadable handler directory" >&2; exit 1; fi
+fi
+# A handler directory with no .rs files is clean.
+pass_at reeve-planning/src/handler/README.md 'notes'
+# A failing `find` must stop the lint (exit 2), not skip the handler scan and report ok.
+at reeve-planning/src/handler/stories.rs 'self.ports.stories.set_delivery(tx, s, 1, now)'
+mkdir -p "$tmp/shim"; printf '#!/bin/sh\nexit 1\n' > "$tmp/shim/find"; chmod +x "$tmp/shim/find"
+s=0; PATH="$tmp/shim:$PATH" bash scripts/check-context-isolation.sh "$tmp" >/dev/null 2>&1 || s=$?
+if [ "$s" -ne 2 ]; then echo "lint exited $s, wanted 2, when find fails" >&2; exit 1; fi
 echo "isolation lint test ok"

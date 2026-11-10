@@ -17,7 +17,8 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 [ -d crates ] || { echo "no crates/ directory under $PWD" >&2; exit 2; }
 crates='reeve_(protocol|planning|identity|activity|server)'
-g() { grep "$@" || [ $? -eq 1 ]; }   # swallow only "no match" (1); a grep error (2) aborts under set -e
+# Exit codes: 0 clean, 1 a violation, 2 the lint itself could not run (it never reports ok on a partial read).
+g() { local s=0; grep "$@" || s=$?; [ "$s" -le 1 ] || exit 2; }   # swallow only "no match" (1); a grep error is 2
 violations=$( { g -rnE "${crates}::[a-z_]+::" crates --include='*.rs'; } ; { g -rnEz "${crates}::\{[^}]*\b[a-z_]+::" crates --include='*.rs' -l; } )
 if [ -n "$violations" ]; then
   echo "context isolation violated: import through the crate facade only" >&2
@@ -47,7 +48,10 @@ if [ -d "$planning/handler" ]; then
       if [ ! -f "$f" ]; then bad+="$f: missing (the call-site rules below judge it by name)"$'\n'; fi
     done
   fi
+  # A command substitution (not `< <(...)`) so a failing find stops the lint instead of skipping the scan.
+  files=$(find "$planning/handler" -name '*.rs' | sort) || { echo "cannot list $planning/handler" >&2; exit 2; }
   while IFS= read -r f; do
+    [ -n "$f" ] || continue   # no .rs files: "<<<" still feeds one empty line
     # kb/ADR-0002 R4: only move_story (handler/moves.rs) moves a story, however the call is spelled
     # (a call, UFCS, or a method value bound to a name and called later).
     if [ "$f" != "$moves" ]; then
@@ -57,7 +61,7 @@ if [ -d "$planning/handler" ]; then
       x=$(flat "$f" | g -oE "${lb}move_to\b")
       if [ -n "$x" ]; then bad+="$f: move_to outside handler/moves.rs"$'\n'; fi
     fi
-  done < <(find "$planning/handler" -name '*.rs' | sort)
+  done <<< "$files"
   # kb/ADR-0014 R4, kb/ADR-0017 R5: moving a story never reads sprints, goals or urgency.
   if [ -f "$moves" ]; then
     x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(")
