@@ -721,7 +721,7 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 	});
 }
 
-test('the board banner counts a decision blocking this sprint, links to its lane, and a row title opens the decision drawer', async ({ page }) => {
+test('the board banner counts a decision needed this sprint, links to its lane, and a row title opens the decision drawer', async ({ page }) => {
 	const tag = crypto.randomUUID().slice(0, 8);
 	const title = `Banner smoke decision ${tag}`;
 	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Banner smoke epic ${tag}` });
@@ -748,7 +748,7 @@ test('the board banner counts a decision blocking this sprint, links to its lane
 		await page.goto('/board');
 		const banner = page.getByRole('navigation', { name: 'Decisions needing attention' });
 		// Earlier tests link the draft goal to the initiative, so other decisions are needed this sprint too: the count is at least ours.
-		const link = banner.getByRole('link', { name: /^\d+ decisions? blocks? this sprint$/ });
+		const link = banner.getByRole('link', { name: /^\d+ decisions? needed this sprint$/ });
 		await expect(link).toBeVisible();
 		await link.click();
 		await expect(page).toHaveURL(/\/decisions#this-sprint$/);

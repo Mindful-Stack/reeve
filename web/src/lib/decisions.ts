@@ -129,9 +129,9 @@ export const LANE_ORDER: QueueLane[] = ['review', 'this_sprint', 'next_sprint', 
 
 export const LANE_LABEL: Record<QueueLane, string> = {
 	review: 'Record to review',
-	this_sprint: 'Blocking this sprint',
-	next_sprint: 'Blocking next sprint',
-	beyond: 'Blocking beyond',
+	this_sprint: 'Needed this sprint',
+	next_sprint: 'Needed next sprint',
+	beyond: 'Needed after next sprint',
 	open: 'Open, not blocking yet',
 	satisfied: 'Accepted',
 	closed: 'Closed'
@@ -148,7 +148,7 @@ export function nextStepText(s: NextStep, reversibility: Reversibility | null | 
 		case 'configure_repo':
 			return `Repository ${s.repo} is not checked: an admin adds it to the server's repos`;
 		case 'fix_record':
-			return checkLabel(s.result);
+			return `Fix the record: ${checkLabel(s.result)}`;
 		case 'review_record':
 			return 'Linked PR \u00b7 not accepted yet';
 		case 'await_check':
@@ -169,7 +169,7 @@ export function neededLabel(n: NeededIn): string {
 		case 'next_sprint':
 			return 'Needed next sprint';
 		case 'beyond':
-			return 'Needed beyond';
+			return 'Needed after next sprint';
 		case 'none':
 			return 'Not needed yet';
 	}

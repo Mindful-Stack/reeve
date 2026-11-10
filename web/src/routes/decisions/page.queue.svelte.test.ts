@@ -136,7 +136,7 @@ describe('decisions queue page', () => {
 			entry('open', dec(5, 'Idle'))
 		]);
 		await open();
-		expect(headings()).toEqual(['Record to review', 'Blocking this sprint', 'Blocking next sprint', 'Blocking beyond', 'Open, not blocking yet']);
+		expect(headings()).toEqual(['Record to review', 'Needed this sprint', 'Needed next sprint', 'Needed after next sprint', 'Open, not blocking yet']);
 		const ids = [...document.body.querySelectorAll('h2')].map((h) => h.id);
 		expect(ids).toEqual(['review', 'this-sprint', 'next-sprint', '', '']);
 		expect(titles('#decisions-review')).toEqual(['Reviewing']);
@@ -161,7 +161,7 @@ describe('decisions queue page', () => {
 		net.queue = queue([entry('beyond', dec(1, 'Later')), entry('open', dec(2, 'Idle'))]);
 		await open();
 		const divider = document.body.querySelector('.divider')!;
-		expect(text(divider.nextElementSibling)).toContain('Blocking beyond');
+		expect(text(divider.nextElementSibling)).toContain('Needed after next sprint');
 	});
 
 	it('does not say nothing is needed on a completely empty queue', async () => {
@@ -266,7 +266,7 @@ describe('decisions queue page', () => {
 			entry('closed', dec(6, 'Old one', { closed: closedBy }))
 		]);
 		await open();
-		expect(headings()).toEqual(['Blocking this sprint', 'Open, not blocking yet', 'Accepted', 'Closed']);
+		expect(headings()).toEqual(['Needed this sprint', 'Open, not blocking yet', 'Accepted', 'Closed']);
 		expect(titles('#decisions-this_sprint')).toEqual(['Accepted but blocking', 'Second blocking']);
 		expect(titles('#decisions-open')).toEqual(['Not blocking yet']);
 		expect(titles('#decisions-satisfied')).toEqual(['Unchecked but satisfied']);
@@ -305,7 +305,7 @@ describe('decisions queue page', () => {
 		// Pinned where it was shown while it holds focus: the Closed group itself stays folded.
 		expect(row().closest('ul')!.id).toBe('decisions-this_sprint');
 		// Counted where it is shown, though the server now puts it in Closed.
-		expect(text(document.body.querySelector('h2'))).toBe('Blocking this sprint 1');
+		expect(text(document.body.querySelector('h2'))).toBe('Needed this sprint 1');
 		expect(row().contains(document.activeElement)).toBe(true);
 		expect(document.getElementById('decisions-closed')).toBeNull();
 		// Once focus leaves, it folds into the collapsed Closed group.
@@ -328,7 +328,7 @@ describe('decisions queue page', () => {
 	it('renders no heading for an empty group', async () => {
 		net.queue = queue([entry('this_sprint', dec(1, 'Gate')), entry('satisfied', dec(2, 'Settled', { record, check: accepted }))]);
 		await open();
-		expect(headings()).toEqual(['Blocking this sprint', 'Accepted']);
+		expect(headings()).toEqual(['Needed this sprint', 'Accepted']);
 		expect(document.getElementById('decisions-open')).toBeNull();
 	});
 

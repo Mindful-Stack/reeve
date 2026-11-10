@@ -19,7 +19,7 @@ const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, ' ').trim(
 describe('DecisionBanner', () => {
 	it('names the non-zero parts, hides the zero one and picks the number form', () => {
 		const nav = show({ review: 1, this_sprint: 2, next_sprint: 0 });
-		expect(text(nav)).toBe('⚑ 1 record to review · 2 decisions block this sprint');
+		expect(text(nav)).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
 		expect([...nav!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/decisions#review', '/decisions#this-sprint']);
 	});
 
@@ -32,7 +32,7 @@ describe('DecisionBanner', () => {
 
 	it('uses the singular verb for one and links next sprint', () => {
 		const nav = show({ this_sprint: 1, next_sprint: 3 });
-		expect(text(nav)).toBe('⚑ 1 decision blocks this sprint · 3 decisions block next sprint');
+		expect(text(nav)).toBe('⚑ 1 decision needed this sprint · 3 decisions needed next sprint');
 		expect(nav!.querySelectorAll('a')[1].getAttribute('href')).toBe('/decisions#next-sprint');
 	});
 

@@ -185,7 +185,8 @@ describe('next step and needed-in wording', () => {
 		expect(nextStepText({ kind: 'write_record' }, null)).toBe('Write a record, or close it');
 		expect(nextStepText({ kind: 'write_record' }, 'one_way')).toBe('Write a record');
 		expect(nextStepText({ kind: 'configure_repo', repo: 'infra' }, null)).toBe("Repository infra is not checked: an admin adds it to the server's repos");
-		expect(nextStepText({ kind: 'fix_record', result: { kind: 'not_accepted', status: 'superseded', superseded_by: 'kb/ADR-9', commit: 'abc' } }, null)).toBe('superseded by kb/ADR-9, re-point');
+		expect(nextStepText({ kind: 'fix_record', result: { kind: 'not_accepted', status: 'superseded', superseded_by: 'kb/ADR-9', commit: 'abc' } }, null)).toBe('Fix the record: superseded by kb/ADR-9, re-point');
+		expect(nextStepText({ kind: 'fix_record', result: { kind: 'not_found' } }, null)).toBe('Fix the record: not found');
 		expect(nextStepText({ kind: 'review_record', pr_url: 'https://github.com/x/y/pull/1' }, null)).toBe('Linked PR \u00b7 not accepted yet');
 		expect(nextStepText({ kind: 'await_check' }, null)).toBe('Waiting for the check (never ran)');
 		const now = Date.parse('2026-11-10T12:00:00Z');
@@ -197,7 +198,7 @@ describe('next step and needed-in wording', () => {
 		expect(neededInText({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('GRA-12 is in discovery');
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
-		expect(neededLabel('beyond')).toBe('Needed beyond');
+		expect(neededLabel('beyond')).toBe('Needed after next sprint');
 		expect(neededLabel('none')).toBe('Not needed yet');
 	});
 

@@ -89,7 +89,7 @@ describe('board decisions', () => {
 		await mounted();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav[aria-label="Decisions needing attention"]'))).toBe('⚑ 1 record to review · 2 decisions block this sprint');
+			expect(text(q('nav[aria-label="Decisions needing attention"]'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
 		});
 		expect(net.paths).toContain('/api/v1/decisions/queue');
 		const banner = q('nav.decision-banner')!;
@@ -165,7 +165,7 @@ describe('board decisions', () => {
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav.decision-banner'))).toBe('⚑ 1 decision blocks next sprint');
+			expect(text(q('nav.decision-banner'))).toBe('⚑ 1 decision needed next sprint');
 		});
 		expect(q('.queue-note')).toBeNull();
 	});
@@ -179,7 +179,7 @@ describe('board decisions', () => {
 			flushSync();
 			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date.');
 		});
-		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions block this sprint');
+		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
 		queue = { entries: [], summary: queueSummary({ review: 3 }) };
 		live.fns.forEach((f) => f());

@@ -8,8 +8,8 @@
 	const parts = $derived(
 		[
 			{ n: summary.review, href: '/decisions#review', text: (n: number) => `${n} ${n === 1 ? 'record' : 'records'} to review` },
-			{ n: summary.this_sprint, href: '/decisions#this-sprint', text: (n: number) => `${n} ${n === 1 ? 'decision blocks' : 'decisions block'} this sprint` },
-			{ n: summary.next_sprint, href: '/decisions#next-sprint', text: (n: number) => `${n} ${n === 1 ? 'decision blocks' : 'decisions block'} next sprint` }
+			{ n: summary.this_sprint, href: '/decisions#this-sprint', text: (n: number) => `${n} ${n === 1 ? 'decision' : 'decisions'} needed this sprint` },
+			{ n: summary.next_sprint, href: '/decisions#next-sprint', text: (n: number) => `${n} ${n === 1 ? 'decision' : 'decisions'} needed next sprint` }
 		].filter((p) => p.n > 0)
 	);
 </script>
