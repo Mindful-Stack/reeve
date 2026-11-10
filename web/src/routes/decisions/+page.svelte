@@ -2,12 +2,14 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
-	import type { AffectedStory, DecisionQueue, QueueGroup } from '#lib/api/types.ts';
+	import type { AffectedStory, DecisionQueue, DecisionQueueEntry, QueueLane } from '#lib/api/types.ts';
 	import DecisionList from '#lib/components/DecisionList.svelte';
-	import { filterDecisions, itemHref } from '#lib/decisions.ts';
+	import { filterDecisions, itemHref, LANE_ANCHOR, LANE_LABEL, LANE_ORDER } from '#lib/decisions.ts';
+	import { decisionHref } from '#lib/drawer.ts';
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { age, errorMessage } from '#lib/format.ts';
 	import { session } from '#lib/me.svelte.ts';
+	import { tick } from 'svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
@@ -24,21 +26,22 @@
 	/** A refetch failed after the list had loaded: the list (and any unsent comment) stays mounted; the banner offers a retry. */
 	let staleNotice = $state<string | null>(null);
 
-	/** The queue's groups in their render order (the server's `QueueGroup` order), with what each heading says. */
-	const LABEL: Record<QueueGroup, string> = {
-		blocking: 'Blocking work',
-		open: 'Open, not blocking yet',
-		satisfied: 'Accepted',
-		closed: 'Closed'
-	};
-	const ORDER: QueueGroup[] = ['blocking', 'open', 'satisfied', 'closed'];
+	/** The lanes that sit beyond the two-sprint window: the Tuesday queue, below a divider. */
+	const OUTSIDE = new Set<QueueLane>(['beyond', 'open', 'satisfied', 'closed']);
+	const NEEDED = new Set<QueueLane>(['review', 'this_sprint', 'next_sprint']);
 
 	/** In the server's order, never re-sorted: the server orders each group by urgency and blocked work. */
 	const decisions = $derived((queue?.entries ?? []).map((e) => e.decision));
 	const shown = $derived(filterDecisions(decisions, { mine: mine ? session.me?.email : undefined, closed: true }));
-	const groupById = $derived(new Map<number, QueueGroup>((queue?.entries ?? []).map((e) => [e.decision.id, e.group])));
+	const laneById = $derived(new Map<number, QueueLane>((queue?.entries ?? []).map((e) => [e.decision.id, e.lane])));
 	const blocks = $derived(new Map<number, AffectedStory[]>((queue?.entries ?? []).map((e) => [e.decision.id, e.blocks])));
-	const groups = $derived(ORDER.map((id) => ({ id, folded: id === 'closed' && !showClosed, listId: `decisions-${id}` })));
+	const entries = $derived(new Map<number, DecisionQueueEntry>((queue?.entries ?? []).map((e) => [e.decision.id, e])));
+	const groups = $derived(LANE_ORDER.map((id) => ({ id, folded: id === 'closed' && !showClosed, listId: `decisions-${id}` })));
+	/** The lanes that have a row for the people shown (the Mine filter applies). */
+	const populated = $derived(new Set(shown.map((d) => laneById.get(d.id)).filter((l): l is QueueLane => !!l)));
+	/** The first lane below the window with a row: the divider goes before its heading. */
+	const firstOutside = $derived(LANE_ORDER.find((l) => OUTSIDE.has(l) && populated.has(l)));
+	const nothingNeeded = $derived(![...NEEDED].some((l) => populated.has(l)));
 	const summary = $derived(queue?.summary);
 
 	/** The newest check of any listed record: how fresh the whole page's statuses are. */
@@ -50,6 +53,15 @@
 	);
 
 	let latest = 0;
+
+	// The lanes render after the first fetch, so a #review / #this-sprint / #next-sprint link scrolls once, then.
+	let scrolled = false;
+	$effect(() => {
+		if (!queue || scrolled) return;
+		scrolled = true;
+		const id = page.url.hash.slice(1);
+		if (id) void tick().then(() => document.getElementById(id)?.scrollIntoView?.());
+	});
 
 	/** The UTC date of a time: the server's overdue ordering and summary are by it. */
 	const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -140,22 +152,30 @@
 	{#if summary}
 		<p class="summary">
 			{summary.open} open · {summary.blocking} blocking {summary.blocked_stories}
-			{summary.blocked_stories === 1 ? 'story' : 'stories'} · {summary.overdue} overdue
+			{summary.blocked_stories === 1 ? 'story' : 'stories'} · {summary.overdue} overdue{#if summary.review > 0}{' · '}{summary.review} to review{/if}
 		</p>
+	{/if}
+	{#if nothingNeeded}
+		<p class="quiet muted">Nothing needed this sprint or next.</p>
 	{/if}
 	<!-- The headings carry their own margins, so the list adds no gap between them and the groups. -->
 	<DecisionList
 		--decision-list-row-gap="0"
 		decisions={shown}
 		{blocks}
+		{entries}
+		decisionHref={(id) => decisionHref(page.url, id)}
 		itemHref={(key) => itemHref(key, initiatives, epics)}
 		onchanged={reload}
-		groupOf={(d) => groupById.get(d.id)!}
+		groupOf={(d) => laneById.get(d.id)!}
 		{groups}
 		empty="No open decisions"
 	>
 		{#snippet heading(group, count)}
-			<h2>
+			{#if group === firstOutside}
+				<p class="divider muted">Outside the two-sprint window · for the Tuesday queue</p>
+			{/if}
+			<h2 id={LANE_ANCHOR[group as QueueLane]}>
 				{#if group === 'closed'}
 					<button
 						type="button"
@@ -163,10 +183,10 @@
 						aria-expanded={showClosed}
 						aria-controls={showClosed ? 'decisions-closed' : undefined}
 						onclick={() => setFlag('closed', !showClosed)}
-						><span aria-hidden="true">{showClosed ? '▾' : '▸'}</span> {LABEL[group as QueueGroup]} <span class="count">{count}</span></button
+						><span aria-hidden="true">{showClosed ? '▾' : '▸'}</span> {LANE_LABEL[group as QueueLane]} <span class="count">{count}</span></button
 					>
 				{:else}
-					{LABEL[group as QueueGroup]} <span class="count">{count}</span>
+					{LANE_LABEL[group as QueueLane]} <span class="count">{count}</span>
 				{/if}
 			</h2>
 		{/snippet}
@@ -179,6 +199,17 @@
 	}
 	.summary {
 		margin: 0 0 4px;
+	}
+	.quiet {
+		margin: 0 0 4px;
+	}
+	.divider {
+		margin: 24px 0 0;
+		padding-top: 8px;
+		border-top: 1px solid var(--line);
+	}
+	.divider + h2 {
+		margin-top: 8px;
 	}
 	.fold {
 		font: inherit;

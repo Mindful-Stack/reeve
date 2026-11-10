@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 // The decisions page is the queue (GET /decisions/queue): All by default with Mine as the toggle (?mine=1), the
-// server's summary line, its four groups in server order (Closed folded unless ?closed=1) and each decision's blocks.
+// server's summary line, its seven lanes in server order (Closed folded unless ?closed=1) and each decision's blocks.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AffectedStory, DecisionQueue, Epic, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
+import type { AffectedStory, DecisionQueue, Epic, QueueGroup, QueueLane, RequiredDecision } from '#lib/api/types.ts';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import { blockedStory, decision, queueEntry, queueSummary } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Page from './+page.svelte';
@@ -73,8 +74,17 @@ function dec(id: number, title: string, more: Partial<RequiredDecision> = {}): R
 const record: RequiredDecision['record'] = { repo: 'kb', path: 'adr/1.md', record_id: 'kb/ADR-1' };
 const accepted = { kind: 'accepted' as const, commit: 'abcdef0123' };
 const closedBy = { at: '2026-10-02T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'withdrawn' as const };
-function entry(group: QueueGroup, d: RequiredDecision, blocks: AffectedStory[] = []) {
-	return queueEntry({ group, decision: d, blocks });
+const GROUP: Record<QueueLane, QueueGroup> = {
+	review: 'blocking',
+	this_sprint: 'blocking',
+	next_sprint: 'blocking',
+	beyond: 'blocking',
+	open: 'open',
+	satisfied: 'satisfied',
+	closed: 'closed'
+};
+function entry(lane: QueueLane, d: RequiredDecision, blocks: AffectedStory[] = [], more: Partial<ReturnType<typeof queueEntry>> = {}) {
+	return queueEntry({ group: GROUP[lane], lane, decision: d, blocks, ...more });
 }
 function queue(entries: ReturnType<typeof entry>[], summary = empty.summary): DecisionQueue {
 	return { entries, summary };
@@ -88,6 +98,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.useRealTimers();
+	resetDecisionDraftsForTests();
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
@@ -115,8 +126,72 @@ const headings = () => [...document.body.querySelectorAll('h2')].map((h) => text
 const pressed = () => document.body.querySelector('[role="group"][aria-label="Decider"] [aria-pressed="true"]')?.textContent;
 
 describe('decisions queue page', () => {
+	const NEXT = { kind: 'write_record' } as const;
+	it('groups by lane under the lane headings, with anchors on the first three', async () => {
+		net.queue = queue([
+			entry('review', dec(1, 'Reviewing'), [], { next_step: { kind: 'review_record', pr_url: null } }),
+			entry('this_sprint', dec(2, 'Now'), [], { next_step: NEXT, needed_in: 'this_sprint' }),
+			entry('next_sprint', dec(3, 'Soon')),
+			entry('beyond', dec(4, 'Later')),
+			entry('open', dec(5, 'Idle'))
+		]);
+		await open();
+		expect(headings()).toEqual(['Record to review', 'Blocking this sprint', 'Blocking next sprint', 'Blocking beyond', 'Open, not blocking yet']);
+		const ids = [...document.body.querySelectorAll('h2')].map((h) => h.id);
+		expect(ids).toEqual(['review', 'this-sprint', 'next-sprint', '', '']);
+		expect(titles('#decisions-review')).toEqual(['Reviewing']);
+		expect(titles('#decisions-beyond')).toEqual(['Later']);
+		// The next step renders per row, and the title opens the drawer.
+		expect(text(document.getElementById('decisions-this_sprint'))).toContain('Write a record');
+		expect(text(document.getElementById('decisions-review'))).toContain('Linked PR');
+		expect(document.body.querySelector<HTMLAnchorElement>('#decisions-review a.title, #decisions-review .title a')?.getAttribute('href')).toBe('/decisions?decision=1');
+	});
+
+	it('puts the Tuesday-queue divider before the first lane outside the window, once', async () => {
+		net.queue = queue([entry('this_sprint', dec(1, 'Now')), entry('open', dec(2, 'Idle')), entry('satisfied', dec(3, 'Settled'))]);
+		await open();
+		const dividers = [...document.body.querySelectorAll('.divider')];
+		expect(dividers.map((d) => text(d))).toEqual(['Outside the two-sprint window · for the Tuesday queue']);
+		expect(dividers[0].nextElementSibling?.tagName).toBe('H2');
+		expect(text(dividers[0].nextElementSibling)).toContain('Open, not blocking yet');
+		expect(document.body.textContent).not.toContain('Nothing needed this sprint or next.');
+	});
+
+	it('skips an empty lane for the divider (Beyond has rows: it leads)', async () => {
+		net.queue = queue([entry('beyond', dec(1, 'Later')), entry('open', dec(2, 'Idle'))]);
+		await open();
+		const divider = document.body.querySelector('.divider')!;
+		expect(text(divider.nextElementSibling)).toContain('Blocking beyond');
+	});
+
+	it('says nothing is needed this sprint or next when those lanes are empty', async () => {
+		net.queue = queue([entry('beyond', dec(1, 'Later'))]);
+		await open();
+		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing needed this sprint or next.');
+	});
+
+	it('adds the review count to the summary only when above zero', async () => {
+		net.queue = queue([entry('review', dec(1, 'R'))], queueSummary({ open: 1, review: 1 }));
+		await open();
+		expect(text(document.body.querySelector('.summary'))).toBe('1 open · 0 blocking 0 stories · 0 overdue · 1 to review');
+	});
+
+	it('scrolls to the lane named by the hash once the queue has rendered', async () => {
+		await route.fake!.goto('/decisions#next-sprint');
+		const scroll = vi.fn();
+		(Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = scroll;
+		try {
+			net.queue = queue([entry('next_sprint', dec(1, 'Soon'))]);
+			await open();
+			await vi.waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
+			expect(scroll.mock.contexts[0]).toBe(document.getElementById('next-sprint'));
+		} finally {
+			delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView;
+		}
+	});
+
 	it('requests the queue unscoped and shows every decider by default', async () => {
-		net.queue = queue([entry('blocking', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
 		await open();
 		expect(document.body.querySelector('h1')?.textContent).toBe('Decisions');
 		expect(pressed()).toBe('All');
@@ -127,14 +202,14 @@ describe('decisions queue page', () => {
 
 	it('ignores an old ?all=1', async () => {
 		await route.fake!.goto('/decisions?all=1');
-		net.queue = queue([entry('blocking', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
 		await open();
 		expect(pressed()).toBe('All');
 		expect(titles('.decisions')).toEqual(['Mine', 'Theirs']);
 	});
 
 	it('Mine filters to the caller and writes ?mine=1', async () => {
-		net.queue = queue([entry('blocking', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
 		await open();
 		const mine = [...document.body.querySelectorAll('[aria-label="Decider"] button')].find((b) => b.textContent === 'Mine') as HTMLButtonElement;
 		mine.click();
@@ -148,7 +223,7 @@ describe('decisions queue page', () => {
 
 	it('opens on Mine from ?mine=1', async () => {
 		await route.fake!.goto('/decisions?mine=1');
-		net.queue = queue([entry('blocking', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
 		await open();
 		expect(pressed()).toBe('Mine');
 		expect(titles('.decisions')).toEqual(['Mine']);
@@ -156,7 +231,7 @@ describe('decisions queue page', () => {
 	});
 
 	it("says the server's summary", async () => {
-		net.queue = queue([entry('blocking', dec(1, 'One'))], queueSummary({ open: 6, blocking: 4, blocked_stories: 11, overdue: 2 }));
+		net.queue = queue([entry('this_sprint', dec(1, 'One'))], queueSummary({ open: 6, blocking: 4, blocked_stories: 11, overdue: 2 }));
 		await open();
 		expect(text(document.body.querySelector('.summary'))).toBe('6 open · 4 blocking 11 stories · 2 overdue');
 	});
@@ -165,15 +240,15 @@ describe('decisions queue page', () => {
 		// Groups that disagree with what blocking() would compute: an accepted record listed as blocking, an unchecked
 		// decision listed as satisfied. The page must follow the server.
 		net.queue = queue([
-			entry('blocking', dec(2, 'Accepted but blocking', { record, check: accepted })),
-			entry('blocking', dec(1, 'Second blocking')),
+			entry('this_sprint', dec(2, 'Accepted but blocking', { record, check: accepted })),
+			entry('this_sprint', dec(1, 'Second blocking')),
 			entry('open', dec(4, 'Not blocking yet')),
 			entry('satisfied', dec(5, 'Unchecked but satisfied')),
 			entry('closed', dec(6, 'Old one', { closed: closedBy }))
 		]);
 		await open();
-		expect(headings()).toEqual(['Blocking work', 'Open, not blocking yet', 'Accepted', 'Closed']);
-		expect(titles('#decisions-blocking')).toEqual(['Accepted but blocking', 'Second blocking']);
+		expect(headings()).toEqual(['Blocking this sprint', 'Open, not blocking yet', 'Accepted', 'Closed']);
+		expect(titles('#decisions-this_sprint')).toEqual(['Accepted but blocking', 'Second blocking']);
 		expect(titles('#decisions-open')).toEqual(['Not blocking yet']);
 		expect(titles('#decisions-satisfied')).toEqual(['Unchecked but satisfied']);
 		expect(document.getElementById('decisions-closed')).toBeNull();
@@ -184,7 +259,7 @@ describe('decisions queue page', () => {
 	});
 
 	it('keeps a decision withdrawn in the default view on screen with its outcome, its group folded', async () => {
-		net.queue = queue([entry('blocking', dec(1, 'Gate')), entry('open', dec(4, 'Free'))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Gate')), entry('open', dec(4, 'Free'))]);
 		net.afterClose = queue([
 			entry('open', dec(4, 'Free')),
 			entry('closed', dec(1, 'Gate', { closed: { ...closedBy, reason: 'no longer needed' }, version: 2 }))
@@ -209,9 +284,9 @@ describe('decisions queue page', () => {
 			expect(row()?.textContent).toContain('Withdrawn by');
 		});
 		// Pinned where it was shown while it holds focus: the Closed group itself stays folded.
-		expect(row().closest('ul')!.id).toBe('decisions-blocking');
+		expect(row().closest('ul')!.id).toBe('decisions-this_sprint');
 		// Counted where it is shown, though the server now puts it in Closed.
-		expect(text(document.body.querySelector('h2'))).toBe('Blocking work 1');
+		expect(text(document.body.querySelector('h2'))).toBe('Blocking this sprint 1');
 		expect(row().contains(document.activeElement)).toBe(true);
 		expect(document.getElementById('decisions-closed')).toBeNull();
 		// Once focus leaves, it folds into the collapsed Closed group.
@@ -232,9 +307,9 @@ describe('decisions queue page', () => {
 	});
 
 	it('renders no heading for an empty group', async () => {
-		net.queue = queue([entry('blocking', dec(1, 'Gate')), entry('satisfied', dec(2, 'Settled', { record, check: accepted }))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Gate')), entry('satisfied', dec(2, 'Settled', { record, check: accepted }))]);
 		await open();
-		expect(headings()).toEqual(['Blocking work', 'Accepted']);
+		expect(headings()).toEqual(['Blocking this sprint', 'Accepted']);
 		expect(document.getElementById('decisions-open')).toBeNull();
 	});
 
@@ -254,17 +329,17 @@ describe('decisions queue page', () => {
 			blockedStory({ key: 'RV-7', title: 'Seven' }),
 			blockedStory({ key: 'RV-8', title: 'Eight' })
 		];
-		net.queue = queue([entry('blocking', dec(1, 'Gate'), blocks), entry('open', dec(4, 'Free'))]);
+		net.queue = queue([entry('this_sprint', dec(1, 'Gate'), blocks), entry('open', dec(4, 'Free'))]);
 		await open();
 		const lines = [...document.body.querySelectorAll('button[data-field="blocks"]')].map((l) => text(l));
-		expect(lines).toEqual(['Blocks 2 stories ▸']);
-		expect(document.getElementById('decisions-blocking')!.textContent).toContain('Blocks 2 stories');
+		expect(lines).toEqual(['Holds 2 ▸']);
+		expect(document.getElementById('decisions-this_sprint')!.textContent).toContain('Holds 2');
 	});
 
 	it('says how fresh the newest record check is', async () => {
 		net.queue = queue([
 			entry('satisfied', dec(2, 'Settled', { record, check: accepted, checked_at: '2026-10-27T11:57:00Z' })),
-			entry('blocking', dec(4, 'Proposed', { record, check: { kind: 'proposed_pr_open' }, checked_at: '2026-10-27T11:00:00Z' }))
+			entry('this_sprint', dec(4, 'Proposed', { record, check: { kind: 'proposed_pr_open' }, checked_at: '2026-10-27T11:00:00Z' }))
 		]);
 		await open();
 		expect(document.body.querySelector('.checked-all')?.textContent?.trim()).toBe('Records checked 3m ago');
