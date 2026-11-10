@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import Logo from '#lib/components/Logo.svelte';
 
 	// Plain fetch, never `unwrap`: this page renders signed out, and /auth/status is not an API envelope.
 	let signIn = $state<boolean | null>(null);
@@ -27,7 +28,7 @@
 
 <main class="signin-page">
 	<div class="card">
-		<h1>Reeve</h1>
+		<h1 class="title"><Logo />Reeve</h1>
 		<p class="muted">Plan the work, then build it.</p>
 		{#if notAllowed}
 			<p role="alert">This address is not allowed on this instance.</p>
@@ -66,5 +67,11 @@
 	}
 	.card > * {
 		margin: 0;
+	}
+	.title {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
 	}
 </style>

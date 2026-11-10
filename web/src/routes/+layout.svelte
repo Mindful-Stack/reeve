@@ -19,6 +19,7 @@
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
+	import Logo from '#lib/components/Logo.svelte';
 	import GoalPicker from '#lib/components/GoalPicker.svelte';
 	import type { LayoutProps } from './$types';
 
@@ -217,7 +218,7 @@
 		<p class="status">Loading…</p>
 	{:then}
 		<header class="top-bar">
-			<a class="brand" href="/">Reeve</a>
+			<a class="brand" href="/"><Logo />Reeve</a>
 			<nav aria-label="Main">
 				{#each links as link (link.href)}
 					<a href={link.href} aria-current={isCurrent(page.url, link.href) ? 'page' : undefined}>{link.label}</a>
@@ -266,6 +267,9 @@
 
 <style>
 	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 		color: var(--foreground);
 		font-size: 18px;
 		font-weight: 700;
