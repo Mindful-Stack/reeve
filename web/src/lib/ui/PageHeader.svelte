@@ -25,6 +25,8 @@
 		gap: 8px 12px;
 		/* Below about 18rem beside the title, the actions take their own row instead of a narrow column. */
 		flex: 1 1 18rem;
+		/* Never wider than the page: a wide control (a select with long options) shrinks instead of scrolling the page. */
+		min-width: 0;
 		font-size: 14px;
 	}
 </style>

@@ -162,13 +162,16 @@
 		gap: 6px;
 		color: var(--muted);
 	}
+	/* A long option (an epic's key and title) shrinks the select, not the page: at 320px the label fits the panel. */
 	.inline {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
+		max-width: 100%;
 	}
 	select {
+		flex: 0 1 auto;
 		max-width: 16rem;
 		min-width: 0;
 	}
