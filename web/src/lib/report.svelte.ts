@@ -3,7 +3,7 @@
 // captured once, when a draft starts (spec: Report from anywhere, Rules 3 and 5).
 import { KINDS, type Kind } from '#lib/board.ts';
 import { newDraftKey, type DraftKey } from '#lib/idempotency.ts';
-import { ImageUploads, stripOrphans, type AttachmentRef } from '#lib/attach.svelte.ts';
+import { ImageUploads, shownIds, stripOrphans, type AttachmentRef } from '#lib/attach.svelte.ts';
 
 export type Origin = { path: string; label: string };
 export type EpicRef = { key: string; title: string };
@@ -31,6 +31,8 @@ const TEMPLATES: Record<Kind, string> = {
 	chore: ''
 };
 const STORAGE = 'reeve.report-draft';
+
+let uploadsOf: { draft: Draft; uploads: ImageUploads } | null = null;
 
 export const report = $state<{ draft: Draft | null; open: boolean }>({ draft: null, open: false });
 
@@ -96,6 +98,7 @@ export function openReport(ctx: Origin & { epic: EpicRef | null }): void {
 
 export function discardDraft(opts: { keepStorage?: boolean } = {}): void {
 	report.draft = null;
+	uploadsOf = null;
 	report.open = false;
 	if (!opts.keepStorage) clearStored();
 }
@@ -108,7 +111,7 @@ export function payloadOf(d: Draft) {
 	const path = d.origin.path.replace(/[()]/g, (c) => (c === '(' ? '%28' : '%29'));
 	const from = `Reported from: [${label}](${path})`;
 	const description = body ? `${body}\n\n${from}` : from;
-	const attachments = (d.attachments ?? []).filter((r) => description.includes(`(${r.url})`)).map((r) => r.id);
+	const attachments = shownIds(description, d.attachments ?? []);
 	return {
 		title: d.title.trim(),
 		kind: d.kind,
@@ -121,7 +124,6 @@ export function payloadOf(d: Draft) {
 	};
 }
 
-let uploadsOf: { draft: Draft; uploads: ImageUploads } | null = null;
 /** The current draft's image uploads, kept here with the draft so closing the dialog never loses one in flight. */
 export function reportUploads(): ImageUploads {
 	const d = report.draft!;

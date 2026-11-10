@@ -443,3 +443,91 @@ fn a_container_with_no_image_in_it_is_unreadable() {
         );
     }
 }
+
+#[test]
+fn clean_jpeg_and_webp_come_back_byte_for_byte() {
+    for (t, f) in [
+        (ImageType::Jpeg, ImageFormat::Jpeg),
+        (ImageType::Webp, ImageFormat::WebP),
+    ] {
+        let b = encode(f);
+        assert_eq!(strip_metadata(t, b.clone()).unwrap(), b, "{t:?}");
+    }
+}
+
+#[test]
+fn a_multi_scan_jpeg_with_restarts_and_fill_bytes_is_walked_to_its_end() {
+    // The walker never decodes: a synthetic progressive-shaped stream is enough.
+    let mut b = vec![0xFF, 0xD8];
+    b.extend(segment(0xE0, b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0"));
+    b.extend(segment(0xC2, &[8, 0, 1, 0, 1, 1, 1, 0x11, 0]));
+    b.extend(segment(
+        0xC4,
+        &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ));
+    b.extend(segment(0xDA, &[1, 1, 0, 0, 63, 0]));
+    b.extend_from_slice(&[
+        0x12, 0xFF, 0x00, 0x34, 0xFF, 0xD0, 0x56, 0xFF, 0xFF, 0xD1, 0x78,
+    ]);
+    b.extend(segment(0xFE, b"secret between scans"));
+    b.extend(segment(
+        0xC4,
+        &[0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ));
+    b.extend(segment(0xDA, &[1, 1, 0, 1, 63, 0]));
+    b.extend_from_slice(&[0x9A, 0xBC]);
+    b.extend_from_slice(&[0xFF, 0xD9]);
+    let out = strip_metadata(ImageType::Jpeg, Bytes::from(b.clone())).unwrap();
+    assert_nothing_planted(&out);
+    // Everything but the comment, byte for byte, the stuffed bytes and restarts of the first scan included.
+    let mut expected = b.clone();
+    let com = segment(0xFE, b"secret between scans");
+    let at = expected
+        .windows(com.len())
+        .position(|w| w == com.as_slice())
+        .unwrap();
+    expected.drain(at..at + com.len());
+    // The walker drops a fill byte before a marker inside a scan only as part of the entropy run: compare as is.
+    assert_eq!(out.as_ref(), expected.as_slice());
+}
+
+#[test]
+fn a_phone_layout_exif_first_keeps_one_orientation_block_right_after_soi() {
+    let clean = encode(ImageFormat::Jpeg);
+    let mut j = Jpeg::from_bytes(clean.clone()).unwrap();
+    j.segments_mut().retain(|s| s.marker() != 0xE0); // no JFIF, as many cameras write
+    let le = b"II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+    j.set_exif(Some(Bytes::from_static(le)));
+    let out = strip_metadata(ImageType::Jpeg, j.encoder().bytes()).unwrap();
+    let segs = jpeg_segments(&out);
+    assert_eq!(segs[0].0, 0xE1, "the orientation block comes first");
+    assert_eq!(segs.iter().filter(|(m, _)| *m == 0xE1).count(), 1);
+    let exif = Jpeg::from_bytes(out.clone()).unwrap().exif().unwrap();
+    assert_eq!(&exif[18..20], &[0, 6]);
+    assert_eq!(pixels(&out), pixels(&clean));
+}
+
+#[test]
+fn containers_without_a_bitstream_are_unreadable() {
+    let mut p = Png::from_bytes(encode(ImageFormat::Png)).unwrap();
+    p.chunks_mut().retain(|c| c.kind() != *b"IDAT");
+    assert!(strip_metadata(ImageType::Png, p.encoder().bytes()).is_err());
+    let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+    w.chunks_mut()
+        .retain(|c| !matches!(&c.id(), b"VP8 " | b"VP8L"));
+    assert!(strip_metadata(ImageType::Webp, w.encoder().bytes()).is_err());
+}
+
+#[test]
+fn every_prefix_of_every_fixture_is_refused_or_stripped_and_never_panics() {
+    // Untrusted input through hand-written indexing: a truncated file must answer, not crash the server.
+    for (t, b) in [
+        (ImageType::Jpeg, jpeg_with(true, true, true)),
+        (ImageType::Png, png_with_metadata()),
+        (ImageType::Webp, webp_with_metadata()),
+    ] {
+        for n in 0..b.len() {
+            let _ = strip_metadata(t, b.slice(..n));
+        }
+    }
+}

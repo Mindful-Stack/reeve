@@ -543,4 +543,175 @@ mod attachment_handlers {
             Err(HandlerError::NotFound)
         ));
     }
+
+    #[tokio::test]
+    async fn a_claim_with_one_foreign_image_rolls_back_mine_on_create_edit_and_comment() {
+        let w = world().await;
+        let c = ctx("a@x");
+        let story =
+            w.h.create_story(
+                &c,
+                "base",
+                "S",
+                Kind::Story,
+                None,
+                "",
+                vec![],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let theirs = up(&w, "b@x").await;
+        // Each write names one of mine (which the UPDATE takes first) and one of theirs: the whole write must go.
+        let mine = up(&w, "a@x").await;
+        let r = w
+            .h
+            .create_initiative_attaching(&c, "i", "I", "", "Now", None, None, None, &[mine, theirs])
+            .await;
+        assert!(matches!(r, Err(HandlerError::Validation(_))));
+        assert!(
+            w.h.ports
+                .keys
+                .find_by_idempotency(ItemType::Initiative, "i")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(owner(&w, mine).await, None);
+
+        let r =
+            w.h.edit_story_attaching(
+                &c,
+                story.key(),
+                story.version(),
+                None,
+                Some("changed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[mine, theirs],
+            )
+            .await;
+        assert!(r.is_err());
+        let now = w.h.get_story(story.key()).await.unwrap();
+        assert_eq!((now.version(), now.description()), (story.version(), ""));
+        assert_eq!(owner(&w, mine).await, None);
+
+        let r =
+            w.h.comment_item_attaching(
+                &c,
+                ItemType::Story,
+                story.key(),
+                "see",
+                Some("ck"),
+                &[mine, theirs],
+            )
+            .await;
+        assert!(r.is_err());
+        assert!(
+            w.h.comments_for_story(story.key())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(owner(&w, mine).await, None);
+        let added = entries(&w.pool)
+            .await
+            .iter()
+            .filter(|e| e.2 != "created")
+            .count();
+        assert_eq!(added, 0, "an entry outlived a refused write");
+    }
+
+    #[tokio::test]
+    async fn a_replayed_comment_claims_nothing_more() {
+        let w = world().await;
+        let c = ctx("a@x");
+        let epic = w.h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+        let first = up(&w, "a@x").await;
+        w.h.comment_item_attaching(&c, ItemType::Epic, epic.key(), "x", Some("same"), &[first])
+            .await
+            .unwrap();
+        let fresh = up(&w, "a@x").await;
+        w.h.comment_item_attaching(
+            &c,
+            ItemType::Epic,
+            epic.key(),
+            "x",
+            Some("same"),
+            &[first, fresh],
+        )
+        .await
+        .unwrap();
+        assert_eq!(owner(&w, fresh).await, None);
+        let added = entries(&w.pool)
+            .await
+            .iter()
+            .filter(|e| e.2 == "attachment_added")
+            .count();
+        assert_eq!(added, 1);
+    }
+
+    #[tokio::test]
+    async fn a_refused_upload_still_sweeps_and_a_deleted_key_uploads_anew() {
+        let w = world().await;
+        let mut old = ctx("a@x");
+        old.now -= Duration::days(8);
+        let stale =
+            w.h.upload_attachment(&old, "s.png", None, png())
+                .await
+                .unwrap();
+        let mut young = ctx("a@x");
+        young.now -= Duration::days(7) - Duration::seconds(1);
+        let kept =
+            w.h.upload_attachment(&young, "k.png", None, png())
+                .await
+                .unwrap();
+        let svg = Bytes::from_static(b"<svg/>");
+        assert!(
+            w.h.upload_attachment(&ctx("a@x"), "x.svg", None, svg)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            w.h.attachment_meta(stale.id(), "a@x").await,
+            Err(HandlerError::NotFound)
+        ));
+        assert!(
+            w.h.attachment_meta(kept.id(), "a@x").await.is_ok(),
+            "a just-under-seven-days upload was swept"
+        );
+
+        let first =
+            w.h.upload_attachment(&ctx("a@x"), "a.png", Some("k"), png())
+                .await
+                .unwrap();
+        w.h.delete_attachment(&ctx("a@x"), first.id())
+            .await
+            .unwrap();
+        let again =
+            w.h.upload_attachment(&ctx("a@x"), "a.png", Some("k"), png())
+                .await
+                .unwrap();
+        assert_ne!(again.id(), first.id());
+    }
+
+    #[tokio::test]
+    async fn exactly_fifty_ids_may_be_claimed_and_duplicates_count_once() {
+        let w = world().await;
+        let i = up(&w, "a@x").await;
+        let mut ids: Vec<Uuid> = (0..MAX_CLAIM - 1).map(|_| Uuid::new_v4()).collect();
+        ids.push(i);
+        ids.push(i); // a duplicate: 51 entries, 50 ids
+        w.h.create_epic_attaching(&ctx("a@x"), "e", "E", None, "", None, &ids)
+            .await
+            .unwrap();
+        assert_eq!(owner(&w, i).await.unwrap().0, ItemType::Epic);
+    }
 }

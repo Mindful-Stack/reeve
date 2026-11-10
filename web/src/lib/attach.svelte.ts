@@ -38,7 +38,7 @@ export function unique(name: string, taken: Set<string>): string {
 export const altFor = (name: string): string => name.replace(/\.[^.]+$/, '').replace(/[\\[\]]/g, '\\$&');
 
 /** The placeholders a reload in mid-upload leaves in a restored draft, and their trailing newline. */
-const ORPHAN = /!\[Uploading [^\]]*‹u\d+›\]\(\)\n?/g;
+const ORPHAN = /!\[Uploading (?:\\.|[^\]\\])*‹u\d+›\]\(\)\n?/g;
 export const stripOrphans = (text: string): string => text.replace(ORPHAN, '');
 
 /** Refuses what the server would refuse, before uploading; a file whose type the OS left empty is the server's to
@@ -54,12 +54,25 @@ let seq = 0;
  *  another is still claimed by the write that saves it. */
 const stored = new Map<string, AttachmentRef>();
 
+/** The ids among `refs` and every upload this tab stored whose image `text` shows. */
+export function shownIds(text: string, refs: AttachmentRef[] = []): string[] {
+	const all = new Map([...stored, ...refs.map((r) => [r.id, r] as const)]);
+	return [...all.values()].filter((r) => text.includes(`(${r.url})`)).map((r) => r.id);
+}
+
 export class ImageUploads {
 	pending = $state<Pending[]>([]);
 	added = $state<AttachmentRef[]>([]);
 	/** For the `aria-live` region. */
 	status = $state('');
-	busy = $derived(this.pending.some((p) => p.state === 'uploading'));
+	/** A getter, not `$derived`: a controller may be created inside an effect that is later destroyed (the Report
+	 *  dialog's), and a derived owned by a destroyed effect stops updating. */
+	get busy(): boolean {
+		return this.pending.some((p) => p.state === 'uploading');
+	}
+	/** The field each upload was added in, to swap its placeholder in place. */
+	#fields = new Map<string, HTMLTextAreaElement>();
+	#leaving = false;
 
 	/** `get` and `set` read and write the field's model; `known` are uploads this draft made before (a restored
 	 *  Report); `onAdded` hears every upload stored, so a draft can keep the refs. */
@@ -79,9 +92,7 @@ export class ImageUploads {
 	/** The uploads still shown in the text: what the write sends as `attachments`. Any upload of this tab counts, so an
 	 *  image moved from another field is claimed too. */
 	ids(): string[] {
-		const text = this.get();
-		const all = new Map([...stored, ...this.added.map((r) => [r.id, r] as const)]);
-		return [...all.values()].filter((r) => text.includes(`(${r.url})`)).map((r) => r.id);
+		return shownIds(this.get(), this.added);
 	}
 
 	/** The `attachments` field of a write: absent when there are none, so a write without images is unchanged. */
@@ -90,8 +101,13 @@ export class ImageUploads {
 		return ids.length ? { attachments: ids } : {};
 	}
 
-	/** After a successful save: the row empties and nothing is deleted. */
+	/** After a successful save, and when an editor opens or is cancelled: the rows empty, the placeholders of uploads
+	 *  still running leave the text, and nothing is deleted. */
 	reset(): void {
+		let text = this.get();
+		for (const p of this.pending) if (p.state === 'uploading') text = text.replace(this.placeholder(p) + '\n', '').replace(this.placeholder(p), '');
+		if (text !== this.get()) this.set(text);
+		this.#fields.clear();
 		this.pending = [];
 		this.added = [];
 		this.status = '';
@@ -131,6 +147,8 @@ export class ImageUploads {
 		}
 		if (ready.length === 0) return;
 		this.insert(ready.map((p) => this.placeholder(p)).join('\n'), el);
+		if (el) for (const p of ready) this.#fields.set(p.token, el);
+		this.guardLeaving();
 		for (const p of ready) void this.upload(p, sources.get(p.token)!);
 	}
 
@@ -156,6 +174,36 @@ export class ImageUploads {
 		this.set(cur === '' || cur.endsWith('\n') ? cur + text : `${cur}\n${text}`);
 	}
 
+	/** Swaps `line` for `next` in the text: through the field it was added in when that is still there (so the caret,
+	 *  scroll and undo stay as the user left them), else through the model. */
+	private swap(p: Pending, line: string, next: string): void {
+		const el = this.#fields.get(p.token);
+		this.#fields.delete(p.token);
+		const i = el && el.isConnected && !el.disabled ? el.value.indexOf(line) : -1;
+		if (el && i >= 0) {
+			el.setRangeText(next, i, i + line.length, 'preserve');
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+			return;
+		}
+		const text = this.get();
+		if (text.includes(line)) this.set(text.replace(line, next));
+	}
+
+	/** The leave warning lasts while any upload runs, whether or not its field is still on the page. */
+	private readonly onLeave = (e: BeforeUnloadEvent) => {
+		if (this.busy) e.preventDefault();
+	};
+	private guardLeaving(): void {
+		if (typeof window === 'undefined') return;
+		if (this.busy && !this.#leaving) {
+			window.addEventListener('beforeunload', this.onLeave);
+			this.#leaving = true;
+		} else if (!this.busy && this.#leaving) {
+			window.removeEventListener('beforeunload', this.onLeave);
+			this.#leaving = false;
+		}
+	}
+
 	private update(p: Pending, patch: Partial<Pending>): void {
 		this.pending = this.pending.map((x) => (x.token === p.token ? { ...x, ...patch } : x));
 	}
@@ -179,19 +227,18 @@ export class ImageUploads {
 			if (!this.pending.some((x) => x.token === p.token)) return;
 			this.added = [...this.added, ref];
 			this.onAdded?.(this.refs());
-			const text = this.get();
-			const line = this.placeholder(p);
 			// The placeholder was edited away meanwhile: the image is not put back; the upload stays unclaimed.
-			if (text.includes(line)) this.set(text.replace(line, `![${altFor(p.name)}](${dto.url})`));
+			this.swap(p, this.placeholder(p), `![${altFor(p.name)}](${dto.url})`);
 			this.update(p, { state: 'added', url: dto.url });
+			this.guardLeaving();
 			this.status = `${p.name} added`;
 		} catch (e) {
 			if (!this.pending.some((x) => x.token === p.token)) return;
 			const message = e instanceof ApiError && e.code !== 'transport' ? e.message : 'the image could not be uploaded; add it again';
 			this.update(p, { state: 'failed', error: message });
-			const text = this.get();
 			const line = this.placeholder(p);
-			if (text.includes(line)) this.set(text.replace(line + '\n', '').replace(line, ''));
+			this.swap(p, this.get().includes(line + '\n') ? line + '\n' : line, '');
+			this.guardLeaving();
 			this.status = `${p.name}: ${message}`;
 		}
 	}
@@ -237,14 +284,10 @@ export function attachable(uploads: ImageUploads): Attachment<HTMLTextAreaElemen
 			e.preventDefault();
 			uploads.add(files, el);
 		};
-		const onLeave = (e: BeforeUnloadEvent) => {
-			if (uploads.busy) e.preventDefault();
-		};
 		el.addEventListener('paste', onPaste);
 		el.addEventListener('dragover', onDragOver);
 		el.addEventListener('dragleave', onDragLeave);
 		el.addEventListener('drop', onDrop);
-		window.addEventListener('beforeunload', onLeave);
 		if (guards++ === 0) {
 			window.addEventListener('dragover', guard);
 			window.addEventListener('drop', guard);
@@ -254,7 +297,6 @@ export function attachable(uploads: ImageUploads): Attachment<HTMLTextAreaElemen
 			el.removeEventListener('dragover', onDragOver);
 			el.removeEventListener('dragleave', onDragLeave);
 			el.removeEventListener('drop', onDrop);
-			window.removeEventListener('beforeunload', onLeave);
 			if (--guards === 0) {
 				window.removeEventListener('dragover', guard);
 				window.removeEventListener('drop', guard);

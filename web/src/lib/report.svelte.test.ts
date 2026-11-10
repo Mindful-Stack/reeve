@@ -174,3 +174,20 @@ describe('report draft images', () => {
 		expect(restoreDraft('dan@example.com')).toBe(false);
 	});
 });
+
+describe('the report draft controller', () => {
+	it('is one per draft, seeded with its refs, and new after a discard', async () => {
+		const { reportUploads } = await import('./report.svelte.ts');
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'x';
+		report.draft!.attachments = [{ id: 'img-1', url: '/api/v1/attachments/img-1' }];
+		report.draft!.description = '![a](/api/v1/attachments/img-1)';
+		const a = reportUploads();
+		expect(reportUploads()).toBe(a);
+		expect(a.ids()).toEqual(['img-1']);
+		discardDraft();
+		openReport({ path: '/board', label: 'Board', epic: null });
+		expect(reportUploads()).not.toBe(a);
+		expect(reportUploads().ids()).toEqual([]);
+	});
+});

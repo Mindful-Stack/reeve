@@ -275,7 +275,7 @@
 						oninput={(e) => (d.description = e.currentTarget.value)}
 						rows="6"
 						disabled={busy}
-						{@attach attachable(reportUploads())}
+						{@attach uploads && attachable(uploads)}
 					></textarea></label
 				>
 				{#if uploads}<ImageUploadsRow {uploads} field={descriptionEl} disabled={busy} />{/if}

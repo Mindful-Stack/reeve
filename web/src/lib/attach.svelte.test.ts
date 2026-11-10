@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 // The image upload controller and its textarea attachment (spec: Screenshots on items, §3).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushSync } from 'svelte';
+const flushEffects = () => flushSync();
 import type { Call } from './test/net';
 
 const net = vi.hoisted(() => ({
 	calls: [] as Call[],
-	next: [] as Array<(c: Call) => unknown>
+	next: [] as Array<(c: Call) => unknown>,
+	/** Every held upload, released when its test ends so none stays busy into the next. */
+	held: [] as Array<() => void>
 }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('./test/net');
@@ -18,7 +22,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	});
 	return orig();
 });
-const { ImageUploads, attachable, nameFor, altFor, stripOrphans, MESSAGES } = await import('./attach.svelte.ts');
+const { ImageUploads, attachable, nameFor, altFor, stripOrphans, unique, MESSAGES } = await import('./attach.svelte.ts');
 const { pasteEvent, dragEvent, file } = await import('./test/events');
 const { ok, failure } = await import('./test/net');
 
@@ -26,15 +30,16 @@ const { ok, failure } = await import('./test/net');
 function deferred(id: string) {
 	let release!: () => void;
 	const gate = new Promise<void>((r) => (release = r));
+	net.held.push(release);
 	net.next.push(async () => {
 		await gate;
 		return ok({ id, url: `/api/v1/attachments/${id}`, filename: 'x', content_type: 'image/png', byte_size: 4, uploaded_by: 'a@x', uploaded_at: '2026-11-10T09:00:00Z' });
 	});
 	return release;
 }
-const settle = () => new Promise((r) => setTimeout(r, 0));
+/** Waits until `cond` holds, failing with a timeout rather than silently going on. */
 async function until(cond: () => boolean) {
-	for (let i = 0; i < 50 && !cond(); i++) await settle();
+	await vi.waitFor(() => expect(cond()).toBe(true));
 }
 
 let el: HTMLTextAreaElement;
@@ -59,9 +64,11 @@ beforeEach(() => {
 	);
 	detach = attachable(u)(el) as () => void;
 });
-afterEach(() => {
+afterEach(async () => {
 	detach();
 	el.remove();
+	for (const r of net.held.splice(0)) r();
+	await new Promise((r) => setTimeout(r, 20));
 });
 
 describe('ImageUploads', () => {
@@ -85,6 +92,8 @@ describe('ImageUploads', () => {
 	});
 
 	it('keeps two same-named files apart when they finish out of order', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 10, 14, 32, 5));
 		const first = deferred('one');
 		const second = deferred('two');
 		u.add([file('image.png'), file('image.png')], el);
@@ -96,6 +105,7 @@ describe('ImageUploads', () => {
 		await until(() => model.includes('/two)'));
 		first();
 		await until(() => !u.busy);
+		vi.useRealTimers();
 		const lines = model.split('\n');
 		expect(lines[0]).toContain('(/api/v1/attachments/one)');
 		expect(lines[1]).toContain('(/api/v1/attachments/two)');
@@ -112,7 +122,7 @@ describe('ImageUploads', () => {
 	it('puts nothing back when the placeholder was edited away, and leaves the upload alone', async () => {
 		const release = deferred('gone');
 		u.add([file('shot.png')], el);
-		model = 'rewritten';
+		el.value = model = 'rewritten';
 		release();
 		await until(() => !u.busy);
 		expect(model).toBe('rewritten');
@@ -192,7 +202,108 @@ describe('ImageUploads', () => {
 	});
 });
 
+describe('ImageUploads, more', () => {
+	it('keeps busy live when it was created in an effect that is gone (the Report dialog closing)', async () => {
+		let made: InstanceType<typeof ImageUploads> | null = null;
+		let text = '';
+		const stop = $effect.root(() => {
+			$effect(() => {
+				made = new ImageUploads(() => text, (t) => (text = t));
+			});
+		});
+		flushEffects();
+		stop();
+		const release = deferred('late');
+		made!.add([file('shot.png')]);
+		expect(made!.busy).toBe(true);
+		release();
+		await until(() => !made!.busy);
+		expect(text).toBe('![shot](/api/v1/attachments/late)');
+	});
+
+	it('swaps the placeholder in place, leaving the caret where the user is typing', async () => {
+		const release = deferred('caret');
+		u.add([file('shot.png')], el);
+		el.value += '\nmore text';
+		el.dispatchEvent(new Event('input'));
+		el.selectionStart = el.selectionEnd = el.value.length - 4;
+		release();
+		await until(() => !u.busy);
+		expect(model).toBe('![shot](/api/v1/attachments/caret)\nmore text');
+		// A whole-value write would have put the caret at the end.
+		expect(el.value.slice(el.selectionStart)).toBe('text');
+	});
+
+	it('takes a placeholder out when its row is removed or reset mid-upload, and stores nothing for it', async () => {
+		const seen: unknown[] = [];
+		const c = new ImageUploads(() => model, (t) => (model = t), [], (r) => seen.push(r));
+		const release = deferred('gone');
+		c.add([file('shot.png')]);
+		c.remove(c.pending[0]);
+		expect(model).toBe('');
+		release();
+		await vi.waitFor(() => expect(net.calls.length).toBeGreaterThan(0));
+		await new Promise((r) => setTimeout(r, 10));
+		expect([c.ids(), seen, model]).toEqual([[], [], '']);
+		const again = deferred('reset');
+		c.add([file('two.png')]);
+		c.reset();
+		expect(model).toBe('');
+		again();
+	});
+
+	it('says a lost upload in the app’s words', async () => {
+		net.next.push(() => {
+			throw new Error('network down');
+		});
+		u.add([file('shot.png')], el);
+		await until(() => !u.busy);
+		expect(u.pending[0].error).toBe('the image could not be uploaded; add it again');
+		expect(model).toBe('');
+	});
+
+	it('numbers names that are taken', () => {
+		expect(unique('a.png', new Set(['a.png', 'a-2.png']))).toBe('a-3.png');
+		expect(unique('notes', new Set(['notes']))).toBe('notes-2');
+		expect(unique('.hidden', new Set(['.hidden']))).toBe('.hidden-2');
+	});
+
+	it('warns before leaving only while an upload runs, even with its field gone', async () => {
+		const release = deferred('leave');
+		u.add([file('shot.png')], el);
+		detach();
+		detach = () => {};
+		const during = new Event('beforeunload', { cancelable: true });
+		window.dispatchEvent(during);
+		expect(during.defaultPrevented).toBe(true);
+		release();
+		await until(() => !u.busy);
+		const after = new Event('beforeunload', { cancelable: true });
+		window.dispatchEvent(after);
+		expect(after.defaultPrevented).toBe(false);
+	});
+});
+
 describe('attachable', () => {
+	it('keeps the window guard while any field is mounted, and only for files', () => {
+		const second = document.createElement('textarea');
+		document.body.append(second);
+		const detachSecond = attachable(u)(second) as () => void;
+		detach();
+		detach = () => {};
+		const beside = dragEvent('drop', [file('a.png')]);
+		window.dispatchEvent(beside);
+		expect(beside.defaultPrevented).toBe(true);
+		const text = dragEvent('dragover', []);
+		window.dispatchEvent(text);
+		expect(text.defaultPrevented).toBe(false);
+		detachSecond();
+		const after = dragEvent('drop', [file('a.png')]);
+		window.dispatchEvent(after);
+		expect(after.defaultPrevented).toBe(false);
+		second.remove();
+	});
+
 	it('handles an image-only paste and a copied file, and leaves a rich text paste to the browser', () => {
 		deferred('p');
 		const image = pasteEvent([file('image.png')]);

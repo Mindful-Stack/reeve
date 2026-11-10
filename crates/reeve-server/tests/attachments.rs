@@ -438,4 +438,122 @@ mod attachments {
         .await;
         assert_eq!(res.status(), 400);
     }
+
+    async fn upload_id(h: &Harness, token: &str) -> String {
+        let (s, v) = upload(h, token, png(4, 4, false)).await;
+        assert_eq!(s, 200, "{v}");
+        v["value"]["id"].as_str().unwrap().to_string()
+    }
+
+    /// Visible to another member once claimed, and listed under its item.
+    async fn claimed_by(h: &Harness, id: &str, key: &str) {
+        assert_eq!(
+            get(h, &h.victim_token, id, None).await.status(),
+            200,
+            "{id} not claimed by {key}"
+        );
+        let (_, list) = call(
+            &h.app,
+            Some(&h.victim_token),
+            "GET",
+            &format!("/api/v1/items/{key}/attachments"),
+            None,
+        )
+        .await;
+        assert!(
+            list["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["id"] == id),
+            "{list}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_create_and_edit_route_claims_its_images() {
+        let h = harness().await;
+        let t = h.admin_token.clone();
+        let creates = [
+            (
+                "/api/v1/initiatives",
+                json!({"idempotency_key": "ri", "title": "I", "horizon": "Now"}),
+            ),
+            (
+                "/api/v1/epics",
+                json!({"idempotency_key": "re", "title": "E"}),
+            ),
+            (
+                "/api/v1/stories",
+                json!({"idempotency_key": "rs", "title": "S", "kind": "story", "criteria": [], "labels": []}),
+            ),
+        ];
+        for (path, mut body) in creates {
+            let id = upload_id(&h, &t).await;
+            body["attachments"] = json!([id]);
+            let (s, v) = call(&h.app, Some(&t), "POST", path, Some(body)).await;
+            assert_eq!(s, 200, "{path}: {v}");
+            let key = v["value"]["key"].as_str().unwrap().to_string();
+            claimed_by(&h, &id, &key).await;
+            // And the edit of the same item.
+            let edit = upload_id(&h, &t).await;
+            let field = if path.ends_with("stories") {
+                "description"
+            } else {
+                "brief"
+            };
+            let (s, v) = call(
+                &h.app,
+                Some(&t),
+                "PATCH",
+                &format!("{path}/{key}"),
+                Some(
+                    json!({"version": v["value"]["version"], field: "see", "attachments": [edit]}),
+                ),
+            )
+            .await;
+            assert_eq!(s, 200, "PATCH {path}: {v}");
+            claimed_by(&h, &edit, &key).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_save_naming_another_persons_image_is_refused_and_writes_nothing() {
+        let h = harness().await;
+        let theirs = upload_id(&h, &h.victim_token).await;
+        let (s, v) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/stories",
+            Some(json!({"idempotency_key": "foreign", "title": "S", "kind": "story", "criteria": [], "labels": [], "attachments": [theirs]})),
+        )
+        .await;
+        assert_eq!((s, v["code"].as_str()), (400, Some("validation")), "{v}");
+        assert!(v["message"].as_str().unwrap().contains("already attached"));
+        let (_, list) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/stories", None).await;
+        assert!(
+            list["value"].as_array().unwrap().is_empty(),
+            "a story was created: {list}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_etag_that_does_not_match_gets_the_image() {
+        let h = harness().await;
+        let id = upload_id(&h, &h.admin_token).await;
+        let tag = get(&h, &h.admin_token, &id, None).await.headers()["etag"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let other = get(&h, &h.admin_token, &id, Some("\"deadbeef\"")).await;
+        assert_eq!(other.status(), 200);
+        assert!(!bytes_of(other).await.is_empty());
+        assert_eq!(
+            get(&h, &h.admin_token, &id, Some(&format!("\"x\", W/{tag}")))
+                .await
+                .status(),
+            304
+        );
+    }
 }

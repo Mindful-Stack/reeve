@@ -43,6 +43,14 @@ struct Seeded {
 /// and done (`done_at` is set where the column exists), a block, a decision linked to a record with a check result,
 /// a comment with an idempotency key on a story and one on the decision, an allowed email and an admin grant, a goal linked to the epic in an opened sprint,
 /// a pull request through the signed webhook, and the activity of all of it. The harness already issued two users' tokens, one of them automation.
+fn image_small() -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
+        .write_to(&mut out, image::ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
 async fn seed(h: &Harness) -> Seeded {
     let (app, t) = (&h.app, h.admin_token.as_str());
     // Access rows (kb/ADR-0015), written with SQL: the API that writes them comes in a later change.
@@ -165,6 +173,16 @@ async fn seed(h: &Harness) -> Seeded {
     )
     .await;
     let uploaded = body_json(res).await;
+    // And one uploaded but never saved: its rows travel in the dump, the export leaves it out.
+    let unsaved = call_raw(
+        app,
+        axum::http::Request::post("/api/v1/attachments?filename=unsaved.png")
+            .header("authorization", format!("Bearer {t}"))
+            .body(axum::body::Body::from(image_small()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unsaved.status(), 200);
     let attachment = uploaded["value"]["id"].as_str().unwrap().to_string();
     post(
         app,

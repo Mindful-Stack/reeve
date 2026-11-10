@@ -22,18 +22,22 @@
 
 	const removed = (id: string) => window.dispatchEvent(new CustomEvent('reeve:attachment-removed', { detail: { id } }));
 
+	let seq = 0;
 	async function load() {
 		const key = itemKey;
+		const mine = ++seq;
 		try {
 			const next = await unwrap(api.GET('/api/v1/items/{key}/attachments', { params: { path: { key } } }));
-			if (key !== itemKey) return; // an answer for an item no longer shown
+			// An answer for an item no longer shown, or overtaken by a newer load: a stale list would report images as
+			// removed that are not.
+			if (key !== itemKey || mine !== seq) return;
 			// One deleted elsewhere (seen on the stream): its rendered images change too.
 			if (listKey === key) for (const a of list) if (!next.some((n) => n.id === a.id)) removed(a.id);
 			list = next;
 			listKey = key;
 			loadError = null;
 		} catch (e) {
-			if (key === itemKey) loadError = errorMessage(e);
+			if (key === itemKey && mine === seq) loadError = errorMessage(e);
 		}
 	}
 
