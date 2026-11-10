@@ -96,6 +96,11 @@ pub trait PlanningReads: Send + Sync {
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<reeve_protocol::CommentDto>, RepoError>;
+    /// Every claimed attachment's metadata, ordered by upload time then id (kb/ADR-0022 R5: no bytes).
+    async fn attachments_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<crate::domain::attachment::Attachment>, RepoError>;
     /// The lineage `urgency` needs: epics whose key is in `epics` or whose initiative is in `initiatives`, and the
     /// stories under `epics` or under those initiatives' epics. Two statements; none when both inputs are empty.
     async fn urgency_lineage_in(

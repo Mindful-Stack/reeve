@@ -62,6 +62,7 @@ pub struct StoryCounts {
 
 // DecisionRepo, CommentRepo and SprintRepo each carry `#[allow(clippy::too_many_arguments)]` by design:
 // some methods take the transaction, the key, the version and every field of the item, which is more than seven.
+mod attachments;
 mod comments;
 mod decisions;
 mod epics;
@@ -74,9 +75,17 @@ mod stories;
 mod urgency;
 
 pub use self::{
-    comments::CommentRepo, decisions::DecisionRepo, epics::EpicRepo, initiatives::InitiativeRepo,
-    keys::KeyRepo, pull_requests::PullRequestRepo, reads::PlanningReads, sprints::SprintRepo,
-    stories::StoryRepo, urgency::UrgencyRepo,
+    attachments::{AttachmentRepo, ClaimOutcome},
+    comments::CommentRepo,
+    decisions::DecisionRepo,
+    epics::EpicRepo,
+    initiatives::InitiativeRepo,
+    keys::KeyRepo,
+    pull_requests::PullRequestRepo,
+    reads::PlanningReads,
+    sprints::SprintRepo,
+    stories::StoryRepo,
+    urgency::UrgencyRepo,
 };
 
 /// Every planning port, each a view of one adapter (`frameworks/rust/repo-port-adapter`, "Single-impl,
@@ -84,6 +93,7 @@ pub use self::{
 #[derive(Clone)]
 pub struct PlanningPorts {
     pub keys: Arc<dyn KeyRepo>,
+    pub attachments: Arc<dyn AttachmentRepo>,
     pub initiatives: Arc<dyn InitiativeRepo>,
     pub epics: Arc<dyn EpicRepo>,
     pub stories: Arc<dyn StoryRepo>,

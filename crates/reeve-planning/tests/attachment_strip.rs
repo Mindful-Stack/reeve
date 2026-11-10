@@ -8,6 +8,14 @@ use reeve_planning::{ImageType, strip_metadata};
 use std::io::Cursor;
 
 const EXIF: &[u8] = b"MM\0*\0\0\0\x08\0\x01\x01\x10\0\x02\0\0\0\x0aTestPhone\0\0\0\0\0";
+/// Every planted value; none may be left anywhere in a stripped file, whatever parser looks.
+const PLANTED: [&[u8]; 5] = [
+    b"TestPhone",
+    b"Tester",
+    b"secret",
+    b"ns.adobe.com",
+    b"MPF\0",
+];
 const XMP: &[u8] =
     b"<x:xmpmeta xmlns:x='adobe:ns:meta/'><dc:creator>Tester</dc:creator></x:xmpmeta>";
 
@@ -87,6 +95,19 @@ fn webp_chunks(b: &[u8]) -> (Vec<[u8; 4]>, Option<u8>) {
 
 fn jpeg_with(exif: bool, xmp: bool, iptc: bool) -> Bytes {
     let mut j = Jpeg::from_bytes(encode(ImageFormat::Jpeg)).unwrap();
+    // Extended XMP, a comment and an MPF index, each carrying a planted value.
+    let mut ext = b"http://ns.adobe.com/xmp/extension/\0".to_vec();
+    ext.extend_from_slice(b"Tester extended");
+    j.segments_mut()
+        .insert(1, JpegSegment::new_with_contents(0xE1, Bytes::from(ext)));
+    j.segments_mut().insert(
+        1,
+        JpegSegment::new_with_contents(0xFE, Bytes::from_static(b"secret comment")),
+    );
+    j.segments_mut().insert(
+        1,
+        JpegSegment::new_with_contents(0xE2, Bytes::from_static(b"MPF\0secret index")),
+    );
     if exif {
         j.set_exif(Some(Bytes::from_static(EXIF)));
     }
@@ -102,7 +123,10 @@ fn jpeg_with(exif: bool, xmp: bool, iptc: bool) -> Bytes {
             JpegSegment::new_with_contents(0xED, Bytes::from_static(b"Photoshop 3.0\0secret")),
         );
     }
-    j.encoder().bytes()
+    // A trailer after the end of the image, as motion photos and secondary images have.
+    let mut b = j.encoder().bytes().to_vec();
+    b.extend_from_slice(b"secret trailer TestPhone");
+    Bytes::from(b)
 }
 
 fn png_with_metadata() -> Bytes {
@@ -129,8 +153,11 @@ fn png_with_metadata() -> Bytes {
 }
 
 fn webp_with_metadata() -> Bytes {
+    use img_parts::ImageICC;
     use img_parts::riff::{RiffChunk, RiffContent};
     let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+    // An ICC profile keeps the extended header (VP8X) after the strip, so its flags are really checked.
+    w.set_icc_profile(Some(Bytes::from_static(b"icc profile bytes")));
     // set_exif turns the file into the extended format (VP8X) and sets its EXIF flag.
     w.set_exif(Some(Bytes::from_static(EXIF)));
     w.chunks_mut().push(RiffChunk::new(
@@ -142,6 +169,51 @@ fn webp_with_metadata() -> Bytes {
     let vp8x = b.windows(4).position(|x| x == b"VP8X").unwrap();
     b[vp8x + 8] |= 0x04;
     Bytes::from(b)
+}
+
+fn assert_nothing_planted(out: &[u8]) {
+    for p in PLANTED {
+        assert!(
+            !out.windows(p.len()).any(|w| w == p),
+            "{:?} left",
+            String::from_utf8_lossy(p)
+        );
+    }
+}
+
+/// A big-endian EXIF block with the camera model and an orientation.
+fn exif_with_orientation(o: u16) -> Bytes {
+    let mut v = b"MM\0*\0\0\0\x08\0\x02".to_vec();
+    v.extend_from_slice(&[0x01, 0x10, 0, 2, 0, 0, 0, 4]);
+    v.extend_from_slice(b"TPh\0"); // a model short enough to sit in the entry
+    v.extend_from_slice(&[0x01, 0x12, 0, 3, 0, 0, 0, 1]);
+    v.extend_from_slice(&o.to_be_bytes());
+    v.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    Bytes::from(v)
+}
+
+/// The compressed image data, which a strip must leave byte for byte: PNG's IDAT contents, the JPEG scan up to its
+/// end marker, the WebP bitstream chunk. Decoded pixels alone could not tell a lossless re-encode from a strip.
+fn payload(t: ImageType, b: &[u8]) -> Vec<u8> {
+    match t {
+        ImageType::Png => Png::from_bytes(Bytes::copy_from_slice(b))
+            .unwrap()
+            .chunks_by_type(*b"IDAT")
+            .flat_map(|c| c.contents().to_vec())
+            .collect(),
+        ImageType::Jpeg => {
+            let sos = b.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+            let eoi = b[sos..].windows(2).position(|w| w == [0xFF, 0xD9]).unwrap();
+            b[sos..sos + eoi + 2].to_vec()
+        }
+        ImageType::Webp => img_parts::webp::WebP::from_bytes(Bytes::copy_from_slice(b))
+            .unwrap()
+            .chunks()
+            .iter()
+            .filter(|c| matches!(&c.id(), b"VP8 " | b"VP8L"))
+            .flat_map(|c| c.content().data().unwrap().to_vec())
+            .collect(),
+    }
 }
 
 // ---- the tests ----
@@ -159,6 +231,12 @@ fn the_fixtures_carry_their_metadata() {
             .any(|(m, c)| *m == 0xE1 && c.starts_with(b"http://ns.adobe.com/xap/1.0/"))
     );
     assert!(j.iter().any(|(m, _)| *m == 0xED));
+    assert!(j.iter().any(|(m, _)| *m == 0xFE));
+    assert!(j.iter().any(|(m, c)| *m == 0xE2 && c.starts_with(b"MPF\0")));
+    assert!(
+        jpeg_with(false, false, false).ends_with(b"TestPhone"),
+        "the trailer is planted"
+    );
     let p = png_chunks(&png_with_metadata());
     for k in [b"eXIf", b"tEXt", b"zTXt", b"iTXt"] {
         assert!(p.contains(k), "{k:?}");
@@ -170,6 +248,7 @@ fn the_fixtures_carry_their_metadata() {
 
 #[test]
 fn jpeg_loses_exif_xmp_and_iptc_and_keeps_its_pixels() {
+    const T: ImageType = ImageType::Jpeg;
     let input = jpeg_with(true, true, true);
     let out = strip_metadata(ImageType::Jpeg, input.clone()).unwrap();
     for (m, c) in jpeg_segments(&out) {
@@ -183,11 +262,19 @@ fn jpeg_loses_exif_xmp_and_iptc_and_keeps_its_pixels() {
         jpeg_segments(&out).iter().any(|(m, _)| *m == 0xDA),
         "scan data kept"
     );
-    assert_eq!(pixels(&input), pixels(&out));
+    assert!(
+        out.ends_with(&[0xFF, 0xD9]),
+        "nothing after the end of the image"
+    );
+    assert_nothing_planted(&out);
+    assert_eq!(payload(T, &input), payload(T, &out), "image data changed");
+    // The planted extended XMP is not well-formed for decoders, so compare with the clean encoding instead.
+    assert_eq!(pixels(&encode(ImageFormat::Jpeg)), pixels(&out));
 }
 
 #[test]
 fn png_loses_every_metadata_chunk_and_keeps_its_pixels() {
+    const T: ImageType = ImageType::Png;
     let input = png_with_metadata();
     let out = strip_metadata(ImageType::Png, input.clone()).unwrap();
     let kinds = png_chunks(&out);
@@ -195,19 +282,25 @@ fn png_loses_every_metadata_chunk_and_keeps_its_pixels() {
         assert!(!kinds.contains(k), "{k:?} left");
     }
     assert!(kinds.contains(b"IDAT") && kinds.contains(b"IEND"));
+    assert_nothing_planted(&out);
+    assert_eq!(payload(T, &input), payload(T, &out), "image data changed");
     assert_eq!(pixels(&input), pixels(&out));
 }
 
 #[test]
 fn webp_loses_exif_and_xmp_and_their_header_flags_and_keeps_its_pixels() {
+    const T: ImageType = ImageType::Webp;
     let input = webp_with_metadata();
     let out = strip_metadata(ImageType::Webp, input.clone()).unwrap();
     let (ids, flags) = webp_chunks(&out);
     assert!(!ids.contains(b"EXIF") && !ids.contains(b"XMP "), "{ids:?}");
     // A VP8X header that still names EXIF or XMP makes strict decoders reject the file.
-    if let Some(f) = flags {
-        assert_eq!(f & 0x0C, 0, "VP8X flags still name metadata: {f:#x}");
-    }
+    let f = flags.expect("the ICC profile keeps VP8X");
+    assert_eq!(f & 0x0C, 0, "VP8X flags still name metadata: {f:#x}");
+    assert_eq!(f & 0x20, 0x20, "the ICC flag is kept");
+    assert!(ids.contains(b"ICCP"));
+    assert_nothing_planted(&out);
+    assert_eq!(payload(T, &input), payload(T, &out), "image data changed");
     assert_eq!(pixels(&input), pixels(&out));
 }
 
@@ -215,4 +308,46 @@ fn webp_loses_exif_and_xmp_and_their_header_flags_and_keeps_its_pixels() {
 fn a_clean_image_comes_back_unchanged() {
     let png = encode(ImageFormat::Png);
     assert_eq!(strip_metadata(ImageType::Png, png.clone()).unwrap(), png);
+}
+
+#[test]
+fn the_orientation_survives_and_nothing_else_of_the_exif_does() {
+    for t in [ImageType::Jpeg, ImageType::Webp] {
+        let input = match t {
+            ImageType::Jpeg => {
+                let mut j = Jpeg::from_bytes(encode(ImageFormat::Jpeg)).unwrap();
+                j.set_exif(Some(exif_with_orientation(6)));
+                j.encoder().bytes()
+            }
+            _ => {
+                let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+                w.set_exif(Some(exif_with_orientation(6)));
+                w.encoder().bytes()
+            }
+        };
+        let out = strip_metadata(t, input).unwrap();
+        let exif = match t {
+            ImageType::Jpeg => Jpeg::from_bytes(out.clone()).unwrap().exif(),
+            _ => img_parts::webp::WebP::from_bytes(out.clone())
+                .unwrap()
+                .exif(),
+        }
+        .expect("an orientation block");
+        // Exactly one IFD entry, the orientation, with the value 6.
+        assert_eq!(&exif[8..10], &[0, 1], "{t:?}");
+        assert_eq!(&exif[10..12], &[0x01, 0x12], "{t:?}");
+        assert_eq!(&exif[18..20], &[0, 6], "{t:?}");
+        assert!(
+            !out.windows(3).any(|w| w == b"TPh"),
+            "{t:?}: the model is left"
+        );
+    }
+}
+
+#[test]
+fn an_upright_orientation_leaves_no_exif_at_all() {
+    let mut j = Jpeg::from_bytes(encode(ImageFormat::Jpeg)).unwrap();
+    j.set_exif(Some(exif_with_orientation(1)));
+    let out = strip_metadata(ImageType::Jpeg, j.encoder().bytes()).unwrap();
+    assert!(Jpeg::from_bytes(out).unwrap().exif().is_none());
 }

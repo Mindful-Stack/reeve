@@ -73,31 +73,37 @@ pub enum UploadError {
     TooLarge,
 }
 
-/// The JPEG APP1 payload prefixes of EXIF and XMP.
-const JPEG_EXIF: &[u8] = b"Exif\0\0";
-const JPEG_XMP: &[u8] = b"http://ns.adobe.com/xap/1.0/";
-const JPEG_XMP_EXT: &[u8] = b"http://ns.adobe.com/xmp/extension/";
 const APP1: u8 = 0xE1;
+const APP2: u8 = 0xE2;
 const APP13: u8 = 0xED;
+const COM: u8 = 0xFE;
 /// The PNG chunks that carry metadata: EXIF and the three text chunks (XMP travels in `iTXt`).
 const PNG_META: [[u8; 4]; 4] = [*b"eXIf", *b"tEXt", *b"zTXt", *b"iTXt"];
+/// The VP8X flag that says an XMP chunk follows.
+const WEBP_XMP_FLAG: u8 = 0b0000_0100;
+const ORIENTATION: u16 = 0x0112;
 
-/// Removes EXIF and XMP metadata (and IPTC, and PNG text chunks) without decoding or re-encoding pixels
-/// (kb/ADR-0023 R3). Image data, colour profiles and every other segment are kept byte for byte.
+/// Removes EXIF and XMP metadata (and IPTC, comments, MPF and data past the image, and PNG text chunks) without
+/// decoding or re-encoding pixels (kb/ADR-0023 R3). Only the EXIF orientation survives, as a one-tag EXIF block, so a
+/// rotated photo still displays upright. Image data, colour profiles and the other segments are kept byte for byte.
 pub fn strip_metadata(t: ImageType, b: Bytes) -> Result<Bytes, UploadError> {
     let bad = |_| UploadError::Unreadable;
     Ok(match t {
         ImageType::Jpeg => {
             let mut j = Jpeg::from_bytes(b).map_err(bad)?;
+            let o = j.exif().and_then(|e| orientation(&e));
+            // set_exif also keeps an MPF index consistent; the MPF segment itself goes below.
+            j.set_exif(None);
             j.segments_mut().retain(|s| {
                 let c = s.contents();
                 !(s.marker() == APP13
+                    || s.marker() == COM
+                    || s.marker() == APP2 && c.starts_with(b"MPF\0")
                     || s.marker() == APP1
-                        && (c.starts_with(JPEG_EXIF)
-                            || c.starts_with(JPEG_XMP)
-                            || c.starts_with(JPEG_XMP_EXT)))
+                        && (c.starts_with(b"Exif\0\0") || c.starts_with(b"http://ns.adobe.com/x")))
             });
-            j.encoder().bytes()
+            j.set_exif(o.map(orientation_exif));
+            jpeg_until_end(j.encoder().bytes())?
         }
         ImageType::Png => {
             let mut p = Png::from_bytes(b).map_err(bad)?;
@@ -106,13 +112,90 @@ pub fn strip_metadata(t: ImageType, b: Bytes) -> Result<Bytes, UploadError> {
         }
         ImageType::Webp => {
             let mut w = WebP::from_bytes(b).map_err(bad)?;
+            let o = w.exif().and_then(|e| orientation(&e));
             w.remove_chunks_by_id(img_parts::webp::CHUNK_XMP);
-            // `set_exif` also rewrites the VP8X flags from the chunks left, which clears the XMP flag too;
-            // removing a chunk alone would leave a header that names metadata that is gone.
-            w.set_exif(None);
+            // set_exif rewrites the VP8X ICC and EXIF flags from the chunks left (or drops VP8X when nothing needs
+            // it); the XMP flag it leaves alone, so that one is cleared by hand.
+            w.set_exif(o.map(orientation_exif));
+            for c in w.chunks_mut() {
+                if c.id() == img_parts::webp::CHUNK_VP8X
+                    && let img_parts::riff::RiffContent::Data(d) = c.content_mut()
+                    && let Some(first) = d.first().copied()
+                {
+                    let mut v = d.to_vec();
+                    v[0] = first & !WEBP_XMP_FLAG;
+                    *d = Bytes::from(v);
+                }
+            }
             w.encoder().bytes()
         }
     })
+}
+
+/// The JPEG up to and including the end-of-image marker of its primary image: anything after it (a trailer, a second
+/// image with its own metadata, a motion clip) is dropped. Entropy-coded data never holds an unescaped `FF D9`.
+fn jpeg_until_end(b: Bytes) -> Result<Bytes, UploadError> {
+    let mut i = 2;
+    // Walk the marker segments to the first start of scan, then find the end marker after it.
+    while i + 4 <= b.len() {
+        if b[i] != 0xFF {
+            return Err(UploadError::Unreadable);
+        }
+        let m = b[i + 1];
+        let len = u16::from_be_bytes([b[i + 2], b[i + 3]]) as usize;
+        i += 2 + len;
+        if m == 0xDA {
+            break;
+        }
+    }
+    let end = b[i.min(b.len())..]
+        .windows(2)
+        .position(|w| w == [0xFF, 0xD9])
+        .ok_or(UploadError::Unreadable)?;
+    Ok(b.slice(..i + end + 2))
+}
+
+/// The orientation tag of a TIFF-structured EXIF block's first IFD, when it names a rotation or flip (2 to 8).
+fn orientation(tiff: &[u8]) -> Option<u16> {
+    let be = match tiff.get(..2)? {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+    let u16_at = |i: usize| -> Option<u16> {
+        let b: [u8; 2] = tiff.get(i..i + 2)?.try_into().ok()?;
+        Some(if be {
+            u16::from_be_bytes(b)
+        } else {
+            u16::from_le_bytes(b)
+        })
+    };
+    let u32_at = |i: usize| -> Option<u32> {
+        let b: [u8; 4] = tiff.get(i..i + 4)?.try_into().ok()?;
+        Some(if be {
+            u32::from_be_bytes(b)
+        } else {
+            u32::from_le_bytes(b)
+        })
+    };
+    let ifd = u32_at(4)? as usize;
+    let n = u16_at(ifd)? as usize;
+    (0..n.min(256))
+        .map(|k| ifd + 2 + 12 * k)
+        .find(|&e| u16_at(e) == Some(ORIENTATION))
+        .and_then(|e| u16_at(e + 8))
+        .filter(|o| (2..=8).contains(o))
+}
+
+/// A one-tag EXIF block (big-endian TIFF) holding only an orientation.
+fn orientation_exif(o: u16) -> Bytes {
+    let mut v = b"MM\0*\0\0\0\x08\0\x01".to_vec();
+    v.extend_from_slice(&ORIENTATION.to_be_bytes());
+    v.extend_from_slice(&3u16.to_be_bytes()); // SHORT
+    v.extend_from_slice(&1u32.to_be_bytes()); // one value
+    v.extend_from_slice(&o.to_be_bytes());
+    v.extend_from_slice(&[0, 0, 0, 0, 0, 0]); // padding, then no next IFD
+    Bytes::from(v)
 }
 
 /// A filename safe to store and to put in `Content-Disposition`: the last path segment, without control characters,
@@ -332,5 +415,21 @@ mod tests {
             ),
             Err(UploadError::Unreadable)
         );
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::*;
+
+    #[test]
+    fn orientation_is_read_in_either_byte_order_and_written_back() {
+        assert_eq!(orientation(&orientation_exif(6)), Some(6));
+        let le = b"II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x03\0\0\0\0\0\0\0";
+        assert_eq!(orientation(le), Some(3));
+        // 1 is upright: nothing to keep.
+        assert_eq!(orientation(&orientation_exif(1)), None);
+        assert_eq!(orientation(b"junk"), None);
+        assert_eq!(orientation(b"MM\0*\xff\xff\xff\xff"), None);
     }
 }

@@ -27,9 +27,9 @@ pub use domain::{
 };
 pub use handler::*;
 pub use ports::{
-    ActivityRecord, ActivitySink, CommentRepo, DecisionRepo, EpicRepo, GoalFilter, InitiativeRepo,
-    KeyRepo, PlanningPorts, PlanningReads, PullRequestRepo, RepoError, SearchRow, SprintRepo,
-    StoryCounts, StoryFilter, StoryRepo, UrgencyRepo,
+    ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
+    EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads, PullRequestRepo,
+    RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryRepo, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;
