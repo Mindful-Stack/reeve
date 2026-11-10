@@ -29,7 +29,7 @@
 <main class="signin-page">
 	<div class="card">
 		<h1 class="title"><Logo />Reeve</h1>
-		<p class="muted">Decide it. Plan it. Build it.</p>
+		<p class="muted">Everything is built on decisions.<br />Make yours deliberate.</p>
 		{#if notAllowed}
 			<p role="alert">This address is not allowed on this instance.</p>
 		{/if}
