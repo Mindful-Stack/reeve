@@ -181,7 +181,7 @@ fn strip_jpeg(b: &[u8]) -> Result<Bytes, UploadError> {
                 }
                 true
             }
-            0xDA | 0xDB | 0xDC | 0xDD => true,
+            0xDA..=0xDD => true,
             0xE0 => payload.starts_with(b"JFIF\0"),
             0xE2 => payload.starts_with(b"ICC_PROFILE\0"),
             0xEE => payload.starts_with(b"Adobe"),
