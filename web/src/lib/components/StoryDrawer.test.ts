@@ -89,7 +89,7 @@ describe('StoryDrawer Report action', () => {
 		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
 	});
 
-	it('says Resume report while a draft exists, and is not hidden by a media rule', async () => {
+	it('says Resume report while a draft exists', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
 		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
 		expect(btn().textContent).toBe('Report');

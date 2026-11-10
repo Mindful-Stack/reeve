@@ -25,7 +25,7 @@
 	import { followBase, rebase, type EditorBase } from '#lib/editorBase.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { reportContext } from '#lib/nav.ts';
-	import { hasDraft, openReport } from '#lib/report.svelte.ts';
+	import { openReport, reportLabel } from '#lib/report.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
@@ -568,7 +568,7 @@
 			{/if}
 		{/if}
 		<!-- The drawer covers the header's Report button at every width; the story never prefills the epic chip. -->
-		<button type="button" class="report-here" onclick={() => openReport({ ...reportContext(page.url), epic: null })}>{hasDraft() ? 'Resume report' : 'Report'}</button>
+		<button type="button" class="report-here" onclick={() => openReport({ ...reportContext(page.url), epic: null })}>{reportLabel()}</button>
 		<button type="button" class="close" aria-label="Close story {storyKey}" onclick={onclose}>×</button>
 	</header>
 

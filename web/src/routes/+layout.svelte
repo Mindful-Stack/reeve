@@ -12,7 +12,7 @@
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
 	import { isCurrent, links, reportContext } from '#lib/nav.ts';
-	import { discardDraft, hasDraft, openReport, persist, report, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
+	import { discardDraft, hasDraft, openReport, persist, report, reportLabel, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
 	import type { Story } from '#lib/api/types.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import ReportDialog from '#lib/components/ReportDialog.svelte';
@@ -132,7 +132,7 @@
 
 	// Report from anywhere: the draft lives in #lib/report.svelte.ts; this is its button, notice and sign-in restore.
 	let notice = $state<{ story: Story; epicTitle: string | null } | null>(null);
-	const reportLabel = $derived(hasDraft() ? 'Resume report' : 'Report');
+	const label = $derived(reportLabel());
 	let restoredNotice = $state(false);
 	let restoredFor: string | null = null;
 	const noticeHref = $derived.by(() => {
@@ -220,8 +220,8 @@
 			</nav>
 			<div class="right">
 				<GoalPicker />
-				<button type="button" class="primary report" aria-label={reportLabel} aria-busy={opening} onclick={openFromHere}>
-					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{reportLabel}</span>
+				<button type="button" class="primary report" aria-label={label} aria-busy={opening} onclick={openFromHere}>
+					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
 				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
 					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />

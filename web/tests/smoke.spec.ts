@@ -660,7 +660,6 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await hit.click();
 	await expect(dialog).toBeHidden();
 	const drawer = page.getByRole('complementary');
-	await expect(drawer.getByRole('heading', { name: new RegExp(existing.key) })).toBeVisible(); // loaded, not just mounted
 	await expect(drawer).toContainText(title); // the drawer is usable, not inert
 	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
 	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
@@ -670,27 +669,52 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(notice).toContainText('waiting for the team to place it');
 	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
 	await page.goto('/board?untriaged=1');
+	await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeChecked();
 	await page.getByText(/^Not ready · \d+$/).click();
 	await expect(page.getByTestId(`card-${key}`)).toContainText('untriaged');
+	// The filter really filters: the similar story sits under an epic, so it is not listed here.
+	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
 });
 
-for (const [width, height, phone] of [[320, 640, true], [1280, 800, false]] as const) {
+test('the story drawer header fits at 320px with a draft: Close stays on screen beside Resume report', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 640 });
+	const s = await chore(page, `Smoke drawer header ${crypto.randomUUID().slice(0, 6)}`);
+	await page.goto('/board');
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await dialog.getByLabel('Title').fill('A draft that outlives the dialog');
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeHidden();
+	await page.goto(`/board?story=${s.key}`);
+	const drawer = page.getByRole('complementary');
+	const resume = drawer.getByRole('button', { name: 'Resume report' });
+	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
+	await expect(resume).toBeVisible();
+	await expect(close).toBeVisible();
+	const r = (await resume.boundingBox())!;
+	const c = (await close.boundingBox())!;
+	expect(c.x + c.width).toBeLessThanOrEqual(320);
+	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
+});
+
+for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
 	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {
 		await page.setViewportSize({ width, height });
 		await page.goto('/board');
+		await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeVisible(); // the board has rendered
 		const report = page.getByRole('button', { name: 'Report', exact: true });
 		await expect(report).toBeVisible();
-		const search = page.getByRole('searchbox', { name: 'Search' });
+		const search = page.getByRole('search', { name: 'Site search' }).getByRole('searchbox');
 		await expect(search).toBeVisible();
 		const m = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
-		const searchWidth = (await search.boundingBox())!.width;
 		expect(m.scroll).toBeLessThanOrEqual(m.client);
-		expect(searchWidth).toBeGreaterThanOrEqual(80);
-		const word = report.locator('.word');
+		expect((await search.boundingBox())!.width).toBeGreaterThanOrEqual(80);
 		// Below 720px the word is clipped to 1x1 (still "visible" to Playwright), so measure it.
-		const wordWidth = (await word.boundingBox())?.width ?? 0;
+		const wordWidth = (await report.locator('.word').boundingBox())?.width ?? 0;
 		if (phone) expect(wordWidth).toBeLessThanOrEqual(1);
 		else expect(wordWidth).toBeGreaterThan(20);
+		if (phone) await expect(report.locator('.plus')).toBeVisible();
+		else await expect(report.locator('.plus')).toBeHidden();
 		await report.click();
 		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
 	});

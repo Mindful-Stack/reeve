@@ -40,6 +40,9 @@ export const hasDraft = (): boolean => {
 	return !!d && (d.uncertain || d.kind !== null || d.title.trim() !== '' || !isUntouched(d.description));
 };
 
+/** The Report button's label and accessible name: the header's and the story drawer's. */
+export const reportLabel = (): string => (hasDraft() ? 'Resume report' : 'Report');
+
 const isStr = (x: unknown): x is string => typeof x === 'string';
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null;
 
