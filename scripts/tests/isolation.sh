@@ -54,6 +54,7 @@ fail_at reeve-planning/src/handler/sub/x.rs 'self.ports.stories.set_delivery(tx,
 pass_at reeve-planning/src/handler/stories.rs '/// `self.ports.stories.set_delivery(` is the only mover'
 pass_at reeve-planning/src/handler/prs.rs '// never self.ports.decisions here'
 pass_at reeve-planning/src/handler/prs.rs 'self.ports.stories.get_story(k)'
+pass_at reeve-planning/src/handler/prs.rs $'use crate::ports::{PullRequestRepo, StoryRepo};\nself.ports.stories.get_story(k)'
 # A string literal holding `//` must not hide the rest of its line from the call-site rules.
 fail_at reeve-planning/src/handler/stories.rs 'let u = "https://x"; self.ports.stories.set_delivery(tx, s, 1, now)'
 pass_at reeve-planning/src/handler/stories.rs 'let u = "a \\"quoted\\" self.ports.stories.set_delivery(tx) str";'

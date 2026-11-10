@@ -7,7 +7,8 @@
 # call (a method call, UFCS, a method value, a ports alias) but not, among others:
 #   - a call routed through another handler method, e.g. prs.rs calling `self.create_story` or any method that
 #     itself reaches a forbidden port;
-#   - macro-generated code, raw strings, char literals holding `"`, and string literals spanning lines.
+#   - macro-generated code, raw strings, char literals holding `"`, string literals spanning lines, and a `//`
+#     inside a `/* */` block comment (it hides the rest of that line).
 # The behaviour itself is pinned by tests: tests/handlers.rs
 # recording_a_pull_request_links_updates_and_never_moves_the_story, tests/rules.rs (move_story's rules) and
 # tests/sprints.rs moves_never_depend_on_goals.
@@ -66,7 +67,9 @@ if [ -d "$planning/handler" ]; then
   # `ports` in prs.rs must be exactly `ports.pull_requests.<method>` or `ports.stories.get_story`, so an alias
   # (`let st = &self.ports.stories;`) or UFCS (`StoryRepo::touch_story(&*self.ports.stories, ..)`) fails.
   if [ -f "$p" ]; then
-    x=$(flat "$p" | g -oE "${lb}ports\b(\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?)?" | sed -E 's/^[^p]*//' \
+    # `use` declarations (`use crate::ports::StoryRepo;`) name the module, not the field, so they are dropped first.
+    x=$(flat <(sed -E '/^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?use[[:space:]]/d' "$p") \
+      | g -oE "${lb}ports\b(\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?)?" | sed -E 's/^[^p]*//' \
       | g -vE '^ports\.pull_requests\.[A-Za-z0-9_]+$|^ports\.stories\.get_story$')
     while IFS= read -r l; do
       if [ -n "$l" ]; then bad+="$p: uses $l"$'\n'; fi

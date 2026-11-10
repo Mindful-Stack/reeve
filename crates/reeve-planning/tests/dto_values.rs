@@ -484,7 +484,8 @@ fn war_room_entry_dto_carries_every_field() {
             title: "Initiative title".into(),
             horizon: "now".into(),
         }),
-        state: mark_state(ItemType::Epic),
+        // A different item type on the mark, so a builder that read `state.item` for the entry's item shows.
+        state: mark_state(ItemType::Story),
     };
     assert_eq!(
         v!(WarRoomEntryDto::from(&with)),
