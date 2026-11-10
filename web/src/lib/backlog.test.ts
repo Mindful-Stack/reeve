@@ -26,15 +26,15 @@ describe('groupBacklog', () => {
 	];
 	const b = groupBacklog(buckets, initiatives, epics, todo);
 
-	it('No epic first: every epic-less row in one run, rank order, all counted untriaged', () => {
-		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-0', 'S-1', 'S-3']);
+	it("No epic first: every epic-less row in one run, in the order given (the server's), all counted untriaged", () => {
+		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-1', 'S-3', 'S-0']);
 		expect(b.untriaged).toBe(3);
 	});
 	it('initiatives in planning order, every epic listed, an empty one says so', () => {
 		expect(b.sections.map((s) => s.title)).toEqual(['Onboarding', 'Billing', 'Search', 'No initiative']);
 		const i1 = b.sections[0].epics;
 		expect(i1.map((e) => e.epic.key)).toEqual(['E-1', 'E-2']);
-		expect(i1[0].rows.map((r) => r.story.key)).toEqual(['S-2', 'S-5']); // rank order, not input order
+		expect(i1[0].rows.map((r) => r.story.key)).toEqual(['S-5', 'S-2']); // the server's order: never re-sorted
 		expect(i1[0].summary).toBe('1 of 2 ready');
 		expect(i1[0].tone).toBe('warn');
 		expect(i1[1].tone).toBe('muted');
@@ -44,12 +44,20 @@ describe('groupBacklog', () => {
 		expect(b.sections[2].epics).toEqual([]); // an initiative without epics is kept
 		expect(b.sections[2].initiative?.key).toBe('I-3');
 	});
-	it('stories whose epic is unknown are returned as orphans in rank order', () => {
+	it('stories whose epic is unknown are returned as orphans', () => {
 		expect(b.orphans.map((r) => r.story.key)).toEqual(['S-6']);
 	});
 	it('epics without an initiative go under No initiative', () => {
 		expect(b.sections[3].epics.map((e) => e.epic.key)).toEqual(['E-3']);
 		expect(b.sections[3].epics[0].tone).toBe('ready');
+	});
+	it('filtered: omits epics and initiatives with no rows and counts the matches', () => {
+		const f = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' }), row('S-5', 5, { epic: 'E-1', ready: true }), row('S-1', 1, { untriaged: true }), row('S-4', 4, { epic: 'E-3' })], { filtered: true });
+		expect(f.sections.map((s) => s.title)).toEqual(['Onboarding', 'No initiative']);
+		expect(f.sections[0].epics.map((e) => [e.epic.key, e.summary])).toEqual([['E-1', '2 matches']]);
+		expect(f.sections[1].epics.map((e) => [e.epic.key, e.summary])).toEqual([['E-3', '1 match']]);
+		expect(f.noEpic.map((r) => r.story.key)).toEqual(['S-1']);
+		expect(groupBacklog(buckets, initiatives, epics, [], { filtered: true }).sections).toEqual([]);
 	});
 });
 

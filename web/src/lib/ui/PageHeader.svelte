@@ -2,7 +2,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	let { title, count, children }: { title: string; count?: number; children?: Snippet } = $props();
+	let { title, count, children }: { title: string; count?: number | string; children?: Snippet } = $props();
 </script>
 
 <div class="page-header">

@@ -1,4 +1,4 @@
-import type { SearchHit } from '#lib/api/types.ts';
+import type { SearchHit, Story } from '#lib/api/types.ts';
 import { levelOfItem, levelOfKind, type Level } from '#lib/glyphs.ts';
 
 /** Where a hit opens: an initiative's or an epic's page, a story in the board's drawer. */
@@ -37,4 +37,14 @@ export function highlight(title: string, query: string): Piece[] {
  *  one: the header box looks it up before filtering the backlog by it. A phrase ("12 apples") is never key-shaped. */
 export function isKeyShaped(text: string): boolean {
 	return /^(#?\d+|[a-z][a-z0-9]*-\d+)$/i.test(text.trim());
+}
+
+/** Why a story the backlog's text matched is listed when its title does not show it (the title is highlighted when it
+ *  does): read from the row's own fields, in the server's order of fields; the key is what is left. */
+export function matchedBy(s: Story, query: string | null): string | null {
+	const q = query?.trim().toLowerCase();
+	if (!q || s.title.toLowerCase().includes(q)) return null;
+	if (s.description.toLowerCase().includes(q)) return 'matched description';
+	if (s.external_ref?.toLowerCase().includes(q)) return `matched ${s.external_ref}`;
+	return 'matched key';
 }

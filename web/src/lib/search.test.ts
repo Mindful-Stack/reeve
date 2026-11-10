@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { highlight, hitHref, hitLevel, isKeyShaped } from './search.ts';
+import { story } from '#lib/test/fixtures.ts';
+import { highlight, hitHref, hitLevel, isKeyShaped, matchedBy } from './search.ts';
 
 const hit = (item: 'initiative' | 'epic' | 'story', kind: 'story' | 'bug' | 'chore' | null = null) => ({
 	key: 'ABC-7',
@@ -65,5 +66,19 @@ describe('isKeyShaped', () => {
 	});
 	it.each(['invoice', '12 apples', 'TST-', '-12', 'a-b', '#', '', 'TST-12-3', '1-2'])('%s is text', (q) => {
 		expect(isKeyShaped(q)).toBe(false);
+	});
+});
+
+describe('matchedBy', () => {
+	const s = story({ key: 'ABC-12', title: 'Invoice export', description: 'Sends the ZEBRA file', external_ref: 'SCRUM-40' });
+	it('is null without text or when the title matches (the title is highlighted instead)', () => {
+		expect(matchedBy(s, null)).toBeNull();
+		expect(matchedBy(s, 'invoice')).toBeNull();
+	});
+	it('names the field the text matched otherwise', () => {
+		expect(matchedBy(s, 'zebra')).toBe('matched description');
+		expect(matchedBy(s, 'scrum-4')).toBe('matched SCRUM-40');
+		expect(matchedBy(s, '12')).toBe('matched key');
+		expect(matchedBy(s, 'abc-12')).toBe('matched key');
 	});
 });
