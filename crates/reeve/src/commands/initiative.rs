@@ -1,5 +1,6 @@
 use super::finish;
 use crate::client::Client;
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -95,6 +96,17 @@ pub enum Initiative {
         #[arg(long)]
         reopen: bool,
     },
+    /// Mark the initiative urgent for one cycle, or renew its mark; --clear removes it (interactive tokens only).
+    Urgent {
+        /// Initiative key.
+        key: KeyRef,
+        /// Why it is urgent (at most 200 characters); left out, marking again keeps the current reason; --reason '' clears it.
+        #[arg(long, conflicts_with = "clear")]
+        reason: Option<String>,
+        /// Remove the initiative's urgent mark (clearing one with none changes nothing).
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
@@ -125,12 +137,29 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::initiative,
         ),
+        Initiative::Urgent { key, reason, clear } => {
+            super::urgent::<InitiativeDto>(
+                c,
+                format!("/initiatives/{key}"),
+                reason,
+                clear,
+                json,
+                |s| super::UrgentView {
+                    level: Level::Initiative,
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
+                },
+            )
+            .await?
+        }
         Initiative::Show { key } => {
             let out = c
                 .get::<InitiativeDto>(&format!("/initiatives/{key}"))
                 .await?;
+            let now = chrono::Utc::now();
             if json || !matches!(out, crate::client::Outcome::Ok(_)) {
-                finish(out, json, crate::render::initiative)
+                finish(out, json, |v| crate::render::initiative_show(v, now))
             } else {
                 // Advisory and best effort: a failed findings read (an older server, a dropped connection) still shows the
                 // initiative.
@@ -167,7 +196,7 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
                     .filter(|b| !b.is_empty())
                     .collect::<Vec<_>>()
                     .join("\n");
-                    let s = crate::render::initiative(v);
+                    let s = crate::render::initiative_show(v, now);
                     if f.is_empty() { s } else { format!("{s}\n{f}") }
                 })
             }

@@ -10,10 +10,13 @@ pub mod initiative;
 pub mod search;
 pub mod sprint;
 pub mod story;
+pub mod war_room;
 use crate::client::{Client, Outcome};
+use crate::glyphs::Level;
 use clap::Subcommand;
-use reeve_protocol::ErrorCode;
+use reeve_protocol::{ErrorCode, ItemRefDto, Key, MarkUrgent, UrgentMarkDto};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A text argument (a brief, a description) given inline, or read from a file whose contents are sent unchanged, so no
 /// shell quoting stands between an agent's Markdown and the server; the path `-` reads stdin. Clap keeps the two
@@ -74,6 +77,9 @@ pub enum Cmd {
     /// Import from another tracker (admins with an interactive token only). Rehearses unless --apply.
     #[command(subcommand)]
     Import(import::Import),
+    /// The war room: every urgent mark, active and expired.
+    #[command(subcommand)]
+    WarRoom(war_room::WarRoom),
     /// The terminal board for your own work (uses your `reeve auth login`, never REEVE_TOKEN).
     Tui,
 }
@@ -102,6 +108,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Search(x) => search::run(&c, x, json).await,
                 Cmd::Export(x) => export::run(&c, x, json).await,
                 Cmd::Import(x) => import::run(&c, x, json).await,
+                Cmd::WarRoom(x) => war_room::run(&c, x, json).await,
                 Cmd::Auth(_) | Cmd::Tui => unreachable!(),
             }
         }
@@ -134,6 +141,55 @@ pub async fn whoami(c: &Client) -> anyhow::Result<Result<String, Outcome<()>>> {
             current,
         }),
     })
+}
+
+/// What `urgent` reads of an initiative, epic or story: its level and key, its own mark and its urgent sources.
+pub struct UrgentView<'a> {
+    pub level: Level,
+    pub key: &'a Key,
+    pub own: Option<&'a UrgentMarkDto>,
+    pub sources: &'a [ItemRefDto],
+}
+
+/// `urgent` for all three levels, on the item at `item` (`/{initiatives|epics|stories}/{key}`), read through `view`:
+/// `--clear` is a bodiless DELETE of its `/urgent` route and prints one fixed line; otherwise a POST prints the mark
+/// line then the urgent lines (`render::urgent_answer`). The reason is trimmed and a blank one is `null`, as the web
+/// sends it; with no `--reason` at all the item is read first and its own mark's reason resent, so marking again keeps
+/// it, as the TUI and the web do. A read that is not Ok is the outcome and nothing is posted. No version is sent either
+/// way.
+pub async fn urgent<T: Serialize + DeserializeOwned>(
+    c: &Client,
+    item: String,
+    reason: Option<String>,
+    clear: bool,
+    json: bool,
+    view: impl Fn(&T) -> UrgentView<'_>,
+) -> anyhow::Result<i32> {
+    let path = format!("{item}/urgent");
+    if clear {
+        return Ok(finish(c.delete::<T>(&path).await?, json, |v| {
+            format!("urgent mark cleared on {}", view(v).key)
+        }));
+    }
+    let reason = match reason {
+        Some(r) => Some(r),
+        None => match c.get::<T>(&item).await? {
+            Outcome::Ok(v) => view(&v).own.and_then(|m| m.reason.clone()),
+            other => return Ok(finish(other, json, |_| String::new())),
+        },
+    };
+    let reason = reason
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty());
+    let body = serde_json::to_value(MarkUrgent { reason })?;
+    let out = c.post::<T>(&path, body).await?;
+    // Read the clock after the answer: the server stamps the mark when it handles the POST, so a clock read before it
+    // would measure a fresh 14-day mark as just over 14 days and say "expires in 15 d".
+    let now = chrono::Utc::now();
+    Ok(finish(out, json, |v| {
+        let u = view(v);
+        crate::render::urgent_answer(u.level, u.key, u.own, u.sources, now)
+    }))
 }
 
 /// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.

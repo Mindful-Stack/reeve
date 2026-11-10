@@ -20,6 +20,7 @@ mod scenarios;
 mod set_epic;
 mod sse;
 mod term;
+mod urgent;
 mod view;
 mod words;
 
@@ -154,6 +155,7 @@ where
 
     pub fn draw(&mut self) -> std::io::Result<()> {
         let now = Instant::now();
+        self.state.set_wall(chrono::Utc::now());
         let s = &self.state;
         self.terminal
             .draw(|f| view::draw(f, s, now))

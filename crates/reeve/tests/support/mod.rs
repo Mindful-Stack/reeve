@@ -1,5 +1,6 @@
 //! A scripted planner for the TUI's integration tests: canned answers per endpoint, a queue of event-stream
-//! connections, and a record of what the TUI sent. No database; no domain rules.
+//! connections plus a live channel into the open one, held replies for urgency writes, and a record of what the TUI
+//! sent. No database; no domain rules.
 //!
 //! Every body is built from `reeve_protocol` types (the envelope, the story, the configuration, the activity entry),
 //! so a protocol change breaks this fixture rather than letting it drift from the server.
@@ -9,7 +10,7 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -17,8 +18,9 @@ use futures_util::{Stream, StreamExt, stream::BoxStream};
 use ratatui::backend::TestBackend;
 use reeve::tui::{Driver, Input, Io, Options, Setup};
 use reeve_protocol::{
-    ActivityEntryDto, DeliveryState, EpicDto, ErrorCode, InstanceConfigDto, Kind, Me, Readiness,
-    Response as Envelope, Role, StoryDto, StoryWithReadiness, TokenKind, Via,
+    ActivityEntryDto, DeliveryState, EpicDto, ErrorCode, InstanceConfigDto, ItemRefDto, ItemType,
+    Kind, Me, Readiness, Response as Envelope, Role, StoryDto, StoryWithReadiness, TokenKind,
+    UrgentMarkDto, Via,
 };
 use serde_json::Value;
 use std::{
@@ -29,7 +31,10 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    oneshot,
+};
 
 pub enum Conn {
     /// Answer 200 and send these frames; then close, or hold the connection open.
@@ -54,6 +59,28 @@ pub struct Seen {
     /// Stream bodies dropped before they ended: the client closed or aborted the connection.
     pub closed_streams: usize,
     pub moves: Vec<Value>,
+    /// Each urgency write (`POST`/`DELETE /stories/{key}/urgent`), in arrival order.
+    pub urgent: Vec<Sent>,
+}
+
+/// A request as the TUI sent it: method, path and raw body (empty for a body-less `DELETE`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sent {
+    pub method: String,
+    pub path: String,
+    pub body: String,
+}
+
+/// The release of one held urgency reply: until [`Held::release`] runs, the TUI's request waits for its answer.
+pub struct Held(oneshot::Sender<(u16, Value)>);
+impl Held {
+    /// Answers the held request. Released before any urgency write arrived, the reply is buffered and answers the next
+    /// one at once.
+    pub fn release(self, status: u16, body: Value) {
+        self.0
+            .send((status, body))
+            .expect("the held reply's receiver is gone (the request was dropped)");
+    }
 }
 
 pub struct Script {
@@ -62,6 +89,12 @@ pub struct Script {
     pub stories_hang: Mutex<bool>,
     pub events: Mutex<VecDeque<Conn>>,
     pub moves: Mutex<VecDeque<Answer>>,
+    /// Held replies for urgency writes, taken in order; a write with none queued is answered 500.
+    pub urgent: Mutex<VecDeque<oneshot::Receiver<(u16, Value)>>>,
+    /// The live channel: frames pushed here reach the open event-stream connection after its scripted frames,
+    /// without a reconnect. The first held-open connection takes the receiver.
+    live_tx: UnboundedSender<String>,
+    live_rx: Mutex<Option<UnboundedReceiver<String>>>,
     pub seen: Mutex<Seen>,
 }
 
@@ -75,17 +108,44 @@ pub fn me(kind: TokenKind) -> Me {
 
 impl Script {
     pub fn new() -> Arc<Self> {
+        let (live_tx, live_rx) = unbounded_channel();
         Arc::new(Self {
             me: me(TokenKind::Interactive),
             stories: Mutex::new(vec![]),
             stories_hang: Mutex::new(false),
             events: Mutex::new(VecDeque::new()),
             moves: Mutex::new(VecDeque::new()),
+            urgent: Mutex::new(VecDeque::new()),
+            live_tx,
+            live_rx: Mutex::new(Some(live_rx)),
             seen: Mutex::new(Seen::default()),
         })
     }
     pub fn seen<R>(&self, f: impl FnOnce(&Seen) -> R) -> R {
         f(&self.seen.lock().unwrap())
+    }
+    /// What `GET /stories` answers from now on. Change it before releasing a write, or the refetch the write's
+    /// completion triggers brings back the old board.
+    pub fn set_stories(&self, rows: Vec<StoryWithReadiness>) {
+        *self.stories.lock().unwrap() = rows;
+    }
+    /// Queues a held reply for the next urgency write; the request waits until the returned handle is released.
+    pub fn hold_urgent(&self) -> Held {
+        let (tx, rx) = oneshot::channel();
+        self.urgent.lock().unwrap().push_back(rx);
+        Held(tx)
+    }
+    /// Sends `frame` on the open event-stream connection, which is not reconnected. Panics when no connection holds
+    /// the live channel (none opened yet, or it was dropped), so a test cannot pass by a reconnect instead. Delivery past
+    /// that is best effort: a frame lost in transit shows up as the test's wait timing out.
+    pub fn push_live(&self, frame: String) {
+        assert!(
+            self.live_rx.lock().unwrap().is_none(),
+            "no event-stream connection has taken the live channel yet"
+        );
+        self.live_tx
+            .send(frame)
+            .expect("the connection holding the live channel is gone");
     }
 }
 
@@ -162,19 +222,51 @@ pub fn story(
     }
 }
 
+/// The story as the server sends it when urgent through these sources (its own key for its own mark).
+pub fn urgent_via(mut s: StoryWithReadiness, sources: &[(&str, ItemType)]) -> StoryWithReadiness {
+    s.story.urgent_sources = sources
+        .iter()
+        .map(|(k, item)| ItemRefDto {
+            key: k.parse().unwrap(),
+            item: *item,
+        })
+        .collect();
+    s
+}
+
+/// The story as the server sends it right after a mark on it: its own active mark, which makes it its own source.
+pub fn marked_urgent(s: StoryWithReadiness, reason: Option<&str>) -> StoryWithReadiness {
+    let key = s.story.key.to_string();
+    let mut s = urgent_via(s, &[(&key, ItemType::Story)]);
+    s.story.urgent_mark = Some(UrgentMarkDto {
+        at: "2026-11-08T12:00:00Z".parse().unwrap(),
+        by: "dan@example.com".into(),
+        reason: reason.map(str::to_string),
+        expires_at: "2026-11-22T12:00:00Z".parse().unwrap(),
+        active: true,
+        done: false,
+    });
+    s
+}
+
 /// The server's first frame: `event: cursor`, the start id as both id and data.
 pub fn cursor(id: i64) -> String {
     format!("event: cursor\nid: {id}\ndata: {id}\n\n")
 }
 
-/// An `event: activity` frame whose id is the entry id and whose data is the entry's JSON.
+/// An `event: activity` frame about a story, whose id is the entry id and whose data is the entry's JSON.
 pub fn activity(id: i64, action: &str, key: &str, payload: Value) -> String {
+    activity_on(id, "story", action, key, payload)
+}
+
+/// An `event: activity` frame about any entity type (`"story"`, `"epic"`, `"initiative"`).
+pub fn activity_on(id: i64, entity_type: &str, action: &str, key: &str, payload: Value) -> String {
     let dto = ActivityEntryDto {
         id,
         at: "2026-10-28T10:00:00Z".parse().unwrap(),
         actor: "anna@example.com".into(),
         via: Via::Interactive,
-        entity_type: "story".into(),
+        entity_type: entity_type.into(),
         entity_key: key.into(),
         action: action.into(),
         payload,
@@ -240,6 +332,29 @@ async fn mv(
     }
 }
 
+/// `POST` or `DELETE /stories/{key}/urgent`: records the request, then answers with the next held reply once it is
+/// released (500 when none is queued).
+async fn urgent(State(s): State<Arc<Script>>, method: Method, uri: Uri, body: Bytes) -> Response {
+    s.seen.lock().unwrap().urgent.push(Sent {
+        method: method.to_string(),
+        path: uri.path().to_string(),
+        body: String::from_utf8(body.to_vec()).unwrap(),
+    });
+    let held = s.urgent.lock().unwrap().pop_front();
+    let Some(rx) = held else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(error(ErrorCode::Internal)),
+        )
+            .into_response();
+    };
+    match rx.await {
+        Ok((code, v)) => (StatusCode::from_u16(code).unwrap(), Json(v)).into_response(),
+        // The test dropped the handle without releasing it: never answer.
+        Err(_) => std::future::pending().await,
+    }
+}
+
 async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
     let id = headers
         .get("last-event-id")
@@ -263,10 +378,23 @@ async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
                     .into_iter()
                     .map(|f| Ok::<_, Infallible>(Bytes::from(f))),
             );
-            let tail: BoxStream<'static, Result<Bytes, Infallible>> = if close {
-                futures_util::stream::empty().boxed()
+            // A held-open connection carries the live channel if no earlier connection took it.
+            let live = if close {
+                None
             } else {
-                futures_util::stream::pending().boxed()
+                s.live_rx.lock().unwrap().take()
+            };
+            let tail: BoxStream<'static, Result<Bytes, Infallible>> = match (close, live) {
+                (true, _) => futures_util::stream::empty().boxed(),
+                (false, Some(rx)) => futures_util::stream::unfold(rx, |mut rx| async move {
+                    rx.recv()
+                        .await
+                        .map(|f| (Ok::<_, Infallible>(Bytes::from(f)), rx))
+                })
+                // Defensive: `Script` keeps the sender, so the channel never ends; if it did, the connection stays open.
+                .chain(futures_util::stream::pending())
+                .boxed(),
+                (false, None) => futures_util::stream::pending().boxed(),
             };
             let body = Counted {
                 inner: head.chain(tail).boxed(),
@@ -304,6 +432,7 @@ pub async fn serve(s: Arc<Script>) -> String {
             get(|| async { Json(ok(Vec::<EpicDto>::new())) }),
         )
         .route("/api/v1/stories/{key}/move", post(mv))
+        .route("/api/v1/stories/{key}/urgent", post(urgent).delete(urgent))
         .route("/api/v1/events", get(events))
         .with_state(s);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

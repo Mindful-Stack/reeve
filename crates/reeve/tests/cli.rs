@@ -54,6 +54,36 @@ fn read_request(stream: &std::net::TcpStream) -> (String, String) {
 fn serve(
     answers: Vec<(&'static str, u16, serde_json::Value)>,
 ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    serve_lazy(
+        answers
+            .into_iter()
+            .map(|(want, status, body)| (want, status, lazy(move || body)))
+            .collect(),
+    )
+}
+
+/// An answer body built when its request is handled, not when the test starts.
+type Lazy = Box<dyn FnOnce() -> serde_json::Value + Send>;
+
+fn lazy(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
+    Box::new(f)
+}
+
+/// `lazy`, built 2 ms after the request arrives: a mark it stamps is later than any clock the CLI read before sending
+/// by whole milliseconds, which the expiry's millisecond arithmetic cannot round away, so a CLI that measures from such
+/// a clock says "expires in 15 d" every run.
+fn late(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
+    lazy(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        f()
+    })
+}
+
+/// `serve`, with each body built when its request arrives: a mark the fake server answers is timestamped as the real
+/// server would stamp it, after the CLI sent its request.
+fn serve_lazy(
+    answers: Vec<(&'static str, u16, Lazy)>,
+) -> (String, std::thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
@@ -68,7 +98,7 @@ fn serve(
                 continue;
             }
             let (status, body) = if expected {
-                (status, body.to_string())
+                (status, body().to_string())
             } else {
                 (
                     500,
@@ -160,6 +190,7 @@ fn reeve_at(url: &str, args: &[&str]) -> std::process::Output {
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_ASCII")
         .args(args)
         .timeout(Duration::from_secs(60))
         .output()
@@ -189,6 +220,7 @@ fn capture(args: &[&str]) -> (String, String) {
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_ASCII")
         .args(args)
         .timeout(std::time::Duration::from_secs(30))
         .output()
@@ -2415,4 +2447,759 @@ fn a_conflict_on_open_says_to_run_it_again() {
     let json = conflict_at(true);
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(v["current"], 2, "{v}");
+}
+
+fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::StoryDto {
+    reeve_protocol::StoryDto {
+        key: "ABC-1".parse().unwrap(),
+        title: "Match".into(),
+        kind: reeve_protocol::Kind::Story,
+        epic: None,
+        description: String::new(),
+        criteria: vec![reeve_protocol::CriterionDto {
+            text: "It works".into(),
+            done: false,
+        }],
+        owner: None,
+        labels: vec![],
+        rank: 1,
+        blocked_by: vec![],
+        delivery: reeve_protocol::DeliveryState::Todo,
+        resolution: None,
+        external_ref: None,
+        version: 1,
+        prs: vec![],
+        goals: vec![],
+        urgent_mark: None,
+        urgent_sources: sources,
+    }
+}
+
+/// `story show` of a story that is urgent through its epic: the urgent line is right after the first line, and the rest
+/// of the output is the story's usual output.
+#[test]
+fn story_show_prints_the_urgent_line_after_the_first_line() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-40".parse().unwrap(),
+        item: reeve_protocol::ItemType::Epic,
+    }];
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories/ABC-1",
+        200,
+        ok(serde_json::to_value(urgent_story(src)).unwrap()),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "ABC-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains(" ! [todo] Match"), "{text}");
+    assert_eq!(lines[1], "  urgent · via epic ABC-40", "{text}");
+    assert!(lines[2].starts_with("  kind: Story"), "{text}");
+    assert_eq!(lines[3], "  [ ] It works", "{text}");
+    assert_eq!(lines.len(), 4, "{text}");
+}
+
+/// `ls` shows the `!` after the key and never the urgent lines.
+#[test]
+fn initiative_ls_marks_an_urgent_initiative_with_a_bang_and_no_urgent_line() {
+    let i = reeve_protocol::InitiativeDto {
+        key: "ABC-3".parse().unwrap(),
+        title: "Leave".into(),
+        brief: String::new(),
+        horizon: "Now".into(),
+        target_month: None,
+        owner: None,
+        discovery_complete: None,
+        progress: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-40".parse().unwrap(),
+            item: reeve_protocol::ItemType::Epic,
+        }],
+    };
+    let (url, server) = serve(vec![(
+        "GET /api/v1/initiatives",
+        200,
+        ok(serde_json::json!([i])),
+    )]);
+    let out = reeve_at(&url, &["initiative", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("ABC-3 ! Leave"), "{text}");
+    assert!(!text.contains("urgent ·"), "{text}");
+}
+
+/// `epic show` prints the urgent line right after its first line, ahead of the best-effort findings and comments.
+#[test]
+fn epic_show_prints_the_urgent_line_after_the_first_line() {
+    let e = reeve_protocol::EpicDto {
+        key: "ABC-2".parse().unwrap(),
+        title: "Hosting".into(),
+        initiative: None,
+        brief: String::new(),
+        discovery_complete: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-3".parse().unwrap(),
+            item: reeve_protocol::ItemType::Initiative,
+        }],
+    };
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/epics/ABC-2",
+            200,
+            ok(serde_json::to_value(e).unwrap()),
+        ),
+        (
+            "GET /api/v1/epics/ABC-2/findings",
+            200,
+            ok(serde_json::json!([])),
+        ),
+        (
+            "GET /api/v1/items/ABC-2/comments",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["epic", "show", "ABC-2"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains(" ! Hosting"), "{text}");
+    assert_eq!(lines[1], "  urgent · via initiative ABC-3", "{text}");
+    assert_eq!(lines.len(), 2, "{text}");
+}
+
+/// `story context` prints the story's urgent line right after the story's own first line.
+#[test]
+fn story_context_prints_the_urgent_line_after_the_storys_first_line() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-40".parse().unwrap(),
+        item: reeve_protocol::ItemType::Epic,
+    }];
+    let ctx = serde_json::json!({
+        "story": urgent_story(src), "epic": null, "initiative": null,
+        "required_decisions": [], "blockers": [], "comments": [],
+        "readiness": {"ready": true, "reasons": []}, "goals": []
+    });
+    let (url, server) = serve(vec![("GET /api/v1/stories/ABC-1/context", 200, ok(ctx))]);
+    let out = reeve_at(&url, &["story", "context", "ABC-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("[todo] Match"))
+        .unwrap();
+    assert!(lines[at].contains(" !"), "{text}");
+    assert_eq!(lines[at + 1], "  urgent · via epic ABC-40", "{text}");
+}
+
+/// `story show` and `story context` measure a mark's expiry from a clock read after the answer: the fake server stamps
+/// a fresh 14-day mark while handling the GET (as when another client marks the story while the read is in flight), so
+/// a CLI that reads its clock before the request says 15 d.
+#[test]
+fn story_show_and_context_measure_a_fresh_mark_after_the_answer() {
+    let (url, server) = serve_lazy(vec![(
+        "GET /api/v1/stories/TST-1",
+        200,
+        late(|| ok(marked_story_json("TST-1", None))),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("· expires in 14 d"), "{text}");
+
+    let (url, server) = serve_lazy(vec![(
+        "GET /api/v1/stories/TST-1/context",
+        200,
+        late(|| {
+            ok(serde_json::json!({
+                "story": marked_story_json("TST-1", None), "epic": null, "initiative": null,
+                "required_decisions": [], "blockers": [], "comments": [],
+                "readiness": {"ready": true, "reasons": []}, "goals": []
+            }))
+        }),
+    )]);
+    let out = reeve_at(&url, &["story", "context", "TST-1"]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("· expires in 14 d"), "{text}");
+}
+
+/// A story as the urgent route answers a mark: urgent by its own mark, which carries `reason`.
+fn marked_story_json(key: &str, reason: Option<&str>) -> serde_json::Value {
+    let at = chrono::Utc::now();
+    let mut s = urgent_story(vec![reeve_protocol::ItemRefDto {
+        key: key.parse().unwrap(),
+        item: reeve_protocol::ItemType::Story,
+    }]);
+    s.key = key.parse().unwrap();
+    s.urgent_mark = Some(reeve_protocol::UrgentMarkDto {
+        at,
+        by: "dana@example.com".into(),
+        reason: reason.map(Into::into),
+        expires_at: at + chrono::Duration::days(14),
+        active: true,
+        done: false,
+    });
+    serde_json::to_value(s).unwrap()
+}
+
+/// Marking posts the trimmed reason to the story's urgent route and prints the mark line then the urgent line; a CLI
+/// that sends the reason untrimmed, or prints the whole story, fails. The fake server stamps the mark when it handles
+/// the POST, as the real one does, so a CLI that measures the expiry from a clock read before the request says 15 d.
+#[test]
+fn story_urgent_posts_the_trimmed_reason() {
+    let (url, server) = serve_lazy(vec![(
+        "POST /api/v1/stories/TST-1/urgent",
+        200,
+        late(|| ok(marked_story_json("TST-1", Some("Customer X blocked")))),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "story",
+            "urgent",
+            "TST-1",
+            "--reason",
+            "  Customer X blocked ",
+        ],
+    );
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":"Customer X blocked"}));
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        format!("{} !", glyph(reeve::glyphs::Level::Story, "TST-1")),
+        "{text}"
+    );
+    assert_eq!(
+        lines[1], "  urgent · marked by dana, today · 'Customer X blocked' · expires in 14 d",
+        "{text}"
+    );
+}
+
+/// A blank reason is no reason: `null`, as the web sends it. Epics use their own path, and the answer's first line is
+/// the epic's mark line with the `!` its own source earns.
+#[test]
+fn epic_urgent_with_a_blank_reason_posts_null() {
+    let e = reeve_protocol::EpicDto {
+        key: "ABC-40".parse().unwrap(),
+        title: "Hosting".into(),
+        initiative: None,
+        brief: String::new(),
+        discovery_complete: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![reeve_protocol::ItemRefDto {
+            key: "ABC-40".parse().unwrap(),
+            item: reeve_protocol::ItemType::Epic,
+        }],
+    };
+    let (url, server) = serve(vec![(
+        "POST /api/v1/epics/ABC-40/urgent",
+        200,
+        ok(serde_json::to_value(e).unwrap()),
+    )]);
+    let out = reeve_at(&url, &["epic", "urgent", "ABC-40", "--reason", "   "]);
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":null}));
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        text.lines().next().unwrap(),
+        format!("{} !", glyph(reeve::glyphs::Level::Epic, "ABC-40")),
+        "{text}"
+    );
+}
+
+/// `--clear` is a bodiless DELETE on the same path and prints one fixed line.
+#[test]
+fn initiative_urgent_clear_sends_delete() {
+    let init = serde_json::json!({"key":"ABC-2","title":"Leave","brief":"","horizon":"Now","target_month":null,
+        "owner":null,"discovery_complete":null,"progress":null,"external_ref":null,"version":1,
+        "urgent_mark":null,"urgent_sources":[]});
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/initiatives/ABC-2/urgent",
+        200,
+        ok(init),
+    )]);
+    let out = reeve_at(&url, &["initiative", "urgent", "ABC-2", "--clear"]);
+    assert_eq!(server.join().unwrap(), vec![String::new()], "no body");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "urgent mark cleared on ABC-2\n"
+    );
+}
+
+/// `--clear` with `--reason` is a clap conflict at every level, before any request (nothing listens on the port).
+#[test]
+fn urgent_clear_with_reason_is_a_usage_error() {
+    for (level, key) in [
+        ("initiative", "ABC-2"),
+        ("epic", "ABC-40"),
+        ("story", "TST-1"),
+    ] {
+        let out = Command::cargo_bin("reeve")
+            .unwrap()
+            .env("REEVE_URL", "http://127.0.0.1:9")
+            .env("REEVE_TOKEN", "reeve_test")
+            .args([level, "urgent", key, "--clear", "--reason", "x"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{level}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("cannot be used with"), "{level}: {err}");
+        assert!(err.contains("--reason"), "{level}: {err}");
+    }
+}
+
+/// Each level marks with POST and clears with DELETE on its own plural path; `serve` answers 500 and fails the test on
+/// any other request line.
+#[test]
+fn urgent_uses_post_to_mark_and_delete_to_clear_at_every_level() {
+    for (level, plural, key) in [
+        ("initiative", "initiatives", "ABC-2"),
+        ("epic", "epics", "ABC-40"),
+        ("story", "stories", "TST-1"),
+    ] {
+        // A reason, so marking posts without reading the item first.
+        let marks: [(&[&str], &str); 2] = [(&["--reason", "x"], "POST"), (&["--clear"], "DELETE")];
+        for (extra, verb) in marks {
+            let want: &'static str =
+                Box::leak(format!("{verb} /api/v1/{plural}/{key}/urgent").into_boxed_str());
+            let (url, server) = serve(vec![(
+                want,
+                404,
+                serde_json::json!({"outcome":"error","code":"not_found","message":"not found"}),
+            )]);
+            let mut args = vec![level, "urgent", key];
+            args.extend(extra);
+            reeve_at(&url, &args);
+            server.join().unwrap();
+        }
+    }
+}
+
+/// An automation token's refusal exits 2 and the human text goes to stderr, none to stdout.
+#[test]
+fn urgent_refused_interactive_only_exits_2() {
+    let body = serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false});
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/stories/TST-1",
+            200,
+            ok(marked_story_json("TST-1", None)),
+        ),
+        ("POST /api/v1/stories/TST-1/urgent", 403, body),
+    ]);
+    let out = reeve_at(&url, &["story", "urgent", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    // `render::reason(&Reason::InteractiveOnly)`; `render` is private to the crate, so the wording is spelled out.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("only an interactive user may do this"),
+        "{err}"
+    );
+    assert!(out.stdout.is_empty());
+}
+
+/// Marking again with no `--reason` keeps the current one: the item is read, then its reason is resent. A CLI that posts
+/// null (wiping the reason) or skips the read fails.
+#[test]
+fn story_urgent_without_reason_resends_the_current_reason() {
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/stories/TST-1",
+            200,
+            ok(marked_story_json("TST-1", Some("old"))),
+        ),
+        (
+            "POST /api/v1/stories/TST-1/urgent",
+            200,
+            ok(marked_story_json("TST-1", Some("old"))),
+        ),
+    ]);
+    let out = reeve_at(&url, &["story", "urgent", "TST-1"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(bodies[0], "", "the read has no body");
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":"old"}));
+}
+
+/// `--reason ''` clears the reason: no read, a null reason posted. `serve` answers one request, so a read before the
+/// POST would get the POST's expected line wrong and fail.
+#[test]
+fn story_urgent_with_an_empty_reason_posts_null_without_reading() {
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/TST-1/urgent",
+        200,
+        ok(marked_story_json("TST-1", None)),
+    )]);
+    let out = reeve_at(&url, &["story", "urgent", "TST-1", "--reason", ""]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(sent, serde_json::json!({"reason":null}));
+}
+
+/// A read that is not Ok is the command's outcome and nothing is posted: `serve` closes after the GET, so a POST would
+/// fail to connect and change the exit code and stderr.
+#[test]
+fn epic_urgent_with_a_failed_read_posts_nothing() {
+    let (url, server) = serve(vec![("GET /api/v1/epics/ABC-40", 403, forbidden())]);
+    let out = reeve_at(&url, &["epic", "urgent", "ABC-40"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out_text(&out), "");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("forbidden"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// ---- war-room ls | clear | re-mark ----
+//
+// `serve` closes its listener after the last answer, so an unexpected POST makes the CLI fail: the exit-0 assert on
+// a GET-only test is what proves nothing was posted.
+
+/// A war-room row. `at_d` and `exp_d` are days from now: half days for a row built when the test starts, so floor and
+/// ceiling are unambiguous; whole days are fine for a row built when its request is handled (`late`), since the CLI
+/// reads its clock after the answer.
+fn wr_row(
+    key: &str,
+    item: &str,
+    initiative: Option<(&str, &str)>,
+    (at_d, exp_d): (f64, f64),
+    active: bool,
+    done: bool,
+) -> serde_json::Value {
+    let off =
+        |d: f64| chrono::Utc::now() + chrono::Duration::milliseconds((d * 86_400_000.0) as i64);
+    serde_json::json!({
+        "item": {"key": key, "item": item},
+        "title": format!("T {key}"),
+        "initiative": initiative.map(|(k, t)| serde_json::json!({"key": k, "title": t, "horizon": "h"})),
+        "mark": {"at": off(at_d), "by": "dana@example.com", "reason": null,
+                 "expires_at": off(exp_d), "active": active, "done": done}
+    })
+}
+
+fn wr_active(key: &str, item: &str) -> serde_json::Value {
+    wr_row(key, item, None, (-2.5, 9.5), true, false)
+}
+fn wr_expired(key: &str) -> serde_json::Value {
+    wr_row(key, "story", None, (-12.5, -2.5), false, false)
+}
+fn wr_expired_done(key: &str) -> serde_json::Value {
+    wr_row(key, "story", None, (-12.5, -2.5), false, true)
+}
+
+fn glyph(level: reeve::glyphs::Level, key: &str) -> String {
+    reeve::glyphs::mark_with(level, key, false)
+}
+
+fn out_text(out: &std::process::Output) -> String {
+    String::from_utf8(out.stdout.clone()).unwrap()
+}
+
+/// Rows print in the server's order with the initiative named only for epics and stories.
+#[test]
+fn war_room_ls_lists_rows() {
+    let rows = serde_json::json!([
+        wr_row(
+            "ABC-40",
+            "epic",
+            Some(("ABC-2", "Payments")),
+            (-2.5, 9.5),
+            true,
+            false
+        ),
+        wr_row("ABC-1", "story", None, (-12.5, -2.5), false, false),
+    ]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-40 · in Payments · marked by dana, 2 d ago · expires in 10 d\n{} T ABC-1 · marked by dana, 12 d ago · expired 2 d ago\n",
+            glyph(reeve::glyphs::Level::Epic, "ABC-40"),
+            glyph(reeve::glyphs::Level::Story, "ABC-1"),
+        )
+    );
+}
+
+#[test]
+fn war_room_ls_empty() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/war-room",
+        200,
+        ok(serde_json::json!([])),
+    )]);
+    let out = reeve_at(&url, &["war-room", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(out_text(&out), "The war room is empty.\n");
+}
+
+#[test]
+fn war_room_clear_without_yes_rehearses() {
+    let rows = serde_json::json!([wr_active("ABC-1", "story"), wr_expired("ABC-2")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "clear"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-1 · marked by dana, 2 d ago · expires in 10 d\n{} T ABC-2 · marked by dana, 12 d ago · expired 2 d ago\nWould clear 2 marks; run again with --yes.\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-1"),
+            glyph(reeve::glyphs::Level::Story, "ABC-2"),
+        )
+    );
+}
+
+#[test]
+fn war_room_re_mark_without_yes_names_what_it_left_out() {
+    let rows = serde_json::json!([
+        wr_active("ABC-1", "story"),
+        wr_expired("ABC-2"),
+        wr_expired_done("ABC-3")
+    ]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "re-mark"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-2 · marked by dana, 12 d ago · expired 2 d ago\nWould re-mark 1 mark for another cycle (1 on a done story left out); run again with --yes.\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-2")
+        )
+    );
+}
+
+/// `--yes` posts exactly the listed items, in order, and prints the server's new war room.
+#[test]
+fn war_room_clear_yes_posts_exactly_the_listed_items() {
+    let rows = serde_json::json!([wr_active("ABC-40", "epic"), wr_expired("ABC-1")]);
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(rows)),
+        (
+            "POST /api/v1/war-room/clear",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    // Parsed: the body's key order is serde_json's (sorted), the array order is the GET's.
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-40","item":"epic"},{"key":"ABC-1","item":"story"}]})
+    );
+    assert_eq!(out_text(&out), "Cleared 2 marks.\nThe war room is empty.\n");
+}
+
+/// The `renew` alias posts only the expired, not-done item to the renew route.
+#[test]
+fn war_room_renew_alias_posts_only_expired_not_done() {
+    let rows = serde_json::json!([
+        wr_active("ABC-1", "story"),
+        wr_expired("ABC-2"),
+        wr_expired_done("ABC-3")
+    ]);
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(rows)),
+        (
+            "POST /api/v1/war-room/renew",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["war-room", "renew", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
+    );
+    assert_eq!(
+        out_text(&out),
+        "Re-marked 1 mark for another cycle.\nThe war room is empty.\n"
+    );
+}
+
+/// `story ls` marks an urgent story's key column with ` !`, and keeps four tab-separated columns.
+#[test]
+fn story_ls_marks_an_urgent_story_in_the_first_column() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-1".parse().unwrap(),
+        item: reeve_protocol::ItemType::Story,
+    }];
+    let row = serde_json::json!({
+        "story": urgent_story(src),
+        "readiness": {"ready": true, "reasons": []}
+    });
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories",
+        200,
+        ok(serde_json::json!([row])),
+    )]);
+    let out = reeve_at(&url, &["story", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = out_text(&out);
+    let cols: Vec<&str> = text.trim_end().split('\t').collect();
+    assert_eq!(cols.len(), 4, "{text}");
+    assert_eq!(
+        cols[0],
+        format!("{} !", glyph(reeve::glyphs::Level::Story, "ABC-1")),
+        "{text}"
+    );
+}
+
+/// `--json story urgent` prints the envelope with the marked story as its value.
+#[test]
+fn story_urgent_json_prints_the_envelope() {
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/stories/TST-1",
+            200,
+            ok(marked_story_json("TST-1", None)),
+        ),
+        (
+            "POST /api/v1/stories/TST-1/urgent",
+            200,
+            ok(marked_story_json("TST-1", None)),
+        ),
+    ]);
+    let out = reeve_at(&url, &["--json", "story", "urgent", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
+    assert_eq!(env["outcome"], "ok");
+    assert_eq!(env["value"]["key"], "TST-1");
+}
+
+/// `re-mark --yes` (not the alias) posts to the renew route and prints the server's answer like `ls`. The fake server
+/// stamps the renewed mark when it handles the POST, so a CLI that measures the expiry from a clock read before its
+/// requests says 15 d.
+#[test]
+fn war_room_re_mark_yes_prints_the_servers_answer_like_ls() {
+    let rows = serde_json::json!([wr_expired("ABC-2")]);
+    let (url, server) = serve_lazy(vec![
+        ("GET /api/v1/war-room", 200, lazy(move || ok(rows))),
+        (
+            "POST /api/v1/war-room/renew",
+            200,
+            late(|| {
+                ok(serde_json::json!([wr_row(
+                    "ABC-2",
+                    "story",
+                    None,
+                    (0.0, 14.0),
+                    true,
+                    false
+                )]))
+            }),
+        ),
+    ]);
+    let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
+    );
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "Re-marked 1 mark for another cycle.\n{} T ABC-2 · marked by dana, today · expires in 14 d\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-2"),
+        )
+    );
+}
+
+/// A refused read posts nothing: `serve` closes after the GET, so an attempted POST would change the outcome.
+#[test]
+fn war_room_clear_yes_with_a_refused_get_posts_nothing() {
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 403, forbidden())]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out_text(&out), "");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("forbidden"));
+}
+
+/// Nothing selected: the GET only, exit 0, and the note about done stories.
+#[test]
+fn war_room_re_mark_with_only_done_expired_says_so() {
+    let rows = serde_json::json!([wr_expired_done("ABC-3")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows))]);
+    let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        "No expired marks to re-mark (1 on a done story left out).\n"
+    );
+}
+
+#[test]
+fn war_room_clear_json_without_yes_prints_the_get_envelope() {
+    let rows = serde_json::json!([wr_active("ABC-1", "story")]);
+    let (url, server) = serve(vec![("GET /api/v1/war-room", 200, ok(rows.clone()))]);
+    let out = reeve_at(&url, &["--json", "war-room", "clear"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
+    assert_eq!(env["outcome"], "ok");
+    assert_eq!(env["value"], rows);
+}
+
+/// The client keeps no copy of the server's 100-item limit: 101 are posted and the refusal is printed.
+#[test]
+fn war_room_clear_101_rows_are_all_posted_and_the_server_refusal_printed() {
+    let rows: Vec<_> = (1..=101)
+        .map(|n| wr_active(&format!("ABC-{n}"), "story"))
+        .collect();
+    let refusal =
+        serde_json::json!({"outcome":"error","code":"validation","message":"at most 100 items"});
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(serde_json::json!(rows))),
+        ("POST /api/v1/war-room/clear", 422, refusal),
+    ]);
+    let out = reeve_at(&url, &["war-room", "clear", "--yes"]);
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(sent["items"].as_array().unwrap().len(), 101);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("at most 100 items"));
+    assert_eq!(out_text(&out), "");
 }

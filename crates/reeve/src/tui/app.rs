@@ -1,10 +1,11 @@
 //! The core (kb/ADR-0011 R2): composition, input mode and key routing, reply classification, the one-shot actions
-//! (take, copy, open), identity, and routing notes between owners. Free of I/O, like every update.
+//! (take, clearing an urgent mark, copy, open), identity, and routing notes between owners. Free of I/O, like every
+//! update.
 use crate::tui::effect::{Completion, Effect, Failure, Reply, Request, Route, Seq, Stamp};
 use crate::tui::generation::Gen;
 use crate::tui::keys::{self, Action};
 use crate::tui::note::{Note, Out, WriteOutcome};
-use crate::tui::{board, drawer, live, moves, set_epic, words};
+use crate::tui::{board, drawer, live, moves, set_epic, urgent, words};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use reeve_protocol::{EditItem, Key, Me, TokenKind, normalise_email};
 use std::{
@@ -63,6 +64,9 @@ pub struct Ui {
     pub height: u16,
     /// `NO_COLOR` is unset.
     pub color: bool,
+    /// The wall clock of the frame being drawn. The driver reads it once per frame and records it here, so the view and
+    /// the drawer's scroll cap word the dates the same way.
+    pub wall: chrono::DateTime<chrono::Utc>,
 }
 
 /// What draws over the board and receives the keys. At most one is open at a time: opening one closes the others.
@@ -73,6 +77,7 @@ pub enum Overlay {
     MovePrompt,
     MovePicker,
     EpicPicker,
+    UrgentPrompt,
     Search,
     FilterMenu,
 }
@@ -90,6 +95,7 @@ pub struct State {
     pub board: board::State,
     pub moves: moves::State,
     pub set_epic: set_epic::State,
+    pub urgent: urgent::State,
     pub live: live::State,
     pub ui: Ui,
     pub quit: bool,
@@ -116,6 +122,7 @@ pub enum Msg {
     Board(board::Msg),
     Move(moves::Msg),
     SetEpic(set_epic::Msg),
+    Urgent(urgent::Msg),
     Live(live::Msg),
     /// A finished request, before the core stamps and classifies it. `write`: the story a write was for
     /// (`Request::write_key`), so the core words its lost answer or conflict once, for every owner.
@@ -132,6 +139,11 @@ pub enum Msg {
         stamp: Stamp,
         result: Completion,
     },
+    ClearUrgentDone {
+        key: Key,
+        stamp: Stamp,
+        result: Completion,
+    },
     /// From the runtime: an open or copy failed.
     Status(String),
     Tick,
@@ -144,6 +156,7 @@ impl fmt::Debug for Msg {
             Msg::Board(m) => write!(f, "Board({m:?})"),
             Msg::Move(m) => write!(f, "Move({m:?})"),
             Msg::SetEpic(m) => write!(f, "SetEpic({m:?})"),
+            Msg::Urgent(m) => write!(f, "Urgent({m:?})"),
             Msg::Live(m) => write!(f, "Live({m:?})"),
             Msg::Done {
                 sent,
@@ -154,6 +167,9 @@ impl fmt::Debug for Msg {
             Msg::MeLoaded(c) => write!(f, "MeLoaded({c:?})"),
             Msg::RetryMe(g) => write!(f, "RetryMe({g})"),
             Msg::TakeDone { key, result, .. } => write!(f, "TakeDone({key}, {result:?})"),
+            Msg::ClearUrgentDone { key, result, .. } => {
+                write!(f, "ClearUrgentDone({key}, {result:?})")
+            }
             Msg::Status(s) => write!(f, "Status({s})"),
             Msg::Tick => write!(f, "Tick"),
         }
@@ -182,6 +198,7 @@ impl State {
             board: board::State::default(),
             moves: moves::State::default(),
             set_epic: set_epic::State::default(),
+            urgent: urgent::State::default(),
             live: live::State::with_backoff(start.backoff.clone()),
             ui: Ui {
                 width: start.width,
@@ -217,6 +234,11 @@ impl State {
     /// The number of the last request sent.
     pub fn seq(&self) -> Seq {
         self.seq
+    }
+
+    /// Records the wall clock the next frame is drawn with. Only the driver (and the test harness) calls this.
+    pub fn set_wall(&mut self, wall: chrono::DateTime<chrono::Utc>) {
+        self.ui.wall = wall;
     }
 
     /// Numbers a request as it is sent. Only the driver (and the test harness) calls this.
@@ -270,6 +292,15 @@ impl State {
         self.absorb(o, Msg::SetEpic, now)
     }
 
+    fn urgent_msg(&mut self, m: urgent::Msg, now: Instant) -> Vec<Effect<Msg>> {
+        let cx = urgent::Ctx {
+            board: self.board.view(),
+            read_only: self.session.read_only(),
+        };
+        let o = self.urgent.update(m, &cx);
+        self.absorb(o, Msg::Urgent, now)
+    }
+
     fn live_msg(&mut self, m: live::Msg, now: Instant) -> Vec<Effect<Msg>> {
         let o = self.live.update(m, &live::Ctx { now });
         self.absorb(o, Msg::Live, now)
@@ -315,6 +346,7 @@ impl State {
         // Every follow-up, picker and prompt goes, so no late reply can start a write (kb/ADR-0015 R5).
         let mut fx = self.moves_msg(moves::Msg::Reset, now);
         fx.extend(self.set_epic_msg(set_epic::Msg::Reset, now));
+        fx.extend(self.urgent_msg(urgent::Msg::Reset, now));
         fx.extend(self.live_msg(live::Msg::Stop, now));
         self.set_status(SIGNED_OUT, now);
         fx
@@ -363,6 +395,7 @@ impl State {
             (self.moves.prompt().is_some(), Overlay::MovePrompt),
             (self.moves.picker().is_some(), Overlay::MovePicker),
             (self.set_epic.picker().is_some(), Overlay::EpicPicker),
+            (self.urgent.open().is_some(), Overlay::UrgentPrompt),
             (self.board.search().is_some(), Overlay::Search),
             (self.board.filter_menu().is_some(), Overlay::FilterMenu),
         ]
@@ -389,6 +422,7 @@ impl State {
             }
             Overlay::MovePrompt | Overlay::MovePicker => self.moves_msg(moves::Msg::Close, now),
             Overlay::EpicPicker => self.set_epic_msg(set_epic::Msg::Close, now),
+            Overlay::UrgentPrompt => self.urgent_msg(urgent::Msg::Close, now),
             Overlay::FilterMenu | Overlay::Search => self.board_msg(board::Msg::CloseOverlays, now),
         }
     }
@@ -462,6 +496,7 @@ impl State {
             Msg::Board(m) => self.board_msg(m, now),
             Msg::Move(m) => self.moves_msg(m, now),
             Msg::SetEpic(m) => self.set_epic_msg(m, now),
+            Msg::Urgent(m) => self.urgent_msg(m, now),
             Msg::Live(m) => self.live_msg(m, now),
             Msg::Status(t) => {
                 self.set_status(t, now);
@@ -518,6 +553,25 @@ impl State {
                     now,
                 )
             }
+            Msg::ClearUrgentDone { key, stamp, result } => {
+                let outcome = WriteOutcome::of(&result);
+                // Failures were worded by `classify`; it does not word a refusal, so this does.
+                match &result {
+                    Completion::Ok(_) => self.set_status(format!("{key} urgent mark cleared"), now),
+                    Completion::Refused { reasons, .. } => {
+                        self.set_status(format!("{key}: {}", words::shorts(reasons)), now);
+                    }
+                    Completion::Failed(_) => {}
+                }
+                self.notes(
+                    vec![Note::WriteFinished {
+                        key,
+                        stamp,
+                        outcome,
+                    }],
+                    now,
+                )
+            }
         }
     }
 
@@ -548,6 +602,7 @@ impl State {
             Some(Overlay::MovePrompt) => self.moves_msg(moves::Msg::PromptKey(k), now),
             Some(Overlay::MovePicker) => self.moves_msg(moves::Msg::PickerKey(k), now),
             Some(Overlay::EpicPicker) => self.set_epic_msg(set_epic::Msg::Key(k), now),
+            Some(Overlay::UrgentPrompt) => self.urgent_msg(urgent::Msg::Key(k), now),
             Some(Overlay::FilterMenu) => self.board_msg(board::Msg::FilterKey(k), now),
             Some(Overlay::Search) => self.board_msg(board::Msg::SearchKey(k), now),
             None => match keys::action(&k) {
@@ -561,7 +616,12 @@ impl State {
     fn drawer_max(&self) -> Option<u16> {
         let e = self.board.selected_entry()?;
         let terminal = ratatui::layout::Rect::new(0, 0, self.ui.width, self.ui.height);
-        Some(drawer::max_scroll(&self.board, e, drawer::area(terminal)))
+        Some(drawer::max_scroll(
+            &self.board,
+            e,
+            drawer::area(terminal),
+            self.ui.wall,
+        ))
     }
 
     fn selected_key(&self) -> Option<Key> {
@@ -607,6 +667,8 @@ impl State {
             Action::MoveTo => self.moves_msg(moves::Msg::Pick, now),
             Action::SetEpic => self.set_epic_msg(set_epic::Msg::Open, now),
             Action::Take => self.take(now),
+            Action::ClearUrgent => self.clear_urgent(now),
+            Action::MarkUrgent => self.mark_urgent(now),
             Action::Yank => match self.selected_key() {
                 Some(k) => {
                     self.set_status(format!("copied {k}"), now);
@@ -694,6 +756,8 @@ impl State {
                     | Action::MoveTo
                     | Action::Take
                     | Action::SetEpic
+                    | Action::MarkUrgent
+                    | Action::ClearUrgent
                         if writable.is_some() =>
                     {
                         writable.clone()
@@ -705,6 +769,7 @@ impl State {
                         Some(format!("nothing after {}", words::state(at)))
                     }
                     Action::Take if mine => Some("already yours".into()),
+                    Action::MarkUrgent | Action::ClearUrgent => urgent::blocked(story, action),
                     Action::OpenPr if story.prs.is_empty() => Some("no pull request".into()),
                     _ => None,
                 };
@@ -788,6 +853,55 @@ impl State {
         fx.push(Effect::http(
             Request::Edit { key, body },
             move |stamp, result| Msg::TakeDone {
+                key: k,
+                stamp,
+                result,
+            },
+        ));
+        fx
+    }
+
+    /// The selected story's key when `a` may run on it now; otherwise its reason is in the status line.
+    fn urgent_target(&mut self, a: Action, now: Instant) -> Option<Key> {
+        let (key, blocked) = match self.board.writable(self.session.read_only()) {
+            Ok(e) => (e.item.story.key.clone(), urgent::blocked(&e.item.story, a)),
+            Err(why) => {
+                self.set_status(why, now);
+                return None;
+            }
+        };
+        match blocked {
+            Some(why) => {
+                self.set_status(format!("{key}: {why}"), now);
+                None
+            }
+            None => Some(key),
+        }
+    }
+
+    /// Opens the reason prompt, prefilled with the story's current reason; the `urgent` slice sends the mark.
+    fn mark_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
+        let Some(key) = self.urgent_target(Action::MarkUrgent, now) else {
+            return Vec::new();
+        };
+        let reason = self
+            .board
+            .get(&key)
+            .and_then(|e| e.item.story.urgent_mark.as_ref())
+            .and_then(|m| m.reason.clone());
+        self.urgent_msg(urgent::Msg::Open { key, reason }, now)
+    }
+
+    /// Clears the selected story's own mark. No version: marks do not take one (kb/ADR-0017 R5).
+    fn clear_urgent(&mut self, now: Instant) -> Vec<Effect<Msg>> {
+        let Some(key) = self.urgent_target(Action::ClearUrgent, now) else {
+            return Vec::new();
+        };
+        let mut fx = self.notes(vec![Note::WriteStarted(key.clone())], now);
+        let k = key.clone();
+        fx.push(Effect::http(
+            Request::ClearUrgent { key },
+            move |stamp, result| Msg::ClearUrgentDone {
                 key: k,
                 stamp,
                 result,

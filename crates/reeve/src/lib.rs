@@ -8,6 +8,7 @@ pub mod glyphs;
 mod jira;
 mod render;
 pub mod tui;
+mod urgency;
 
 use clap::Parser;
 

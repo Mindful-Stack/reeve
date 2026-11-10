@@ -80,6 +80,7 @@ An example, with the owner of each step: `L` on a story that is not ready makes 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-09 (kb/ADR-0015): kb/ADR-0008 is superseded by kb/ADR-0015; the token-kind rule R7 narrows is now kb/ADR-0015 R7, unchanged in substance. No trigger fired; the decision holds.
+- 2026-11-09 (kb/ADR-0017): R2's slices grow by `urgent` (the optional-reason prompt that marks a story urgent and owns that write) and its one-shots by clearing a story's urgent mark; both writes take the write path (R5, R8). The TUI, like the web, does not offer marking a done story; the server accepts such a mark, so this is presentation (R9). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0001 (public API only; R6 restates its R2 for the TUI)

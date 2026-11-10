@@ -1,7 +1,7 @@
 //! The screen: a header line, the body (board or empty state, with the drawer and any overlay on top), a status line.
 use crate::tui::app::State;
 use crate::tui::live::Conn;
-use crate::tui::{board, drawer, keys, moves, set_epic, words};
+use crate::tui::{board, drawer, keys, moves, set_epic, urgent, words};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -91,6 +91,9 @@ fn header(s: &State, w: usize) -> String {
     };
     if s.board.filter().ready_only {
         filter.push_str(" · ready");
+    }
+    if s.board.filter().urgent_only {
+        filter.push_str(" · urgent");
     }
     if !s.board.query().is_empty() {
         filter.push_str(&format!(" · \"{}\"", s.board.query()));
@@ -233,13 +236,14 @@ pub fn draw(f: &mut Frame, s: &State, now: Instant) {
     if let Some(scroll) = s.ui.drawer
         && let Some(e) = s.board.selected_entry()
     {
-        drawer::draw(f, drawer::area(area), &s.board, e, scroll);
+        drawer::draw(f, drawer::area(area), &s.board, e, scroll, s.ui.wall);
     }
     if let Some(row) = s.board.filter_menu() {
         board::view::filter_menu(f, body, &s.board, row);
     }
     moves::view::draw(f, body, &s.moves, &s.board);
     set_epic::view::draw(f, body, &s.set_epic, &s.board);
+    urgent::view::draw(f, body, &s.urgent, &s.board);
     if let Some(row) = s.ui.menu {
         menu(f, body, s, row);
     }
@@ -488,6 +492,25 @@ mod tests {
     }
 
     #[test]
+    fn the_header_names_the_ready_and_urgent_filters_after_the_menu_closes() {
+        let mut sim = mine(vec!["ABC-1"]);
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            !rows[0].contains("· ready") && !rows[0].contains("· urgent"),
+            "{}",
+            rows[0]
+        );
+        sim.char('f');
+        sim.char('j');
+        sim.char(' '); // row 1: ready only
+        sim.char('j');
+        sim.char(' '); // row 2: urgent only
+        sim.press(KeyCode::Esc, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        assert!(rows[0].contains("mine · ready · urgent"), "{}", rows[0]);
+    }
+
+    #[test]
     fn empty_states() {
         let mut sim = Sim::loaded(
             TokenKind::Interactive,
@@ -612,6 +635,236 @@ mod tests {
         assert!(!has(&rows, "ABC-1"));
     }
 
+    /// The cell of the first `!` on the card of `title` and the row it sits on.
+    fn bang(rows: &[String], title: &str) -> (u16, u16) {
+        at(rows, &format!("! {title}"))
+    }
+
+    /// ABC-1 is selected (the first card). The urgent story is ABC-1 when `selected_first`, else ABC-2.
+    fn urgent_board(selected_first: bool) -> Sim {
+        let (a, b) = if selected_first {
+            ("ABC-1", "ABC-2")
+        } else {
+            ("ABC-2", "ABC-1")
+        };
+        let list = vec![
+            urgent(owned(story(a, Todo, 1), "dan@example.com")),
+            owned(story(b, Todo, 1), "dan@example.com"),
+        ];
+        Sim::loaded(TokenKind::Interactive, list)
+    }
+
+    #[test]
+    fn an_urgent_card_carries_a_red_bold_bang_with_colour_and_a_plain_one_without() {
+        for w in [120, 100] {
+            // ABC-2 is urgent and not selected (ABC-1, first, is).
+            let mut sim = urgent_board(false);
+            let (rows, buf) = sim.render(w, 30);
+            let (x, y) = bang(&rows, "Title of ABC-2");
+            assert_eq!(buf[(x, y)].symbol(), "!");
+            assert_eq!(buf[(x, y)].fg, Color::Reset, "no colour unless allowed");
+            assert!(
+                !has(&rows, "! Title of ABC-1"),
+                "only the urgent story gets it: {rows:#?}"
+            );
+            sim.s.ui.color = true;
+            let (_, buf) = sim.render(w, 30);
+            assert_eq!(buf[(x, y)].fg, Color::Red, "width {w}");
+            assert!(buf[(x, y)].modifier.contains(Modifier::BOLD));
+            assert!(!buf[(x, y)].modifier.contains(Modifier::REVERSED));
+        }
+    }
+
+    #[test]
+    fn the_bang_on_the_selected_card_keeps_the_selected_style_not_red() {
+        for w in [120, 100] {
+            let mut sim = urgent_board(true);
+            sim.s.ui.color = true;
+            let (rows, buf) = sim.render(w, 30);
+            let (x, y) = bang(&rows, "Title of ABC-1");
+            let c = &buf[(x, y)];
+            assert_eq!(c.symbol(), "!");
+            assert!(c.modifier.contains(Modifier::REVERSED | Modifier::BOLD));
+            assert_eq!(c.fg, Color::Reset, "width {w}");
+            assert_ne!(c.bg, Color::Red);
+        }
+    }
+
+    #[test]
+    fn a_done_story_with_an_active_own_mark_has_no_bang() {
+        let sim_list = vec![done_marked(owned(
+            story("ABC-1", Done, 1),
+            "dan@example.com",
+        ))];
+        for w in [120, 100] {
+            let mut sim = Sim::loaded(TokenKind::Interactive, sim_list.clone());
+            sim.s.board.test_set_filter_all(true);
+            let (rows, _) = sim.render(w, 30);
+            assert!(has(&rows, "Title of ABC-1"), "{rows:#?}");
+            assert!(!has(&rows, "! "), "{rows:#?}");
+        }
+    }
+
+    #[test]
+    fn the_bang_leaves_column_zero_to_the_live_marker_and_the_title_gives_up_two_columns() {
+        let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        s.story.title = "A very long title that cannot fit in a card".into();
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.s
+            .live
+            .test_set_last_changed(Some((key("ABC-1"), sim.now)));
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "• ● ABC-1"), "{rows:#?}");
+        // Column inner width is 120 / 5 - 2 = 22: "! " then the title cut to 20 columns.
+        let cut = crate::tui::view::fit("A very long title that cannot fit in a card", 20);
+        assert!(has(&rows, &format!("! {cut}")), "{rows:#?}");
+        let (x, y) = at(&rows, &format!("! {cut}"));
+        let card: String = rows[y as usize].chars().skip(x as usize).take(22).collect();
+        assert_eq!(card.trim_end(), format!("! {cut}"), "{rows:#?}");
+        // List layout: the bang is still before the title and the title is cut with an ellipsis.
+        let (rows, _) = sim.render(50, 30);
+        let head = rows.iter().find(|r| r.contains("! A very")).unwrap();
+        assert!(
+            head.starts_with("• ● ABC-1 story  ! A very"),
+            "the bang directly follows the lead: {rows:#?}"
+        );
+        assert!(head.trim_end().ends_with('…'), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_drawer_says_why_a_story_is_urgent_right_under_its_title() {
+        let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        s.story.title = "The title".into();
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        let (_, y) = at(&rows, "The title");
+        let right: String = rows[y as usize].chars().skip(60).collect();
+        assert!(right.contains("The title"), "{rows:#?}");
+        assert!(
+            rows[y as usize + 1].contains("urgent · marked by dana, 2 d ago · expires in 10 d"),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn the_filter_keeps_only_urgent_stories_and_has_a_third_row() {
+        let list = vec![
+            urgent(owned(story("ABC-1", Todo, 1), "dan@example.com")),
+            owned(story("ABC-2", Todo, 1), "dan@example.com"),
+            done_marked(owned(story("ABC-3", Done, 1), "dan@example.com")),
+        ];
+        let mut sim = Sim::loaded(TokenKind::Interactive, list);
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "Title of ABC-2") && has(&rows, "Title of ABC-3"));
+        sim.char('f');
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "[ ] urgent only"), "{rows:#?}");
+        sim.char('j');
+        sim.char('j');
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "[x] urgent only"), "{rows:#?}");
+        sim.char('f');
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "Title of ABC-1"), "{rows:#?}");
+        assert!(
+            !has(&rows, "Title of ABC-2") && !has(&rows, "Title of ABC-3"),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_urgent_filter_says_so() {
+        let mut sim = Sim::loaded(
+            TokenKind::Interactive,
+            vec![owned(story("ABC-1", Todo, 1), "dan@example.com")],
+        );
+        let open_urgent = |sim: &mut Sim| {
+            sim.char('f');
+            sim.char('j');
+            sim.char('j');
+            sim.press(KeyCode::Enter, KeyModifiers::NONE);
+            sim.char('f');
+        };
+        open_urgent(&mut sim);
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            has(&rows, "no urgent stories owned by you — f shows all"),
+            "{rows:#?}"
+        );
+        sim.s.board.test_set_filter_all(true);
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "no urgent stories"), "{rows:#?}");
+        assert!(!has(&rows, "owned by you"), "{rows:#?}");
+    }
+
+    #[test]
+    fn urgency_comes_from_the_sources_never_from_the_mark() {
+        let list = vec![
+            urgent_via_epic(owned(story("ABC-1", Todo, 1), "dan@example.com")),
+            marked_without_sources(owned(story("ABC-2", Todo, 1), "dan@example.com")),
+        ];
+        for w in [120, 100] {
+            let mut sim = Sim::loaded(TokenKind::Interactive, list.clone());
+            let (rows, _) = sim.render(w, 30);
+            assert!(has(&rows, "! Title of ABC-1"), "width {w}: {rows:#?}");
+            assert!(
+                has(&rows, "Title of ABC-2") && !has(&rows, "! Title of ABC-2"),
+                "{rows:#?}"
+            );
+        }
+        let mut sim = Sim::loaded(TokenKind::Interactive, list);
+        sim.char('f');
+        sim.char('j');
+        sim.char('j');
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        sim.char('f');
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            has(&rows, "Title of ABC-1") && !has(&rows, "Title of ABC-2"),
+            "{rows:#?}"
+        );
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "urgent · via epic ABC-100"), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_long_owner_at_a_narrow_width_never_clips_the_bang() {
+        let mut s = urgent(owned(
+            story("ABC-1", Todo, 1),
+            "a-remarkably-long-owner-name@example.com",
+        ));
+        s.story.title = "Title".into();
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.s.board.test_set_filter_all(true);
+        let (rows, _) = sim.render(40, 20);
+        let head = rows.iter().find(|r| r.contains("ABC-1")).unwrap();
+        assert!(head.contains("…! "), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_drawer_scroll_cap_agrees_with_what_is_drawn() {
+        // The frame's wording ("2 d ago", "expires in 10 d") is longer than the mark's own date would give, so
+        // the urgent line wraps in the drawer and a cap counted with other wording would miss a line.
+        let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        s.story.urgent_mark.as_mut().unwrap().reason = Some("abcde".into());
+        s.story.description = (1..=60)
+            .map(|i| format!("line {i}"))
+            .chain(["LASTLINE".to_string()])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let _ = sim.render(120, 30); // the core learns the terminal's size from the driver's frames
+        for _ in 0..100 {
+            sim.char('J');
+        }
+        let (rows, _) = sim.render(120, 30);
+        assert!(has(&rows, "LASTLINE"), "{rows:#?}");
+    }
+
     #[test]
     fn the_status_line_shows_an_outcome_then_the_ticker() {
         let mut sim = mine(vec!["ABC-1"]);
@@ -720,6 +973,22 @@ mod tests {
         sim.char('e');
         let (rows, _) = sim.render(120, 30);
         assert!(has(&rows, "epic for ● ABC-1 story"), "{rows:#?}");
+    }
+
+    #[test]
+    fn the_urgent_prompt_is_titled_with_the_tagged_key_and_prefilled() {
+        let mut marked = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        marked.story.urgent_mark.as_mut().unwrap().reason = Some("old".into());
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![marked]);
+        sim.char('u');
+        let (rows, _) = sim.render(120, 30);
+        let title = format!(
+            " mark {} urgent ",
+            crate::tui::moves::view::tagged(&sim.s.board, &key("ABC-1"))
+        );
+        assert_eq!(title, " mark ● ABC-1 story urgent ");
+        assert!(has(&rows, &title), "{rows:#?}");
+        assert!(has(&rows, "reason (optional): old"), "{rows:#?}");
     }
 
     #[test]

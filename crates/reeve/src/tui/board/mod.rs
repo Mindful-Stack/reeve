@@ -6,6 +6,7 @@ use crate::tui::effect::{Completion, Effect, Failure, Reply, Request, Seq, Stamp
 use crate::tui::line::{LineEditor, LineEvent};
 use crate::tui::note::{Note, Out, WriteOutcome};
 use crate::tui::words::{self, STATES};
+use crate::urgency::is_urgent;
 use crossterm::event::KeyEvent;
 use reeve_protocol::{DeliveryState, Key, StoryDto, StoryWithReadiness, normalise_email};
 use std::collections::{HashMap, HashSet};
@@ -23,6 +24,8 @@ pub struct Entry {
 pub struct Filter {
     pub all: bool,
     pub ready_only: bool,
+    /// Only stories the server says are urgent (`is_urgent`; kb/ADR-0017 R3).
+    pub urgent_only: bool,
 }
 
 /// What the core passes the board read-only (kb/ADR-0011 R2).
@@ -96,8 +99,8 @@ pub struct Selected {
     pub version: i64,
 }
 
-/// What the workflow slices (moves, set_epic) may read of the board, and nothing more: read-only, so every change
-/// to the board still goes through its own messages (kb/ADR-0011 R2).
+/// What the workflow slices (moves, set_epic, urgent) may read of the board, and nothing more: read-only, so every
+/// change to the board still goes through its own messages (kb/ADR-0011 R2).
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     board: &'a State,
@@ -122,6 +125,10 @@ impl View<'_> {
     /// A write on `k` is in flight.
     pub fn locked(&self, k: &Key) -> bool {
         self.board.locked(k)
+    }
+    /// The story `k` as the board holds it now, if it is still on the board.
+    pub fn story(&self, k: &Key) -> Option<&StoryDto> {
+        self.board.get(k).map(|e| &e.item.story)
     }
 }
 
@@ -355,6 +362,9 @@ impl State {
         if self.filter.ready_only && (!e.item.readiness.ready || e.readiness_pending) {
             return false;
         }
+        if self.filter.urgent_only && !is_urgent(&s.urgent_sources) {
+            return false;
+        }
         if !q.is_empty()
             && !s.key.to_string().to_lowercase().contains(q)
             && !s.title.to_lowercase().contains(q)
@@ -563,7 +573,7 @@ impl State {
         }
     }
 
-    /// Rows: 0 mine / all, 1 ready only.
+    /// Rows: 0 mine / all, 1 ready only, 2 urgent only.
     fn filter_key(&mut self, k: &KeyEvent, cx: &Ctx) -> Out<Msg> {
         use crossterm::event::KeyCode;
         let Some(row) = self.filter_menu else {
@@ -572,14 +582,14 @@ impl State {
         let before = self.place(cx);
         match k.code {
             KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('q') => self.filter_menu = None,
-            KeyCode::Char('j') | KeyCode::Down => self.filter_menu = Some((row + 1).min(1)),
+            KeyCode::Char('j') | KeyCode::Down => self.filter_menu = Some((row + 1).min(2)),
             KeyCode::Char('k') | KeyCode::Up => self.filter_menu = Some(row.saturating_sub(1)),
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.parked = false;
-                if row == 0 {
-                    self.filter.all = !self.filter.all;
-                } else {
-                    self.filter.ready_only = !self.filter.ready_only;
+                match row {
+                    0 => self.filter.all = !self.filter.all,
+                    1 => self.filter.ready_only = !self.filter.ready_only,
+                    _ => self.filter.urgent_only = !self.filter.urgent_only,
                 }
                 return self.reselect(before, cx);
             }
@@ -599,6 +609,7 @@ impl State {
             filter: Filter {
                 all: true,
                 ready_only: false,
+                urgent_only: false,
             },
             ..Self::default()
         }
@@ -1268,6 +1279,34 @@ mod tests {
         let _ = b.update(Msg::FilterKey(k(KeyCode::Esc)), &cx());
         assert!(b.filter_menu.is_none());
         assert_eq!(b.selected, Some(key("ABC-1")), "a filter change reselects");
+    }
+
+    #[test]
+    fn the_filter_menu_reaches_a_third_row_that_keeps_only_urgent_stories() {
+        let mut b = loaded(
+            vec![
+                urgent(owned(story("ABC-1", Todo, 1), "dan@example.com")),
+                owned(story("ABC-2", Todo, 1), "dan@example.com"),
+                done_marked(owned(story("ABC-3", Done, 1), "dan@example.com")),
+            ],
+            1,
+        );
+        assert_eq!(b.visible(&cx()).len(), 3);
+        let _ = b.update(Msg::FilterOpen, &cx());
+        for c in ['j', 'j', 'j'] {
+            let _ = b.update(Msg::FilterKey(k(KeyCode::Char(c))), &cx());
+        }
+        assert_eq!(b.filter_menu, Some(2), "the clamp stops at the third row");
+        let _ = b.update(Msg::FilterKey(k(KeyCode::Enter)), &cx());
+        assert!(b.filter.urgent_only);
+        let keys: Vec<_> = b
+            .visible(&cx())
+            .iter()
+            .map(|e| e.item.story.key.clone())
+            .collect();
+        assert_eq!(keys, vec![key("ABC-1")]);
+        let _ = b.update(Msg::FilterKey(k(KeyCode::Enter)), &cx());
+        assert!(!b.filter.urgent_only);
     }
 
     #[test]

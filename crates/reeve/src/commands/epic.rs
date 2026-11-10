@@ -1,5 +1,6 @@
 use super::finish;
 use crate::client::Client;
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -84,6 +85,17 @@ pub enum Epic {
         #[arg(long)]
         reopen: bool,
     },
+    /// Mark the epic urgent for one cycle, or renew its mark; --clear removes it (interactive tokens only).
+    Urgent {
+        /// Epic key.
+        key: KeyRef,
+        /// Why it is urgent (at most 200 characters); left out, marking again keeps the current reason; --reason '' clears it.
+        #[arg(long, conflicts_with = "clear")]
+        reason: Option<String>,
+        /// Remove the epic's urgent mark (clearing one with none changes nothing).
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
@@ -110,10 +122,22 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::epic,
         ),
+        Epic::Urgent { key, reason, clear } => {
+            super::urgent::<EpicDto>(c, format!("/epics/{key}"), reason, clear, json, |s| {
+                super::UrgentView {
+                    level: Level::Epic,
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
+                }
+            })
+            .await?
+        }
         Epic::Show { key } => {
             let out = c.get::<EpicDto>(&format!("/epics/{key}")).await?;
+            let now = chrono::Utc::now();
             if json || !matches!(out, crate::client::Outcome::Ok(_)) {
-                finish(out, json, crate::render::epic)
+                finish(out, json, |v| crate::render::epic_show(v, now))
             } else {
                 // Advisory and best effort: a failed findings read (an older server, a dropped connection) still shows the
                 // epic.
@@ -138,7 +162,7 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
                         .filter(|b| !b.is_empty())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let s = crate::render::epic(v);
+                    let s = crate::render::epic_show(v, now);
                     if f.is_empty() { s } else { format!("{s}\n{f}") }
                 })
             }

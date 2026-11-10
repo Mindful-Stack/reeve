@@ -60,7 +60,7 @@ These rules describe the code as it is. ADR-0010 records the crate rules; this n
 ## The TUI
 
 `reeve tui` (`crates/reeve/src/tui/`, kb/ADR-0011) is an HTTP and event-stream client like the browser: protocol types
-only, no store. It is a reducer of feature slices (`board`, `moves`, `set_epic`, `live`) under a core that routes messages;
+only, no store. It is a reducer of feature slices (`board`, `moves`, `set_epic`, `urgent`, `live`) under a core that routes messages;
 an update never does I/O, the runtime runs its effects and returns results as messages. Writes are not optimistic.
 Freshness is by request order, not story version alone: the core numbers every request when it is sent, and a board
 load sent before a write completed is dropped. It authenticates only with the stored login (`REEVE_TOKEN` is never its

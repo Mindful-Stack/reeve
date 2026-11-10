@@ -1,5 +1,6 @@
 use super::{finish, whoami};
 use crate::client::Client;
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -161,6 +162,17 @@ pub enum Story {
         #[arg(long)]
         by: KeyRef,
     },
+    /// Mark the story urgent for one cycle, or renew its mark; --clear removes it (interactive tokens only).
+    Urgent {
+        /// Story key.
+        key: KeyRef,
+        /// Why it is urgent (at most 200 characters); left out, marking again keeps the current reason; --reason '' clears it.
+        #[arg(long, conflicts_with = "clear")]
+        reason: Option<String>,
+        /// Remove the story's urgent mark (clearing one with none changes nothing).
+        #[arg(long)]
+        clear: bool,
+    },
 }
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum KindArg {
@@ -246,11 +258,22 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::story,
         ),
-        Story::Show { key } => finish(
-            c.get::<StoryDto>(&format!("/stories/{key}")).await?,
-            json,
-            crate::render::story,
-        ),
+        Story::Urgent { key, reason, clear } => {
+            super::urgent::<StoryDto>(c, format!("/stories/{key}"), reason, clear, json, |s| {
+                super::UrgentView {
+                    level: Level::of_kind(s.kind),
+                    key: &s.key,
+                    own: s.urgent_mark.as_ref(),
+                    sources: &s.urgent_sources,
+                }
+            })
+            .await?
+        }
+        Story::Show { key } => {
+            let out = c.get::<StoryDto>(&format!("/stories/{key}")).await?;
+            let now = chrono::Utc::now();
+            finish(out, json, |s| crate::render::story_show(s, now))
+        }
         Story::Ls {
             epic,
             owner,
@@ -411,12 +434,13 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::readiness,
         ),
-        Story::Context { key } => finish(
-            c.get::<StoryContextDto>(&format!("/stories/{key}/context"))
-                .await?,
-            json,
-            crate::render::context_markdown,
-        ),
+        Story::Context { key } => {
+            let out = c
+                .get::<StoryContextDto>(&format!("/stories/{key}/context"))
+                .await?;
+            let now = chrono::Utc::now();
+            finish(out, json, |x| crate::render::context_markdown(x, now))
+        }
         Story::Block { key, by } => finish(
             c.post::<reeve_protocol::Empty>(
                 &format!("/stories/{key}/blocks"),

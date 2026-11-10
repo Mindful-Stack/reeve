@@ -3,6 +3,8 @@ use crate::glyphs::{Level, mark};
 use crate::tui::app::WIDE;
 use crate::tui::board::{Entry, State};
 use crate::tui::{view, words};
+use crate::urgency::urgent_lines;
+use chrono::{DateTime, Utc};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -10,9 +12,15 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, Wrap},
 };
 
-pub fn lines(board: &State, e: &Entry) -> Vec<String> {
+pub fn lines(board: &State, e: &Entry, wall: DateTime<Utc>) -> Vec<String> {
     let s = &e.item.story;
     let mut out = vec![s.title.clone()];
+    out.extend(urgent_lines(
+        s.urgent_mark.as_ref(),
+        &s.urgent_sources,
+        &s.key,
+        wall,
+    ));
     out.push(format!(
         "owner {} · epic {} · {}",
         s.owner.as_deref().map(words::local_part).unwrap_or("none"),
@@ -105,10 +113,10 @@ fn block(e: &Entry) -> Block<'static> {
     ))
 }
 
-fn paragraph(board: &State, e: &Entry) -> Paragraph<'static> {
+fn paragraph(board: &State, e: &Entry, wall: DateTime<Utc>) -> Paragraph<'static> {
     // Wrapped, never cut: the full reasons and the whole description must be readable, and the scroll counts wrapped
     // lines, so J/K reach the end of a long description.
-    let text: Vec<Line> = lines(board, e).into_iter().map(Line::raw).collect();
+    let text: Vec<Line> = lines(board, e, wall).into_iter().map(Line::raw).collect();
     Paragraph::new(text).wrap(Wrap { trim: false })
 }
 
@@ -120,13 +128,16 @@ fn last(p: &Paragraph, inner: Rect) -> u16 {
 }
 
 /// The furthest the drawer at `area` scrolls: its wrapped line count less its inner height (0 when it all fits).
-pub fn max_scroll(board: &State, e: &Entry, area: Rect) -> u16 {
-    last(&paragraph(board, e), block(e).inner(area))
+///
+/// `wall` is the frame's wall clock, the one the view draws with (`Ui::wall`): the wording of the dates decides how
+/// the urgent line wraps, so the cap must count the same text.
+pub fn max_scroll(board: &State, e: &Entry, area: Rect, wall: DateTime<Utc>) -> u16 {
+    last(&paragraph(board, e, wall), block(e).inner(area))
 }
 
-pub fn draw(f: &mut Frame, area: Rect, board: &State, e: &Entry, scroll: u16) {
+pub fn draw(f: &mut Frame, area: Rect, board: &State, e: &Entry, scroll: u16, wall: DateTime<Utc>) {
     let block = block(e);
-    let p = paragraph(board, e);
+    let p = paragraph(board, e, wall);
     // The core caps the stored scroll; the data or the size may since have changed, so a scroll past the end shows
     // the last page rather than a blank box.
     let scroll = scroll.min(last(&p, block.inner(area)));

@@ -139,6 +139,7 @@ async fn flow() {
     override_with_a_reason(&mut t, &dan, &k(&s3)).await;
     set_epic(&mut t, &dan, &k(&s1), &k(&epic)).await;
     a_second_clients_write_arrives_live(&mut t, &dan).await;
+    mark_urgent_with_a_reason(&mut t, &dan).await;
     automation_is_read_only(&base, &bot, &dan, &k(&s3)).await;
 }
 
@@ -252,6 +253,36 @@ async fn a_second_clients_write_arrives_live(t: &mut Tui, dan: &Api) {
             .any(|l| l.contains(&key) && !l.contains(" · dan"))
     })
     .await;
+}
+
+/// A story the TUI marks: the `!` appears once the server answered, and the server holds the reason the prompt sent.
+/// That the mark is never drawn optimistically is `tui_scripted`'s `marking_waits_for_the_reply_then_refetches_once`.
+async fn mark_urgent_with_a_reason(t: &mut Tui, dan: &Api) {
+    let s = dan
+        .own(&dan.story("urgent e2e").await, "dan@example.com")
+        .await;
+    let key = s["key"].as_str().unwrap().to_string();
+    t.until("the new story on the board", WAIT, |d| {
+        d.screen().contains("urgent e2e")
+    })
+    .await;
+    assert!(!t.d.screen().contains("! urgent e2e"), "not urgent yet");
+    select(t, &key).await;
+    t.press(KeyCode::Char('u'));
+    t.until("the reason prompt", WAIT, |d| {
+        d.screen().contains("reason (optional):")
+    })
+    .await;
+    t.type_text("e2e");
+    t.press(KeyCode::Enter);
+    t.until("the mark before the title", WAIT, |d| {
+        d.screen().contains("! urgent e2e")
+    })
+    .await;
+    let story = dan.get(&format!("/stories/{key}")).await;
+    assert_eq!(story["urgent_mark"]["reason"], "e2e", "{story}");
+    assert_eq!(story["urgent_mark"]["by"], "dan@example.com", "{story}");
+    assert_eq!(story["version"], s["version"], "a mark takes no version");
 }
 
 async fn automation_is_read_only(base: &str, bot: &str, dan: &Api, key: &str) {

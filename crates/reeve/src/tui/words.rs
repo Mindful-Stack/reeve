@@ -12,6 +12,11 @@ pub const STATES: [DeliveryState; 5] = [
     DeliveryState::Done,
 ];
 
+/// Reasons in their short wording, comma-separated: how a refusal reads in the status line.
+pub fn shorts(rs: &[Reason]) -> String {
+    rs.iter().map(short).collect::<Vec<_>>().join(", ")
+}
+
 pub fn short(r: &Reason) -> String {
     match r {
         Reason::Untriaged => "untriaged".into(),
@@ -83,10 +88,9 @@ pub fn index(s: DeliveryState) -> usize {
         .expect("every state is in STATES")
 }
 
-/// The email's local part, as the ticker and cards show owners.
-pub fn local_part(email: &str) -> &str {
-    email.split('@').next().unwrap_or(email)
-}
+/// The single copy lives in crate::urgency.
+pub(crate) use crate::urgency::local_part;
+
 #[cfg(test)]
 mod tests {
     use super::*;
