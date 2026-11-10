@@ -11,12 +11,14 @@ pub enum WarRoom {
     Ls,
     /// Clear every listed mark; rehearses unless --yes (interactive tokens only).
     Clear {
+        /// Clear the listed marks; without it the run only rehearses.
         #[arg(long)]
         yes: bool,
     },
     /// Re-mark every listed expired mark for another cycle (done stories left out); rehearses unless --yes (interactive tokens only).
     #[command(name = "re-mark", alias = "renew")]
     ReMark {
+        /// Re-mark the listed marks; without it the run only rehearses.
         #[arg(long)]
         yes: bool,
     },

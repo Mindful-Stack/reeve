@@ -166,7 +166,7 @@ pub enum Story {
     Urgent {
         /// Story key.
         key: KeyRef,
-        /// Why it is urgent (optional, at most 200 characters).
+        /// Why it is urgent (optional, at most 200 characters); marking again replaces the mark, so leaving it out clears the reason (war-room re-mark keeps reasons).
         #[arg(long, conflicts_with = "clear")]
         reason: Option<String>,
         /// Remove the story's urgent mark (clearing one with none changes nothing).
@@ -452,7 +452,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                 c.get::<StoryContextDto>(&format!("/stories/{key}/context"))
                     .await?,
                 json,
-                |x| crate::render::context_markdown_at(x, now),
+                |x| crate::render::context_markdown(x, now),
             )
         }
         Story::Block { key, by } => finish(

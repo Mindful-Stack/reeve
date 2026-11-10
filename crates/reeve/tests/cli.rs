@@ -2620,10 +2620,7 @@ fn story_urgent_posts_the_trimmed_reason() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines[0],
-        format!(
-            "{} !",
-            reeve::glyphs::mark_with(reeve::glyphs::Level::Story, "TST-1", false)
-        ),
+        format!("{} !", glyph(reeve::glyphs::Level::Story, "TST-1")),
         "{text}"
     );
     assert!(lines[1].starts_with("urgent · marked by"), "{text}");
@@ -2660,10 +2657,7 @@ fn epic_urgent_with_a_blank_reason_posts_null() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         text.lines().next().unwrap(),
-        format!(
-            "{} !",
-            reeve::glyphs::mark_with(reeve::glyphs::Level::Epic, "ABC-40", false)
-        ),
+        format!("{} !", glyph(reeve::glyphs::Level::Epic, "ABC-40")),
         "{text}"
     );
 }
@@ -2922,6 +2916,77 @@ fn war_room_renew_alias_posts_only_expired_not_done() {
         serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
     );
     assert_eq!(out_text(&out), "The war room is empty.\n");
+}
+
+/// `story ls` marks an urgent story's key column with ` !`, and keeps four tab-separated columns.
+#[test]
+fn story_ls_marks_an_urgent_story_in_the_first_column() {
+    let src = vec![reeve_protocol::ItemRefDto {
+        key: "ABC-1".parse().unwrap(),
+        item: reeve_protocol::ItemType::Story,
+    }];
+    let row = serde_json::json!({
+        "story": urgent_story(src),
+        "readiness": {"ready": true, "reasons": []}
+    });
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories",
+        200,
+        ok(serde_json::json!([row])),
+    )]);
+    let out = reeve_at(&url, &["story", "ls"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = out_text(&out);
+    let cols: Vec<&str> = text.trim_end().split('\t').collect();
+    assert_eq!(cols.len(), 4, "{text}");
+    assert_eq!(
+        cols[0],
+        format!("{} !", glyph(reeve::glyphs::Level::Story, "ABC-1")),
+        "{text}"
+    );
+}
+
+/// `--json story urgent` prints the envelope with the marked story as its value.
+#[test]
+fn story_urgent_json_prints_the_envelope() {
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/TST-1/urgent",
+        200,
+        ok(marked_story_json("TST-1", None)),
+    )]);
+    let out = reeve_at(&url, &["--json", "story", "urgent", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
+    assert_eq!(env["outcome"], "ok");
+    assert_eq!(env["value"]["key"], "TST-1");
+}
+
+/// `re-mark --yes` (not the alias) posts to the renew route and prints the server's answer like `ls`.
+#[test]
+fn war_room_re_mark_yes_prints_the_servers_answer_like_ls() {
+    let rows = serde_json::json!([wr_expired("ABC-2")]);
+    let answer = serde_json::json!([wr_active("ABC-2", "story")]);
+    let (url, server) = serve(vec![
+        ("GET /api/v1/war-room", 200, ok(rows)),
+        ("POST /api/v1/war-room/renew", 200, ok(answer)),
+    ]);
+    let out = reeve_at(&url, &["war-room", "re-mark", "--yes"]);
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let sent: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"items":[{"key":"ABC-2","item":"story"}]})
+    );
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} T ABC-2 · marked by dana, 2 d ago · expires in 10 d\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-2"),
+        )
+    );
 }
 
 /// A refused read posts nothing: `serve` closes after the GET, so an attempted POST would change the outcome.

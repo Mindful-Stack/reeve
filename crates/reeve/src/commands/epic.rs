@@ -89,7 +89,7 @@ pub enum Epic {
     Urgent {
         /// Epic key.
         key: KeyRef,
-        /// Why it is urgent (optional, at most 200 characters).
+        /// Why it is urgent (optional, at most 200 characters); marking again replaces the mark, so leaving it out clears the reason (war-room re-mark keeps reasons).
         #[arg(long, conflicts_with = "clear")]
         reason: Option<String>,
         /// Remove the epic's urgent mark (clearing one with none changes nothing).

@@ -445,7 +445,7 @@ pub fn comment(c: &CommentDto) -> String {
 
 /// The context bundle as Markdown at a given instant. Every required decision's record path appears verbatim so an agent
 /// can open the file; the story's urgent lines follow its title line.
-pub fn context_markdown_at(c: &StoryContextDto, now: DateTime<Utc>) -> String {
+pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "# Story\n\n{}\n", story_show(&c.story, now));
     if !c.story.description.is_empty() {
@@ -1336,7 +1336,7 @@ mod tests {
             readiness: ready(),
             goals: vec![],
         };
-        let out = context_markdown_at(&c, now());
+        let out = context_markdown(&c, now());
         let lines: Vec<&str> = out.lines().collect();
         let at = lines
             .iter()
