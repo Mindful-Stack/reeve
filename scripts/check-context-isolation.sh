@@ -62,10 +62,10 @@ if [ -d "$planning/handler" ]; then
       if [ -n "$x" ]; then bad+="$f: move_to outside handler/moves.rs"$'\n'; fi
     fi
   done <<< "$files"
-  # kb/ADR-0014 R4, kb/ADR-0017 R5: moving a story never reads sprints, goals or urgency.
+  # kb/ADR-0014 R4, kb/ADR-0017 R5: moving a story never reads sprints, goals, urgency or the decision queue's windows.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(")
-    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals or urgency"$'\n'; fi
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|decision_queue_in|decision_context|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(")
+    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of
   # `ports` in prs.rs must be exactly `ports.pull_requests.<method>` or `ports.stories.get_story`, so an alias
