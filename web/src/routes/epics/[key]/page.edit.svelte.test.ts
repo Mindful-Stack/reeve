@@ -123,6 +123,8 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			return s.epic;
 		}
 		if (method === 'GET' && path.endsWith('/attachments')) return [];
+		if (method === 'POST' && path === '/api/v1/attachments')
+			return { id: 'img-b', url: '/api/v1/attachments/img-b', filename: 'shot.png', content_type: 'image/png', byte_size: 4, uploaded_by: 'dan@example.com', uploaded_at: '2026-11-10T09:00:00Z' };
 		throw new Error(`unexpected ${method} ${path}`);
 	});
 	return orig();
@@ -988,4 +990,27 @@ describe('epic page: urgent mark', () => {
 		expect(document.body.querySelector('[data-testid="urgent-line"] a')!.getAttribute('href')).toBe('/initiatives/ABC-1');
 	});
 
+});
+
+describe('epic page: brief images', () => {
+	it('saves the brief with the image it shows and empties the row', async () => {
+		const { file } = await import('#lib/test/events.ts');
+		await open();
+		(document.body.querySelector('button[aria-label="Actions for ABC-5"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull();
+		});
+		([...document.body.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[]).find((b) => b.textContent?.trim() === 'Edit brief')!.click();
+		flushSync();
+		const input = document.body.querySelector<HTMLInputElement>('form.brief-edit input[type=file]')!;
+		Object.defineProperty(input, 'files', { value: [file('shot.png')], configurable: true });
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+		await vi.waitFor(() => expect(document.body.querySelector<HTMLTextAreaElement>('form.brief-edit textarea')!.value).toContain('/api/v1/attachments/img-b'));
+		flushSync();
+		document.body.querySelector<HTMLFormElement>('form.brief-edit')!.requestSubmit();
+		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
+		expect(net.patches[0]).toMatchObject({ attachments: ['img-b'] });
+		expect((net.patches[0] as { brief: string }).brief).toContain('![shot](/api/v1/attachments/img-b)');
+	});
 });
