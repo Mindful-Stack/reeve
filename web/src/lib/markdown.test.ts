@@ -85,3 +85,28 @@ describe('renderMarkdown', () => {
 		expect([...el.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/epics/E-1', 'mailto:a@x.se']);
 	});
 });
+
+describe('images', () => {
+	const id = '0f8b2c3e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+	it('loads lazily and links an attachment image to its full size', () => {
+		const html = renderMarkdown(`![shot](/api/v1/attachments/${id})`);
+		const box = document.createElement('div');
+		box.innerHTML = html;
+		const img = box.querySelector('img')!;
+		expect(img.getAttribute('loading')).toBe('lazy');
+		expect(img.getAttribute('decoding')).toBe('async');
+		const a = img.closest('a')!;
+		expect(a.getAttribute('href')).toBe(`/api/v1/attachments/${id}`);
+		expect(a.getAttribute('target')).toBe('_blank');
+	});
+
+	it('leaves an image already inside a link alone, and does not wrap an external one', () => {
+		const box = document.createElement('div');
+		box.innerHTML = renderMarkdown(`[![shot](/api/v1/attachments/${id})](https://example.com)`);
+		expect(box.querySelectorAll('a')).toHaveLength(1);
+		expect(box.querySelector('a')!.getAttribute('href')).toBe('https://example.com');
+		box.innerHTML = renderMarkdown('![x](https://example.com/x.png)');
+		expect(box.querySelector('a')).toBeNull();
+		expect(box.querySelector('img')!.getAttribute('loading')).toBe('lazy');
+	});
+});

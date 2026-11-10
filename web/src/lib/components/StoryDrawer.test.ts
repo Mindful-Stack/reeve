@@ -37,7 +37,7 @@ function answer(url: URL, method = 'GET'): unknown {
 	const p = url.pathname;
 	if (p === '/api/v1/activity') return url.searchParams.get('entity_key') === 'RV-5' ? [created] : [];
 	if (p.endsWith('/ready')) return { ready: true, reasons: [] };
-	if (p.endsWith('/comments') || p === '/api/v1/decisions' || p === '/api/v1/epics') return [];
+	if (p.endsWith('/comments') || p.endsWith('/attachments') || p === '/api/v1/decisions' || p === '/api/v1/epics') return [];
 	if (p === '/api/v1/initiatives') return [{ key: 'RV-1', title: 'Payments' }];
 	if (p === '/api/v1/sprints') return { active: null, closed: [], draft: null };
 	if (p.startsWith('/api/v1/stories/')) return story;
@@ -407,7 +407,8 @@ describe('StoryDrawer reads as a view', () => {
 
 	it('opens with no field in edit mode and no decision or blocker form', async () => {
 		const d = await open();
-		expect(d.querySelector('input, select, textarea:not([aria-label^="comment"])')).toBeNull();
+		// The comment composer (and its hidden image picker) is always there; no other field is.
+		expect(d.querySelector('input:not([type="file"]), select, textarea:not([aria-label^="comment"])')).toBeNull();
 		expect(d.querySelector('h4')).toBeNull();
 		expect(button(d, '+ Require a decision')).toBeDefined();
 		expect(button(d, '+ Add blocker')).toBeDefined();

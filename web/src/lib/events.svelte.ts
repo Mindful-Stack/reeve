@@ -1,6 +1,6 @@
 import type { ActivityEntry } from '#lib/api/types.ts';
 import { createSubscriber } from 'svelte/reactivity';
-import { short } from '#lib/format.ts';
+import { actionLabel, short } from '#lib/format.ts';
 
 /** How long a change by someone else stays highlighted on its card or row. */
 export const RECENT_MS = 10_000;
@@ -66,7 +66,9 @@ export function freshNote(recent: Arrival[], key: string, me: string | undefined
 		const { entry, arrived } = recent[i];
 		if (now - arrived >= RECENT_MS) return null;
 		if (entry.entity_key !== key || entry.actor === me) continue;
-		return `${short(entry.actor)} ${entry.action.replaceAll('_', ' ')} this · just now`;
+		return entry.action.startsWith('attachment_')
+			? `${short(entry.actor)} ${actionLabel(entry.action, entry.payload)} · just now`
+			: `${short(entry.actor)} ${entry.action.replaceAll('_', ' ')} this · just now`;
 	}
 	return null;
 }

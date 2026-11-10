@@ -24,8 +24,27 @@ const CONFIG = {
 	ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i
 };
 
-/** Markdown to sanitised HTML. Needs a DOM (a browser, or jsdom in tests): without one DOMPurify returns its input. */
+/** A same-origin attachment image (kb/ADR-0023: served by the server under the session's access check). */
+export const ATTACHMENT_SRC = /^\/api\/v1\/attachments\/[0-9a-f-]{36}$/;
+
+/** Markdown to sanitised HTML. Needs a DOM (a browser, or jsdom in tests): without one DOMPurify returns its input.
+ *  Images load lazily; an attachment image not already inside a link opens its full size in a new tab. */
 export function renderMarkdown(md: string): string {
 	const html = marked.parse(md, { async: false, gfm: true });
-	return DOMPurify.sanitize(html, CONFIG);
+	const body = DOMPurify.sanitize(html, { ...CONFIG, RETURN_DOM: true }) as unknown as HTMLElement;
+	if (typeof body?.querySelectorAll !== 'function') return String(body ?? '');
+	for (const img of body.querySelectorAll('img')) {
+		img.setAttribute('loading', 'lazy');
+		img.setAttribute('decoding', 'async');
+		const src = img.getAttribute('src') ?? '';
+		if (ATTACHMENT_SRC.test(src) && !img.closest('a')) {
+			const a = img.ownerDocument.createElement('a');
+			a.setAttribute('href', src);
+			a.setAttribute('target', '_blank');
+			a.setAttribute('rel', 'noopener noreferrer');
+			img.replaceWith(a);
+			a.append(img);
+		}
+	}
+	return body.innerHTML;
 }

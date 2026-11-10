@@ -293,3 +293,9 @@ mark {
 	color: var(--foreground);
 	border-radius: 2px;
 }
+
+/* A Markdown field a file is dragged over (#lib/attach.svelte.ts). */
+textarea[data-drop] {
+	outline: 2px dashed var(--focus);
+	outline-offset: 2px;
+}

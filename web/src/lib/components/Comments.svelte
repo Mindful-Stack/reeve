@@ -5,6 +5,8 @@
 	import { age, errorMessage, short } from '#lib/format.ts';
 	import { draftKey, newDraftKey } from '#lib/idempotency.ts';
 	import CommentBody from '#lib/components/CommentBody.svelte';
+	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
 	// A story's comment thread, oldest first, and the form that adds to it. Posting replaces the thread with the one the
 	// server returns, then tells the drawer (which reloads the activity).
@@ -24,24 +26,30 @@
 	let draft = newDraftKey();
 	let busy = $state(false);
 	let error = $state<string | null>(null);
+	let field = $state<HTMLTextAreaElement | null>(null);
+	const uploads = new ImageUploads(
+		() => body,
+		(t) => (body = t)
+	);
 
 	async function post(e: SubmitEvent) {
 		e.preventDefault();
 		const text = body.trim();
-		if (!text || busy) return;
+		if (!text || busy || uploads.busy) return;
 		busy = true;
 		error = null;
 		try {
 			const thread = await unwrap(
 				api.POST('/api/v1/items/{key}/comments', {
 					params: { path: { key: itemKey } },
-					body: { idempotency_key: draftKey(draft, text), body: text }
+					body: { idempotency_key: draftKey(draft, text), body: text, ...uploads.body() }
 				})
 			);
 			// Only if the composer still holds what was sent (it is disabled while posting, so this is a guard, not a race).
 			if (body.trim() === text) {
 				body = '';
 				draft = newDraftKey();
+				uploads.reset();
 			}
 			onposted(thread);
 		} catch (err) {
@@ -68,8 +76,19 @@
 	{/each}
 </ol>
 <form onsubmit={post}>
-	<textarea rows="3" bind:value={body} disabled={busy} placeholder="Add a comment" aria-label="comment on {itemKey}"></textarea>
-	<button type="submit" disabled={busy || !body.trim()}>Comment</button>
+	<div class="compose">
+		<textarea
+			rows="3"
+			bind:this={field}
+			bind:value={body}
+			disabled={busy}
+			placeholder="Add a comment"
+			aria-label="comment on {itemKey}"
+			{@attach attachable(uploads)}
+		></textarea>
+		<ImageUploadsRow {uploads} {field} disabled={busy} />
+	</div>
+	<button type="submit" disabled={busy || uploads.busy || !body.trim()}>{uploads.busy ? 'Uploading…' : 'Comment'}</button>
 </form>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -87,8 +106,11 @@
 		gap: 0.5rem;
 		align-items: flex-start;
 	}
-	textarea {
+	.compose {
 		flex: 1;
+		display: grid;
+	}
+	textarea {
 		font: inherit;
 	}
 	.muted {

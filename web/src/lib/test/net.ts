@@ -5,9 +5,9 @@
 // (import this module with `await import` inside the factory), with a sync `vi.hoisted` holder for what the handler records.
 import { SvelteMap, SvelteURL } from 'svelte/reactivity';
 
-/** One request as the fake server sees it: the method, the absolute URL, its path and the parsed JSON body of a write
- *  (null for a read or an empty body). */
-export type Call = { method: string; url: URL; path: string; body: unknown };
+/** One request as the fake server sees it: the method, the absolute URL, its path, the parsed JSON body of a write
+ *  (null for a read, an empty body, or a body that is not JSON), its raw bytes (null for a read) and its headers. */
+export type Call = { method: string; url: URL; path: string; body: unknown; bytes: Uint8Array | null; headers: Headers };
 
 /** Answers a call: a `Response` is sent as is, anything else is the value of an `ok` envelope. Throwing rejects the
  *  fetch, as a network failure does. */
@@ -37,11 +37,15 @@ export function installFetch(handler: Handler): void {
 		const req = input instanceof Request ? input : new Request(String(input), init);
 		const url = new URL(req.url, ORIGIN);
 		let body: unknown = null;
+		let bytes: Uint8Array | null = null;
 		if (req.method !== 'GET' && req.method !== 'HEAD') {
-			const text = await req.text();
-			body = text ? JSON.parse(text) : null;
+			bytes = new Uint8Array(await req.arrayBuffer());
+			// Only a JSON body is parsed: an upload is the file's bytes.
+			const isJson = (req.headers.get('content-type') ?? 'application/json').includes('json');
+			const text = new TextDecoder().decode(bytes);
+			body = isJson && text ? JSON.parse(text) : null;
 		}
-		const answer = await handler({ method: req.method, url, path: url.pathname, body });
+		const answer = await handler({ method: req.method, url, path: url.pathname, body, bytes, headers: req.headers });
 		return answer instanceof Response ? answer : ok(answer);
 	};
 }

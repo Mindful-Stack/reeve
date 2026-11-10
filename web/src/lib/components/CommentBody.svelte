@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { renderMarkdown } from '#lib/markdown.ts';
+	import { rendered } from '#lib/rendered.ts';
 
 	// One comment's body, rendered as Markdown like a story's description: an imported Jira comment carries links and
 	// lists, and anything typed here may too.
@@ -9,9 +10,22 @@
 </script>
 
 <!-- Sanitised by renderMarkdown (#lib/markdown.ts). -->
-<div class="comment-body">{@html html}</div>
+<div class="comment-body" {@attach rendered()}>{@html html}</div>
 
 <style>
+	.comment-body :global(img) {
+		max-width: 100%;
+		height: auto;
+		max-height: 30rem;
+	}
+	.comment-body :global(.image-unavailable) {
+		display: inline-block;
+		padding: 0.125rem 0.5rem;
+		border-radius: 3px;
+		background: var(--lighter-background);
+		color: var(--muted);
+		font-size: 13px;
+	}
 	.comment-body {
 		margin: 0.1rem 0 0;
 		overflow-wrap: anywhere;

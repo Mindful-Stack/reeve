@@ -3,6 +3,7 @@
 // captured once, when a draft starts (spec: Report from anywhere, Rules 3 and 5).
 import { KINDS, type Kind } from '#lib/board.ts';
 import { newDraftKey, type DraftKey } from '#lib/idempotency.ts';
+import { ImageUploads, stripOrphans, type AttachmentRef } from '#lib/attach.svelte.ts';
 
 export type Origin = { path: string; label: string };
 export type EpicRef = { key: string; title: string };
@@ -19,6 +20,9 @@ export type Draft = {
 	leftFrom: string | null;
 	/** The last send's answer was lost (transport failure): it may have been filed. Cleared by a create or Discard. */
 	uncertain: boolean;
+	/** The images uploaded for this draft; sent as `attachments` while the description still shows them. Absent in a
+	 *  draft saved before images could be added. */
+	attachments?: AttachmentRef[];
 };
 
 const TEMPLATES: Record<Kind, string> = {
@@ -58,7 +62,9 @@ function isDraft(x: unknown): x is Draft {
 		(epic === null || (isObj(epic) && isStr(epic.key) && isStr(epic.title))) &&
 		isObj(key) && isStr(key.key) && (key.sent === null || isStr(key.sent)) &&
 		(x.leftFrom === null || isStr(x.leftFrom)) &&
-		typeof x.uncertain === 'boolean'
+		typeof x.uncertain === 'boolean' &&
+		(x.attachments === undefined ||
+			(Array.isArray(x.attachments) && x.attachments.every((r) => isObj(r) && isStr(r.id) && isStr(r.url))))
 	);
 }
 
@@ -101,14 +107,40 @@ export function payloadOf(d: Draft) {
 	const label = d.origin.label.replace(/[[\]\\]/g, '\\$&');
 	const path = d.origin.path.replace(/[()]/g, (c) => (c === '(' ? '%28' : '%29'));
 	const from = `Reported from: [${label}](${path})`;
+	const description = body ? `${body}\n\n${from}` : from;
+	const attachments = (d.attachments ?? []).filter((r) => description.includes(`(${r.url})`)).map((r) => r.id);
 	return {
 		title: d.title.trim(),
 		kind: d.kind,
 		epic: d.epic?.key ?? null,
-		description: body ? `${body}\n\n${from}` : from,
+		description,
 		criteria: [] as string[],
-		labels: [] as string[]
+		labels: [] as string[],
+		// Only when there are some: a draft without images keeps the payload text, and so the key, it was sent with.
+		...(attachments.length ? { attachments } : {})
 	};
+}
+
+let uploadsOf: { draft: Draft; uploads: ImageUploads } | null = null;
+/** The current draft's image uploads, kept here with the draft so closing the dialog never loses one in flight. */
+export function reportUploads(): ImageUploads {
+	const d = report.draft!;
+	if (uploadsOf?.draft !== d) {
+		uploadsOf = {
+			draft: d,
+			uploads: new ImageUploads(
+				() => report.draft?.description ?? '',
+				(t) => {
+					if (report.draft) report.draft.description = t;
+				},
+				d.attachments ?? [],
+				(refs) => {
+					if (report.draft) report.draft.attachments = refs;
+				}
+			)
+		};
+	}
+	return uploadsOf.uploads;
 }
 
 /** The one canonical string the dialog passes to `draftKey`. */
@@ -133,7 +165,9 @@ export function restoreDraft(email: string): boolean {
 			const prev = report.draft;
 			// A duplicated tab copies sessionStorage: only an uncertain send must retry with its stored key; any other
 			// draft takes a fresh one so two tabs never share a key.
-			report.draft = saved.draft.uncertain ? saved.draft : { ...saved.draft, key: newDraftKey() };
+			// A reload in mid-upload leaves its placeholders behind; nothing will ever replace them.
+			const draft = { ...saved.draft, description: stripOrphans(saved.draft.description) };
+			report.draft = draft.uncertain ? draft : { ...draft, key: newDraftKey() };
 			if (hasDraft()) return true;
 			report.draft = prev;
 		}

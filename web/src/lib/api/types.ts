@@ -17,6 +17,7 @@ export type QueueGroup = S['QueueGroup'];
 export type DecisionQueue = S['DecisionQueueDto'];
 export type BlockedStory = S['BlockedStoryDto'];
 export type Comment = S['CommentDto'];
+export type AttachmentDto = S['AttachmentDto'];
 export type ActivityEntry = S['ActivityEntryDto'];
 export type Readiness = S['Readiness'];
 export type Reason = S['Reason'];
