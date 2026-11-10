@@ -216,6 +216,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/decisions/{id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One decision as the queue shows it: lane, window, next step and the work it holds or affects, from one snapshot.
+         *     404 for a missing id.
+         */
+        get: operations["decisions_id_context"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/decisions/{id}/link": {
         parameters: {
             query?: never;
@@ -850,7 +870,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["context"];
+        get: operations["stories_key_context"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1105,6 +1125,27 @@ export interface components {
             /** @description Caller-chosen key that makes a retried comment safe: a repeat returns the thread with the first comment only. */
             idempotency_key?: string | null;
         };
+        /**
+         * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
+         *     historical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.
+         */
+        AffectedStoryDto: {
+            /** @description Servers always send it; JSON without it (an older server, whose blocks were all todo) reads as todo. */
+            delivery: components["schemas"]["DeliveryState"];
+            key: components["schemas"]["Key"];
+            /** @description Servers always send it; JSON without it (an older server) reads as a story. */
+            kind: components["schemas"]["Kind"];
+            /** @description The story's own window, by its goals. Servers always send it; JSON without it reads as `none`. */
+            needed_in: components["schemas"]["NeededIn"];
+            /** @description Servers always send it; JSON without it reads as no owner. */
+            owner: string | null;
+            title: string;
+            /**
+             * @description Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it
+             *     reads as false.
+             */
+            urgent: boolean;
+        };
         AllowEntryRequest: {
             kind: components["schemas"]["AccessKind"];
             value: string;
@@ -1126,11 +1167,6 @@ export interface components {
         };
         BlockEdge: {
             blocker: components["schemas"]["KeyRef"];
-        };
-        /** @description A todo story that cannot start because of a decision. */
-        BlockedStoryDto: {
-            key: components["schemas"]["Key"];
-            title: string;
         };
         /** @description The outcome of the last record check on a required decision. */
         CheckResult: {
@@ -1256,28 +1292,54 @@ export interface components {
         };
         DecisionQueueDto: {
             /**
-             * @description In page order: groups in `QueueGroup` declaration order, then server order within each group. Clients must not
+             * @description In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
              *     re-sort.
              */
             entries: components["schemas"]["DecisionQueueEntryDto"][];
             summary: components["schemas"]["DecisionQueueSummaryDto"];
         };
         DecisionQueueEntryDto: {
-            /** @description The todo stories whose readiness fails on this decision; empty outside the blocking group. */
-            blocks: components["schemas"]["BlockedStoryDto"][];
+            /** @description The todo stories whose readiness fails on this decision (held); empty outside the live lanes. */
+            blocks: components["schemas"]["AffectedStoryDto"][];
             decision: components["schemas"]["RequiredDecisionDto"];
             group: components["schemas"]["QueueGroup"];
+            /** @description The page lane. Servers always send it; JSON without it (an older server) reads as `open`. */
+            lane: components["schemas"]["QueueLane"];
+            /** @description When the decision is needed. Servers always send it; JSON without it reads as `none`. */
+            needed_in: components["schemas"]["NeededIn"];
+            needed_in_reason: null | components["schemas"]["NeededInReason"];
+            next_step: null | components["schemas"]["NextStep"];
+            /**
+             * @description Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without
+             *     it reads as none.
+             */
+            under_way: components["schemas"]["AffectedStoryDto"][];
         };
-        /** @description Counts over open, unsatisfied decisions only; `blocked_stories` counts each story once. */
+        /** @description Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once. */
         DecisionQueueSummaryDto: {
             /** Format: int32 */
             blocked_stories: number;
             /** Format: int32 */
             blocking: number;
+            /**
+             * Format: int32
+             * @description Size of the next-sprint lane; reads as 0 without it.
+             */
+            next_sprint: number;
             /** Format: int32 */
             open: number;
             /** Format: int32 */
             overdue: number;
+            /**
+             * Format: int32
+             * @description Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.
+             */
+            review: number;
+            /**
+             * Format: int32
+             * @description Size of the this-sprint lane; reads as 0 without it.
+             */
+            this_sprint: number;
         };
         /** @enum {string} */
         DeliveryState: "todo" | "in_progress" | "in_review" | "testing" | "done";
@@ -1621,6 +1683,45 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
+        /**
+         * @description When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).
+         * @enum {string}
+         */
+        NeededIn: "this_sprint" | "next_sprint" | "beyond" | "none";
+        /** @description Why a decision is needed this sprint or next. */
+        NeededInReason: {
+            /** Format: int64 */
+            goal_id: number;
+            /** @enum {string} */
+            kind: "goal";
+            outcome: string;
+        } | {
+            key: components["schemas"]["Key"];
+            /** @enum {string} */
+            kind: "discovery";
+        };
+        /** @description What an open, unsatisfied decision needs next. The first that holds wins, in declaration order. */
+        NextStep: {
+            /** @enum {string} */
+            kind: "write_record";
+        } | {
+            /** @enum {string} */
+            kind: "configure_repo";
+            repo: string;
+        } | {
+            /** @enum {string} */
+            kind: "fix_record";
+            result: components["schemas"]["CheckResult"];
+        } | {
+            /** @enum {string} */
+            kind: "review_record";
+            pr_url: string;
+        } | {
+            /** Format: date-time */
+            checked_at?: string | null;
+            /** @enum {string} */
+            kind: "await_check";
+        };
         /** @description Opens the draft; the end defaults to one `[sprints] length_days` after today. */
         OpenSprint: {
             /** Format: date */
@@ -1718,6 +1819,11 @@ export interface components {
          * @enum {string}
          */
         QueueGroup: "blocking" | "open" | "satisfied" | "closed";
+        /**
+         * @description The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.
+         * @enum {string}
+         */
+        QueueLane: "review" | "this_sprint" | "next_sprint" | "beyond" | "open" | "satisfied" | "closed";
         /**
          * @description Places a todo story before `before` (another todo story), or at the end of the todo column when `before` is absent.
          *     The server renumbers the column's ranks 0..n-1 in one write; only the moved story's version changes, because rank is
@@ -1836,6 +1942,12 @@ export interface components {
             note?: string | null;
         };
         RecordRefDto: {
+            /**
+             * @description Where to read the record in a browser, `<repo url>/blob/HEAD/<path>`; the server derives it from the repository's
+             *     `https://` URL in `[[repos]]` and leaves it out when there is none (never stored, kb/ADR-0004 R1). Absent
+             *     in JSON from an older server.
+             */
+            browse_url?: string | null;
             path: string;
             record_id: string;
             repo: string;
@@ -1938,11 +2050,52 @@ export interface components {
             outcome: "ok";
             value: {
                 /**
-                 * @description In page order: groups in `QueueGroup` declaration order, then server order within each group. Clients must not
+                 * @description In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
                  *     re-sort.
                  */
                 entries: components["schemas"]["DecisionQueueEntryDto"][];
                 summary: components["schemas"]["DecisionQueueSummaryDto"];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_DecisionQueueEntryDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** @description The todo stories whose readiness fails on this decision (held); empty outside the live lanes. */
+                blocks: components["schemas"]["AffectedStoryDto"][];
+                decision: components["schemas"]["RequiredDecisionDto"];
+                group: components["schemas"]["QueueGroup"];
+                /** @description The page lane. Servers always send it; JSON without it (an older server) reads as `open`. */
+                lane: components["schemas"]["QueueLane"];
+                /** @description When the decision is needed. Servers always send it; JSON without it reads as `none`. */
+                needed_in: components["schemas"]["NeededIn"];
+                needed_in_reason: null | components["schemas"]["NeededInReason"];
+                next_step: null | components["schemas"]["NextStep"];
+                /**
+                 * @description Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without
+                 *     it reads as none.
+                 */
+                under_way: components["schemas"]["AffectedStoryDto"][];
             };
         } | {
             /** @enum {string} */
@@ -4373,6 +4526,71 @@ export interface operations {
                 };
             };
             /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    decisions_id_context: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_DecisionQueueEntryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -7710,7 +7928,7 @@ export interface operations {
             };
         };
     };
-    context: {
+    stories_key_context: {
         parameters: {
             query?: never;
             header?: never;

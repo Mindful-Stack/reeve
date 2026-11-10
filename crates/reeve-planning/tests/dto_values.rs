@@ -406,22 +406,26 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
 }
 
 #[test]
-fn queue_entry_dto_carries_decision_group_and_blocked_stories() {
+fn queue_entry_dto_carries_every_field() {
     let e = QueueEntry {
         group: QueueGroup::Blocking,
-        lane: QueueLane::Beyond,
-        needed_in: NeededIn::Beyond,
-        needed_in_reason: None,
-        next_step: None,
-        under_way: vec![],
+        lane: QueueLane::ThisSprint,
+        needed_in: NeededIn::ThisSprint,
+        needed_in_reason: Some(NeededInReason::Goal {
+            goal_id: 7,
+            outcome: "ship it".into(),
+        }),
+        next_step: Some(NextStep::ReviewRecord {
+            pr_url: "https://github.com/acme/kb/pull/9".into(),
+        }),
         decision: decision(),
         blocks: vec![
             HeldStory {
-                kind: Kind::Story,
+                kind: Kind::Bug,
                 delivery: DeliveryState::Todo,
-                owner: None,
-                urgent: false,
-                needed_in: NeededIn::Beyond,
+                owner: Some("o@x".into()),
+                urgent: true,
+                needed_in: NeededIn::ThisSprint,
                 key: k("ABC-31"),
                 title: "first".into(),
             },
@@ -435,12 +439,30 @@ fn queue_entry_dto_carries_decision_group_and_blocked_stories() {
                 title: "second".into(),
             },
         ],
+        under_way: vec![HeldStory {
+            kind: Kind::Chore,
+            delivery: DeliveryState::InReview,
+            owner: Some("p@x".into()),
+            urgent: false,
+            needed_in: NeededIn::NextSprint,
+            key: k("ABC-33"),
+            title: "third".into(),
+        }],
     };
     assert_eq!(
         v!(DecisionQueueEntryDto::from(&e)),
         json!({
             "decision": decision_json(), "group": "blocking",
-            "blocks": [{"key": "ABC-31", "title": "first"}, {"key": "ABC-32", "title": "second"}]
+            "lane": "this_sprint", "needed_in": "this_sprint",
+            "needed_in_reason": {"kind": "goal", "goal_id": 7, "outcome": "ship it"},
+            "next_step": {"kind": "review_record", "pr_url": "https://github.com/acme/kb/pull/9"},
+            "blocks": [
+                {"key": "ABC-31", "title": "first", "kind": "bug", "delivery": "todo", "owner": "o@x", "urgent": true, "needed_in": "this_sprint"},
+                {"key": "ABC-32", "title": "second", "kind": "story", "delivery": "todo", "owner": null, "urgent": false, "needed_in": "beyond"}
+            ],
+            "under_way": [
+                {"key": "ABC-33", "title": "third", "kind": "chore", "delivery": "in_review", "owner": "p@x", "urgent": false, "needed_in": "next_sprint"}
+            ]
         })
     );
 }
@@ -452,13 +474,82 @@ fn queue_summary_dto_carries_every_count() {
         blocking: 3,
         blocked_stories: 2,
         overdue: 1,
-        review: 0,
-        this_sprint: 0,
-        next_sprint: 0,
+        review: 5,
+        this_sprint: 6,
+        next_sprint: 7,
     };
     assert_eq!(
         v!(DecisionQueueSummaryDto::from(s)),
-        json!({"open": 4, "blocking": 3, "blocked_stories": 2, "overdue": 1})
+        json!({"open": 4, "blocking": 3, "blocked_stories": 2, "overdue": 1, "review": 5, "this_sprint": 6, "next_sprint": 7})
+    );
+}
+
+/// An old server's queue (no field added by the lanes change) still reads: a new client against an older server.
+#[test]
+fn an_older_servers_queue_json_reads_with_defaults() {
+    let old = json!({
+        "entries": [{
+            "decision": decision_json(), "group": "blocking",
+            "blocks": [{"key": "ABC-31", "title": "first"}]
+        }],
+        "summary": {"open": 4, "blocking": 3, "blocked_stories": 2, "overdue": 1}
+    });
+    let q: DecisionQueueDto = serde_json::from_value(old).unwrap();
+    let e = &q.entries[0];
+    assert_eq!(e.lane, QueueLane::Open);
+    assert_eq!(e.needed_in, NeededIn::None);
+    assert_eq!(e.needed_in_reason, None);
+    assert_eq!(e.next_step, None);
+    assert!(e.under_way.is_empty());
+    let b = &e.blocks[0];
+    assert_eq!(
+        (
+            b.kind,
+            b.delivery,
+            b.owner.as_deref(),
+            b.urgent,
+            b.needed_in
+        ),
+        (
+            Kind::Story,
+            DeliveryState::Todo,
+            None,
+            false,
+            NeededIn::None
+        )
+    );
+    assert_eq!(e.decision.record.as_ref().unwrap().browse_url, None);
+    let s = &q.summary;
+    assert_eq!((s.review, s.this_sprint, s.next_sprint), (0, 0, 0));
+}
+
+/// A newer server's queue with a field this build does not know still reads: an older client against a newer server.
+#[test]
+fn a_queue_with_an_unknown_extra_field_reads() {
+    let mut e = json!({
+        "decision": decision_json(), "group": "open", "lane": "open", "needed_in": "none",
+        "needed_in_reason": null, "next_step": null, "blocks": [], "under_way": [],
+        "added_later": {"x": 1}
+    });
+    e["decision"]["record"]["browse_url"] =
+        json!("https://github.com/acme/kb/blob/HEAD/adrs/0001.md");
+    e["decision"]["added_later"] = json!(true);
+    let q: DecisionQueueDto = serde_json::from_value(json!({
+        "entries": [e],
+        "summary": {"open": 1, "blocking": 0, "blocked_stories": 0, "overdue": 0,
+                    "review": 0, "this_sprint": 0, "next_sprint": 0, "added_later": 3}
+    }))
+    .unwrap();
+    assert_eq!(q.entries.len(), 1);
+    assert_eq!(
+        q.entries[0]
+            .decision
+            .record
+            .as_ref()
+            .unwrap()
+            .browse_url
+            .as_deref(),
+        Some("https://github.com/acme/kb/blob/HEAD/adrs/0001.md")
     );
 }
 

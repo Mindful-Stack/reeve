@@ -3,8 +3,8 @@
 // draft with the reloaded decision. The props are `$state`, so `onchanged` replaces the list as a page's reload does.
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
-import { decision } from '#lib/test/fixtures.ts';
+import type { AffectedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
+import { blockedStory, decision } from '#lib/test/fixtures.ts';
 import DecisionList from './DecisionList.svelte';
 
 type Sent = { method: string; path: string; body: unknown };
@@ -1070,7 +1070,7 @@ describe('DecisionList blocks that go away', () => {
 	it('drops the body once the decision blocks nothing', () => {
 		const state = $state({
 			decisions: [open],
-			blocks: new Map([[1, [{ key: 'ABC-31', title: 'Tier page' }]]]) as ReadonlyMap<number, BlockedStory[]>,
+			blocks: new Map([[1, [blockedStory({ key: 'ABC-31', title: 'Tier page' })]]]) as ReadonlyMap<number, AffectedStory[]>,
 			onchanged: async () => {}
 		});
 		app = mount(DecisionList, { target: document.body, props: state });

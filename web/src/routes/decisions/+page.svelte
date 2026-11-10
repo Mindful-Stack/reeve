@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
-	import type { BlockedStory, DecisionQueue, QueueGroup } from '#lib/api/types.ts';
+	import type { AffectedStory, DecisionQueue, QueueGroup } from '#lib/api/types.ts';
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import { filterDecisions, itemHref } from '#lib/decisions.ts';
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
@@ -37,7 +37,7 @@
 	const decisions = $derived((queue?.entries ?? []).map((e) => e.decision));
 	const shown = $derived(filterDecisions(decisions, { mine: mine ? session.me?.email : undefined, closed: true }));
 	const groupById = $derived(new Map<number, QueueGroup>((queue?.entries ?? []).map((e) => [e.decision.id, e.group])));
-	const blocks = $derived(new Map<number, BlockedStory[]>((queue?.entries ?? []).map((e) => [e.decision.id, e.blocks])));
+	const blocks = $derived(new Map<number, AffectedStory[]>((queue?.entries ?? []).map((e) => [e.decision.id, e.blocks])));
 	const groups = $derived(ORDER.map((id) => ({ id, folded: id === 'closed' && !showClosed, listId: `decisions-${id}` })));
 	const summary = $derived(queue?.summary);
 

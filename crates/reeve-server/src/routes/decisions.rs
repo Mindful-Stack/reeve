@@ -5,7 +5,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{DecisionScope, HandlerError, Handlers};
+use reeve_planning::{DecisionScope, HandlerError, Handlers, QueueEntry, RequiredDecision};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -32,6 +32,31 @@ async fn resolve_on(h: &Handlers, raw: &KeyRef) -> Result<Key, HandlerError> {
 }
 
 type Dec = Json<Response<RequiredDecisionDto>>;
+
+/// The one place a decision becomes a response: its record link gains `browse_url` from the repository's `https://`
+/// URL in configuration (planning knows names only). Every route that returns a decision goes through it.
+pub(crate) fn decision_dto(s: &AppState, d: &RequiredDecision) -> RequiredDecisionDto {
+    let mut dto = RequiredDecisionDto::from(d);
+    browse(s, &mut dto);
+    dto
+}
+
+/// Sets `browse_url` on an already-built DTO: `<repo url>/blob/HEAD/<path>`, nothing for a repository without an
+/// `https://` URL.
+pub(crate) fn browse(s: &AppState, dto: &mut RequiredDecisionDto) {
+    if let Some(r) = dto.record.as_mut() {
+        r.browse_url = s
+            .repo_urls
+            .get(&r.repo)
+            .map(|base| format!("{base}/blob/HEAD/{}", r.path.trim_start_matches('/')));
+    }
+}
+
+fn entry_dto(s: &AppState, e: &QueueEntry) -> DecisionQueueEntryDto {
+    let mut dto = DecisionQueueEntryDto::from(e);
+    browse(s, &mut dto.decision);
+    dto
+}
 
 /// The scope `on`/`initiative`/`include_closed` names. `None`: a reference that matches nothing, answered as an
 /// empty list, not 404. Both given is a validation error. The list and the queue resolve through this one function,
@@ -95,7 +120,7 @@ async fn list(
                 .await?
         }
     };
-    Ok(ok(rows.iter().map(RequiredDecisionDto::from).collect()))
+    Ok(ok(rows.iter().map(|d| decision_dto(&s, d)).collect()))
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -128,9 +153,21 @@ async fn queue(
     };
     let (entries, summary) = s.handlers.decision_queue(&scope, c.ctx().now).await?;
     Ok(ok(DecisionQueueDto {
-        entries: entries.iter().map(DecisionQueueEntryDto::from).collect(),
+        entries: entries.iter().map(|e| entry_dto(&s, e)).collect(),
         summary: summary.into(),
     }))
+}
+
+/// One decision as the queue shows it: lane, window, next step and the work it holds or affects, from one snapshot.
+/// 404 for a missing id.
+#[utoipa::path(get, path = "/decisions/{id}/context", params(("id" = i64, Path)), responses((status = 200, body = Response<DecisionQueueEntryDto>), (status = 404, body = Response<Empty>)))]
+async fn context(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(id): ApiPath<i64>,
+) -> Result<Json<Response<DecisionQueueEntryDto>>, AppError> {
+    let e = s.handlers.decision_context(id, c.ctx().now).await?;
+    Ok(ok(entry_dto(&s, &e)))
 }
 
 #[utoipa::path(post, path = "/decisions", request_body = RequireDecision, responses((status = 200, body = Response<RequiredDecisionDto>)))]
@@ -152,7 +189,7 @@ async fn create(
             b.reversibility,
         )
         .await?;
-    Ok(ok(RequiredDecisionDto::from(&d)))
+    Ok(ok(decision_dto(&s, &d)))
 }
 #[utoipa::path(get, path = "/decisions/{id}", params(("id" = i64, Path)), responses((status = 200, body = Response<RequiredDecisionDto>)))]
 async fn get(
@@ -160,9 +197,8 @@ async fn get(
     _c: Caller,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Dec, AppError> {
-    Ok(ok(RequiredDecisionDto::from(
-        &s.handlers.get_decision(id).await?,
-    )))
+    let d = s.handlers.get_decision(id).await?;
+    Ok(ok(decision_dto(&s, &d)))
 }
 #[utoipa::path(patch, path = "/decisions/{id}", params(("id" = i64, Path)), request_body = EditDecision, responses((status = 200, body = Response<RequiredDecisionDto>)))]
 async fn edit(
@@ -183,7 +219,7 @@ async fn edit(
             b.reversibility,
         )
         .await?;
-    Ok(ok(RequiredDecisionDto::from(&d)))
+    Ok(ok(decision_dto(&s, &d)))
 }
 #[utoipa::path(post, path = "/decisions/{id}/link", params(("id" = i64, Path)), request_body = LinkRecord, responses((status = 200, body = Response<RequiredDecisionDto>)))]
 async fn link(
@@ -196,7 +232,7 @@ async fn link(
         .handlers
         .link_record(&c.ctx(), id, &b.repo, &b.path, &b.record_id, b.pr_url)
         .await?;
-    Ok(ok(RequiredDecisionDto::from(&d)))
+    Ok(ok(decision_dto(&s, &d)))
 }
 #[utoipa::path(post, path = "/decisions/{id}/check", params(("id" = i64, Path)), request_body = RecordCheckResult, responses((status = 200, body = Response<RequiredDecisionDto>), (status = 403, body = Response<Empty>, description = "an accepted result from a caller who is not an admin"), (status = 409, body = Response<Empty>)))]
 async fn check(
@@ -212,7 +248,7 @@ async fn check(
         .handlers
         .record_check(&c.ctx(), id, &b.record_id, b.version, b.check, is_admin)
         .await?;
-    Ok(ok(RequiredDecisionDto::from(&d)))
+    Ok(ok(decision_dto(&s, &d)))
 }
 #[utoipa::path(post, path = "/decisions/{id}/close", params(("id" = i64, Path)), request_body = CloseDecision, responses((status = 200, body = Response<RequiredDecisionDto>), (status = 400, body = Response<Empty>, description = "no reason, already closed, or decided on a one-way decision (kb/ADR-0013 R3)")))]
 async fn close(
@@ -225,7 +261,7 @@ async fn close(
         .handlers
         .close_decision(&c.ctx(), id, b.kind, &b.reason)
         .await?;
-    Ok(ok(RequiredDecisionDto::from(&d)))
+    Ok(ok(decision_dto(&s, &d)))
 }
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -233,6 +269,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list, create))
         .routes(routes!(queue))
         .routes(routes!(get, edit))
+        .routes(routes!(context))
         .routes(routes!(link))
         .routes(routes!(check))
         .routes(routes!(close))

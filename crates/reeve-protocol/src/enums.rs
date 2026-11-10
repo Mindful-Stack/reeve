@@ -79,13 +79,25 @@ pub enum QueueGroup {
 
 /// When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum NeededIn {
     ThisSprint,
     NextSprint,
     Beyond,
+    #[default]
     None,
 }
 
@@ -120,7 +132,18 @@ pub enum NextStep {
 
 /// The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum QueueLane {
@@ -128,6 +151,7 @@ pub enum QueueLane {
     ThisSprint,
     NextSprint,
     Beyond,
+    #[default]
     Open,
     Satisfied,
     Closed,

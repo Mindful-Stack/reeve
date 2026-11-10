@@ -4,7 +4,7 @@
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import { levelOfItem } from '#lib/glyphs.ts';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import type { BlockedStory, ClosureKind, Comment, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+	import type { AffectedStory, ClosureKind, Comment, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 	import { fullLabel } from '#lib/board.ts';
 	import { closeActions, dateLine, decisionStatus, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
@@ -42,7 +42,7 @@
 		decisions: RequiredDecision[];
 		/** The stories each decision keeps out of active work, by decision id (the queue's `blocks`). A decision missing
 		 *  from the map shows no blocks line, so a view without the queue (the drawers, the item pages) passes none. */
-		blocks?: ReadonlyMap<number, BlockedStory[]>;
+		blocks?: ReadonlyMap<number, AffectedStory[]>;
 		/** Where the item a decision blocks opens; when absent (on the item's own page) the item column is left out. */
 		itemHref?: (key: string) => string;
 		/** Reloads the list: after a decision changed (closed, or a conflict), and every two minutes while visible. */
@@ -307,7 +307,7 @@
 	/** The rows whose "Blocks N stories" disclosure is open. */
 	const blocksOpen = new SvelteSet<number>();
 
-	function blockedOf(d: RequiredDecision): BlockedStory[] {
+	function blockedOf(d: RequiredDecision): AffectedStory[] {
 		return blocks?.get(d.id) ?? [];
 	}
 
@@ -565,7 +565,7 @@
 
 {#snippet classifyTrigger()}Classify{/snippet}
 
-{#snippet story(s: BlockedStory)}<span class="key">{s.key}</span> {s.title}{/snippet}
+{#snippet story(s: AffectedStory)}<span class="key">{s.key}</span> {s.title}{/snippet}
 
 {#snippet chip(d: RequiredDecision)}
 	{#if d.reversibility}

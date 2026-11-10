@@ -2,8 +2,8 @@
 // The decision list links a proposed record's PR only when the url is http(s): a stored `javascript:` url is plain text.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BlockedStory, RequiredDecision } from '#lib/api/types.ts';
-import { decision as decisionDto } from '#lib/test/fixtures.ts';
+import type { AffectedStory, RequiredDecision } from '#lib/api/types.ts';
+import { blockedStory, decision as decisionDto } from '#lib/test/fixtures.ts';
 import DecisionList from './DecisionList.svelte';
 
 const net = vi.hoisted(() => ({ calls: [] as { method: string; path: string; body: unknown }[] }));
@@ -334,13 +334,13 @@ describe('DecisionList card', () => {
 		net.calls.length = 0;
 		vi.useRealTimers();
 	});
-	const FOUR: BlockedStory[] = [
-		{ key: 'ABC-31', title: 'Tier page' },
-		{ key: 'ABC-32', title: 'Tier pricing' },
-		{ key: 'ABC-33', title: 'Tier billing' },
-		{ key: 'ABC-34', title: 'Tier emails' }
+	const FOUR: AffectedStory[] = [
+		blockedStory({ key: 'ABC-31', title: 'Tier page' }),
+		blockedStory({ key: 'ABC-32', title: 'Tier pricing' }),
+		blockedStory({ key: 'ABC-33', title: 'Tier billing' }),
+		blockedStory({ key: 'ABC-34', title: 'Tier emails' })
 	];
-	function mountOne(over: Partial<RequiredDecision>, blocks?: ReadonlyMap<number, BlockedStory[]>): HTMLElement {
+	function mountOne(over: Partial<RequiredDecision>, blocks?: ReadonlyMap<number, AffectedStory[]>): HTMLElement {
 		app = mount(DecisionList, {
 			target: document.body,
 			props: {
@@ -526,7 +526,7 @@ describe('DecisionList columns', () => {
 	const COLUMNS = ['title', 'decider', 'when', 'blocks', 'on', 'check', 'discussion', 'actions'];
 	const columnsOf = (li: Element) => [...li.querySelector('.row')!.children].map((c) => c.getAttribute('data-col'));
 
-	function mountMany(decisions: RequiredDecision[], blocks?: ReadonlyMap<number, BlockedStory[]>): HTMLElement[] {
+	function mountMany(decisions: RequiredDecision[], blocks?: ReadonlyMap<number, AffectedStory[]>): HTMLElement[] {
 		app = mount(DecisionList, {
 			target: document.body,
 			props: { decisions, blocks, itemHref: (k: string) => `/epics/${k}`, onchanged: async () => {} }
@@ -541,7 +541,7 @@ describe('DecisionList columns', () => {
 				decisionDto({ id: 1, title: 'Pricing', on: 'RV-1', due: null }),
 				decisionDto({ id: 2, title: 'Queue', on: 'RV-2', closed: { at: '2026-10-02T00:00:00Z', by: 'dan@example.com', reason: 'moot' } })
 			],
-			new Map([[1, [{ key: 'ABC-31', title: 'Tier page' }]]])
+			new Map([[1, [blockedStory({ key: 'ABC-31', title: 'Tier page' })]]])
 		);
 		expect(rows.map(columnsOf)).toEqual([COLUMNS, COLUMNS]);
 	});

@@ -142,6 +142,50 @@
         ],
         "type": "object"
       },
+      "AffectedStoryDto": {
+        "description": "A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is\nhistorical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.",
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryState",
+            "description": "Servers always send it; JSON without it (an older server, whose blocks were all todo) reads as todo."
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind",
+            "description": "Servers always send it; JSON without it (an older server) reads as a story."
+          },
+          "needed_in": {
+            "$ref": "#/components/schemas/NeededIn",
+            "description": "The story's own window, by its goals. Servers always send it; JSON without it reads as `none`."
+          },
+          "owner": {
+            "description": "Servers always send it; JSON without it reads as no owner.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "urgent": {
+            "description": "Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it\nreads as false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "kind",
+          "delivery",
+          "owner",
+          "urgent",
+          "needed_in"
+        ],
+        "type": "object"
+      },
       "AllowEntryRequest": {
         "properties": {
           "kind": {
@@ -209,22 +253,6 @@
         },
         "required": [
           "blocker"
-        ],
-        "type": "object"
-      },
-      "BlockedStoryDto": {
-        "description": "A todo story that cannot start because of a decision.",
-        "properties": {
-          "key": {
-            "$ref": "#/components/schemas/Key"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "title"
         ],
         "type": "object"
       },
@@ -724,7 +752,7 @@
       "DecisionQueueDto": {
         "properties": {
           "entries": {
-            "description": "In page order: groups in `QueueGroup` declaration order, then server order within each group. Clients must not\nre-sort.",
+            "description": "In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not\nre-sort.",
             "items": {
               "$ref": "#/components/schemas/DecisionQueueEntryDto"
             },
@@ -743,9 +771,9 @@
       "DecisionQueueEntryDto": {
         "properties": {
           "blocks": {
-            "description": "The todo stories whose readiness fails on this decision; empty outside the blocking group.",
+            "description": "The todo stories whose readiness fails on this decision (held); empty outside the live lanes.",
             "items": {
-              "$ref": "#/components/schemas/BlockedStoryDto"
+              "$ref": "#/components/schemas/AffectedStoryDto"
             },
             "type": "array"
           },
@@ -754,17 +782,59 @@
           },
           "group": {
             "$ref": "#/components/schemas/QueueGroup"
+          },
+          "lane": {
+            "$ref": "#/components/schemas/QueueLane",
+            "description": "The page lane. Servers always send it; JSON without it (an older server) reads as `open`."
+          },
+          "needed_in": {
+            "$ref": "#/components/schemas/NeededIn",
+            "description": "When the decision is needed. Servers always send it; JSON without it reads as `none`."
+          },
+          "needed_in_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NeededInReason",
+                "description": "Why it is needed this sprint or next; absent otherwise."
+              }
+            ]
+          },
+          "next_step": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NextStep",
+                "description": "What the decision needs next; absent when closed or satisfied."
+              }
+            ]
+          },
+          "under_way": {
+            "description": "Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without\nit reads as none.",
+            "items": {
+              "$ref": "#/components/schemas/AffectedStoryDto"
+            },
+            "type": "array"
           }
         },
         "required": [
           "decision",
           "group",
-          "blocks"
+          "lane",
+          "needed_in",
+          "needed_in_reason",
+          "next_step",
+          "blocks",
+          "under_way"
         ],
         "type": "object"
       },
       "DecisionQueueSummaryDto": {
-        "description": "Counts over open, unsatisfied decisions only; `blocked_stories` counts each story once.",
+        "description": "Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once.",
         "properties": {
           "blocked_stories": {
             "format": "int32",
@@ -772,6 +842,12 @@
             "type": "integer"
           },
           "blocking": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "next_sprint": {
+            "description": "Size of the next-sprint lane; reads as 0 without it.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -785,13 +861,28 @@
             "format": "int32",
             "minimum": 0,
             "type": "integer"
+          },
+          "review": {
+            "description": "Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "this_sprint": {
+            "description": "Size of the this-sprint lane; reads as 0 without it.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
           "open",
           "blocking",
           "blocked_stories",
-          "overdue"
+          "overdue",
+          "review",
+          "this_sprint",
+          "next_sprint"
         ],
         "type": "object"
       },
@@ -2047,6 +2138,158 @@
         ],
         "type": "object"
       },
+      "NeededIn": {
+        "description": "When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).",
+        "enum": [
+          "this_sprint",
+          "next_sprint",
+          "beyond",
+          "none"
+        ],
+        "type": "string"
+      },
+      "NeededInReason": {
+        "description": "Why a decision is needed this sprint or next.",
+        "oneOf": [
+          {
+            "description": "An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).",
+            "properties": {
+              "goal_id": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "goal"
+                ],
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "goal_id",
+              "outcome",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The decision's item, or an ancestor, is in discovery under the first horizon bucket.",
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/Key"
+              },
+              "kind": {
+                "enum": [
+                  "discovery"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NextStep": {
+        "description": "What an open, unsatisfied decision needs next. The first that holds wins, in declaration order.",
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "write_record"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "configure_repo"
+                ],
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repo",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "fix_record"
+                ],
+                "type": "string"
+              },
+              "result": {
+                "$ref": "#/components/schemas/CheckResult"
+              }
+            },
+            "required": [
+              "result",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "review_record"
+                ],
+                "type": "string"
+              },
+              "pr_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "pr_url",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "checked_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "await_check"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "OpenSprint": {
         "description": "Opens the draft; the end defaults to one `[sprints] length_days` after today.",
         "properties": {
@@ -2413,6 +2656,19 @@
         "description": "Where a decision sits in the queue; the declaration order is the page order.",
         "enum": [
           "blocking",
+          "open",
+          "satisfied",
+          "closed"
+        ],
+        "type": "string"
+      },
+      "QueueLane": {
+        "description": "The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.",
+        "enum": [
+          "review",
+          "this_sprint",
+          "next_sprint",
+          "beyond",
           "open",
           "satisfied",
           "closed"
@@ -2870,6 +3126,13 @@
       },
       "RecordRefDto": {
         "properties": {
+          "browse_url": {
+            "description": "Where to read the record in a browser, `<repo url>/blob/HEAD/<path>`; the server derives it from the repository's\n`https://` URL in `[[repos]]` and leaves it out when there is none (never stored, kb/ADR-0004 R1). Absent\nin JSON from an older server.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "path": {
             "type": "string"
           },
@@ -3243,7 +3506,7 @@
               "value": {
                 "properties": {
                   "entries": {
-                    "description": "In page order: groups in `QueueGroup` declaration order, then server order within each group. Clients must not\nre-sort.",
+                    "description": "In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not\nre-sort.",
                     "items": {
                       "$ref": "#/components/schemas/DecisionQueueEntryDto"
                     },
@@ -3256,6 +3519,147 @@
                 "required": [
                   "entries",
                   "summary"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_DecisionQueueEntryDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "properties": {
+                  "blocks": {
+                    "description": "The todo stories whose readiness fails on this decision (held); empty outside the live lanes.",
+                    "items": {
+                      "$ref": "#/components/schemas/AffectedStoryDto"
+                    },
+                    "type": "array"
+                  },
+                  "decision": {
+                    "$ref": "#/components/schemas/RequiredDecisionDto"
+                  },
+                  "group": {
+                    "$ref": "#/components/schemas/QueueGroup"
+                  },
+                  "lane": {
+                    "$ref": "#/components/schemas/QueueLane",
+                    "description": "The page lane. Servers always send it; JSON without it (an older server) reads as `open`."
+                  },
+                  "needed_in": {
+                    "$ref": "#/components/schemas/NeededIn",
+                    "description": "When the decision is needed. Servers always send it; JSON without it reads as `none`."
+                  },
+                  "needed_in_reason": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/NeededInReason",
+                        "description": "Why it is needed this sprint or next; absent otherwise."
+                      }
+                    ]
+                  },
+                  "next_step": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/NextStep",
+                        "description": "What the decision needs next; absent when closed or satisfied."
+                      }
+                    ]
+                  },
+                  "under_way": {
+                    "description": "Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without\nit reads as none.",
+                    "items": {
+                      "$ref": "#/components/schemas/AffectedStoryDto"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "group",
+                  "lane",
+                  "needed_in",
+                  "needed_in_reason",
+                  "next_step",
+                  "blocks",
+                  "under_way"
                 ],
                 "type": "object"
               }
@@ -9286,6 +9690,90 @@
         ]
       }
     },
+    "/api/v1/decisions/{id}/context": {
+      "get": {
+        "operationId": "decisions_id_context",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_DecisionQueueEntryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One decision as the queue shows it: lane, window, next step and the work it holds or affects, from one snapshot.\n404 for a missing id."
+      }
+    },
     "/api/v1/decisions/{id}/link": {
       "post": {
         "operationId": "decisions_id_link",
@@ -13470,7 +13958,7 @@
     },
     "/api/v1/stories/{key}/context": {
       "get": {
-        "operationId": "context",
+        "operationId": "stories_key_context",
         "parameters": [
           {
             "in": "path",

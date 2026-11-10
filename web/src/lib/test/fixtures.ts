@@ -3,6 +3,9 @@
 // passing on a shape the server no longer sends. Overrides are a `Partial` of the same DTO: never cast one.
 import type {
 	ActivityEntry,
+	AffectedStory,
+	DecisionQueue,
+	DecisionQueueEntry,
 	Comment,
 	Epic,
 	Goal,
@@ -202,6 +205,50 @@ export function sprintView(s: Sprint = sprint(), over: Partial<SprintView> = {})
 		},
 		demo: [],
 		upkeep_line: 20,
+		...over
+	};
+}
+
+/** A todo story a decision holds, at the wire's defaults (no owner, not urgent, no window). */
+export function blockedStory(over: Partial<AffectedStory> = {}): AffectedStory {
+	const key = over.key ?? 'ABC-31';
+	return {
+		key,
+		title: `title of ${key}`,
+		kind: 'story',
+		delivery: 'todo',
+		owner: null,
+		urgent: false,
+		needed_in: 'none',
+		...over
+	};
+}
+
+/** A queue entry in the blocking group with no stories held and no next step. */
+export function queueEntry(over: Partial<DecisionQueueEntry> = {}): DecisionQueueEntry {
+	return {
+		decision: decision(),
+		group: 'blocking',
+		lane: 'open',
+		needed_in: 'none',
+		needed_in_reason: null,
+		next_step: null,
+		blocks: [],
+		under_way: [],
+		...over
+	};
+}
+
+/** The queue's counts, all zero. */
+export function queueSummary(over: Partial<DecisionQueue['summary']> = {}): DecisionQueue['summary'] {
+	return {
+		open: 0,
+		blocking: 0,
+		blocked_stories: 0,
+		overdue: 0,
+		review: 0,
+		this_sprint: 0,
+		next_sprint: 0,
 		...over
 	};
 }

@@ -7,7 +7,7 @@ import { flushSync, mount, unmount, type Component } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '#lib/me.svelte.ts';
 import StoryDrawer from '#lib/components/StoryDrawer.svelte';
-import { activity, config, decision, epic, initiative, me, story, withReadiness } from '#lib/test/fixtures.ts';
+import { activity, config, decision, epic, initiative, me, queueEntry, queueSummary, story, withReadiness } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Planning from './+page.svelte';
 import Activity from './(account)/activity/+page.svelte';
@@ -91,8 +91,8 @@ held.reply = (path, query, mark) => {
 		case '/api/v1/decisions/queue':
 			// The decisions page reads the queue.
 			return {
-				entries: [{ group: 'open', decision: decision({ on: 'K-1', title: `${mark} decision` }), blocks: [] }],
-				summary: { open: 1, blocking: 0, blocked_stories: 0, overdue: 0 }
+				entries: [queueEntry({ group: 'open', decision: decision({ on: 'K-1', title: `${mark} decision` }) })],
+				summary: queueSummary({ open: 1 })
 			};
 		case '/api/v1/activity':
 			// An item's own log is empty; the activity page reads the whole log, whose entries it renders by key.

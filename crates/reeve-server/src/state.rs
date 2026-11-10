@@ -29,6 +29,27 @@ pub struct AppState {
     pub logins: Arc<tokio::sync::Mutex<HashMap<String, PendingLogin>>>,
     /// Where the client files come from: embedded in the binary, except in debug builds with `REEVE_ASSETS_DIR`.
     pub assets: crate::assets::Assets,
+    /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
+    /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
+    pub repo_urls: Arc<HashMap<String, String>>,
+}
+
+/// The `https://` base URL of each `[[repos]]` entry that has one, trimmed and without a trailing `.git` or `/`. An
+/// `git@` or other-scheme URL cannot be browsed and is left out.
+pub(crate) fn browsable_repo_urls(config: &ServerConfig) -> HashMap<String, String> {
+    config
+        .repos
+        .iter()
+        .filter_map(|r| {
+            let u = r.url.as_deref()?.trim();
+            if !u.starts_with("https://") {
+                return None;
+            }
+            let u = u.trim_end_matches('/');
+            let u = u.strip_suffix(".git").unwrap_or(u).trim_end_matches('/');
+            (u.len() > "https://".len()).then(|| (r.name.clone(), u.to_string()))
+        })
+        .collect()
 }
 
 /// One strict migrator composed from the three crates' sets, so a migration deleted from any crate is detected
@@ -168,6 +189,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
     };
     #[cfg(not(debug_assertions))]
     let assets = crate::assets::Assets::Embedded;
+    let repo_urls = Arc::new(browsable_repo_urls(&config));
     Ok(AppState {
         handlers,
         tokens: reeve_identity::make_token_store(pool.clone()),
@@ -179,6 +201,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         oidc,
         logins: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assets,
+        repo_urls,
     })
 }
 

@@ -3,8 +3,8 @@
 // server's summary line, its four groups in server order (Closed folded unless ?closed=1) and each decision's blocks.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BlockedStory, DecisionQueue, Epic, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
-import { decision } from '#lib/test/fixtures.ts';
+import type { AffectedStory, DecisionQueue, Epic, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
+import { blockedStory, decision, queueEntry, queueSummary } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Page from './+page.svelte';
 
@@ -28,7 +28,7 @@ vi.mock('#lib/me.svelte.ts', async (orig) => {
 	return real;
 });
 
-const empty: DecisionQueue = { entries: [], summary: { open: 0, blocking: 0, blocked_stories: 0, overdue: 0 } };
+const empty: DecisionQueue = { entries: [], summary: queueSummary() };
 const net = vi.hoisted(() => ({
 	queue: null as null | DecisionQueue,
 	queries: [] as string[],
@@ -73,8 +73,8 @@ function dec(id: number, title: string, more: Partial<RequiredDecision> = {}): R
 const record: RequiredDecision['record'] = { repo: 'kb', path: 'adr/1.md', record_id: 'kb/ADR-1' };
 const accepted = { kind: 'accepted' as const, commit: 'abcdef0123' };
 const closedBy = { at: '2026-10-02T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'withdrawn' as const };
-function entry(group: QueueGroup, d: RequiredDecision, blocks: BlockedStory[] = []) {
-	return { group, decision: d, blocks };
+function entry(group: QueueGroup, d: RequiredDecision, blocks: AffectedStory[] = []) {
+	return queueEntry({ group, decision: d, blocks });
 }
 function queue(entries: ReturnType<typeof entry>[], summary = empty.summary): DecisionQueue {
 	return { entries, summary };
@@ -156,7 +156,7 @@ describe('decisions queue page', () => {
 	});
 
 	it("says the server's summary", async () => {
-		net.queue = queue([entry('blocking', dec(1, 'One'))], { open: 6, blocking: 4, blocked_stories: 11, overdue: 2 });
+		net.queue = queue([entry('blocking', dec(1, 'One'))], queueSummary({ open: 6, blocking: 4, blocked_stories: 11, overdue: 2 }));
 		await open();
 		expect(text(document.body.querySelector('.summary'))).toBe('6 open · 4 blocking 11 stories · 2 overdue');
 	});
@@ -251,8 +251,8 @@ describe('decisions queue page', () => {
 
 	it("passes each decision's blocks to its card", async () => {
 		const blocks = [
-			{ key: 'RV-7', title: 'Seven' },
-			{ key: 'RV-8', title: 'Eight' }
+			blockedStory({ key: 'RV-7', title: 'Seven' }),
+			blockedStory({ key: 'RV-8', title: 'Eight' })
 		];
 		net.queue = queue([entry('blocking', dec(1, 'Gate'), blocks), entry('open', dec(4, 'Free'))]);
 		await open();
