@@ -59,6 +59,10 @@ rust-embed = "8"
 mime_guess = "2"
 base64 = "0.22"
 rsa = "0.9"
+img-parts = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+bytes = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 # RSA key generation for the test-only fake OpenID issuer (reeve-identity, `static-oidc`) takes seconds per key
 # unoptimised. The test profile inherits these from dev.

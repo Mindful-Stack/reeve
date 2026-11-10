@@ -4,6 +4,10 @@ mod handler;
 mod ports;
 mod repo;
 pub use domain::{
+    attachment::{
+        Attachment, AttachmentOwner, CHUNK, ImageType, MAX_BYTES, UploadError, chunks,
+        clean_filename, strip_metadata,
+    },
     decision::{
         CheckOutcome, Closed, DecisionEdit, DecisionError, FieldChange, PrUrl, RecordRef,
         RequiredDecision,
