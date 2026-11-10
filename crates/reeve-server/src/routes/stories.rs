@@ -46,7 +46,9 @@ pub struct StoryQuery {
     /// with every other filter.
     pub goal: Option<String>,
     /// Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external
-    /// reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly.
+    /// reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly. The length bounds count
+    /// characters of the trimmed text, so padding around 200 characters is accepted.
+    #[param(min_length = 1, max_length = 200)]
     pub q: Option<String>,
     pub kind: Option<Kind>,
     /// An initiative key or external reference: stories whose epic belongs to it. A reference that matches nothing,

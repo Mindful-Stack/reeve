@@ -7114,7 +7114,8 @@ export interface operations {
                 goal?: string;
                 /**
                  * @description Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external
-                 *     reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly.
+                 *     reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly. The length bounds count
+                 *     characters of the trimmed text, so padding around 200 characters is accepted.
                  */
                 q?: string;
                 kind?: components["schemas"]["Kind"];
