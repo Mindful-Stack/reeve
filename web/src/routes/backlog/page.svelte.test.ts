@@ -941,6 +941,110 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		});
 	});
 
+	it('Show open stories superseded by another query does not move focus when the user later returns to the open query', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		data.hold = true;
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		// The query changes before the open rows land: the hand-off belonged to that landing, which never comes.
+		go('?q=yyy');
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		data.held[2]();
+		data.held[3]();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('No todo stories match');
+			expect(document.body.textContent).toContain('yyy');
+		});
+		data.held[0]();
+		data.held[1]();
+		await new Promise((r) => setTimeout(r, 10));
+		// Later the user returns to the open query, with focus on nothing in particular.
+		data.hold = false;
+		(document.activeElement as HTMLElement | null)?.blur();
+		go('?q=zzz&state=open');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-2"]')).not.toBeNull();
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('Show open stories still hands focus over when a reload for the old query lands before the navigation commits', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		// A live refetch for the todo query is in flight, and still the latest request, when the user asks for the open rows.
+		data.hold = true;
+		void data.liveFns[0]();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		let commit = () => {};
+		const committed = new Promise<void>((r) => (commit = r));
+		vi.mocked(goto).mockImplementationOnce(async (url) => {
+			await committed;
+			(page.url as URL).href = String(url);
+		});
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		// The todo answer lands while the URL still reads the todo query.
+		data.held[0]();
+		data.held[1]();
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(String(page.url)).toBe('http://localhost/backlog?q=zzz');
+		commit();
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		data.held[2]();
+		data.held[3]();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-2"]')).not.toBeNull();
+			const active = document.activeElement as HTMLElement;
+			expect(active.closest('[role="group"][aria-label="State"]')).not.toBeNull();
+			expect(active.textContent).toBe('Open');
+		});
+	});
+
+	it('Show open stories left for another query before either answers does not move focus when the user returns to the open query', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		data.hold = true;
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		// Another query, held: it never lands, since the user returns to the open query before it answers.
+		go('?q=yyy');
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		(document.activeElement as HTMLElement | null)?.blur();
+		go('?q=zzz&state=open');
+		await vi.waitFor(() => expect(data.held).toHaveLength(6));
+		for (const h of data.held) h();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-2"]')).not.toBeNull();
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('a row title carries data-sveltekit-reset="false", so opening the drawer keeps focus and scroll (jsdom cannot observe either)', async () => {
+		data.stories = [row('S-1', 1, null), row('S-2', 2, 'E-1')];
+		await open('Title S-2');
+		const links = [...document.body.querySelectorAll<HTMLAnchorElement>('li[data-key] a.title')];
+		expect(links).toHaveLength(2);
+		for (const a of links) expect(a.getAttribute('data-sveltekit-reset')).toBe('false');
+	});
+
 	it('the empty state names a key that matched nothing, and says "No stories" when nothing is filtered', async () => {
 		go('?q=ABC-99&state=open');
 		await open('No item ABC-99');

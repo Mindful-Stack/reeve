@@ -5763,6 +5763,78 @@ async fn decision_queue_costs_the_same_with_goals() {
     assert_eq!(few, many);
 }
 
+/// The queue reads only unfinished stories (kb/ADR-0018 R5): done stories under a decision's epic are neither held
+/// nor under way, and adding them changes no row the queue reads. The domain drops done stories too, so the queue's
+/// answer is the same either way: only this rows-read comparison catches a regression to `DoneWindow::All` (every done
+/// story in the history fetched, then thrown away). A future queue read whose rows legitimately grow with done
+/// stories must update this test.
+#[tokio::test]
+async fn decision_queue_reads_no_done_story() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let (epic, ss) = marked_epic_with_stories(&h, &dan, "f", 2).await;
+    let d = h
+        .require_decision(&dan, "d", &epic, "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let q = || {
+        let (h, c) = (h.clone(), dan.clone());
+        async move {
+            queue_all(&h, &c).await;
+        }
+    };
+    q().await; // warm up: prepared statements, catalog caches
+    let before = common::rows(&pool, q).await;
+    assert!(before > 0, "the counter measured {before} rows");
+    let mut done = Vec::new();
+    for i in 0..5 {
+        let s = h
+            .create_story(
+                &dan,
+                &format!("f-done{i}"),
+                "Done",
+                Kind::Story,
+                Some(epic.clone()),
+                "",
+                vec!["works".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        h.move_story(
+            &dan,
+            s.key(),
+            s.version(),
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+            Some("dropped before the decision".into()),
+        )
+        .await
+        .unwrap();
+        done.push(s.key().clone());
+    }
+    let (es, _) = queue_all(&h, &dan).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    let affected: Vec<Key> = e
+        .held
+        .iter()
+        .chain(&e.under_way)
+        .map(|s| s.key.clone())
+        .collect();
+    assert_eq!(
+        affected,
+        ss.iter().map(|s| s.key().clone()).collect::<Vec<_>>()
+    );
+    let after = common::rows(&pool, q).await;
+    assert_eq!(
+        before, after,
+        "the queue read rows of the done stories {done:?}"
+    );
+}
+
 /// The queue reads one snapshot: a goal link committed while the read waits does not change the lane the read reports;
 /// a fresh call sees it. Catches reads taken on separate snapshots.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

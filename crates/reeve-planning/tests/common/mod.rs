@@ -59,6 +59,30 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
+    measure(pool, "calls", f).await
+}
+
+/// The number of rows `f`'s statements return or touch in this database, measured as `statements` measures calls
+/// (the same rules apply). For tests that pin which rows a read asks for.
+// Unused in one of the two test binaries that include this module.
+#[allow(dead_code)]
+pub async fn rows<F, Fut>(pool: &PgPool, f: F) -> i64
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    measure(pool, "rows", f).await
+}
+
+/// Resets this database's `pg_stat_statements` entries, runs `f`, and sums `column` (`"calls"` or `"rows"`) over them:
+/// the shared body of `statements` and `rows`, under their rules.
+// Unused in one of the two test binaries that include this module.
+#[allow(dead_code)]
+async fn measure<F, Fut>(pool: &PgPool, column: &str, f: F) -> i64
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     sqlx::query(
         "SELECT pg_stat_statements_reset(0::oid, \
          (SELECT oid FROM pg_database WHERE datname = current_database()), 0::bigint)",
@@ -68,9 +92,11 @@ where
     .unwrap();
     f().await;
     sqlx::query_scalar(
-        "SELECT coalesce(sum(calls), 0)::bigint FROM pg_stat_statements \
+        "SELECT coalesce(sum(CASE WHEN $1 = 'rows' THEN rows ELSE calls END), 0)::bigint \
+         FROM pg_stat_statements \
          WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())",
     )
+    .bind(column)
     .fetch_one(pool)
     .await
     .unwrap()
