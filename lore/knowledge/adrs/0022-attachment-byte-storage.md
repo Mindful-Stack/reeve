@@ -3,7 +3,7 @@ id: kb/ADR-0022
 title: "ADR-0022: Attachment bytes are stored in PostgreSQL as 1 MiB bytea chunks owned by the planning context"
 description: "We decided to store attachment bytes in planning-owned PostgreSQL tables as 1 MiB bytea chunks, because the planner has one storage engine and one database container, and chunks let a read stream a file, and later serve a byte range, without holding the whole file in memory."
 tags: [adr, reeve, planning, storage, attachments]
-status: proposed
+status: accepted
 date: 2026-11-10
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-10.
+Accepted 2026-11-11 by Daniel Thyselius.
 
 ## Context
 People want to paste screenshots into the descriptions, briefs and comments of initiatives, epics and stories, and

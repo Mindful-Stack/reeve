@@ -3,7 +3,7 @@ id: kb/ADR-0023
 title: "ADR-0023: Attachments are raster images, checked and stripped on upload and served only through the request's access check"
 description: "We decided that attachments are PNG, JPEG or WebP identified by their bytes, stripped of metadata without re-encoding, capped at 10 MiB, served sandboxed from the server under every request's access check and hard-deleted on request, because they share the session cookie's origin and every member can see them."
 tags: [adr, reeve, planning, attachments, security]
-status: proposed
+status: accepted
 date: 2026-11-10
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-10.
+Accepted 2026-11-11 by Daniel Thyselius.
 
 ## Context
 Attachments (kb/ADR-0022) are uploaded by members and shown inline in Markdown on the same origin as the app, where
