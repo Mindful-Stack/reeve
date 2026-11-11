@@ -648,7 +648,7 @@
 					{#each r.reasons as reason, i (i)}
 						<li>
 							{#if 'decision_id' in reason}
-								<a href={decisionHref(page.url, reason.decision_id)}>{fullLabel(reason)}</a>
+								<a data-sveltekit-noscroll href={decisionHref(page.url, reason.decision_id)}>{fullLabel(reason)}</a>
 							{:else}
 								{fullLabel(reason)}
 							{/if}
@@ -857,7 +857,7 @@
 				<ul class="blockers">
 					{#each s.blocked_by as b (b)}
 						<li>
-							<a href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
+							<a data-sveltekit-noscroll href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
 							<button type="button" aria-label="Remove block by {b}" disabled={busy} onclick={() => removeBlocker(b)}>Remove</button>
 						</li>
 					{/each}

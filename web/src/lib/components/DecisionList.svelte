@@ -292,18 +292,22 @@
 		if (!d || !body || busy !== null) return;
 		busy = id;
 		delete errors[id];
+		// The key this send used: it names the draft sent. A drawer swap can leave this send pending while the same draft is
+		// retried and cleared, and a new draft with the same text started; that one has a new key and is not this send's.
+		const key = draftKey(d.id, body);
 		try {
 			const thread = await unwrap(
 				api.POST('/api/v1/decisions/{id}/comments', {
 					params: { path: { id } },
-					body: { body, idempotency_key: draftKey(d.id, body) }
+					body: { body, idempotency_key: key }
 				})
 			);
 			// The post's answer is newer than any refetch still in flight.
 			generation[id] = (generation[id] ?? 0) + 1;
 			threads[id] = thread;
-			// Only if the composer still holds what was sent (it is disabled while posting, so this is a guard, not a race).
-			if (decisionDrafts[id]?.body.trim() === body) delete decisionDrafts[id];
+			// Only the draft that was sent: the same key and text (a draft edited since has a new key once it is sent again).
+			const now = decisionDrafts[id];
+			if (now && now.id.key === key && now.body.trim() === body) delete decisionDrafts[id];
 		} catch (err) {
 			await failed(id, err);
 		} finally {
@@ -611,7 +615,7 @@
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
 		<div class="row">
-			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
+			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" data-sveltekit-noscroll href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
 			<span class="cell decider" data-col="decider" title={d.closed ? undefined : d.decider}>{#if !d.closed}{short(d.decider)}<span class="visually-hidden">{' decides'}</span>{/if}</span>
 			<span class="cell when" data-col="when"
 				>{#if !d.closed}<span class={when.tone}>{when.text}</span>

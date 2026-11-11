@@ -5,7 +5,8 @@ import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AffectedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
 import { blockedStory, decision } from '#lib/test/fixtures.ts';
-import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
+import { decisionDrafts, resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
+import { settle } from '#lib/test/net.ts';
 import DecisionList from './DecisionList.svelte';
 
 type Sent = { method: string; path: string; body: unknown };
@@ -865,6 +866,58 @@ describe('DecisionList row', () => {
 		});
 		expect(net.sent).toEqual([{ method: 'GET', path: '/api/v1/decisions/1/comments', body: null }]);
 		expect(row.querySelector('textarea[aria-label="comment on Pick a queue"]')).not.toBeNull();
+	});
+
+	it('a late response for a comment sent before a drawer swap does not delete a newer draft with the same text', async () => {
+		net.replies.reply = (r) => net.replies.ok([]);
+		const comment = () => rows()[0].querySelector<HTMLTextAreaElement>('textarea[data-field="comment"]')!;
+		const submit = () => rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!;
+		const posts = () => net.sent.filter((r) => r.method === 'POST').map((r) => r.body as { body: string; idempotency_key: string });
+		const write = (text: string) => {
+			comment().value = text;
+			comment().dispatchEvent(new Event('input', { bubbles: true }));
+			flushSync();
+		};
+		const expand = async () => {
+			discussion(rows()[0]).click();
+			flushSync();
+			await vi.waitFor(() => {
+				flushSync();
+				expect(comment()).not.toBeNull();
+			});
+		};
+
+		show([open]);
+		await expand();
+		write('Agreed');
+		// The first send never answers (yet).
+		let release!: () => void;
+		net.replies.gate = new Promise<void>((r) => (release = r));
+		submit().click();
+		await vi.waitFor(() => expect(posts()).toHaveLength(1));
+		net.replies.gate = null;
+
+		// A drawer swap: the list is destroyed and mounted again, and the same draft is retried with its key and succeeds.
+		unmount(app!);
+		app = null;
+		show([open]);
+		await expand();
+		expect(comment().value).toBe('Agreed');
+		submit().click();
+		await vi.waitFor(() => expect(posts()).toHaveLength(2));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(comment().value).toBe('');
+		});
+		expect(posts()[1].idempotency_key).toBe(posts()[0].idempotency_key);
+
+		// A new draft with the same text, then the first send's answer arrives.
+		write('Agreed');
+		release();
+		await settle();
+		flushSync();
+		expect(comment().value).toBe('Agreed');
+		expect(decisionDrafts[1]?.body).toBe('Agreed');
 	});
 
 	it('keeps an unsent comment and its idempotency key across an unmount and remount', async () => {

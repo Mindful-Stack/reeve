@@ -117,21 +117,27 @@ describe('board decisions', () => {
 		expect(q('nav.decision-banner')).toBeNull();
 	});
 
-	it('does not say the counts are stale when the last good summary has no parts', async () => {
+	it('says the counts may be out of date even when the last good summary had no parts, and Retry brings the banner', async () => {
 		queue = { entries: [], summary: queueSummary() };
-		const queueReads = () => net.paths.filter((p) => p === '/api/v1/decisions/queue').length;
 		await mounted();
-		// The first answer has landed once its request was sent and the microtasks behind it ran.
-		await vi.waitFor(() => expect(queueReads()).toBe(1));
-		await settle();
-		queue = null;
-		live.fns.forEach((f) => f());
-		await vi.waitFor(() => expect(queueReads()).toBe(2));
+		await vi.waitFor(() => expect(net.paths.filter((p) => p === '/api/v1/decisions/queue')).toHaveLength(1));
 		await settle();
 		flushSync();
-		expect(queueReads()).toBe(2);
 		expect(q('.queue-note')).toBeNull();
+		queue = null;
+		live.fns.forEach((f) => f());
+		await vi.waitFor(() => {
+			flushSync();
+			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date · Retry');
+		});
 		expect(q('nav.decision-banner')).toBeNull();
+		queue = { entries: [], summary: queueSummary({ this_sprint: 2 }) };
+		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(text(q('nav.decision-banner'))).toBe('⚑ 2 decisions needed this sprint');
+		});
+		expect(q('.queue-note')).toBeNull();
 	});
 
 	it("reloads the cards but not the decisions summary after the user's own card move; a live event reloads both", async () => {
@@ -207,7 +213,7 @@ describe('board decisions', () => {
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date.');
+			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date · Retry');
 		});
 		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();

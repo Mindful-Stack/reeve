@@ -246,4 +246,15 @@ describe('the layout and the decision drawer', () => {
 		const [to] = vi.mocked(goto).mock.calls[0] as [URL];
 		expect([...new URL(to).searchParams.keys()]).toEqual([]);
 	});
+
+	it('closing a drawer keeps the hash, in place, so a lane link keeps its lane and the scroll', async () => {
+		await mountLayout();
+		navigate('http://localhost/board?decision=7#next-sprint');
+		await decisionFocused(7);
+		document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		const [to, opts] = vi.mocked(goto).mock.calls[0] as [URL, unknown];
+		expect(new URL(to).hash).toBe('#next-sprint');
+		expect([...new URL(to).searchParams.keys()]).toEqual([]);
+		expect(opts).toEqual({ replace: true, reset: false });
+	});
 });

@@ -123,7 +123,7 @@
 					line={urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), (x) => (x.item === 'epic' && x.key === s.epic && s.epic ? epicTitle.get(s.epic) : undefined))}
 				/>
 			{/if}
-			<a class="title" href={href(s.key)}>{s.title}</a>
+			<a class="title" data-sveltekit-noscroll href={href(s.key)}>{s.title}</a>
 			{#if showEpic}<span class="epic">{s.epic ? (epicTitle.get(s.epic) ?? s.epic) : 'No epic'}</span>{/if}
 			<span class="end">
 				<span title={r.readiness.ready ? undefined : r.readiness.reasons.map((x) => fullLabel(x)).join('\n')}
