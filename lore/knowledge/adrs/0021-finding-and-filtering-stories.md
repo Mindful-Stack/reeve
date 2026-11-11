@@ -3,7 +3,7 @@ id: kb/ADR-0021
 title: "ADR-0021: The story list is the one filtered list of stories, filtered on the server with an additive vocabulary"
 description: "We decided that GET /stories and `reeve story ls` are the one filtered list of stories, filtered on the server with an additive parameter vocabulary that includes text, because people looked in two places for one job and Lorekeeper's skills already depend on that list."
 tags: [adr, reeve, planning, search, api]
-status: proposed
+status: accepted
 date: 2026-11-10
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-10.
+Accepted 2026-11-11 by Daniel Thyselius.
 
 ## Context
 People find work in two places. The backlog page loads every todo story from `GET /stories?delivery=todo` and
