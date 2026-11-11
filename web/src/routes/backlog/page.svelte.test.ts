@@ -1012,6 +1012,85 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		});
 	});
 
+	it('Show open stories does not move focus when its answer lands in the same turn another query commits, before the query effect runs', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		data.hold = true;
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		// Svelte runs effects in a microtask of its own: delay that microtask so the open answer's continuation, already
+		// queued, runs first. The interleaving is a valid one (the answer arrives just as another navigation commits);
+		// whether a browser produces it is unverified, so this pins defensive hardening.
+		const later = vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((fn) => void setTimeout(fn));
+		try {
+			data.held[0]();
+			data.held[1]();
+			(page.url as URL).href = 'http://localhost/backlog?q=yyy';
+			await new Promise((r) => setTimeout(r, 10));
+			// The delay took effect: otherwise this would pass without ever reaching that interleaving.
+			expect(later).toHaveBeenCalled();
+		} finally {
+			later.mockRestore();
+		}
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		data.held[2]();
+		data.held[3]();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('No todo stories match');
+			expect(document.body.textContent).toContain('yyy');
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect((document.activeElement as HTMLElement).closest('[role="group"][aria-label="State"]')).toBeNull();
+	});
+
+	it('Show open stories does not move focus when another query commits after its answer landed, before the render tick', async () => {
+		const inState = () => (document.activeElement as HTMLElement).closest('[role="group"][aria-label="State"]') !== null;
+		// The other query commits a few microtasks after the open answer is released. Which count falls between the
+		// landing's check and the render tick that follows it depends on Svelte's scheduling, so every count is tried, from
+		// before the answer is read to after focus has moved. Whatever the count: focus that had not moved when the other
+		// query committed never moves to the State control afterwards.
+		const movedFirst: boolean[] = [];
+		for (let hops = 0; hops <= 8; hops++) {
+			if (app) unmount(app);
+			app = null;
+			document.body.innerHTML = '';
+			Object.assign(data, data.fresh());
+			go('?q=zzz');
+			data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+			await open('No todo stories match');
+			data.hold = true;
+			const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+			show.focus();
+			show.click();
+			await vi.waitFor(() => expect(data.held).toHaveLength(2));
+			data.held[0]();
+			data.held[1]();
+			for (let i = 0; i < hops; i++) await Promise.resolve();
+			const moved = inState();
+			movedFirst.push(moved);
+			(page.url as URL).href = 'http://localhost/backlog?q=yyy';
+			await vi.waitFor(() => expect(data.held).toHaveLength(4));
+			data.held[2]();
+			data.held[3]();
+			await vi.waitFor(() => {
+				flushSync();
+				expect(document.body.textContent).toContain('No todo stories match');
+				expect(document.body.textContent).toContain('yyy');
+			});
+			await new Promise((r) => setTimeout(r, 10));
+			flushSync();
+			if (!moved) expect(inState(), `the other query committed after ${hops} microtasks`).toBe(false);
+		}
+		// Both sides of the window were reached: the other query committed before focus moved, and after.
+		expect(movedFirst).toContain(false);
+		expect(movedFirst).toContain(true);
+	});
+
 	it('Show open stories left for another query before either answers does not move focus when the user returns to the open query', async () => {
 		go('?q=zzz');
 		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
@@ -1037,7 +1116,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.activeElement).toBe(document.body);
 	});
 
-	it('a row title carries data-sveltekit-reset="false", so opening the drawer keeps focus and scroll (jsdom cannot observe either)', async () => {
+	it('a row title carries data-sveltekit-reset="false", so opening the drawer keeps focus and scroll (this pins the attribute; it does not exercise SvelteKit navigation)', async () => {
 		data.stories = [row('S-1', 1, null), row('S-2', 2, 'E-1')];
 		await open('Title S-2');
 		const links = [...document.body.querySelectorAll<HTMLAnchorElement>('li[data-key] a.title')];
