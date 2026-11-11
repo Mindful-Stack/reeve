@@ -3,11 +3,11 @@ use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{BlockedStory, QueueEntry, QueueSummary};
+use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use reeve_protocol::{
-    BlockedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
+    AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
     DemoStoryDto, DiscoveryMarkDto, EpicDto, GoalDto, GoalProgressDto, InitiativeDto, Key,
     PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintState,
     SprintViewDto, StoryDto,
@@ -100,6 +100,8 @@ impl From<&RequiredDecision> for RequiredDecisionDto {
                 repo: r.repo().to_string(),
                 path: r.path().to_string(),
                 record_id: r.record_id().to_string(),
+                // The server derives it from configuration; planning knows repository names only.
+                browse_url: None,
             }),
             pr_url: d.pr_url().map(str::to_string),
             check: d.check().clone(),
@@ -130,11 +132,16 @@ impl From<&PullRequest> for PullRequestDto {
     }
 }
 
-impl From<&BlockedStory> for BlockedStoryDto {
-    fn from(b: &BlockedStory) -> Self {
+impl From<&QueueStory> for AffectedStoryDto {
+    fn from(b: &QueueStory) -> Self {
         Self {
             key: b.key.clone(),
             title: b.title.clone(),
+            kind: b.kind,
+            delivery: b.delivery,
+            owner: b.owner.clone(),
+            urgent: b.urgent,
+            needed_in: b.needed_in,
         }
     }
 }
@@ -144,7 +151,12 @@ impl From<&QueueEntry> for DecisionQueueEntryDto {
         Self {
             decision: RequiredDecisionDto::from(&e.decision),
             group: e.group,
-            blocks: e.blocks.iter().map(BlockedStoryDto::from).collect(),
+            lane: e.lane,
+            needed_in: e.needed_in,
+            needed_in_reason: e.needed_in_reason.clone(),
+            next_step: e.next_step.clone(),
+            blocks: e.held.iter().map(AffectedStoryDto::from).collect(),
+            under_way: e.under_way.iter().map(AffectedStoryDto::from).collect(),
         }
     }
 }
@@ -156,6 +168,9 @@ impl From<QueueSummary> for DecisionQueueSummaryDto {
             blocking: s.blocking,
             blocked_stories: s.blocked_stories,
             overdue: s.overdue,
+            review: s.review,
+            this_sprint: s.this_sprint,
+            next_sprint: s.next_sprint,
         }
     }
 }

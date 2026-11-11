@@ -107,6 +107,11 @@ pub struct RecordRefDto {
     pub repo: String,
     pub path: String,
     pub record_id: String,
+    /// Where to read the record in a browser, `<repo url>/blob/HEAD/<path>`; the server derives it from the repository's
+    /// `https://` URL in `[[repos]]` and leaves it out when there is none (never stored, kb/ADR-0004 R1). Absent
+    /// in JSON from an older server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browse_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -130,33 +135,96 @@ pub struct RequiredDecisionDto {
     pub version: i64,
 }
 
-/// A todo story that cannot start because of a decision.
+fn default_kind() -> Kind {
+    Kind::Story
+}
+
+fn default_delivery() -> DeliveryState {
+    DeliveryState::Todo
+}
+
+/// A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
+/// historical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-pub struct BlockedStoryDto {
+pub struct AffectedStoryDto {
     pub key: Key,
     pub title: String,
+    /// Servers always send it; JSON without it (an older server) reads as a story.
+    #[serde(default = "default_kind")]
+    #[schema(required = true)]
+    pub kind: Kind,
+    /// Servers always send it; JSON without it (an older server, whose blocks were all todo) reads as todo.
+    #[serde(default = "default_delivery")]
+    #[schema(required = true)]
+    pub delivery: DeliveryState,
+    /// Servers always send it; JSON without it reads as no owner.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub owner: Option<String>,
+    /// Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it
+    /// reads as false.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub urgent: bool,
+    /// The story's own window, by its goals. Servers always send it; JSON without it reads as `none`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub needed_in: NeededIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionQueueEntryDto {
     pub decision: RequiredDecisionDto,
     pub group: QueueGroup,
-    /// The todo stories whose readiness fails on this decision; empty outside the blocking group.
-    pub blocks: Vec<BlockedStoryDto>,
+    /// The page lane. Servers always send it; JSON without it (an older server) reads as `open`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub lane: QueueLane,
+    /// When the decision is needed. Servers always send it; JSON without it reads as `none`.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub needed_in: NeededIn,
+    /// Why it is needed this sprint or next; absent otherwise.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub needed_in_reason: Option<NeededInReason>,
+    /// What the decision needs next; absent when closed or satisfied.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub next_step: Option<NextStep>,
+    /// The todo stories whose readiness fails on this decision (held); empty outside the live lanes.
+    pub blocks: Vec<AffectedStoryDto>,
+    /// Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without
+    /// it reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub under_way: Vec<AffectedStoryDto>,
 }
 
-/// Counts over open, unsatisfied decisions only; `blocked_stories` counts each story once.
+/// Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionQueueSummaryDto {
     pub open: u32,
     pub blocking: u32,
     pub blocked_stories: u32,
     pub overdue: u32,
+    /// Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub review: u32,
+    /// Size of the this-sprint lane; reads as 0 without it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub this_sprint: u32,
+    /// Size of the next-sprint lane; reads as 0 without it.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub next_sprint: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionQueueDto {
-    /// In page order: groups in `QueueGroup` declaration order, then server order within each group. Clients must not
+    /// In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
     /// re-sort.
     pub entries: Vec<DecisionQueueEntryDto>,
     pub summary: DecisionQueueSummaryDto,

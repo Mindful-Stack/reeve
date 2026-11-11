@@ -29,8 +29,8 @@ describe('reason labels', () => {
 		expect(fullLabel({ reason: 'untriaged' })).toBe('untriaged: no epic yet; triage places it');
 
 		const proposed: Reason = { reason: 'decision_proposed_pr_open', decision_id: 7, title: 'Use Postgres' };
-		expect(shortLabel(proposed)).toBe('decision: proposed, PR open');
-		expect(fullLabel(proposed)).toBe('decision "Use Postgres" is proposed; its PR is open');
+		expect(shortLabel(proposed)).toBe('decision: proposed (PR linked)');
+		expect(fullLabel(proposed)).toBe('decision "Use Postgres" is proposed; its PR is linked');
 
 		expect(shortLabel({ reason: 'blocked_by', story: 'ABC-9' })).toBe('blocked by ABC-9');
 	});

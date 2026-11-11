@@ -3,8 +3,10 @@
 // draft with the reloaded decision. The props are `$state`, so `onchanged` replaces the list as a page's reload does.
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlockedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
-import { decision } from '#lib/test/fixtures.ts';
+import type { AffectedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
+import { blockedStory, decision } from '#lib/test/fixtures.ts';
+import { decisionDrafts, resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
+import { settle } from '#lib/test/net.ts';
 import DecisionList from './DecisionList.svelte';
 
 type Sent = { method: string; path: string; body: unknown };
@@ -60,6 +62,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
+	resetDecisionDraftsForTests();
 	net.sent.length = 0;
 	net.replies.reply = net.replies.unexpected;
 	net.replies.gate = null;
@@ -865,6 +868,96 @@ describe('DecisionList row', () => {
 		expect(row.querySelector('textarea[aria-label="comment on Pick a queue"]')).not.toBeNull();
 	});
 
+	it('a late response for a comment sent before a drawer swap does not delete a newer draft with the same text', async () => {
+		net.replies.reply = (r) => net.replies.ok([]);
+		const comment = () => rows()[0].querySelector<HTMLTextAreaElement>('textarea[data-field="comment"]')!;
+		const submit = () => rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!;
+		const posts = () => net.sent.filter((r) => r.method === 'POST').map((r) => r.body as { body: string; idempotency_key: string });
+		const write = (text: string) => {
+			comment().value = text;
+			comment().dispatchEvent(new Event('input', { bubbles: true }));
+			flushSync();
+		};
+		const expand = async () => {
+			discussion(rows()[0]).click();
+			flushSync();
+			await vi.waitFor(() => {
+				flushSync();
+				expect(comment()).not.toBeNull();
+			});
+		};
+
+		show([open]);
+		await expand();
+		write('Agreed');
+		// The first send never answers (yet).
+		let release!: () => void;
+		net.replies.gate = new Promise<void>((r) => (release = r));
+		submit().click();
+		await vi.waitFor(() => expect(posts()).toHaveLength(1));
+		net.replies.gate = null;
+
+		// A drawer swap: the list is destroyed and mounted again, and the same draft is retried with its key and succeeds.
+		unmount(app!);
+		app = null;
+		show([open]);
+		await expand();
+		expect(comment().value).toBe('Agreed');
+		submit().click();
+		await vi.waitFor(() => expect(posts()).toHaveLength(2));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(comment().value).toBe('');
+		});
+		expect(posts()[1].idempotency_key).toBe(posts()[0].idempotency_key);
+
+		// A new draft with the same text, then the first send's answer arrives.
+		write('Agreed');
+		release();
+		await settle();
+		flushSync();
+		expect(comment().value).toBe('Agreed');
+		expect(decisionDrafts[1]?.body).toBe('Agreed');
+	});
+
+	it('keeps an unsent comment and its idempotency key across an unmount and remount', async () => {
+		// Every send fails on purpose: the draft and its key must survive, and a retry must reuse the key.
+		net.replies.reply = (r) =>
+			r.method === 'POST' ? { status: 500, body: { outcome: 'error', code: 'internal', message: 'boom' } } : net.replies.ok([]);
+		const comment = () => rows()[0].querySelector<HTMLTextAreaElement>('textarea[data-field="comment"]')!;
+		const posts = () => net.sent.filter((r) => r.method === 'POST').map((r) => (r.body as { body: string; idempotency_key: string }));
+		const write = (text: string) => {
+			comment().value = text;
+			comment().dispatchEvent(new Event('input', { bubbles: true }));
+			flushSync();
+		};
+		const send = async (n: number) => {
+			rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!.click();
+			await vi.waitFor(() => expect(posts()).toHaveLength(n));
+			await vi.waitFor(() => {
+				flushSync();
+				expect(rows()[0].querySelector<HTMLButtonElement>('button[data-field="comment-submit"]')!.disabled).toBe(false);
+			});
+		};
+		show([open]);
+		discussion(rows()[0]).click();
+		flushSync();
+		write('draft text');
+		await send(1);
+		// A drawer swap and Back: the list is destroyed and mounted again.
+		unmount(app!);
+		app = null;
+		show([open]);
+		discussion(rows()[0]).click();
+		flushSync();
+		expect(comment().value).toBe('draft text');
+		await send(2);
+		expect(posts()[1].idempotency_key).toBe(posts()[0].idempotency_key);
+		write('draft text, edited');
+		await send(3);
+		expect(posts()[2].idempotency_key).not.toBe(posts()[0].idempotency_key);
+	});
+
 	it('gives every focusable control in the row a data-field', () => {
 		show([open]);
 		const row = rows()[0];
@@ -1070,7 +1163,7 @@ describe('DecisionList blocks that go away', () => {
 	it('drops the body once the decision blocks nothing', () => {
 		const state = $state({
 			decisions: [open],
-			blocks: new Map([[1, [{ key: 'ABC-31', title: 'Tier page' }]]]) as ReadonlyMap<number, BlockedStory[]>,
+			blocks: new Map([[1, [blockedStory({ key: 'ABC-31', title: 'Tier page' })]]]) as ReadonlyMap<number, AffectedStory[]>,
 			onchanged: async () => {}
 		});
 		app = mount(DecisionList, { target: document.body, props: state });

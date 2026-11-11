@@ -29,6 +29,77 @@ pub struct AppState {
     pub logins: Arc<tokio::sync::Mutex<HashMap<String, PendingLogin>>>,
     /// Where the client files come from: embedded in the binary, except in debug builds with `REEVE_ASSETS_DIR`.
     pub assets: crate::assets::Assets,
+    /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
+    /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
+    pub repo_urls: Arc<HashMap<String, String>>,
+}
+
+/// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, port, query or fragment and
+/// without a trailing `.git` or `/`. Three shapes are browsable: `https://host/org/repo(.git)`, the scp-style
+/// `git@host:org/repo(.git)` and `ssh://git@host[:port]/org/repo(.git)` (production clones private repositories over
+/// ssh with deploy keys); the last two map to `https://host/org/repo`. A repository's own `browse_url`, when set, takes
+/// precedence; a host without a dot (an ssh host alias) gives none. A `http://` or other-scheme URL cannot be browsed
+/// safely and is left out. Userinfo (`https://user:token@host/...`, a clone URL) is dropped so a credential never reaches
+/// an API caller.
+pub(crate) fn browsable_repo_urls(config: &ServerConfig) -> HashMap<String, String> {
+    config
+        .repos
+        .iter()
+        .filter_map(|r| {
+            // An explicit address wins over one derived from the clone url (validated at load, so it is Some here).
+            let base = match r.browse_url.as_deref() {
+                Some(b) => explicit_browse_base(b),
+                None => browse_base(r.url.as_deref()?),
+            };
+            Some((r.name.clone(), base?))
+        })
+        .collect()
+}
+
+/// The base of an explicit `browse_url`: https only (the ssh forms that `browse_base` derives from are refused).
+pub(crate) fn explicit_browse_base(raw: &str) -> Option<String> {
+    let u = url::Url::parse(raw.trim()).ok()?;
+    if u.scheme() != "https" {
+        return None;
+    }
+    browse_base(raw)
+}
+
+fn browse_base(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    // scp-style `git@host:org/repo`: no scheme, a colon after the host. A scheme URL has `://` (before any `@`).
+    let https = match raw.strip_prefix("git@") {
+        Some(rest) if !rest.contains("://") => {
+            let (host, path) = rest.split_once(':').filter(|(h, _)| !h.is_empty())?;
+            format!("https://{host}/{}", path.trim_start_matches('/'))
+        }
+        _ => raw.to_string(),
+    };
+    let mut u = url::Url::parse(&https).ok()?;
+    match u.scheme() {
+        "https" => {}
+        // The ssh scheme's user and port say how to clone, not where to browse. A url cannot change between a special
+        // scheme and another, so the https form is built from the parts.
+        "ssh" => {
+            let host = u.host_str().filter(|h| !h.is_empty())?;
+            u = url::Url::parse(&format!("https://{host}{}", u.path())).ok()?;
+        }
+        _ => return None,
+    }
+    // A host without a dot is no DNS name (an ssh host alias such as `github-kb`, or `localhost`): a link to it cannot resolve.
+    if u.host_str().is_none_or(|h| !h.contains('.')) {
+        return None;
+    }
+    u.set_username("").ok()?;
+    u.set_password(None).ok()?;
+    u.set_query(None);
+    u.set_fragment(None);
+    let base = u.as_str().trim_end_matches('/');
+    let base = base
+        .strip_suffix(".git")
+        .unwrap_or(base)
+        .trim_end_matches('/');
+    Some(base.to_string())
 }
 
 /// One strict migrator composed from the three crates' sets, so a migration deleted from any crate is detected
@@ -168,6 +239,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
     };
     #[cfg(not(debug_assertions))]
     let assets = crate::assets::Assets::Embedded;
+    let repo_urls = Arc::new(browsable_repo_urls(&config));
     Ok(AppState {
         handlers,
         tokens: reeve_identity::make_token_store(pool.clone()),
@@ -179,6 +251,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         oidc,
         logins: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assets,
+        repo_urls,
     })
 }
 
@@ -224,5 +297,51 @@ mod tests {
         assert!(range(reeve_planning::migrator(), 1000));
         assert!(range(reeve_identity::migrator(), 2000));
         assert!(range(reeve_activity::migrator(), 3000));
+    }
+
+    /// Every browsable shape gives the same https base: no user, password, port, `.git` or trailing slash. Catches a
+    /// credential or an ssh port reaching an API caller, and an ssh url dropped for lack of an https scheme.
+    #[test]
+    fn browse_base_derives_https_from_https_scp_and_ssh_urls() {
+        let same = "https://github.com/acme/orion";
+        for raw in [
+            "https://github.com/acme/orion",
+            "https://github.com/acme/orion.git",
+            "https://github.com/acme/orion/",
+            "https://bot:SECRET@github.com/acme/orion.git?x=1#y",
+            "git@github.com:acme/orion.git",
+            "git@github.com:acme/orion",
+            "  git@github.com:acme/orion.git/ ",
+            "ssh://git@github.com/acme/orion.git",
+            "ssh://git@github.com:2222/acme/orion.git",
+            "ssh://git:SECRET@github.com:2222/acme/orion",
+        ] {
+            assert_eq!(browse_base(raw).as_deref(), Some(same), "{raw}");
+        }
+        assert_eq!(
+            browse_base("git@git.example.com:team/sub/repo.git").as_deref(),
+            Some("https://git.example.com/team/sub/repo")
+        );
+    }
+
+    /// Anything that cannot be browsed is left out: plain http, other schemes, a missing host, a missing path.
+    #[test]
+    fn browse_base_refuses_what_cannot_be_browsed() {
+        for raw in [
+            "",
+            "http://git.example.com/acme/plain",
+            "ftp://git.example.com/acme/plain",
+            "file:///srv/git/orion",
+            "git@:acme/orion.git",
+            "git@github.com",
+            "ssh://git@/acme/orion",
+            // No dot in the host: an ssh host alias (or localhost), not a web host.
+            "git@github-knowledge-base:Acme/kb.git",
+            "ssh://git@github-knowledge-base/Acme/kb.git",
+            "https://localhost/acme/orion",
+            "orion",
+        ] {
+            assert_eq!(browse_base(raw), None, "{raw:?}");
+        }
     }
 }

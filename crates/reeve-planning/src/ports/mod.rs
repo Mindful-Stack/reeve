@@ -72,7 +72,8 @@ pub enum DoneWindow {
     All,
     /// Done stories that entered done at or after this instant (one with no `done_at` is not kept).
     Since(DateTime<Utc>),
-    /// No done stories.
+    /// No done stories: every story whose delivery is not done, of any state otherwise (wire `done=none`; the
+    /// decision queue's read, kb/ADR-0018 R5).
     None,
 }
 

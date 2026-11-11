@@ -18,6 +18,12 @@ pub trait DecisionRepo: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<(RequiredDecision, bool), RepoError>;
     async fn get_decision(&self, id: i64) -> Result<RequiredDecision, RepoError>;
+    /// `get_decision` on the caller's transaction, without a row lock (so it works in a READ ONLY snapshot).
+    async fn get_decision_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+    ) -> Result<RequiredDecision, RepoError>;
     async fn get_decision_for_update(
         &self,
         tx: &mut Transaction<'_, Postgres>,
