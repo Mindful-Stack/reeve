@@ -1712,9 +1712,16 @@ mod views {
         let list = |f: StoryFilter| {
             let h = h.clone();
             async move {
-                h.list_stories(&f, false, reeve_protocol::DoneFilter::All, at(3, 18))
-                    .await
-                    .unwrap()
+                h.list_stories(
+                    &f,
+                    None,
+                    None,
+                    false,
+                    reeve_protocol::DoneFilter::All,
+                    at(3, 18),
+                )
+                .await
+                .unwrap()
             }
         };
         // Draft goals do not resolve: only the active sprint's do.
@@ -1809,7 +1816,14 @@ mod views {
             let h = h.clone();
             async move {
                 let mut k: Vec<_> = h
-                    .list_stories(&f, ready, reeve_protocol::DoneFilter::All, at(3, 18))
+                    .list_stories(
+                        &f,
+                        None,
+                        None,
+                        ready,
+                        reeve_protocol::DoneFilter::All,
+                        at(3, 18),
+                    )
                     .await
                     .unwrap()
                     .into_iter()
@@ -2469,6 +2483,8 @@ mod views {
             async move {
                 h.list_stories(
                     &StoryFilter::default(),
+                    None,
+                    None,
                     false,
                     reeve_protocol::DoneFilter::All,
                     at(4, 0),
@@ -2486,6 +2502,8 @@ mod views {
         let all = h
             .list_stories(
                 &StoryFilter::default(),
+                None,
+                None,
                 false,
                 reeve_protocol::DoneFilter::All,
                 at(4, 0),

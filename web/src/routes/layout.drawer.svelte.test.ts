@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-// The layout owns the story drawer's lifecycle: `?story=KEY` mounts it (keyed by KEY), Escape drops the parameter in
-// place, and focus returns to whatever opened the first drawer, across drawer-to-drawer navigation.
+// The layout owns the drawers' lifecycle: `?story=KEY` mounts the story drawer (keyed by KEY) and `?decision=ID` the
+// decision drawer, Escape drops the parameter in place, and focus returns to whatever opened the first drawer, across
+// drawer-to-drawer navigation (a story's link from a decision, and back).
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import Layout from './+layout.svelte';
 
 const net = vi.hoisted(() => ({ gets: [] as string[] }));
@@ -39,13 +41,23 @@ vi.mock('#lib/events.svelte.ts', async (orig) => ({
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const real = await orig<typeof import('#lib/api/client.ts')>();
 	const ok = (value: unknown) => Promise.resolve({ data: { outcome: 'ok', value }, response: { status: 200 } as Response });
-	const { story } = await import('#lib/test/fixtures.ts');
+	const { blockedStory, decision, queueEntry, story } = await import('#lib/test/fixtures.ts');
 	return {
 		...real,
 		api: {
-			GET: (path: string, init?: { params?: { path?: { key: string } } }) => {
+			GET: (path: string, init?: { params?: { path?: { key?: string; id?: number } } }) => {
 				const key = init?.params?.path?.key;
-				net.gets.push(key ? path.replace('{key}', key) : path);
+				const id = init?.params?.path?.id;
+				net.gets.push(key ? path.replace('{key}', key) : id ? path.replace('{id}', String(id)) : path);
+				if (path === '/api/v1/decisions/{id}/context')
+					return ok(
+						queueEntry({
+							decision: decision({ id: id!, title: `Decision ${id}`, on: 'RV-1' }),
+							lane: 'this_sprint',
+							needed_in: 'this_sprint',
+							blocks: [blockedStory({ key: 'RV-5', title: 'Held story', needed_in: 'this_sprint' })]
+						})
+					);
 				if (path === '/api/v1/stories/{key}') return ok(story({ key: key!, title: `Story ${key}` }));
 				if (path === '/api/v1/stories/{key}/ready') return ok({ ready: true, reasons: [] });
 				return ok([]);
@@ -61,6 +73,7 @@ afterEach(() => {
 	document.body.innerHTML = '';
 	net.gets.length = 0;
 	vi.mocked(goto).mockClear();
+	resetDecisionDraftsForTests();
 	(page.url as URL).href = 'http://localhost/board';
 });
 
@@ -149,5 +162,99 @@ describe('the layout and the story drawer', () => {
 			expect(drawer('RV-5')).toBeNull();
 			expect(document.activeElement).toBe(document.body.querySelector('button.report'));
 		});
+	});
+});
+
+const decisionDrawer = (id: number) => document.body.querySelector<HTMLElement>(`[data-testid="decision-drawer"][aria-label="Decision #${id}"]`);
+
+async function decisionFocused(id: number) {
+	await vi.waitFor(() => {
+		flushSync();
+		expect(decisionDrawer(id)).not.toBeNull();
+		expect(document.activeElement).toBe(decisionDrawer(id)!.querySelector('h2'));
+	});
+}
+
+describe('the layout and the decision drawer', () => {
+	async function mountLayout() {
+		const children = createRawSnippet(() => ({ render: () => '<p>content</p>' }));
+		app = mount(Layout, { target: document.body, props: { children } as never });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('main')).not.toBeNull();
+		});
+	}
+
+	it('opens on ?decision=, swaps to the story drawer from a held story, comes back on Back, and closes on Escape to the opener', async () => {
+		const opener = document.createElement('button');
+		document.body.append(opener);
+		opener.focus();
+		await mountLayout();
+
+		// 1. Following the opener's link mounts the decision drawer, which reads the decision's context.
+		const decisionUrl = 'http://localhost/board?decision=7';
+		navigate(decisionUrl);
+		await decisionFocused(7);
+		expect(net.gets).toContain('/api/v1/decisions/7/context');
+		expect(drawer('RV-5')).toBeNull();
+
+		// 2. A held story's link swaps to the story drawer: the URL has story and no decision.
+		const link = await vi.waitFor(() => {
+			flushSync();
+			const a = decisionDrawer(7)!.querySelector<HTMLAnchorElement>('.held a.key');
+			expect(a).not.toBeNull();
+			return a!;
+		});
+		const href = link.getAttribute('href')!;
+		expect(new URL(href, 'http://localhost').searchParams.get('story')).toBe('RV-5');
+		expect(new URL(href, 'http://localhost').searchParams.has('decision')).toBe(false);
+		navigate(new URL(href, 'http://localhost').href);
+		await drawerFocused('RV-5');
+		expect(decisionDrawer(7)).toBeNull();
+
+		// 3. Back shows the decision drawer again.
+		navigate(decisionUrl);
+		await decisionFocused(7);
+		expect(drawer('RV-5')).toBeNull();
+
+		// 4. Escape drops the parameter in place and focus returns to the opener of the first drawer.
+		document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		expect(goto).toHaveBeenCalledTimes(1);
+		const [to, opts] = vi.mocked(goto).mock.calls[0] as [URL, unknown];
+		expect(new URL(to).searchParams.has('decision')).toBe(false);
+		expect(new URL(to).pathname).toBe('/board');
+		expect(opts).toEqual({ replace: true, reset: false });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(decisionDrawer(7)).toBeNull();
+			expect(document.activeElement).toBe(opener);
+		});
+	});
+
+	it('opens nothing for a decision that is not a positive whole number, and closing the decision drawer drops its parameter', async () => {
+		await mountLayout();
+		navigate('http://localhost/board?decision=abc');
+		flushSync();
+		expect(document.body.querySelector('[data-testid="decision-drawer"]')).toBeNull();
+		navigate('http://localhost/board?decision=0');
+		flushSync();
+		expect(document.body.querySelector('[data-testid="decision-drawer"]')).toBeNull();
+
+		navigate('http://localhost/board?decision=7');
+		await decisionFocused(7);
+		document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		const [to] = vi.mocked(goto).mock.calls[0] as [URL];
+		expect([...new URL(to).searchParams.keys()]).toEqual([]);
+	});
+
+	it('closing a drawer keeps the hash, in place, so a lane link keeps its lane and the scroll', async () => {
+		await mountLayout();
+		navigate('http://localhost/board?decision=7#next-sprint');
+		await decisionFocused(7);
+		document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		const [to, opts] = vi.mocked(goto).mock.calls[0] as [URL, unknown];
+		expect(new URL(to).hash).toBe('#next-sprint');
+		expect([...new URL(to).searchParams.keys()]).toEqual([]);
+		expect(opts).toEqual({ replace: true, reset: false });
 	});
 });

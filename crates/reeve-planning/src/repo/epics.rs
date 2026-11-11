@@ -30,6 +30,18 @@ impl EpicRepo for PgPlanningRepo {
     ) -> Result<Vec<Epic>, RepoError> {
         Ok(sqlx::query(&format!("SELECT {EPIC_COLS} FROM epics WHERE ($1::text IS NULL OR initiative_key = $1) ORDER BY created_at, {BY_KEY_NUMBER}")).bind(initiative.map(|k| k.to_string())).fetch_all(&mut **tx).await?.iter().map(epic_from).collect())
     }
+    async fn epic_keys_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        initiative: &Key,
+    ) -> Result<Vec<Key>, RepoError> {
+        let rows: Vec<String> =
+            sqlx::query_scalar("SELECT key FROM epics WHERE initiative_key = $1")
+                .bind(initiative.to_string())
+                .fetch_all(&mut **tx)
+                .await?;
+        Ok(rows.iter().map(|k| key(k)).collect())
+    }
     async fn update_epic(
         &self,
         tx: &mut Transaction<'_, Postgres>,

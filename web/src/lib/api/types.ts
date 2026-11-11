@@ -1,5 +1,5 @@
 // Aliases over the generated schema only: the client never defines a wire shape by hand (kb/ADR-0006 R2).
-import type { components } from './schema';
+import type { components, operations } from './schema';
 
 type S = components['schemas'];
 export type Story = S['StoryDto'];
@@ -15,7 +15,12 @@ export type Reversibility = S['Reversibility'];
 export type ClosureKind = S['ClosureKind'];
 export type QueueGroup = S['QueueGroup'];
 export type DecisionQueue = S['DecisionQueueDto'];
-export type BlockedStory = S['BlockedStoryDto'];
+export type AffectedStory = S['AffectedStoryDto'];
+export type DecisionQueueEntry = S['DecisionQueueEntryDto'];
+export type NextStep = S['NextStep'];
+export type NeededIn = S['NeededIn'];
+export type NeededInReason = S['NeededInReason'];
+export type QueueLane = S['QueueLane'];
 export type Comment = S['CommentDto'];
 export type AttachmentDto = S['AttachmentDto'];
 export type ActivityEntry = S['ActivityEntryDto'];
@@ -46,3 +51,5 @@ export type WarRoomEntry = S['WarRoomEntryDto'];
 export type Access = S['AccessDto'];
 export type AccessEntry = S['AccessEntryDto'];
 export type AccessKind = S['AccessKind'];
+/** The query `GET /api/v1/stories` takes. */
+export type StoryQuery = NonNullable<operations['stories_list']['parameters']['query']>;

@@ -4,16 +4,18 @@
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import { levelOfItem } from '#lib/glyphs.ts';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import type { BlockedStory, ClosureKind, Comment, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-	import { fullLabel } from '#lib/board.ts';
-	import { closeActions, dateLine, decisionStatus, pruneExpanded, recordMismatch, today } from '#lib/decisions.ts';
+	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
+	import { closeActions, dateLine, decisionStatus, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
-	import { draftKey, newDraftKey, type DraftKey } from '#lib/idempotency.ts';
+	import { draftKey } from '#lib/idempotency.ts';
+	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
 	import { tick as nextRender, untrack, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { safePrUrl } from '#lib/prs.ts';
 	import CommentBody from '#lib/components/CommentBody.svelte';
+	import NeededInReason from '#lib/components/NeededInReason.svelte';
 	import { followBase } from '#lib/editorBase.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { DECISION_SAME, decisionDraft, decisionEdit, fieldsText, mergeDraft, type DecisionDraft } from '#lib/forms.ts';
@@ -26,6 +28,9 @@
 
 	let {
 		decisions,
+		entries,
+		expandAll = false,
+		decisionHref,
 		itemHref,
 		onchanged,
 		poll = true,
@@ -42,7 +47,15 @@
 		decisions: RequiredDecision[];
 		/** The stories each decision keeps out of active work, by decision id (the queue's `blocks`). A decision missing
 		 *  from the map shows no blocks line, so a view without the queue (the drawers, the item pages) passes none. */
-		blocks?: ReadonlyMap<number, BlockedStory[]>;
+		blocks?: ReadonlyMap<number, AffectedStory[]>;
+		/** The queue's entry for each decision, by id. A row with an entry shows its next step, when it is needed and the work it
+		 *  holds ("Holds N stories · M under way"); a row without one shows none of these. */
+		entries?: ReadonlyMap<number, DecisionQueueEntry>;
+		/** Every row starts with its discussion open and loaded (the decision drawer). Each id opens once: a discussion the
+		 *  user collapsed stays collapsed through refetches. */
+		expandAll?: boolean;
+		/** Where a decision opens in the drawer; when absent (in the drawer itself) the title is plain text. */
+		decisionHref?: (id: number) => string;
 		/** Where the item a decision blocks opens; when absent (on the item's own page) the item column is left out. */
 		itemHref?: (key: string) => string;
 		/** Reloads the list: after a decision changed (closed, or a conflict), and every two minutes while visible. */
@@ -112,10 +125,7 @@
 		untrack(restoreFocus);
 	});
 
-	type Draft = { body: string; id: DraftKey };
-
 	let threads = $state<Record<number, Comment[]>>({});
-	let drafts = $state<Record<number, Draft>>({});
 	let reasons = $state<Record<number, string>>({});
 	/** A row's thread, comment and close failures, shown at the top of its body. */
 	let errors = $state<Record<number, string>>({});
@@ -211,12 +221,12 @@
 
 	/** The PR link of a proposed record, only when http(s): plain text otherwise, so a stored `javascript:` url never runs. */
 	function prHref(d: RequiredDecision): string | null {
-		return d.check.kind === 'proposed_pr_open' && d.pr_url ? safePrUrl(d.pr_url) : null;
+		return (d.check.kind === 'proposed_pr_open' || d.check.kind === 'unchecked') && d.pr_url ? safePrUrl(d.pr_url) : null;
 	}
 
 	/** One idempotency key per comment being written; `draftKey` keeps it across retries of the same text only. */
 	function write(id: number, body: string) {
-		drafts[id] = { body, id: drafts[id]?.id ?? newDraftKey() };
+		draftFor(id).body = body;
 	}
 
 	/** Writes the failure's text into `into` (the row's errors unless the editor's); a conflict also reloads the list. */
@@ -229,7 +239,7 @@
 		else into[id] = errorMessage(e);
 	}
 
-	/** Loads (or reloads) one discussion. Drafts live in `drafts`, which this never touches, so an unsent comment and its
+	/** Loads (or reloads) one discussion. Drafts live in `decisionDrafts`, which this never touches, so an unsent comment and its
 	 *  idempotency key survive every refetch. */
 	async function loadThread(id: number) {
 		const seq = (generation[id] = (generation[id] ?? 0) + 1);
@@ -260,25 +270,44 @@
 		for (const id of expanded) void loadThread(id);
 	});
 
+	/** The ids `expandAll` already opened: each opens once, so a discussion the user collapsed is not reopened by a refetch. */
+	const autoExpanded = new Set<number>();
+	$effect(() => {
+		if (!expandAll) return;
+		const ids = decisions.map((d) => d.id);
+		untrack(() => {
+			for (const id of ids) {
+				if (autoExpanded.has(id)) continue;
+				autoExpanded.add(id);
+				expanded.add(id);
+				void loadThread(id);
+			}
+		});
+	});
+
 	async function post(e: SubmitEvent, id: number) {
 		e.preventDefault();
-		const d = drafts[id];
+		const d = decisionDrafts[id];
 		const body = d?.body.trim();
 		if (!d || !body || busy !== null) return;
 		busy = id;
 		delete errors[id];
+		// The key this send used: it names the draft sent. A drawer swap can leave this send pending while the same draft is
+		// retried and cleared, and a new draft with the same text started; that one has a new key and is not this send's.
+		const key = draftKey(d.id, body);
 		try {
 			const thread = await unwrap(
 				api.POST('/api/v1/decisions/{id}/comments', {
 					params: { path: { id } },
-					body: { body, idempotency_key: draftKey(d.id, body) }
+					body: { body, idempotency_key: key }
 				})
 			);
 			// The post's answer is newer than any refetch still in flight.
 			generation[id] = (generation[id] ?? 0) + 1;
 			threads[id] = thread;
-			// Only if the composer still holds what was sent (it is disabled while posting, so this is a guard, not a race).
-			if (drafts[id]?.body.trim() === body) delete drafts[id];
+			// Only the draft that was sent: the same key and text (a draft edited since has a new key once it is sent again).
+			const now = decisionDrafts[id];
+			if (now && now.id.key === key && now.body.trim() === body) delete decisionDrafts[id];
 		} catch (err) {
 			await failed(id, err);
 		} finally {
@@ -303,12 +332,11 @@
 	};
 	const closeForms: Record<number, HTMLFormElement | null> = {};
 	/** The chip's words for a classification (kb/ADR-0013 R1). */
-	const REVERSIBILITY_TEXT: Record<Reversibility, string> = { one_way: 'One-way', two_way: 'Two-way' };
 	/** The rows whose "Blocks N stories" disclosure is open. */
 	const blocksOpen = new SvelteSet<number>();
 
-	function blockedOf(d: RequiredDecision): BlockedStory[] {
-		return blocks?.get(d.id) ?? [];
+	function blockedOf(d: RequiredDecision): AffectedStory[] {
+		return blocks?.get(d.id) ?? entries?.get(d.id)?.blocks ?? [];
 	}
 
 	function stories(n: number): string {
@@ -565,7 +593,7 @@
 
 {#snippet classifyTrigger()}Classify{/snippet}
 
-{#snippet story(s: BlockedStory)}<span class="key">{s.key}</span> {s.title}{/snippet}
+{#snippet story(s: AffectedStory)}<span class="key">{s.key}</span> {s.title}{/snippet}
 
 {#snippet chip(d: RequiredDecision)}
 	{#if d.reversibility}
@@ -579,11 +607,15 @@
 	{@const tone = d.closed ? 'muted' : d.check.kind === 'accepted' ? 'ready' : 'warn'}
 	{@const when = dateLine(d, now)}
 	{@const blocked = blockedOf(d)}
+	{@const entry = entries?.get(d.id)}
+	{@const underWay = entry?.under_way ?? []}
+	{@const work = blocked.length + underWay.length > 0}
+	{@const holds = entry ? `Holds ${stories(blocked.length)}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
 		<div class="row">
-			<span class="cell headline" data-col="title"><span class="title">{d.title}</span>{@render chip(d)}</span>
+			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" data-sveltekit-reset="false" href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
 			<span class="cell decider" data-col="decider" title={d.closed ? undefined : d.decider}>{#if !d.closed}{short(d.decider)}<span class="visually-hidden">{' decides'}</span>{/if}</span>
 			<span class="cell when" data-col="when"
 				>{#if !d.closed}<span class={when.tone}>{when.text}</span>
@@ -599,15 +631,15 @@
 					{/if}{/if}</span
 			>
 			<span class="cell blocks-line" data-col="blocks"
-				>{#if blocked.length}<button
+				>{#if work}<button
 						type="button"
 						class="ghost inline"
 						data-field="blocks"
-						aria-label="Blocks {stories(blocked.length)}: {d.title}"
+						aria-label="{holds}: {d.title}"
 						aria-expanded={blocksOpen.has(d.id)}
 						aria-controls={blocksOpen.has(d.id) ? `${uid}-${d.id}-blocked` : undefined}
 						onclick={() => (blocksOpen.has(d.id) ? blocksOpen.delete(d.id) : blocksOpen.add(d.id))}
-						>Blocks {stories(blocked.length)} <span aria-hidden="true">{blocksOpen.has(d.id) ? '▾' : '▸'}</span></button
+						>{holds} <span aria-hidden="true">{blocksOpen.has(d.id) ? '▾' : '▸'}</span></button
 					>{/if}</span
 			>
 			<span class="cell on" data-col="on"
@@ -635,9 +667,27 @@
 			>
 		</div>
 
-		{#if d.closed || errors[d.id] || (edits[d.id] && !edits[d.id].inline) || closing[d.id] || expanded.has(d.id) || (blocked.length && blocksOpen.has(d.id)) || mismatch}
+		{#if entry && !d.closed}
+			{@const next = entry.next_step}
+			{@const reason = entry.needed_in_reason}
+			{#if next || entry.needed_in !== 'none'}
+				<div class="lines">
+					{#if entry.needed_in !== 'none'}
+						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}<NeededInReason {reason} />{/if}</p>
+					{/if}
+					{#if next}
+						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
+						<p class="next-step" data-testid="next-step">
+							{#if link}<a href={link} data-field="next-pr" target="_blank" rel="noopener noreferrer">{nextStepText(next, d.reversibility, minuteClock.now)}</a>{:else}{nextStepText(next, d.reversibility, minuteClock.now)}{/if}
+						</p>
+					{/if}
+				</div>
+			{/if}
+		{/if}
+
+		{#if d.closed || errors[d.id] || (edits[d.id] && !edits[d.id].inline) || closing[d.id] || expanded.has(d.id) || (work && blocksOpen.has(d.id)) || mismatch}
 			<div class="body">
-				{#if blocked.length && blocksOpen.has(d.id)}
+				{#if work && blocksOpen.has(d.id)}
 					<ul class="blocked" id="{uid}-{d.id}-blocked">
 						{#each blocked as s (s.key)}
 							<li>
@@ -646,6 +696,16 @@
 								{:else}
 									{@render story(s)}
 								{/if}
+							</li>
+						{/each}
+						{#each underWay as s (s.key)}
+							<li class="under-way">
+								{#if itemHref}
+									<a data-field="blocked-{s.key}" href={itemHref(s.key)}>{@render story(s)}</a>
+								{:else}
+									{@render story(s)}
+								{/if}
+								<span class="muted">· {COLUMN_LABEL[s.delivery]}, under way</span>
 							</li>
 						{/each}
 					</ul>
@@ -746,8 +806,9 @@
 				{#if expanded.has(d.id)}
 					<section class="discussion-panel" id="{uid}-{d.id}-discussion" aria-label="Discussion of {d.title}">
 						{#if d.record}
+							{@const url = d.record.browse_url ? safePrUrl(d.record.browse_url) : null}
 							<p class="record-line">
-								<span class="record" title={d.record.record_id}>{d.record.repo}/{d.record.path}</span>
+								{#if url}<a class="record" href={url} data-field="record" target="_blank" rel="noopener noreferrer" title={d.record.record_id}>{d.record.repo}/{d.record.path}</a>{:else}<span class="record" title={d.record.record_id}>{d.record.repo}/{d.record.path}</span>{/if}
 								{#if d.checked_at}
 									· <time class="checked" datetime={d.checked_at} title={new Date(d.checked_at).toLocaleString()}>checked {age(d.checked_at, minuteClock.now)} ago</time>
 								{/if}
@@ -774,11 +835,11 @@
 								data-field="comment"
 								placeholder="Add to the discussion"
 								aria-label="comment on {d.title}"
-								value={drafts[d.id]?.body ?? ''}
+								value={decisionDrafts[d.id]?.body ?? ''}
 								disabled={busy === d.id}
 								oninput={(e) => write(d.id, e.currentTarget.value)}
 							></textarea>
-							<button type="submit" data-field="comment-submit" disabled={busy !== null || !drafts[d.id]?.body.trim()}>Comment</button>
+							<button type="submit" data-field="comment-submit" disabled={busy !== null || !decisionDrafts[d.id]?.body.trim()}>Comment</button>
 						</form>
 					</section>
 				{/if}
@@ -893,7 +954,8 @@
 		.cell.actions {
 			order: 0;
 		}
-		.body {
+		.body,
+		.lines {
 			flex-basis: 100%;
 			order: 2;
 		}
@@ -909,6 +971,10 @@
 	}
 	.title {
 		font-weight: 600;
+	}
+	a.title:hover,
+	a.title:focus-visible {
+		text-decoration: underline;
 	}
 	.check a {
 		text-decoration: none;
@@ -973,6 +1039,17 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--muted);
+	}
+	.lines {
+		display: grid;
+		grid-column: 1 / -1;
+		gap: 2px;
+		padding: 2px 0;
+		font-size: 14px;
+		color: var(--muted);
+	}
+	.lines p {
+		margin: 0;
 	}
 	.discussion-panel {
 		display: grid;

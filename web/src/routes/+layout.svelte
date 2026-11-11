@@ -11,6 +11,7 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { headerSearch } from '#lib/headerSearch.ts';
 	import { isCurrent, links, reportContext } from '#lib/nav.ts';
 	import { discardDraft, hasDraft, openReport, persist, report, reportLabel, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
 	import type { Story } from '#lib/api/types.ts';
@@ -19,6 +20,8 @@
 	import ActionsMenu from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
+	import DecisionDrawer from '#lib/components/DecisionDrawer.svelte';
+	import { storyHref } from '#lib/drawer.ts';
 	import Logo from '#lib/components/Logo.svelte';
 	import GoalPicker from '#lib/components/GoalPicker.svelte';
 	import type { LayoutProps } from './$types';
@@ -36,10 +39,41 @@
 	]);
 	let search: HTMLInputElement | undefined = $state();
 	let q = $state('');
-	// On /search the field shows the query in the URL, trimmed as the page searches it, so a reload keeps it.
+	// On /backlog and /search the field shows the URL's text, trimmed as those pages read it, so a reload keeps it. Only
+	// when that text changes: toggling a filter or opening the drawer never rewrites what is being typed.
+	/** The text the box mirrors on `url`: the URL's `q` on /backlog and /search, null elsewhere. */
+	const mirrorOf = (url: { readonly pathname: string; readonly searchParams: Pick<URLSearchParams, 'get'> }) => (url.pathname === '/backlog' || url.pathname === '/search' ? (url.searchParams.get('q')?.trim() ?? '') : null);
+	let mirrored: string | null = null;
 	$effect(() => {
-		if (page.url.pathname === '/search') q = page.url.searchParams.get('q')?.trim() ?? '';
+		const text = mirrorOf(page.url);
+		if (text !== null && text !== mirrored) q = text;
+		mirrored = text;
 	});
+
+	// The one text box (kb/ADR-0021): a key jumps to the item it names, any other text filters the backlog
+	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup, and a lookup whose page moved on is dropped.
+	let searching = $state(false);
+	const headerBox = headerSearch(
+		(text) => unwrap(api.GET('/api/v1/search', { params: { query: { q: text } } })),
+		async (to) => {
+			// Text on the backlog edits its URL in place, as its filters do.
+			if (to.kind === 'filter') return page.url.pathname === '/backlog' ? goto(to.href, { replace: true, reset: false }) : goto(to.href);
+			// A story opens over the current view. After a jump the key is spent: the box shows the page's own text again.
+			await (to.kind === 'story' ? goto(to.href, { reset: false }) : goto(to.href));
+			q = mirrorOf(page.url) ?? '';
+		},
+		(busy) => (searching = busy),
+		() => page.url.href
+	);
+	/** Escape gives the box back its mirrored text (a search field would clear itself) and leaves it; a pending lookup
+	 *  is dropped with it. */
+	function searchKey(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		e.preventDefault();
+		headerBox.cancel();
+		q = mirrorOf(page.url) ?? '';
+		search?.blur();
+	}
 
 	/** "/" focuses search, except where it is typed as text or a dialog is open. */
 	function shortcut(e: KeyboardEvent) {
@@ -54,27 +88,36 @@
 
 	/** `?story=KEY` opens the story drawer over whatever view is showing. */
 	const drawerKey = $derived(page.url.searchParams.get('story'));
+	/** `?decision=ID` opens the decision drawer the same way. The two are mutually exclusive (links drop the other, see
+	 *  #lib/drawer.ts); a URL with both shows the story. Anything but a positive whole number opens nothing. */
+	const drawerDecision = $derived.by(() => {
+		const raw = page.url.searchParams.get('decision');
+		return raw !== null && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
+	});
+	/** The URL names a drawer, whichever. */
+	const hasDrawer = (u: URL) => u.searchParams.has('story') || u.searchParams.has('decision');
 
 	// Focus returns to whatever opened the drawer (a card's title link, a row's title) when it closes. Moving from one
-	// story to another (a blocker link) remounts the drawer but keeps the first opener. Captured in onNavigate: the
+	// story to another (a blocker link), or between a decision and a story, remounts the drawer but keeps the first opener. Captured in onNavigate: the
 	// router's default focus reset blurs the clicked link after these callbacks and before `page.url` changes, so an
 	// effect on the URL would only see `body`. Restored once the drawer is gone, and only when focus went with it (focus
 	// the user moved elsewhere is theirs). A drawer opened by loading its URL has no opener.
 	let opener: HTMLElement | null = null;
 	onNavigate(({ from, to }) => {
 		// A filed-report notice outlives the dialog; only opening its story (a drawer-only change) keeps it.
-		if (!(from && to && sameApartFromStory(from.url, to.url))) {
+		if (!(from && to && sameApartFromDrawer(from.url, to.url))) {
 			notice = null;
 			restoredNotice = false;
 		}
-		if (!to?.url.searchParams.has('story') || from?.url.searchParams.has('story')) return;
+		if (!to || !hasDrawer(to.url) || (from && hasDrawer(from.url))) return;
 		const a = document.activeElement;
 		opener = a instanceof HTMLElement && a !== document.body ? a : null;
 	});
-	function sameApartFromStory(a: URL, b: URL): boolean {
+	function sameApartFromDrawer(a: URL, b: URL): boolean {
 		const strip = (u: URL) => {
 			const c = new URL(u.href);
 			c.searchParams.delete('story');
+			c.searchParams.delete('decision');
 			c.hash = '';
 			return c.href;
 		};
@@ -85,7 +128,7 @@
 	let reportButton: HTMLButtonElement | undefined = $state();
 	let drawerWasOpen = false;
 	$effect.pre(() => {
-		const open = drawerKey !== null;
+		const open = drawerKey !== null || drawerDecision !== null;
 		if (!open && drawerWasOpen) {
 			const o = opener;
 			opener = null;
@@ -102,6 +145,7 @@
 	function closeDrawer() {
 		const url = new URL(page.url.href);
 		url.searchParams.delete('story');
+		url.searchParams.delete('decision');
 		goto(url, { replace: true, reset: false });
 	}
 
@@ -143,9 +187,7 @@
 	let restoredFor: string | null = null;
 	const noticeHref = $derived.by(() => {
 		if (!notice) return '';
-		const url = new URL(page.url.href);
-		url.searchParams.set('story', notice.story.key);
-		return url.pathname + url.search;
+		return storyHref(page.url, notice.story.key);
 	});
 
 	let opening = $state(false);
@@ -177,9 +219,7 @@
 	}
 
 	function viewStory(k: string) {
-		const url = new URL(page.url.href);
-		url.searchParams.set('story', k);
-		goto(url, { reset: false });
+		goto(new URL(storyHref(page.url, k), page.url.href), { reset: false });
 	}
 
 	// Sign-in: bring back this tab's draft once per account; then keep it saved while it changes. Declared in this
@@ -229,8 +269,8 @@
 				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
-				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
-					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />
+				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void headerBox.submit(q, new URL(page.url.href)); }}>
+					<input bind:this={search} bind:value={q} type="search" placeholder="Search or jump to a key" aria-label="Search" onkeydown={searchKey} />
 					<kbd aria-hidden="true">/</kbd>
 				</form>
 				<a class="live" class:on={live.connected} href="/activity" title={live.connected ? 'Live: changes appear as they happen' : 'Not connected: reconnecting'}>
@@ -258,6 +298,10 @@
 		{#if drawerKey}
 			{#key drawerKey}
 				<StoryDrawer storyKey={drawerKey} onclose={closeDrawer} />
+			{/key}
+		{:else if drawerDecision}
+			{#key drawerDecision}
+				<DecisionDrawer decisionId={drawerDecision} onclose={closeDrawer} />
 			{/key}
 		{/if}
 	{:catch e}
@@ -312,6 +356,11 @@
 	form[role='search'] input {
 		width: 100%;
 		padding-right: 28px;
+	}
+	/* A key lookup is pending: the box stays usable (a new submit supersedes it) but reads as working. */
+	form[role='search'][aria-busy='true'] input {
+		color: var(--muted);
+		cursor: progress;
 	}
 	kbd {
 		position: absolute;

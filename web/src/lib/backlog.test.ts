@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reason, Story } from '#lib/api/types.ts';
 import { epic as epicDto, initiative, withReadiness } from '#lib/test/fixtures.ts';
-import { groupBacklog } from './backlog.ts';
+import { activeFilterCount, backlogState, backlogView, groupBacklog, toStoryQuery, withoutFilters } from './backlog.ts';
 
 const ini = (key: string, horizon: string, title = key) => initiative({ key, title, horizon });
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: `Epic ${key}`, initiative });
@@ -26,15 +26,15 @@ describe('groupBacklog', () => {
 	];
 	const b = groupBacklog(buckets, initiatives, epics, todo);
 
-	it('No epic first: every epic-less row in one run, rank order, all counted untriaged', () => {
-		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-0', 'S-1', 'S-3']);
+	it("No epic first: every epic-less row in one run, in the order given (the server's), all counted untriaged", () => {
+		expect(b.noEpic.map((r) => r.story.key)).toEqual(['S-1', 'S-3', 'S-0']);
 		expect(b.untriaged).toBe(3);
 	});
 	it('initiatives in planning order, every epic listed, an empty one says so', () => {
 		expect(b.sections.map((s) => s.title)).toEqual(['Onboarding', 'Billing', 'Search', 'No initiative']);
 		const i1 = b.sections[0].epics;
 		expect(i1.map((e) => e.epic.key)).toEqual(['E-1', 'E-2']);
-		expect(i1[0].rows.map((r) => r.story.key)).toEqual(['S-2', 'S-5']); // rank order, not input order
+		expect(i1[0].rows.map((r) => r.story.key)).toEqual(['S-5', 'S-2']); // the server's order: never re-sorted
 		expect(i1[0].summary).toBe('1 of 2 ready');
 		expect(i1[0].tone).toBe('warn');
 		expect(i1[1].tone).toBe('muted');
@@ -44,11 +44,105 @@ describe('groupBacklog', () => {
 		expect(b.sections[2].epics).toEqual([]); // an initiative without epics is kept
 		expect(b.sections[2].initiative?.key).toBe('I-3');
 	});
-	it('stories whose epic is unknown are returned as orphans in rank order', () => {
+	it('stories whose epic is unknown are returned as orphans', () => {
 		expect(b.orphans.map((r) => r.story.key)).toEqual(['S-6']);
 	});
 	it('epics without an initiative go under No initiative', () => {
 		expect(b.sections[3].epics.map((e) => e.epic.key)).toEqual(['E-3']);
 		expect(b.sections[3].epics[0].tone).toBe('ready');
+	});
+	it('filtered: omits epics and initiatives with no rows and counts the matches', () => {
+		const f = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' }), row('S-5', 5, { epic: 'E-1', ready: true }), row('S-1', 1, { untriaged: true }), row('S-4', 4, { epic: 'E-3' })], { filtered: true });
+		expect(f.sections.map((s) => s.title)).toEqual(['Onboarding', 'No initiative']);
+		expect(f.sections[0].epics.map((e) => [e.epic.key, e.summary])).toEqual([['E-1', '2 matches']]);
+		expect(f.sections[1].epics.map((e) => [e.epic.key, e.summary])).toEqual([['E-3', '1 match']]);
+		expect(f.noEpic.map((r) => r.story.key)).toEqual(['S-1']);
+		expect(groupBacklog(buckets, initiatives, epics, [], { filtered: true }).sections).toEqual([]);
+	});
+	it('outside Todo: every epic is listed with its story count, not its readiness', () => {
+		const o = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' }), row('S-5', 5, { epic: 'E-1', ready: true })], { todo: false });
+		expect(o.sections.map((s) => s.title)).toEqual(['Onboarding', 'Billing', 'Search', 'No initiative']);
+		expect(o.sections[0].epics.map((e) => [e.epic.key, e.summary, e.tone])).toEqual([
+			['E-1', '2 stories', 'muted'],
+			['E-2', 'No stories', 'muted']
+		]);
+		const f = groupBacklog(buckets, initiatives, epics, [row('S-2', 2, { epic: 'E-1' })], { filtered: true, todo: false });
+		expect(f.sections[0].epics.map((e) => e.summary)).toEqual(['1 match']);
+	});
+});
+
+describe('activeFilterCount and withoutFilters', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	it('count the filters, not state, view or text; Mine only while signed in', () => {
+		expect(activeFilterCount(at('?q=a&state=open&view=rank'), 'a@example.com')).toBe(0);
+		expect(activeFilterCount(at('?kind=bug&mine=1&urgent=1'), 'a@example.com')).toBe(3);
+		expect(activeFilterCount(at('?kind=bug&mine=1'), null)).toBe(1);
+	});
+	it('Clear filters removes the filters and keeps the text, state and view', () => {
+		expect(withoutFilters(at('?q=zebra&state=open&view=relevance&kind=bug&mine=1&story=S-1')).search).toBe('?q=zebra&state=open&view=relevance&story=S-1');
+	});
+});
+
+describe('toStoryQuery', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	const me = 'a@example.com';
+
+	it('is null for the plain backlog: the unfiltered todo list is the rows', () => {
+		expect(toStoryQuery(at(''), me)).toBeNull();
+		expect(toStoryQuery(at('?group=rank'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=rank&state=todo'), me)).toBeNull();
+		expect(toStoryQuery(at('?story=S-1'), me)).toBeNull();
+	});
+	it('defaults state to todo, also with text (the header box supplies state=open)', () => {
+		expect(toStoryQuery(at('?q=a'), me)).toEqual({ q: 'a', delivery: 'todo' });
+		expect(toStoryQuery(at('?q=%20a%20'), me)).toEqual({ q: 'a', delivery: 'todo' });
+		expect(toStoryQuery(at('?q=%20%20'), me)).toBeNull();
+	});
+	it('maps state to delivery or done, and relevance to sort only with text', () => {
+		expect(toStoryQuery(at('?q=a&state=open&view=relevance'), me)).toEqual({ q: 'a', done: 'none', sort: 'relevance' });
+		expect(toStoryQuery(at('?state=all'), me)).toEqual({ done: 'all' });
+		expect(toStoryQuery(at('?state=open'), me)).toEqual({ done: 'none' });
+		expect(toStoryQuery(at('?state=zz'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=relevance'), me)).toBeNull();
+		expect(toStoryQuery(at('?view=relevance&state=all'), me)).toEqual({ done: 'all' });
+		expect(toStoryQuery(at('?q=a&view=rank'), me)).toEqual({ q: 'a', delivery: 'todo' });
+	});
+	it('sends mine as the owner only while signed in', () => {
+		expect(toStoryQuery(at('?mine=1'), me)).toEqual({ delivery: 'todo', owner: me });
+		expect(toStoryQuery(at('?mine=1'), undefined)).toBeNull();
+		expect(toStoryQuery(at('?mine=1&state=open'), null)).toEqual({ done: 'none' });
+	});
+	it('drops an unknown kind and passes the other filters through', () => {
+		expect(toStoryQuery(at('?kind=zz'), me)).toBeNull();
+		expect(toStoryQuery(at('?kind=bug&epic=E-1&initiative=I-1&label=ux&ready=1&untriaged=1&urgent=1'), me)).toEqual({
+			delivery: 'todo',
+			kind: 'bug',
+			epic: 'E-1',
+			initiative: 'I-1',
+			label: 'ux',
+			ready: true,
+			untriaged: true,
+			urgent: true
+		});
+		expect(toStoryQuery(at('?ready=0&urgent=true'), me)).toBeNull();
+	});
+});
+
+describe('backlogState and backlogView', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	it('read the URL with their defaults', () => {
+		expect(backlogState(at(''))).toBe('todo');
+		expect(backlogState(at('?state=open'))).toBe('open');
+		expect(backlogState(at('?state=all'))).toBe('all');
+		expect(backlogState(at('?state=zz'))).toBe('todo');
+		expect(backlogView(at(''))).toBe('epic');
+		expect(backlogView(at('?group=rank'))).toBe('rank');
+		expect(backlogView(at('?view=rank'))).toBe('rank');
+		expect(backlogView(at('?view=epic&group=rank'))).toBe('epic');
+		expect(backlogView(at('?q=a&view=relevance'))).toBe('relevance');
+	});
+	it('shows relevance without text as ranked', () => {
+		expect(backlogView(at('?view=relevance'))).toBe('rank');
+		expect(backlogView(at('?view=relevance&q=%20'))).toBe('rank');
 	});
 });

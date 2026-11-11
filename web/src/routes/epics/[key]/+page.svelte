@@ -29,7 +29,7 @@
 	import { epicStripDecisions, pollsChecks } from '#lib/epic.ts';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { errorMessage, short } from '#lib/format.ts';
-	import { storyHref } from '#lib/drawer.ts';
+	import { decisionHref, storyHref } from '#lib/drawer.ts';
 	import { draftKey, newDraftKey } from '#lib/idempotency.ts';
 	import { followBase, rebase, type EditorBase } from '#lib/editorBase.ts';
 	import { EPIC_SAME, epicDetails, epicEdit, fieldsText, mergeDraft, type EpicDetails } from '#lib/forms.ts';
@@ -78,7 +78,8 @@
 	);
 	let showClosed = $state(false);
 	/** Whether the decisions that block nothing (accepted, and closed ones when shown) are unfolded. */
-	let showAccepted = $state(false);
+	/** The user's choice for the accepted fold; null follows the default (open when nothing blocks). */
+	let accepted = $state<boolean | null>(null);
 	/** The open "New story" dialog's opening, or null: a create's answer closes only the dialog it was sent from. */
 	let creatingStory = $state<number | null>(null);
 	let storyOpenings = 0;
@@ -117,6 +118,7 @@
 	const blockingDecisions = $derived(blocking(decisions));
 	const blockingIds = $derived(new Set(blockingDecisions.map((d) => d.id)));
 	const acceptedCount = $derived(decisions.filter((d) => !d.closed && !blockingIds.has(d.id)).length);
+	const showAccepted = $derived(accepted ?? (blockingDecisions.length === 0 && acceptedCount > 0));
 	const closedCount = $derived(decisions.filter((d) => d.closed).length);
 	const shownDecisions = $derived(decisions.filter((d) => showClosed || (showAccepted && acceptedCount === 0) || !d.closed));
 	// Counted under the key the server returned: the URL may name the epic by an alias (an external reference).
@@ -245,7 +247,7 @@
 		initiativeDecisions = [];
 		epic = null;
 		showClosed = false;
-		showAccepted = false;
+		accepted = null;
 		creatingStory = null;
 		addingDecision = null;
 		decisionError = null;
@@ -471,7 +473,7 @@
 
 	/** Unfolds the decisions that block nothing; with no accepted ones, the fold is the closed ones alone (shownDecisions). */
 	function toggleRest() {
-		showAccepted = !showAccepted;
+		accepted = !showAccepted;
 	}
 
 	function toggleStory(k: string) {
@@ -654,7 +656,7 @@
 								>
 								<span class="key"><Glyph level={levelOfKind(s.kind)} />{s.key}</span>
 								{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
-								<a class="title" href={storyHref(page.url, s.key)}>{s.title}</a>
+								<a class="title" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.title}</a>
 								<span
 									class="readiness"
 									title={item.readiness.ready ? undefined : item.readiness.reasons.map((r) => fullLabel(r)).join('\n')}
@@ -682,13 +684,15 @@
 
 		<section id="decisions" aria-labelledby="decisions-h">
 			<div class="section-head">
-				<h2 id="decisions-h">Decisions <span class="count">{decisions.length - closedCount}</span></h2>
+				<!-- The separators sit inside template literals: Svelte trims a span's leading space, which would run "Decisions" into the count. -->
+				<h2 id="decisions-h">Decisions{#if blockingDecisions.length}<span class="count">{` · ${blockingDecisions.length} blocking`}</span>{/if}{#if acceptedCount}<span class="count">{` · ${acceptedCount} accepted`}</span>{/if}</h2>
 				<button type="button" onclick={() => (addingDecision = ++decisionOpenings)}>+ Add decision</button>
 			</div>
 			{#key key}
 				<!-- One list over both groups: a decision that moves between them keeps its editor, draft and thread. -->
 				<DecisionList
 					decisions={shownDecisions}
+					decisionHref={(id) => decisionHref(page.url, id)}
 					onchanged={reload}
 					poll={false}
 					rest={(d) => !blockingIds.has(d.id)}

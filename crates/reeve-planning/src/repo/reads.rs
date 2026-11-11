@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::queue::LineageItem;
 
 #[async_trait]
 impl PlanningReads for PgPlanningRepo {
@@ -174,14 +175,7 @@ impl PlanningReads for PgPlanningRepo {
         exact: Option<&Key>,
         limit: i64,
     ) -> Result<Vec<SearchRow>, RepoError> {
-        let mut pattern = String::from("%");
-        for ch in text.chars() {
-            if matches!(ch, '%' | '_' | '\\') {
-                pattern.push('\\');
-            }
-            pattern.push(ch);
-        }
-        pattern.push('%');
+        let pattern = like_pattern(text);
         let rows = sqlx::query(
             "SELECT * FROM ( \
                SELECT 'initiative' AS t, key, NULL::text AS kind, title, brief AS text, external_ref, created_at FROM initiatives \
@@ -263,7 +257,21 @@ impl PlanningReads for PgPlanningRepo {
         tx: &mut Transaction<'_, Postgres>,
         stories: &[Key],
     ) -> Result<HashMap<Key, Vec<(i64, String, reeve_protocol::GoalVia)>>, RepoError> {
-        active_goals_of_stories(tx, stories).await
+        goals_of_stories(tx, stories, "active").await
+    }
+    async fn draft_goals_of_stories(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        stories: &[Key],
+    ) -> Result<HashMap<Key, Vec<(i64, String, reeve_protocol::GoalVia)>>, RepoError> {
+        goals_of_stories(tx, stories, "draft").await
+    }
+    async fn decision_lineage_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        items: &[Key],
+    ) -> Result<HashMap<Key, Vec<LineageItem>>, RepoError> {
+        decision_lineage(tx, items).await
     }
     async fn sprint_story_times(
         &self,
@@ -371,20 +379,23 @@ fn story_times_from(r: &sqlx::postgres::PgRow) -> Result<StoryTimes, sqlx::Error
     })
 }
 
-async fn active_goals_of_stories(
+/// The goals of the sprint in `state` each story serves, in one statement.
+async fn goals_of_stories(
     tx: Tx<'_, '_>,
     stories: &[Key],
+    state: &str,
 ) -> Result<HashMap<Key, Vec<(i64, String, GoalVia)>>, RepoError> {
     let keys: Vec<String> = stories.iter().map(|k| k.to_string()).collect();
     let rows = sqlx::query(
         "SELECT s.key, g.id, g.outcome, CASE gl.item_key WHEN s.key THEN 'story' WHEN s.epic_key THEN 'epic' ELSE 'initiative' END AS via \
          FROM stories s LEFT JOIN epics e ON e.key = s.epic_key \
          JOIN goal_links gl ON gl.item_key IN (s.key, s.epic_key, e.initiative_key) \
-         JOIN goals g ON g.id = gl.goal_id JOIN sprints sp ON sp.id = g.sprint_id AND sp.state = 'active' \
+         JOIN goals g ON g.id = gl.goal_id JOIN sprints sp ON sp.id = g.sprint_id AND sp.state = $2 \
          WHERE s.key = ANY($1) \
          ORDER BY s.key, CASE gl.item_key WHEN s.key THEN 0 WHEN s.epic_key THEN 1 ELSE 2 END, g.id",
     )
     .bind(&keys)
+    .bind(state)
     .fetch_all(&mut **tx)
     .await?;
     let mut out: HashMap<Key, Vec<(i64, String, GoalVia)>> = HashMap::new();
@@ -394,6 +405,51 @@ async fn active_goals_of_stories(
         if !e.iter().any(|(g, ..)| *g == id) {
             e.push((id, r.get("outcome"), via_of(r.get("via"))?));
         }
+    }
+    Ok(out)
+}
+
+/// Each item's lineage, nearest first, in one statement: an epic, then its initiative; an initiative alone; a story
+/// starts at its epic (never itself). Each row carries the initiative's horizon (an epic without one: None).
+async fn decision_lineage(
+    tx: Tx<'_, '_>,
+    items: &[Key],
+) -> Result<HashMap<Key, Vec<LineageItem>>, RepoError> {
+    let keys: Vec<String> = items.iter().map(|k| k.to_string()).collect();
+    let rows = sqlx::query(
+        "WITH k AS (SELECT unnest($1::text[]) AS key) \
+         SELECT k.key AS item, x.key, x.level, x.marked, x.horizon FROM k \
+         JOIN LATERAL ( \
+           SELECT e.key, 'epic' AS level, e.discovery_at IS NOT NULL AS marked, i.horizon, 0 AS ord \
+             FROM epics e LEFT JOIN initiatives i ON i.key = e.initiative_key \
+            WHERE e.key = k.key OR e.key = (SELECT s.epic_key FROM stories s WHERE s.key = k.key) \
+           UNION ALL \
+           SELECT i.key, 'initiative', i.discovery_at IS NOT NULL, i.horizon, 1 \
+             FROM initiatives i \
+            WHERE i.key = k.key \
+               OR i.key = (SELECT e.initiative_key FROM epics e WHERE e.key = k.key) \
+               OR i.key = (SELECT e.initiative_key FROM epics e JOIN stories s ON s.epic_key = e.key WHERE s.key = k.key) \
+         ) x ON true \
+         ORDER BY length(k.key), k.key, x.ord",
+    )
+    .bind(&keys)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut out: HashMap<Key, Vec<LineageItem>> = HashMap::new();
+    for r in rows {
+        let level = match r.get::<String, _>("level").as_str() {
+            "epic" => ItemType::Epic,
+            "initiative" => ItemType::Initiative,
+            other => return Err(bad("lineage level", other).into()),
+        };
+        out.entry(key(r.get("item")))
+            .or_default()
+            .push(LineageItem {
+                key: key(r.get("key")),
+                level,
+                discovery_marked: r.get("marked"),
+                initiative_horizon: r.get("horizon"),
+            });
     }
     Ok(out)
 }

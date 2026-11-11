@@ -71,6 +71,27 @@ pub enum Story {
         /// Only stories serving the active sprint's goals: a goal id, `any` (some goal) or `none` (upkeep).
         #[arg(long, value_name = "ID|any|none")]
         goal: Option<String>,
+        /// Only stories whose title, description or external reference contains this text (any case, 1 to 200
+        /// characters); a key-shaped text (`12`, `#12`, `ABC-12`) also finds that key.
+        #[arg(long)]
+        text: Option<String>,
+        /// Only stories of this kind.
+        #[arg(long, value_enum)]
+        kind: Option<KindArg>,
+        /// Only stories in this initiative's epics (a key or external reference).
+        #[arg(long)]
+        initiative: Option<KeyRef>,
+        /// Only stories shown as urgent.
+        #[arg(long)]
+        urgent: bool,
+        /// Only stories that are not done; combines with --delivery (both must hold, so with --delivery done it
+        /// lists nothing).
+        #[arg(long)]
+        open: bool,
+        /// The order: `rank` (the default) or `relevance` (needs --text: the exact key or external reference first,
+        /// then title matches).
+        #[arg(long, value_enum)]
+        sort: Option<SortArg>,
     },
     /// Stories with a similar title (fuzzy match on the title): open ones, and ones done recently with their resolution. Check before filing.
     Similar {
@@ -189,6 +210,28 @@ pub enum KindArg {
     Bug,
     Chore,
 }
+/// A query value as the server spells it: the serialised name of a unit enum variant; anything that does not serialise
+/// to a string is an error, never an empty value.
+fn wire<T: serde::Serialize>(v: T) -> anyhow::Result<String> {
+    match serde_json::to_value(v)? {
+        serde_json::Value::String(s) => Ok(s),
+        other => anyhow::bail!("{other} is not a query value"),
+    }
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum SortArg {
+    Rank,
+    Relevance,
+}
+impl From<SortArg> for StorySort {
+    fn from(s: SortArg) -> Self {
+        match s {
+            SortArg::Rank => StorySort::Rank,
+            SortArg::Relevance => StorySort::Relevance,
+        }
+    }
+}
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum StateArg {
     Todo,
@@ -302,6 +345,12 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             ready,
             mine,
             goal,
+            text,
+            kind,
+            initiative,
+            urgent,
+            open,
+            sort,
         } => {
             let owner = if mine {
                 match whoami(c).await? {
@@ -320,13 +369,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                 q.push(("owner", o));
             }
             if let Some(d) = delivery {
-                q.push((
-                    "delivery",
-                    serde_json::to_value(DeliveryState::from(d))?
-                        .as_str()
-                        .unwrap()
-                        .to_string(),
-                ));
+                q.push(("delivery", wire(DeliveryState::from(d))?));
             }
             if let Some(l) = label {
                 q.push(("label", l));
@@ -339,6 +382,24 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             }
             if let Some(g) = goal {
                 q.push(("goal", g));
+            }
+            if let Some(t) = text {
+                q.push(("q", t));
+            }
+            if let Some(k) = kind {
+                q.push(("kind", wire(Kind::from(k))?));
+            }
+            if let Some(i) = initiative {
+                q.push(("initiative", i.to_string()));
+            }
+            if urgent {
+                q.push(("urgent", "true".into()));
+            }
+            if open {
+                q.push(("done", wire(DoneFilter::None)?));
+            }
+            if let Some(s) = sort {
+                q.push(("sort", wire(StorySort::from(s))?));
             }
             finish(
                 c.get_query::<Vec<StoryWithReadiness>>("/stories", &q)
@@ -533,6 +594,16 @@ fn render_similar(hits: &[SimilarStory]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A query value is the variant's wire name; a value that does not serialise to a string is refused, not sent
+    /// empty.
+    #[test]
+    fn wire_spells_variants_and_refuses_the_rest() {
+        assert_eq!(wire(DeliveryState::InProgress).unwrap(), "in_progress");
+        assert_eq!(wire(StorySort::Relevance).unwrap(), "relevance");
+        assert!(wire(7u8).is_err());
+        assert!(wire(Option::<Kind>::None).is_err());
+    }
 
     fn hit(key: &str, delivery: DeliveryState, resolution: Option<Resolution>) -> SimilarStory {
         SimilarStory {

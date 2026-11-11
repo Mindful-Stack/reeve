@@ -17,7 +17,7 @@ pub use domain::{
     },
     progress::progress,
     pull_request::{PrChange, PullRequest},
-    queue::{BlockedStory, QueueEntry, QueueSummary},
+    queue::{LineageItem, QueueEntry, QueueStory, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
         DemoStory, Goal, GoalLink, GoalProgress, Sprint, SprintCounts, StoryTimes, Summary,
@@ -28,8 +28,9 @@ pub use domain::{
 pub use handler::*;
 pub use ports::{
     ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
-    EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads, PullRequestRepo,
-    RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryRepo, UrgencyRepo,
+    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads,
+    PullRequestRepo, RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryRepo,
+    StoryText, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;

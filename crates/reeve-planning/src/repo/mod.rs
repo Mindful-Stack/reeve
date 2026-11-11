@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use reeve_protocol::{
     ClosureKind, Confidence, DeliveryState, GoalVia, ItemType, Key, Kind, PrStatus, Resolution,
-    Reversibility, SprintState, TokenKind, Verdict,
+    Reversibility, SprintState, StorySort, TokenKind, Verdict,
 };
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::{collections::HashMap, sync::Arc};
@@ -56,6 +56,19 @@ pub fn make_planning_ports(pool: PgPool) -> PlanningPorts {
 }
 
 type Tx<'a, 'b> = &'a mut Transaction<'b, Postgres>;
+
+/// `text` as an ILIKE substring pattern (used with `ESCAPE '\\'`): `%`, `_` and `\\` in it match only themselves.
+fn like_pattern(text: &str) -> String {
+    let mut pattern = String::from("%");
+    for ch in text.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
 
 fn kind_str(k: Kind) -> &'static str {
     match k {

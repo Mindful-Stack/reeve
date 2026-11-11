@@ -8,7 +8,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use reeve_protocol::{DeliveryState, ItemType, Key, Kind};
+use reeve_protocol::{DeliveryState, ItemType, Key, Kind, StorySort};
 use sqlx::{Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
 
@@ -34,6 +34,8 @@ pub struct SearchRow {
     pub external_ref: Option<String>,
 }
 
+/// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`
+/// and `urgent`, which the handler applies after the read (on values computed in the same snapshot, kb/ADR-0021 R4).
 #[derive(Debug, Clone, Default)]
 pub struct StoryFilter {
     pub epic: Option<Key>,
@@ -44,6 +46,35 @@ pub struct StoryFilter {
     pub label: Option<String>,
     /// Goal membership, applied after the stories are read (`goal=<id>|any|none`); combines with every other filter.
     pub goal: Option<GoalFilter>,
+    /// A case-insensitive substring of the title, description or external reference, or exactly the key it names.
+    pub text: Option<StoryText>,
+    pub kind: Option<Kind>,
+    /// Stories whose epic is one of these; `Some(vec![])` lists nothing (an initiative with no epics, or a reference
+    /// that named nothing).
+    pub epics: Option<Vec<Key>>,
+    /// Only stories shown as urgent (non-empty `urgent_sources`), applied by the handler after the read.
+    pub urgent: bool,
+    /// `Relevance` needs `text`; the handler refuses it without.
+    pub sort: StorySort,
+}
+
+/// Text the story list matches, and the key it names (derived by the handler from the text, never by a caller).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoryText {
+    pub text: String,
+    pub key: Option<Key>,
+}
+
+/// Which done stories the story list keeps; the handler computes the cutoff, so the clock stays out of the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoneWindow {
+    #[default]
+    All,
+    /// Done stories that entered done at or after this instant (one with no `done_at` is not kept).
+    Since(DateTime<Utc>),
+    /// No done stories: every story whose delivery is not done, of any state otherwise (wire `done=none`; the
+    /// decision queue's read, kb/ADR-0018 R5).
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

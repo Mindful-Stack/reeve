@@ -2,11 +2,14 @@
 // Opened by an external reference (`/board?story=SCRUM-11`), the drawer reads the activity log by the story's canonical
 // key: the story endpoints resolve a reference, the activity log is keyed by the canonical key only.
 import { flushSync, mount, tick, unmount } from 'svelte';
+import { page } from '$app/state';
+import { decisionHref } from '#lib/drawer.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
-import { activity, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
+import { activity, decision, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
 import { discardDraft, report } from '#lib/report.svelte.ts';
+import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
 vi.mock('$app/state', async () => ({
@@ -67,6 +70,7 @@ net.answers.of = answer;
 
 let app: ReturnType<typeof mount> | null = null;
 afterEach(() => {
+	resetDecisionDraftsForTests();
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
@@ -105,6 +109,44 @@ describe('StoryDrawer Report action', () => {
 		report.draft!.title = 'a draft in progress';
 		flushSync();
 		expect(btn().textContent).toBe('Resume report');
+	});
+});
+
+describe('StoryDrawer decision readiness reasons', () => {
+	it('links a decision reason to the decision drawer and leaves other reasons as text', async () => {
+		net.answers.of = (url, method) =>
+			url.pathname.endsWith('/ready')
+				? { ready: false, reasons: [{ reason: 'decision_unchecked', decision_id: 7, title: 'Use Postgres' }, { reason: 'no_criteria' }] }
+				: answer(url, method);
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const items = await vi.waitFor(() => {
+			flushSync();
+			const li = [...document.body.querySelectorAll('.readiness .reasons li')];
+			expect(li).toHaveLength(2);
+			return li;
+		});
+		const a = items[0].querySelector('a');
+		expect(a?.getAttribute('href')).toBe(decisionHref(page.url, 7));
+		expect(a?.getAttribute('href')).toBe('/board?decision=7');
+		expect(a?.textContent).toContain('Use Postgres');
+		expect(items[1].querySelector('a')).toBeNull();
+	});
+});
+
+describe('StoryDrawer required decisions', () => {
+	it('opens a decision in its drawer from its title', async () => {
+		net.answers.of = (url, method) =>
+			url.pathname === '/api/v1/decisions' ? [decision({ id: 7, on: 'RV-5', on_type: 'story', title: 'Use Postgres' })] : answer(url, method);
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const title = await vi.waitFor(() => {
+			flushSync();
+			const a = document.body.querySelector<HTMLAnchorElement>('.decisions a.title');
+			expect(a).not.toBeNull();
+			return a!;
+		});
+		expect(title.textContent).toBe('Use Postgres');
+		expect(title.getAttribute('href')).toBe(decisionHref(page.url, 7));
+		expect(title.getAttribute('href')).toBe('/board?decision=7');
 	});
 });
 

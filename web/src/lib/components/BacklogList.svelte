@@ -1,10 +1,13 @@
-<!-- web/src/lib/components/BacklogList.svelte: one ranked list of backlog rows: drag handle, rank, key, title
-     (opens the drawer), optional epic, readiness (the server's, kb/ADR-0018 R1), owner and an actions menu. Ranking
-     targets come from the rows of this list; the page does the writes. -->
+<!-- web/src/lib/components/BacklogList.svelte: one list of backlog rows in the server's order: drag handle, rank (or
+     the delivery state of a row that is not todo), key, title (opens the drawer; the text filter's matches marked),
+     optional epic, status (the server's readiness, kb/ADR-0018 R1, or a done row's resolution), owner and an actions
+     menu. Ranking targets come from the rows of this list; the page does the writes and says when ranking is offered
+     at all. -->
 <script lang="ts">
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
-	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, neighbourBefore, orderAfterDrop, shortReason } from '#lib/board.ts';
+	import { afterPart, COLUMN_LABEL, COLUMNS, type Column, dropBefore, fullLabel, neighbourBefore, orderAfterDrop, storyStatus } from '#lib/board.ts';
 	import { freshNote, live } from '#lib/events.svelte.ts';
+	import { highlight, matchedBy } from '#lib/search.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
@@ -19,6 +22,8 @@
 		epicTitle,
 		href,
 		busy = false,
+		rankable = true,
+		query = null,
 		onrank,
 		onmove,
 		onepic
@@ -32,6 +37,10 @@
 		/** The drawer link for a story. */
 		href: (key: string) => string;
 		busy?: boolean;
+		/** Offer the drag handle, Move up and Move down: the page's call (Todo, not Relevance, rows of the current query). */
+		rankable?: boolean;
+		/** The backlog's text filter: matches in titles are marked, and a row matched elsewhere says where. */
+		query?: string | null;
 		/** Place `key` before `before` in the full list (null: at the end). */
 		onrank: (key: string, before: string | null) => void;
 		/** Move to another column: the page's move path (resolution, refusal and override prompt included). */
@@ -52,9 +61,12 @@
 		const key = item.story.key;
 		const up = neighbourBefore(rows, key, 'up');
 		const down = neighbourBefore(rows, key, 'down');
-		return [
+		const ranking: MenuItem[] = [
 			{ label: 'Move up', onselect: () => up && onrank(key, target(up.before, rows)), disabled: busy || !up },
-			{ label: 'Move down', onselect: () => down && onrank(key, target(down.before, rows)), disabled: busy || !down },
+			{ label: 'Move down', onselect: () => down && onrank(key, target(down.before, rows)), disabled: busy || !down }
+		];
+		return [
+			...(rankable ? ranking : []),
 			// Every other column, as on a board card.
 			...COLUMNS.filter((c) => c !== item.story.delivery).map((c) => ({
 				label: `Move to ${COLUMN_LABEL[c]}`,
@@ -66,7 +78,7 @@
 	}
 
 	function dragStart(e: DragEvent, item: StoryWithReadiness) {
-		if (busy) {
+		if (busy || !rankable) {
 			e.preventDefault();
 			return;
 		}
@@ -87,7 +99,7 @@
 		e.preventDefault();
 		const d = dragging;
 		dragging = null;
-		if (!d) return;
+		if (!d || !rankable) return;
 		const peers = new Set(d.peers.map((p) => p.story.key));
 		const boxes = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(':scope > li[data-key]')]
 			.filter((li) => peers.has(li.dataset.key ?? ''))
@@ -105,29 +117,41 @@
 	{#each rows as r (r.story.key)}
 		{@const s = r.story}
 		{@const note = freshNote(live.recent, s.key, session.me?.email)}
+		{@const matched = matchedBy(s, query, session.config?.key_prefix)}
+		{@const status = storyStatus(r)}
 		<li data-key={s.key} class:fresh={note} class:urgent={s.urgent_sources.length > 0}>
-			<!-- The pointer path; the actions menu is the keyboard path, so the handle is out of the tab order. -->
-			<button
-				type="button"
-				class="handle ghost icon"
-				tabindex="-1"
-				draggable="true"
-				aria-label="Drag {s.key} to rank"
-				ondragstart={(e) => dragStart(e, r)}
-				ondragend={() => (dragging = null)}>⠿</button
-			>
-			<span class="rank"><span class="visually-hidden">{'rank '}</span>{s.rank}</span>
+			{#if rankable}
+				<!-- The pointer path; the actions menu is the keyboard path, so the handle is out of the tab order. -->
+				<button
+					type="button"
+					class="handle ghost icon"
+					tabindex="-1"
+					draggable="true"
+					aria-label="Drag {s.key} to rank"
+					ondragstart={(e) => dragStart(e, r)}
+					ondragend={() => (dragging = null)}>⠿</button
+				>
+			{/if}
+			{#if s.delivery === 'todo'}
+				<span class="rank"><span class="visually-hidden">{'rank '}</span>{s.rank}</span>
+			{:else}
+				<span class="rank state">{COLUMN_LABEL[s.delivery]}</span>
+			{/if}
 			<span class="key">{s.key}</span>
 			{#if s.urgent_sources.length > 0}
 				<UrgentChip
 					line={urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), (x) => (x.item === 'epic' && x.key === s.epic && s.epic ? epicTitle.get(s.epic) : undefined))}
 				/>
 			{/if}
-			<a class="title" href={href(s.key)}>{s.title}</a>
+			<a class="title" data-sveltekit-reset="false" href={href(s.key)}
+				>{#each highlight(s.title, query ?? '') as p, i (i)}{#if p.match}<mark>{p.text}</mark>{:else}{p.text}{/if}{/each}</a
+			>
+			{#if matched}<span class="matched">{matched}</span>{/if}
 			{#if showEpic}<span class="epic">{s.epic ? (epicTitle.get(s.epic) ?? s.epic) : 'No epic'}</span>{/if}
 			<span class="end">
-				<span title={r.readiness.ready ? undefined : r.readiness.reasons.map((x) => fullLabel(x)).join('\n')}
-					><StatusDot tone={r.readiness.ready ? 'ready' : 'warn'} label={shortReason(r.readiness)} /></span
+				<!-- The status word as a board card shows it: a done row its resolution, every other row its readiness. -->
+				<span title={s.delivery === 'done' || r.readiness.ready ? undefined : r.readiness.reasons.map((x) => fullLabel(x)).join('\n')}
+					><StatusDot tone={status.tone} label={status.word} /></span
 				>
 				<Avatar email={s.owner} />
 				<ActionsMenu label="Actions for {s.key}" items={menu(r)} control="menu" />
@@ -141,6 +165,11 @@
 	.rows > li {
 		gap: 6px 12px;
 		padding: 7px 10px;
+	}
+	/* The rows answer an older query or a write is in flight: they offer no action, and look it. */
+	.rows[aria-busy='true'] {
+		opacity: 0.6;
+		transition: opacity 0.15s;
 	}
 	.rows > li.urgent {
 		box-shadow: inset 0 0 0 2px var(--danger);
@@ -162,6 +191,13 @@
 		min-width: 2ch;
 		text-align: right;
 		font-variant-numeric: tabular-nums;
+	}
+	.rank.state {
+		white-space: nowrap;
+	}
+	.matched {
+		color: var(--muted);
+		font-size: 13px;
 	}
 	.title {
 		flex: 1 1 200px;

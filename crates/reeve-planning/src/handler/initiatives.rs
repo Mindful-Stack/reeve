@@ -365,7 +365,7 @@ impl Handlers {
                 let stories = self
                     .ports
                     .stories
-                    .list_stories(tx, &filter, None)
+                    .list_stories(tx, &filter, crate::ports::DoneWindow::All)
                     .await?
                     .len() as u32;
                 (

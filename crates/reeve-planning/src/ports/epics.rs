@@ -23,6 +23,13 @@ pub trait EpicRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         initiative: Option<&Key>,
     ) -> Result<Vec<Epic>, RepoError>;
+    /// The keys of one initiative's epics, in no particular order, on the caller's transaction (the story list's
+    /// `initiative` filter reads keys only).
+    async fn epic_keys_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        initiative: &Key,
+    ) -> Result<Vec<Key>, RepoError>;
     async fn update_epic(
         &self,
         tx: &mut Transaction<'_, Postgres>,

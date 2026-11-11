@@ -2,9 +2,9 @@ mod common;
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use reeve_planning::{
-    ActivityRecord, ActivitySink, Closed, Ctx, Epic, Handlers, Initiative, ItemType, RepoError,
-    RequiredDecision, Settings, Story, StoryFilter, UrgentMark, compute_readiness,
-    make_planning_ports,
+    ActivityRecord, ActivitySink, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative, ItemType,
+    RepoError, RequiredDecision, Settings, Story, StoryFilter, StoryText, UrgentMark,
+    compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -527,7 +527,11 @@ async fn keys_items_versions_and_readiness_inputs() {
         let pool = pool.clone();
         async move {
             let mut tx = pool.begin().await.unwrap();
-            let found = ports.stories.list_stories(&mut tx, &f, None).await.unwrap();
+            let found = ports
+                .stories
+                .list_stories(&mut tx, &f, DoneWindow::All)
+                .await
+                .unwrap();
             tx.rollback().await.unwrap();
             keys(found)
         }
@@ -1190,7 +1194,7 @@ async fn list_stories_with_a_cutoff() {
         move_to(&pool, k, DeliveryState::Done, done, at).await;
     }
     let ports = make_planning_ports(pool.clone());
-    let list = |f: StoryFilter, since: Option<chrono::DateTime<Utc>>| {
+    let list = |f: StoryFilter, since: DoneWindow| {
         let (ports, pool) = (ports.clone(), pool.clone());
         async move {
             let mut tx = pool.begin().await.unwrap();
@@ -1208,11 +1212,11 @@ async fn list_stories_with_a_cutoff() {
         v
     };
     assert_eq!(
-        sorted(list(StoryFilter::default(), Some(cutoff)).await),
+        sorted(list(StoryFilter::default(), DoneWindow::Since(cutoff)).await),
         sorted(vec![t.clone(), p.clone(), r.clone(), e.clone()])
     );
     assert_eq!(
-        sorted(list(StoryFilter::default(), None).await),
+        sorted(list(StoryFilter::default(), DoneWindow::All).await),
         sorted(vec![t, p, r.clone(), e.clone(), o, n])
     );
     let only_done = StoryFilter {
@@ -1220,7 +1224,7 @@ async fn list_stories_with_a_cutoff() {
         ..Default::default()
     };
     assert_eq!(
-        sorted(list(only_done, Some(cutoff)).await),
+        sorted(list(only_done, DoneWindow::Since(cutoff)).await),
         sorted(vec![r, e])
     );
 }
@@ -1547,7 +1551,7 @@ async fn untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readi
                 untriaged: true,
                 ..Default::default()
             },
-            None,
+            DoneWindow::All,
         )
         .await
         .unwrap()
@@ -1733,4 +1737,935 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// A story with every field the story list's predicates read.
+struct Spec<'a> {
+    title: &'a str,
+    kind: Kind,
+    epic: Option<&'a Key>,
+    description: &'a str,
+    external_ref: Option<&'a str>,
+    owner: Option<&'a str>,
+}
+
+impl Default for Spec<'_> {
+    fn default() -> Self {
+        Spec {
+            title: "plain",
+            kind: Kind::Story,
+            epic: None,
+            description: "",
+            external_ref: None,
+            owner: None,
+        }
+    }
+}
+
+async fn spec_story(h: &Handlers, idem: &str, s: Spec<'_>) -> Key {
+    h.create_story(
+        &dan(),
+        idem,
+        s.title,
+        s.kind,
+        s.epic.cloned(),
+        s.description,
+        vec![],
+        vec![],
+        s.external_ref.map(Into::into),
+        s.owner.map(Into::into),
+    )
+    .await
+    .unwrap()
+    .key()
+    .clone()
+}
+
+/// The keys `list_stories` returns for `f` and `done`, in order.
+async fn listed(pool: &sqlx::PgPool, f: StoryFilter, done: DoneWindow) -> Vec<Key> {
+    let ports = make_planning_ports(pool.clone());
+    let mut tx = pool.begin().await.unwrap();
+    let got = ports.stories.list_stories(&mut tx, &f, done).await.unwrap();
+    tx.rollback().await.unwrap();
+    got.iter().map(|s| s.key().clone()).collect()
+}
+
+fn text(t: &str, key: Option<&Key>) -> Option<StoryText> {
+    Some(StoryText {
+        text: t.into(),
+        key: key.cloned(),
+    })
+}
+
+fn sorted(mut v: Vec<Key>) -> Vec<Key> {
+    v.sort_by_key(|k| k.to_string());
+    v
+}
+
+/// Text matches the title, the description and the external reference, in any case; a story matching none is absent.
+#[tokio::test]
+async fn story_list_text_matches_title_description_and_ref_case_insensitively() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let by_title = spec_story(
+        &h,
+        "t",
+        Spec {
+            title: "Invoice export",
+            ..Default::default()
+        },
+    )
+    .await;
+    let by_description = spec_story(
+        &h,
+        "d",
+        Spec {
+            description: "the INVOICE pdf is blank",
+            ..Default::default()
+        },
+    )
+    .await;
+    let by_ref = spec_story(
+        &h,
+        "r",
+        Spec {
+            external_ref: Some("INVOICE-9"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let distractor = spec_story(
+        &h,
+        "x",
+        Spec {
+            title: "Receipts",
+            description: "no match here",
+            external_ref: Some("JPD-1"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let got = listed(
+        &pool,
+        StoryFilter {
+            text: text("iNvOiCe", None),
+            ..Default::default()
+        },
+        DoneWindow::All,
+    )
+    .await;
+    assert_eq!(
+        sorted(got),
+        sorted(vec![by_title, by_description, by_ref]),
+        "not {distractor}"
+    );
+}
+
+/// `%`, `_` and `\` in the text are literal, as in search. Catches an unescaped pattern, which matches every row.
+#[tokio::test]
+async fn story_list_text_escapes_like_wildcards() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let mut k = std::collections::HashMap::new();
+    for (idem, title) in [
+        ("pct", "100% done"),
+        ("und", "a_b"),
+        ("bsl", "back\\slash"),
+        ("both", "x\\%y"),
+        ("plain", "plain words"),
+    ] {
+        k.insert(
+            idem,
+            spec_story(
+                &h,
+                idem,
+                Spec {
+                    title,
+                    ..Default::default()
+                },
+            )
+            .await,
+        );
+    }
+    for (t, want) in [
+        ("%", vec!["pct", "both"]),
+        ("_", vec!["und"]),
+        ("\\", vec!["bsl", "both"]),
+        ("\\%", vec!["both"]),
+    ] {
+        let got = listed(
+            &pool,
+            StoryFilter {
+                text: text(t, None),
+                ..Default::default()
+            },
+            DoneWindow::All,
+        )
+        .await;
+        assert_eq!(
+            sorted(got),
+            sorted(want.iter().map(|w| k[w].clone()).collect()),
+            "{t:?}"
+        );
+    }
+}
+
+/// A key-shaped text matches that key exactly, never as a substring of a longer key (`ABC-1` is not `ABC-12`).
+/// Catches a key ILIKE.
+#[tokio::test]
+async fn story_list_key_text_matches_only_the_exact_key() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let mut keys = vec![];
+    for i in 1..=12 {
+        keys.push(
+            story(&h, &format!("s{i}"), Kind::Story, None, &[])
+                .await
+                .key()
+                .clone(),
+        );
+    }
+    let (one, twelve) = (&keys[0], &keys[11]);
+    assert_eq!(
+        (one.to_string(), twelve.to_string()),
+        ("ABC-1".into(), "ABC-12".into())
+    );
+    let got = listed(
+        &pool,
+        StoryFilter {
+            text: text("ABC-1", Some(one)),
+            ..Default::default()
+        },
+        DoneWindow::All,
+    )
+    .await;
+    assert_eq!(got, vec![one.clone()]);
+}
+
+/// Each new predicate alone: an epic set keeps its stories (and `Some([])` keeps none); a kind keeps that kind.
+#[tokio::test]
+async fn story_list_epics_some_empty_lists_nothing() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let e1 = h.create_epic(&c, "e1", "E1", None, "", None).await.unwrap();
+    let e2 = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
+    let e3 = h.create_epic(&c, "e3", "E3", None, "", None).await.unwrap();
+    let in1 = story(&h, "in1", Kind::Story, Some(e1.key()), &[])
+        .await
+        .key()
+        .clone();
+    let in2 = story(&h, "in2", Kind::Bug, Some(e2.key()), &[])
+        .await
+        .key()
+        .clone();
+    let in3 = story(&h, "in3", Kind::Chore, Some(e3.key()), &[])
+        .await
+        .key()
+        .clone();
+    let loose = story(&h, "loose", Kind::Bug, None, &[]).await.key().clone();
+    let epics = |v: Vec<&Key>| StoryFilter {
+        epics: Some(v.into_iter().cloned().collect()),
+        ..Default::default()
+    };
+    assert_eq!(
+        listed(&pool, epics(vec![]), DoneWindow::All).await,
+        Vec::<Key>::new()
+    );
+    assert_eq!(
+        sorted(listed(&pool, epics(vec![e1.key(), e2.key()]), DoneWindow::All).await),
+        sorted(vec![in1.clone(), in2.clone()])
+    );
+    let kind = |k: Kind| StoryFilter {
+        kind: Some(k),
+        ..Default::default()
+    };
+    assert_eq!(
+        sorted(listed(&pool, kind(Kind::Bug), DoneWindow::All).await),
+        sorted(vec![in2, loose])
+    );
+    assert_eq!(
+        listed(&pool, kind(Kind::Chore), DoneWindow::All).await,
+        vec![in3]
+    );
+    assert_eq!(
+        listed(&pool, kind(Kind::Story), DoneWindow::All).await,
+        vec![in1]
+    );
+}
+
+/// Predicates combine as a conjunction: each distractor fails exactly one of them. On the done-window fixture, text
+/// combines with every done window, and `delivery=done` with no done stories lists nothing.
+#[tokio::test]
+async fn story_list_filters_combine() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let e1 = h.create_epic(&c, "e1", "E1", None, "", None).await.unwrap();
+    let e2 = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
+    let zebra_bug = spec_story(
+        &h,
+        "zb",
+        Spec {
+            title: "zebra crossing",
+            kind: Kind::Bug,
+            ..Default::default()
+        },
+    )
+    .await;
+    let zebra_story = spec_story(
+        &h,
+        "zs",
+        Spec {
+            title: "zebra stripes",
+            ..Default::default()
+        },
+    )
+    .await;
+    let other_bug = spec_story(
+        &h,
+        "ob",
+        Spec {
+            title: "horse",
+            kind: Kind::Bug,
+            ..Default::default()
+        },
+    )
+    .await;
+    let mine_in_e1 = spec_story(
+        &h,
+        "m1",
+        Spec {
+            epic: Some(e1.key()),
+            owner: Some("ann@example.com"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let theirs_in_e1 = spec_story(
+        &h,
+        "t1",
+        Spec {
+            epic: Some(e1.key()),
+            owner: Some("bob@example.com"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mine_in_e2 = spec_story(
+        &h,
+        "m2",
+        Spec {
+            epic: Some(e2.key()),
+            owner: Some("ann@example.com"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let got = listed(
+        &pool,
+        StoryFilter {
+            text: text("zebra", None),
+            kind: Some(Kind::Bug),
+            ..Default::default()
+        },
+        DoneWindow::All,
+    )
+    .await;
+    assert_eq!(
+        got,
+        vec![zebra_bug.clone()],
+        "not {zebra_story} nor {other_bug}"
+    );
+    let got = listed(
+        &pool,
+        StoryFilter {
+            epics: Some(vec![e1.key().clone()]),
+            owner: Some("ann@example.com".into()),
+            ..Default::default()
+        },
+        DoneWindow::All,
+    )
+    .await;
+    assert_eq!(got, vec![mine_in_e1], "not {theirs_in_e1} nor {mine_in_e2}");
+
+    // The done-window fixture (as in `list_stories_with_a_cutoff`): every story's title says "lion".
+    let cutoff = day(10);
+    let lion = |idem: &'static str| {
+        let h = &h;
+        async move {
+            spec_story(
+                h,
+                idem,
+                Spec {
+                    title: "lion",
+                    ..Default::default()
+                },
+            )
+            .await
+        }
+    };
+    let t = lion("lt").await;
+    let p = lion("lp").await;
+    let r = lion("lr").await;
+    let e = lion("le").await;
+    let o = lion("lo").await;
+    let unrelated_todo = story(&h, "u", Kind::Story, None, &[]).await.key().clone();
+    move_to(&pool, &p, DeliveryState::InProgress, None, day(1)).await;
+    for (k, at) in [
+        (&r, cutoff + chrono::Duration::seconds(1)),
+        (&e, cutoff),
+        (&o, cutoff - chrono::Duration::seconds(1)),
+    ] {
+        move_to(
+            &pool,
+            k,
+            DeliveryState::Done,
+            Some(Resolution::Completed),
+            at,
+        )
+        .await;
+    }
+    let lions = || StoryFilter {
+        text: text("lion", None),
+        ..Default::default()
+    };
+    assert_eq!(
+        sorted(listed(&pool, lions(), DoneWindow::All).await),
+        sorted(vec![t.clone(), p.clone(), r.clone(), e.clone(), o.clone()])
+    );
+    assert_eq!(
+        sorted(listed(&pool, lions(), DoneWindow::Since(cutoff)).await),
+        sorted(vec![t.clone(), p.clone(), r.clone(), e.clone()])
+    );
+    let open = listed(&pool, lions(), DoneWindow::None).await;
+    assert_eq!(sorted(open), sorted(vec![t, p]));
+    assert!(
+        listed(&pool, StoryFilter::default(), DoneWindow::None)
+            .await
+            .contains(&unrelated_todo),
+        "no done stories still keeps every other state"
+    );
+    assert_eq!(
+        listed(
+            &pool,
+            StoryFilter {
+                delivery: Some(DeliveryState::Done),
+                ..Default::default()
+            },
+            DoneWindow::None
+        )
+        .await,
+        Vec::<Key>::new()
+    );
+}
+
+/// Relevance orders by tier (the named key, an exact external reference in any case, a title match, the rest) and
+/// within a tier by the default order (state, rank, key); the ranks are set so that the default order is the reverse
+/// of the tier order, and the two title matches sit in different states.
+#[tokio::test]
+async fn story_list_relevance_orders_by_tier_then_rank_order() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let ports = make_planning_ports(pool.clone());
+    let description_only = spec_story(
+        &h,
+        "d",
+        Spec {
+            title: "Unrelated words",
+            description: "follow up on scrum-77",
+            ..Default::default()
+        },
+    )
+    .await;
+    let title_started = spec_story(
+        &h,
+        "ts",
+        Spec {
+            title: "SCRUM-77 follow-up, started",
+            ..Default::default()
+        },
+    )
+    .await;
+    let title_todo = spec_story(
+        &h,
+        "tt",
+        Spec {
+            title: "Also about scrum-77",
+            ..Default::default()
+        },
+    )
+    .await;
+    let exact_ref = spec_story(
+        &h,
+        "r",
+        Spec {
+            title: "Imported",
+            external_ref: Some("SCRUM-77"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let longer_ref = spec_story(
+        &h,
+        "lr",
+        Spec {
+            title: "Imported too",
+            external_ref: Some("SCRUM-770"),
+            ..Default::default()
+        },
+    )
+    .await;
+    // Rank order (todo first): exact_ref, longer_ref, title_todo, description_only; title_started is in progress.
+    let mut tx = pool.begin().await.unwrap();
+    ports
+        .stories
+        .set_ranks(
+            &mut tx,
+            &[
+                (exact_ref.clone(), 1),
+                (longer_ref.clone(), 2),
+                (title_todo.clone(), 3),
+                (description_only.clone(), 4),
+            ],
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    move_to(
+        &pool,
+        &title_started,
+        DeliveryState::InProgress,
+        None,
+        day(1),
+    )
+    .await;
+    let rel = |t: &str, key: Option<&Key>| StoryFilter {
+        text: text(t, key),
+        sort: reeve_protocol::StorySort::Relevance,
+        ..Default::default()
+    };
+    let rank = listed(
+        &pool,
+        StoryFilter {
+            text: text("scrum-77", None),
+            ..Default::default()
+        },
+        DoneWindow::All,
+    )
+    .await;
+    assert_eq!(
+        rank,
+        vec![
+            exact_ref.clone(),
+            longer_ref.clone(),
+            title_todo.clone(),
+            description_only.clone(),
+            title_started.clone()
+        ],
+        "rank, the default, is today's order"
+    );
+    // The handler derives SCRUM-77 as the key the text names; no story has that key.
+    let named: Key = "SCRUM-77".parse().unwrap();
+    assert_eq!(
+        listed(&pool, rel("scrum-77", Some(&named)), DoneWindow::All).await,
+        vec![
+            exact_ref.clone(),
+            title_todo.clone(),
+            title_started.clone(),
+            longer_ref.clone(),
+            description_only.clone()
+        ]
+    );
+    // A key match comes before every other tier, though its own fields do not contain the text.
+    let target = story(&h, "target", Kind::Story, None, &[])
+        .await
+        .key()
+        .clone();
+    let mentions = spec_story(
+        &h,
+        "mentions",
+        Spec {
+            title: &format!("Blocked by {target}"),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut tx = pool.begin().await.unwrap();
+    ports
+        .stories
+        .set_ranks(&mut tx, &[(mentions.clone(), -1), (target.clone(), 9)])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        listed(
+            &pool,
+            rel(&target.to_string(), Some(&target)),
+            DoneWindow::All
+        )
+        .await,
+        vec![target, mentions]
+    );
+}
+
+/// A story whose external reference is another story's key text (a key under an earlier prefix, which a reference may
+/// name): the key tier comes before the exact-reference tier, though the default order puts the reference holder
+/// first.
+#[tokio::test]
+async fn story_list_relevance_puts_the_named_key_before_an_equal_reference() {
+    let (_c, pool) = common::pg().await;
+    let mut old = handlers(&pool);
+    old.settings.key_prefix = "OLD".into();
+    let target = story(&old, "target", Kind::Story, None, &[])
+        .await
+        .key()
+        .clone();
+    assert_eq!(target.to_string(), "OLD-1");
+    let h = handlers(&pool);
+    let ports = make_planning_ports(pool.clone());
+    let holder = spec_story(
+        &h,
+        "holder",
+        Spec {
+            title: "Imported",
+            external_ref: Some(&target.to_string()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut tx = pool.begin().await.unwrap();
+    ports
+        .stories
+        .set_ranks(&mut tx, &[(holder.clone(), 1), (target.clone(), 2)])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let f = |sort| StoryFilter {
+        text: text(&target.to_string(), Some(&target)),
+        sort,
+        ..Default::default()
+    };
+    assert_eq!(
+        listed(&pool, f(reeve_protocol::StorySort::Rank), DoneWindow::All).await,
+        vec![holder.clone(), target.clone()],
+        "rank order puts the holder first"
+    );
+    assert_eq!(
+        listed(
+            &pool,
+            f(reeve_protocol::StorySort::Relevance),
+            DoneWindow::All
+        )
+        .await,
+        vec![target, holder]
+    );
+}
+
+/// `epic_keys_in` reads the keys of one initiative's epics only: not another initiative's, not an unplaced epic's,
+/// and none for an initiative with no epics.
+#[tokio::test]
+async fn epic_keys_in_reads_one_initiatives_epic_keys() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let ports = make_planning_ports(pool.clone());
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let j = h
+        .create_initiative(&c, "j", "J", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let bare = h
+        .create_initiative(&c, "k", "K", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e1 = h
+        .create_epic(&c, "e1", "E1", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let e2 = h
+        .create_epic(&c, "e2", "E2", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    let elsewhere = h
+        .create_epic(&c, "e3", "E3", Some(j.key().clone()), "", None)
+        .await
+        .unwrap();
+    let unplaced = h.create_epic(&c, "e4", "E4", None, "", None).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let under_i = ports.epics.epic_keys_in(&mut tx, i.key()).await.unwrap();
+    let under_bare = ports.epics.epic_keys_in(&mut tx, bare.key()).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        sorted(under_i),
+        sorted(vec![e1.key().clone(), e2.key().clone()]),
+        "not {} nor {}",
+        elsewhere.key(),
+        unplaced.key()
+    );
+    assert_eq!(under_bare, Vec::<Key>::new());
+}
+
+/// The draft read sees only the draft sprint's goals and the active read only the active sprint's, each with its
+/// nearest link. Catches a sprint-state filter dropped or swapped between the two reads.
+#[tokio::test]
+async fn draft_goals_of_stories_reads_only_the_draft_sprint() {
+    use reeve_protocol::{GoalVia, SprintState};
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let e = h
+        .create_epic(&dan(), "e", "E", None, "", None)
+        .await
+        .unwrap();
+    let s = story(&h, "s", Kind::Story, Some(e.key()), &["c"]).await;
+    let day = |d: u32| chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+    let now = day(3).and_hms_opt(9, 0, 0).unwrap().and_utc();
+    let ports = h.ports.clone();
+    let mut tx = pool.begin().await.unwrap();
+    let active = ports
+        .sprints
+        .insert_draft(&mut tx, day(3), day(17), now)
+        .await
+        .unwrap()
+        .unwrap();
+    let (a_goal, _) = ports
+        .sprints
+        .insert_goal(&mut tx, active.id, "active goal", "x", "dan", "", "ka", now)
+        .await
+        .unwrap();
+    ports
+        .sprints
+        .insert_goal_link(&mut tx, a_goal.id, e.key(), "dan", now)
+        .await
+        .unwrap();
+    let mut sp = ports
+        .sprints
+        .sprint_for_update(&mut tx, active.id)
+        .await
+        .unwrap();
+    sp.state = SprintState::Active;
+    sp.opened_at = Some(now);
+    ports.sprints.save_sprint(&mut tx, &sp).await.unwrap();
+    let draft = ports
+        .sprints
+        .insert_draft(&mut tx, day(17), day(30), now)
+        .await
+        .unwrap()
+        .unwrap();
+    let (d_goal, _) = ports
+        .sprints
+        .insert_goal(&mut tx, draft.id, "draft goal", "x", "dan", "", "kd", now)
+        .await
+        .unwrap();
+    ports
+        .sprints
+        .insert_goal_link(&mut tx, d_goal.id, s.key(), "dan", now)
+        .await
+        .unwrap();
+
+    let keys = [s.key().clone()];
+    let drafts = ports
+        .reads
+        .draft_goals_of_stories(&mut tx, &keys)
+        .await
+        .unwrap();
+    assert_eq!(
+        drafts[s.key()],
+        vec![(d_goal.id, "draft goal".to_string(), GoalVia::Story)]
+    );
+    let actives = ports
+        .reads
+        .active_goals_of_stories(&mut tx, &keys)
+        .await
+        .unwrap();
+    assert_eq!(
+        actives[s.key()],
+        vec![(a_goal.id, "active goal".to_string(), GoalVia::Epic)]
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The lineage runs nearest first and never includes the item's own story. Catches a level skipped, the horizon read
+/// from the wrong row, a story listed in its own lineage and a missing key invented.
+#[tokio::test]
+async fn decision_lineage_in_walks_story_epic_initiative() {
+    use reeve_planning::LineageItem;
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let ini = h
+        .create_initiative(&c, "i", "I", "", "Later", None, None, None)
+        .await
+        .unwrap();
+    let epic = h
+        .create_epic(&c, "e", "E", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    let lone = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
+    let s = story(&h, "s", Kind::Story, Some(epic.key()), &["c"]).await;
+    // A second tree with another horizon, so a wrong join would pick up the wrong row.
+    let ini2 = h
+        .create_initiative(&c, "i2", "I2", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let epic2 = h
+        .create_epic(&c, "e3", "E3", Some(ini2.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&c, ItemType::Epic, epic.key(), epic.version(), true)
+        .await
+        .unwrap();
+
+    let ports = h.ports.clone();
+    let missing = Key::new("ABC", 999).unwrap();
+    let items = vec![
+        s.key().clone(),
+        epic.key().clone(),
+        ini.key().clone(),
+        lone.key().clone(),
+        missing.clone(),
+        epic2.key().clone(),
+    ];
+    let mut tx = pool.begin().await.unwrap();
+    let got = ports
+        .reads
+        .decision_lineage_in(&mut tx, &items)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    let e_row = LineageItem {
+        key: epic.key().clone(),
+        level: ItemType::Epic,
+        discovery_marked: true,
+        initiative_horizon: Some("Later".into()),
+    };
+    let i_row = LineageItem {
+        key: ini.key().clone(),
+        level: ItemType::Initiative,
+        discovery_marked: false,
+        initiative_horizon: Some("Later".into()),
+    };
+    assert_eq!(got[s.key()], vec![e_row.clone(), i_row.clone()]);
+    assert_eq!(got[epic.key()], vec![e_row, i_row.clone()]);
+    assert_eq!(got[ini.key()], vec![i_row]);
+    assert_eq!(
+        got[lone.key()],
+        vec![LineageItem {
+            key: lone.key().clone(),
+            level: ItemType::Epic,
+            discovery_marked: false,
+            initiative_horizon: None,
+        }]
+    );
+    assert!(!got.contains_key(&missing));
+    assert_eq!(
+        got[epic2.key()],
+        vec![
+            LineageItem {
+                key: epic2.key().clone(),
+                level: ItemType::Epic,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            },
+            LineageItem {
+                key: ini2.key().clone(),
+                level: ItemType::Initiative,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            }
+        ]
+    );
+}
+
+/// One statement whatever the number of keys. Catches a read per key.
+#[tokio::test]
+async fn decision_lineage_in_costs_the_same_for_three_and_thirty() {
+    let (_c, pool) = common::pg_counted().await;
+    let h = handlers(&pool);
+    let mut keys = seed(&h, "a", 3, 2).await;
+    let measure = |keys: Vec<Key>| {
+        let pool = pool.clone();
+        let ports = h.ports.clone();
+        async move {
+            common::statements(&pool.clone(), || async move {
+                let mut tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    .await
+                    .unwrap();
+                ports
+                    .reads
+                    .decision_lineage_in(&mut tx, &keys)
+                    .await
+                    .unwrap();
+                tx.rollback().await.unwrap();
+            })
+            .await
+        }
+    };
+    let three = measure(keys.clone()).await;
+    keys.extend(seed(&h, "b", 27, 9).await);
+    assert_eq!(keys.len(), 30);
+    let thirty = measure(keys).await;
+    assert_eq!(three, thirty);
+}
+
+/// `DoneWindow::None` (the decision queue's read) lists every story whose delivery is not done, and combines with the
+/// other filters. Catches a done story listed, a started story dropped, and the window ignored.
+#[tokio::test]
+async fn done_none_excludes_done_and_keeps_started() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let e = h
+        .create_epic(&dan(), "e", "E", None, "", None)
+        .await
+        .unwrap();
+    let todo = story(&h, "t", Kind::Story, Some(e.key()), &["c"]).await;
+    let loose = story(&h, "l", Kind::Story, None, &[]).await;
+    let done = insert_imported_done(&pool).await;
+    let started = story(&h, "p", Kind::Chore, None, &[]).await;
+    h.move_story(
+        &dan(),
+        started.key(),
+        started.version(),
+        DeliveryState::InProgress,
+        None,
+        Some("started".into()),
+    )
+    .await
+    .unwrap();
+    let ports = h.ports.clone();
+    let list = |f: StoryFilter, done: DoneWindow| {
+        let (ports, pool) = (ports.clone(), pool.clone());
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let got = ports.stories.list_stories(&mut tx, &f, done).await.unwrap();
+            tx.rollback().await.unwrap();
+            got.iter().map(|s| s.key().clone()).collect::<Vec<_>>()
+        }
+    };
+    let all = list(StoryFilter::default(), DoneWindow::All).await;
+    assert!(
+        all.contains(&done),
+        "without the window a done story is listed"
+    );
+    let un = list(StoryFilter::default(), DoneWindow::None).await;
+    assert_eq!(un.len(), 3);
+    assert!(
+        un.contains(todo.key()) && un.contains(loose.key()) && un.contains(started.key()),
+        "a started story is unfinished"
+    );
+    assert!(!un.contains(&done));
+    assert!(all.contains(started.key()));
+    let in_epic = list(
+        StoryFilter {
+            epic: Some(e.key().clone()),
+            ..Default::default()
+        },
+        DoneWindow::None,
+    )
+    .await;
+    assert_eq!(in_epic, vec![todo.key().clone()]);
 }

@@ -748,8 +748,7 @@ describe('initiative page: Codex review fixes', () => {
 			flushSync();
 			expect(btn('1 accepted decision')).toBeDefined();
 		});
-		btn('1 accepted decision').click();
-		flushSync();
+		// Nothing blocks, so the accepted fold starts open.
 		expandDiscussion('#decisions-rest');
 		editDecision('#decisions-rest');
 		const form = () => document.body.querySelector('form[aria-label="Edit decision Settled"]') as HTMLFormElement | null;
@@ -777,7 +776,6 @@ describe('initiative page: Codex review fixes', () => {
 	it('refreshes the decisions once per two-minute tick, accepted ones included', async () => {
 		net.decisions = [{ ...base, id: 5, title: 'Settled', record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
 		await open();
-		btn('1 accepted decision').click();
 		// The unfolded accepted decision is on screen before the polls are counted.
 		await vi.waitFor(() => {
 			flushSync();
@@ -798,8 +796,10 @@ describe('initiative page: decision focus across groups', () => {
 		const record: RequiredDecision['record'] = { repo: 'lore', path: 'adr/0016.md', record_id: 'ADR-0016' };
 		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
 		await open();
-		btn('1 accepted decision').click();
-		flushSync();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.getElementById('decisions-rest')).not.toBeNull(); // open by default: nothing blocks
+		});
 		expandDiscussion('#decisions-rest');
 		editDecision('#decisions-rest');
 		await vi.waitFor(() => {
@@ -834,6 +834,22 @@ describe('initiative page: decision focus across groups', () => {
 	});
 });
 
+/** With a closed decision the fold exists before anything is accepted; opening and closing it records the user's choice
+ *  (closed), which then holds when nothing blocks any more. */
+async function userClosedFold() {
+	await vi.waitFor(() => {
+		flushSync();
+		expect(document.querySelector('#decisions .fold button')).not.toBeNull();
+	});
+	const fold = () => document.querySelector('#decisions .fold button') as HTMLButtonElement;
+	fold().click();
+	flushSync();
+	fold().click();
+	flushSync();
+}
+
+const gone = () => decision({ id: 9, on: 'ABC-1', on_type: 'initiative', title: 'Gone', closed: { at: '2026-10-02T00:00:00Z', by: 'dan@example.com', reason: 'moot' } });
+
 describe('initiative page: decision rows keep their control through changes', () => {
 	const base = decision({ on: 'ABC-1', on_type: 'initiative', decider: 'dan@example.com', due: null, pr_url: null, checked_at: null,
 		closed: null, created_at: '2026-10-31T09:00:00Z', version: 1, title: 'Settled' });
@@ -841,8 +857,10 @@ describe('initiative page: decision rows keep their control through changes', ()
 	it('restores focus to the same Actions button though a PR link appeared and the title changed', async () => {
 		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
 		await open();
-		btn('1 accepted decision').click();
-		flushSync();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.getElementById('decisions-rest')).not.toBeNull(); // open by default: nothing blocks
+		});
 		expandDiscussion('#decisions-rest');
 		decisionActions('#decisions-rest')!.focus();
 		expect(document.activeElement).toBe(decisionActions('#decisions-rest'));
@@ -860,15 +878,16 @@ describe('initiative page: decision rows keep their control through changes', ()
 	});
 
 	it('keeps a row pinned by focus in view while its Actions menu opens', async () => {
-		net.decisions = [{ ...base, id: 5, record, check: { kind: 'unchecked' } }];
+		net.decisions = [{ ...base, id: 5, record, check: { kind: 'unchecked' } }, gone()];
 		await open();
 		await vi.waitFor(() => {
 			flushSync();
 			expect(decisionActions()).not.toBeNull();
 		});
+		await userClosedFold();
 		decisionActions()!.focus();
 		// A refetch accepts it: the focused row stays pinned in the visible group under the closed fold.
-		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
+		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }, gone()];
 		await fireLive();
 		await vi.waitFor(() => {
 			flushSync();
@@ -894,12 +913,13 @@ describe('initiative page: decision rows keep their control through changes', ()
 	});
 
 	it('keeps a blocking decision being edited in view when it becomes accepted under a closed fold', async () => {
-		net.decisions = [{ ...base, id: 5, record, check: { kind: 'unchecked' } }];
+		net.decisions = [{ ...base, id: 5, record, check: { kind: 'unchecked' } }, gone()];
 		await open();
 		await vi.waitFor(() => {
 			flushSync();
 			expect(document.querySelector('#decisions li [data-field="discussion"]')).not.toBeNull();
 		});
+		await userClosedFold();
 		expandDiscussion('#decisions li');
 		editDecision();
 		const title = () => document.querySelector('#decisions input[data-field="title"]') as HTMLInputElement;
@@ -909,7 +929,7 @@ describe('initiative page: decision rows keep their control through changes', ()
 		});
 		type(title(), 'Settled, half renamed');
 		title().setSelectionRange(2, 5);
-		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }];
+		net.decisions = [{ ...base, id: 5, record, check: { kind: 'accepted', commit: 'abcdef0123' } }, gone()];
 		await fireLive();
 		await vi.waitFor(() => {
 			flushSync();

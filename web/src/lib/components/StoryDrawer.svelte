@@ -29,7 +29,7 @@
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
-	import { storyHref } from '#lib/drawer.ts';
+	import { decisionHref, storyHref } from '#lib/drawer.ts';
 	import { expiry } from '#lib/urgency.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
@@ -661,7 +661,13 @@
 			{#if !r.ready && r.reasons.length > 0}
 				<ul class="reasons">
 					{#each r.reasons as reason, i (i)}
-						<li>{fullLabel(reason)}</li>
+						<li>
+							{#if 'decision_id' in reason}
+								<a data-sveltekit-reset="false" href={decisionHref(page.url, reason.decision_id)}>{fullLabel(reason)}</a>
+							{:else}
+								{fullLabel(reason)}
+							{/if}
+						</li>
 					{/each}
 				</ul>
 			{/if}
@@ -704,7 +710,7 @@
 			{#if closedCount > 0}
 				<label class="toggle"><input type="checkbox" bind:checked={showClosed} /> show closed ({closedCount})</label>
 			{/if}
-			<DecisionList decisions={shownDecisions} onchanged={reload} />
+			<DecisionList decisions={shownDecisions} decisionHref={(id) => decisionHref(page.url, id)} onchanged={reload} />
 			{#if editing.has('decision')}
 				<form class="inline-form" id="drawer-decision-form" onsubmit={requireDecision} onkeydown={cancelOnEscape('decision')}>
 					<h4>Require a decision</h4>
@@ -877,7 +883,7 @@
 				<ul class="blockers">
 					{#each s.blocked_by as b (b)}
 						<li>
-							<a href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
+							<a data-sveltekit-reset="false" href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
 							<button type="button" aria-label="Remove block by {b}" disabled={busy} onclick={() => removeBlocker(b)}>Remove</button>
 						</li>
 					{/each}

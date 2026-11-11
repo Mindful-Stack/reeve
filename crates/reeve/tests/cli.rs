@@ -2082,6 +2082,103 @@ fn queue_body() -> serde_json::Value {
     })
 }
 
+/// What the CLI prints for `queue_body()`: it re-serialises the typed queue, so an older server's response comes back
+/// with every field the lanes change added at its default.
+fn queue_body_defaulted() -> serde_json::Value {
+    let mut b = queue_body();
+    for e in b["entries"].as_array_mut().unwrap() {
+        e["lane"] = serde_json::json!("open");
+        e["needed_in"] = serde_json::json!("none");
+        e["needed_in_reason"] = serde_json::json!(null);
+        e["next_step"] = serde_json::json!(null);
+        e["under_way"] = serde_json::json!([]);
+        for st in e["blocks"].as_array_mut().unwrap() {
+            st["kind"] = serde_json::json!("story");
+            st["delivery"] = serde_json::json!("todo");
+            st["owner"] = serde_json::json!(null);
+            st["urgent"] = serde_json::json!(false);
+            st["needed_in"] = serde_json::json!("none");
+        }
+    }
+    b["summary"]["review"] = serde_json::json!(0);
+    b["summary"]["this_sprint"] = serde_json::json!(0);
+    b["summary"]["next_sprint"] = serde_json::json!(0);
+    b
+}
+
+/// The same queue as a server with the lanes change sends it: every new field set, plus one this build does not know.
+fn queue_body_with_lanes() -> serde_json::Value {
+    let mut b = queue_body();
+    let e = &mut b["entries"][0];
+    e["lane"] = serde_json::json!("this_sprint");
+    e["needed_in"] = serde_json::json!("this_sprint");
+    e["needed_in_reason"] = serde_json::json!({"kind":"goal","goal_id":3,"outcome":"Ship it"});
+    e["next_step"] =
+        serde_json::json!({"kind":"review_record","pr_url":"https://github.com/acme/kb/pull/9"});
+    e["added_later"] = serde_json::json!(true);
+    for (i, st) in e["blocks"].as_array_mut().unwrap().iter_mut().enumerate() {
+        st["kind"] = serde_json::json!("story");
+        st["delivery"] = serde_json::json!("todo");
+        st["owner"] = serde_json::json!(null);
+        st["urgent"] = serde_json::json!(i == 0);
+        st["needed_in"] = serde_json::json!("this_sprint");
+    }
+    e["under_way"] = serde_json::json!([{"key":"TST-3","title":"Three","kind":"bug","delivery":"in_progress",
+        "owner":"o@x","urgent":false,"needed_in":"next_sprint"}]);
+    e["decision"]["record"]["browse_url"] =
+        serde_json::json!("https://github.com/acme/kb/blob/HEAD/adrs/0001.md");
+    b["summary"]["review"] = serde_json::json!(1);
+    b["summary"]["this_sprint"] = serde_json::json!(2);
+    b["summary"]["next_sprint"] = serde_json::json!(3);
+    b
+}
+
+/// A server that sends the new queue fields reads as before (the CLI prints the same lines), in text and as served in
+/// JSON; the old-response fixture above proves the other direction.
+#[test]
+fn decision_ls_queue_reads_a_queue_with_lanes() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/decisions/queue",
+        200,
+        ok(queue_body_with_lanes()),
+    )]);
+    let out = reeve_at(&url, &["decision", "ls", "--queue"]);
+    server.join().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0], "open: 3 · blocking: 1 (2 stories) · overdue: 4",
+        "{text}"
+    );
+    assert!(lines[1].starts_with("[blocking] #7 "), "{text}");
+    assert!(lines[1].ends_with("blocks: 2"), "{text}");
+    assert!(lines[2].starts_with("[closed] #8 "), "{text}");
+
+    // as served in JSON, every new field survives the round trip and the unknown one is dropped
+    let (url, server) = serve(vec![(
+        "GET /api/v1/decisions/queue",
+        200,
+        ok(queue_body_with_lanes()),
+    )]);
+    let out = reeve_at(&url, &["--json", "decision", "ls", "--queue"]);
+    server.join().unwrap();
+    let got: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut want = ok(queue_body_with_lanes());
+    want["value"]["entries"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("added_later");
+    // the closed entry carries no new field in the body, so it comes back at the defaults
+    want["value"]["entries"][1] = queue_body_defaulted()["entries"][1].clone();
+    assert_eq!(got, want);
+}
+
 /// `ls --queue` reads `/decisions/queue` with the same scope query and, with `--json`, prints the envelope as served;
 /// as text the first line is the summary and each entry shows its group and block count. `--mine` conflicts.
 #[test]
@@ -2099,7 +2196,7 @@ fn decision_ls_queue_reads_the_queue() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
-        ok(queue_body())
+        ok(queue_body_defaulted())
     );
 
     let (url, server) = serve(vec![(

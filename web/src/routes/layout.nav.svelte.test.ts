@@ -6,16 +6,25 @@ import type { Story } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
 import { me, story } from '#lib/test/fixtures.ts';
+import { goto } from '$app/navigation';
 import Layout from './+layout.svelte';
 
-const route = vi.hoisted(() => ({ path: '/epics', admin: false }));
-vi.mock('$app/state', () => ({
-	page: {
-		get url() {
-			return new URL(`http://localhost${route.path}`);
-		}
+// The URL is reactive (a SvelteURL), as in the browser: setting `route.path` is a navigation the layout sees.
+const route = vi.hoisted(() => ({
+	url: null as URL | null,
+	admin: false,
+	get path() {
+		return this.url!.pathname + this.url!.search;
+	},
+	set path(p: string) {
+		this.url!.href = `http://localhost${p}`;
 	}
 }));
+vi.mock('$app/state', async () => {
+	const { SvelteURL } = await import('svelte/reactivity');
+	route.url = new SvelteURL('http://localhost/epics');
+	return { page: { url: route.url } };
+});
 const router = vi.hoisted(() => ({ onNavigate: [] as ((n: unknown) => void)[] }));
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(),
@@ -33,13 +42,14 @@ vi.mock('#lib/components/ReportDialog.svelte', () => ({
 		dialog.props = props;
 	}
 }));
-const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void> }));
+const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void>, searchHold: null as null | Promise<void> }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
 	const { me, epic } = await import('#lib/test/fixtures.ts');
 	installFetch(({ method, path }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
+		if (path === '/api/v1/search') return Promise.resolve(net.searchHold).then(() => [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }]);
 		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
 		return failure('unexpected', 404);
 	});
@@ -74,6 +84,7 @@ afterEach(() => {
 	dialog.props = null;
 	net.gets.length = 0;
 	net.hold = null;
+	net.searchHold = null;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
 	if (app) unmount(app);
@@ -222,6 +233,111 @@ describe('top bar search field', () => {
 	it('trims the query of /search as the page does', async () => {
 		await open('/search?q=%20%20northcloud%20');
 		expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('northcloud');
+	});
+	it("shows the backlog's text filter", async () => {
+		await open('/backlog?q=zebra&state=open');
+		expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('zebra');
+	});
+	const submit = (text: string) => {
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.value = text;
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		(input.form as HTMLFormElement).requestSubmit();
+	};
+	it('text filters the open backlog by relevance, without a lookup', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/board');
+		submit('zebra crossing');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?q=zebra+crossing&state=open&view=relevance'));
+		expect(net.gets.filter((g) => g.includes('/search'))).toEqual([]);
+	});
+	it('a key opens its story over the current page; the form is busy while the lookup is pending', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/board?mine=1');
+		submit('12');
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('true');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/board?mine=1&story=ABC-12', { reset: false }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
+		});
+	});
+	it('Escape leaves the field', async () => {
+		await open('/board');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.focus();
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		expect(document.activeElement).not.toBe(input);
+	});
+	it('Escape while a key lookup is pending cancels it: the form is no longer busy and the answer opens nothing', async () => {
+		vi.mocked(goto).mockClear();
+		let release: () => void = () => {};
+		net.searchHold = new Promise((r) => (release = r));
+		await open('/board');
+		submit('ABC-12');
+		await vi.waitFor(() => expect(net.gets).toContain('GET /api/v1/search'));
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('true');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
+		release();
+		await new Promise((r) => setTimeout(r, 20));
+		flushSync();
+		expect(vi.mocked(goto)).not.toHaveBeenCalled();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
+	});
+	it("Escape restores the page's text instead of clearing the field", async () => {
+		await open('/backlog?q=zebra');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.focus();
+		input.value = 'lio';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+		input.dispatchEvent(esc);
+		flushSync();
+		expect(esc.defaultPrevented).toBe(true);
+		expect(input.value).toBe('zebra');
+		expect(document.activeElement).not.toBe(input);
+	});
+	it('the placeholder says a key jumps', async () => {
+		await open('/board');
+		expect(document.body.querySelector('input[type="search"]')!.getAttribute('placeholder')).toBe('Search or jump to a key');
+	});
+	it('text typed on the backlog survives a filter change and the drawer; a new text in the URL replaces it', async () => {
+		await open('/backlog?q=zebra');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.value = 'lion';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		route.path = '/backlog?q=zebra&kind=bug';
+		flushSync();
+		expect(input.value).toBe('lion');
+		route.path = '/backlog?q=zebra&kind=bug&story=S-1';
+		flushSync();
+		expect(input.value).toBe('lion');
+		route.path = '/backlog?q=tiger';
+		flushSync();
+		expect(input.value).toBe('tiger');
+	});
+	it('text on a filtered backlog keeps its filters, sorts by relevance and edits the URL in place', async () => {
+		vi.mocked(goto).mockClear();
+		await open('/backlog?kind=bug');
+		submit('zebra');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?kind=bug&q=zebra&view=relevance', { replace: true, reset: false }));
+	});
+	it("after a key jump the field shows the page's own text again, not the key", async () => {
+		vi.mocked(goto).mockClear();
+		await open('/backlog?q=zebra');
+		submit('12');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalledWith('/backlog?q=zebra&story=ABC-12', { reset: false }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect((document.body.querySelector('input[type="search"]') as HTMLInputElement).value).toBe('zebra');
+		});
 	});
 });
 

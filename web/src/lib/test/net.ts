@@ -50,6 +50,13 @@ export function installFetch(handler: Handler): void {
 	};
 }
 
+/** Lets everything already queued behind a promise run: `rounds` turns of the microtask queue (no timer, so no clock
+ *  to outwait), for a test that proves something did NOT happen. Pair it with a count of the requests sent and
+ *  `flushSync()`; a positive expectation uses `vi.waitFor` instead. */
+export async function settle(rounds = 100): Promise<void> {
+	for (let i = 0; i < rounds; i++) await Promise.resolve();
+}
+
 /** A stand-in for `$app/state`'s `page` with a reactive URL and params, and a `goto` that writes the URL as SvelteKit's
  *  navigation would, so the page re-renders from it. Mock `$app/navigation` with `goto` (wrapped in `vi.fn` to assert
  *  on it) and `$app/state` with `{ page }`; `params` sets a route parameter, as a navigation to another item does. */

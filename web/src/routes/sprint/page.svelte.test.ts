@@ -127,6 +127,18 @@ function activeWith(goals: Goal[], view: Partial<SprintView> = {}): SprintView {
 }
 
 describe('the active sprint', () => {
+	it('links "blocked by n decisions" to the decisions page, which leads with records to review', async () => {
+		// Records to review leave the this-sprint lane, so the link goes to the page, not to #this-sprint.
+		net.sprints!.active = activeWith([goal({ id: 1 }), goal({ id: 2 })], {
+			counts: counts([progress(1, { blocked_decisions: 2 }), progress(2, { blocked_decisions: 0 })])
+		});
+		await open();
+		const link = q<HTMLAnchorElement>('[data-testid="goal-1"] a[href="/decisions"]');
+		expect(text(link)).toBe('blocked by 2 decisions');
+		expect(q('[data-testid="goal-2"] a')).toBeNull();
+		expect(text(q('[data-testid="goal-2"] .counts'))).toContain('blocked by 0 decisions');
+	});
+
 	it('states the rule above the counts and shows each goal with its numbers, the upkeep line and the demo list', async () => {
 		const g = goal({
 			id: 1,

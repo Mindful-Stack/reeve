@@ -366,7 +366,7 @@ async fn flow() {
     assert_eq!(body["outcome"], "refused");
     assert_eq!(body["reasons"][0]["reason"], "decision_no_record");
 
-    // 5. The agent drafts the record on a branch (a PR in real life) and links it: proposed, PR open.
+    // 5. The agent drafts the record on a branch (a PR in real life) and links it: proposed (PR linked).
     std::fs::write(
         kb.join("knowledge/adrs/0001-queue.md"),
         "---\nid: kb/ADR-0001\nstatus: proposed\nsuperseded_by:\n---\n# Queue\n",
@@ -1235,4 +1235,133 @@ async fn flow() {
         .unwrap();
     let text = String::from_utf8_lossy(&text.stdout);
     assert!(text.contains("in flight: 1 (at close: 2)"), "{text}");
+
+    // 9. `story ls` filters on the server by text, kind, initiative, urgency and openness, and orders by relevance
+    // (kb/ADR-0021). Every query below carries a text no earlier story matches, so the earlier rows stay out.
+    let key_of = |v: serde_json::Value| v["value"]["key"].as_str().unwrap().to_string();
+    let zi = key_of(ok(reeve(&human)
+        .args([
+            "initiative",
+            "create",
+            "--idempotency-key",
+            "zi",
+            "--title",
+            "Savanna",
+            "--horizon",
+            "Now",
+            "--external-ref",
+            "ZOO-1",
+        ])
+        .output()
+        .unwrap()));
+    let ze = key_of(ok(reeve(&human)
+        .args([
+            "epic",
+            "create",
+            "--idempotency-key",
+            "ze",
+            "--title",
+            "Grassland",
+            "--initiative",
+            &zi,
+        ])
+        .output()
+        .unwrap()));
+    let filed = |idem: &str, extra: &[&str]| {
+        let mut args = vec!["story", "create", "--idempotency-key", idem];
+        args.extend_from_slice(extra);
+        key_of(ok(reeve(&human).args(&args).output().unwrap()))
+    };
+    let zebra_bug = filed(
+        "zb",
+        &["--title", "Zebra crossing", "--kind", "bug", "--epic", &ze],
+    );
+    let zebra_story = filed("zs", &["--title", "Zebra stripes"]);
+    let zebra_done = filed("zd", &["--title", "Zebra herd"]);
+    let started_ref = filed("zp", &["--title", "ZOO-7 started"]);
+    ok(reeve(&human)
+        .args([
+            "story",
+            "mv",
+            &started_ref,
+            "in-progress",
+            "--override",
+            "demo",
+        ])
+        .output()
+        .unwrap());
+    let mentions_ref = filed("zt", &["--title", "About ZOO-7"]);
+    let exact_ref = filed("zx", &["--title", "Imported", "--external-ref", "ZOO-7"]);
+    ok(reeve(&human)
+        .args([
+            "story",
+            "mv",
+            &zebra_done,
+            "done",
+            "--resolution",
+            "dropped",
+        ])
+        .output()
+        .unwrap());
+    ok(reeve(&human)
+        .args(["story", "urgent", &zebra_story])
+        .output()
+        .unwrap());
+    let ls = |args: &[&str]| -> Vec<String> {
+        let mut all = vec!["story", "ls"];
+        all.extend_from_slice(args);
+        ok(reeve(&bot).args(&all).output().unwrap())["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["story"]["key"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    assert_eq!(
+        sorted(ls(&["--text", "zebra"])),
+        sorted(vec![
+            zebra_bug.clone(),
+            zebra_story.clone(),
+            zebra_done.clone()
+        ])
+    );
+    assert_eq!(
+        sorted(ls(&["--text", "zebra", "--open"])),
+        sorted(vec![zebra_bug.clone(), zebra_story.clone()])
+    );
+    assert_eq!(
+        ls(&["--text", "zebra", "--kind", "bug"]),
+        vec![zebra_bug.clone()]
+    );
+    assert_eq!(ls(&["--initiative", &zi]), vec![zebra_bug.clone()]);
+    assert_eq!(ls(&["--initiative", "ZOO-1"]), vec![zebra_bug.clone()]);
+    assert_eq!(
+        ls(&["--text", "zebra", "--urgent"]),
+        vec![zebra_story.clone()]
+    );
+    assert_eq!(
+        ls(&["--text", "zoo-7"]),
+        vec![mentions_ref.clone(), exact_ref.clone(), started_ref.clone()],
+        "rank order by default"
+    );
+    assert_eq!(
+        ls(&["--text", "zoo-7", "--sort", "relevance"]),
+        vec![exact_ref, mentions_ref, started_ref],
+        "the exact reference first, then the title matches in state order"
+    );
+    let no_text = reeve(&bot)
+        .args(["story", "ls", "--sort", "relevance"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        no_text.status.code(),
+        Some(1),
+        "relevance without text fails"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&no_text.stdout).unwrap();
+    assert_eq!(body["code"], "validation", "{body}");
 }
