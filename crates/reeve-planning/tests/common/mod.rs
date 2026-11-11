@@ -74,6 +74,9 @@ where
     measure(pool, "rows", f).await
 }
 
+/// Resets this database's `pg_stat_statements` entries, runs `f`, and sums `column` (`"calls"` or `"rows"`) over them:
+/// the shared body of `statements` and `rows`, under their rules.
+// Unused in one of the two test binaries that include this module.
 #[allow(dead_code)]
 async fn measure<F, Fut>(pool: &PgPool, column: &str, f: F) -> i64
 where

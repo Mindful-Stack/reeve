@@ -143,16 +143,16 @@
 		afterLanding = { key: JSON.stringify(toStoryQuery(url, session.me?.email)), run: focusStateToggle };
 		return goto(url, { replace: true, reset: false });
 	}
-	/** Runs once an answer for the query `key` lands (applied or failed) and the page has rendered it. Any landing for the
-	 *  URL's query ends the wait: one for another query means the user moved on, and the hand-off must not fire when they
-	 *  later return to `key`. A landing for a query the URL has already left (an older request that was still the latest
-	 *  when the hand-off was set) leaves it waiting. */
+	/** Runs once an answer for the query `key` lands (applied or failed) and the page has rendered it. A landing for any
+	 *  other query (an older request that was still the latest when the hand-off was set) leaves it waiting. The query
+	 *  effect below cancels it once the URL's query moves to another key, so it never fires when the user returns to `key`
+	 *  later, whether or not the query in between ever landed. */
 	let afterLanding: { key: string; run: () => void } | null = null;
 	function landed(key: string) {
 		const a = afterLanding;
-		if (!a || key !== queryKey) return;
+		if (a?.key !== key) return;
 		afterLanding = null;
-		if (a.key === key) void tick().then(a.run);
+		void tick().then(a.run);
 	}
 
 	let latest = 0;
@@ -209,9 +209,11 @@
 		}
 	}
 
-	// The first load, and every change of the query (not of the rest of the URL).
+	// The first load, and every change of the query (not of the rest of the URL). A hand-off waits for its own query: it
+	// is armed before its navigation commits, and this runs only once the URL's query has changed.
 	$effect(() => {
 		void queryKey;
+		if (afterLanding && afterLanding.key !== queryKey) afterLanding = null;
 		untrack(reload);
 	});
 	// Any activity entry, and every (re)connect, refetches with the current query: the dependency graph is the whole tree

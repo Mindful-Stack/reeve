@@ -5764,8 +5764,10 @@ async fn decision_queue_costs_the_same_with_goals() {
 }
 
 /// The queue reads only unfinished stories (kb/ADR-0018 R5): done stories under a decision's epic are neither held
-/// nor under way, and adding them changes no row the queue reads. Catches the stories read with `DoneWindow::All`
-/// (every done story in the history fetched, then thrown away).
+/// nor under way, and adding them changes no row the queue reads. The domain drops done stories too, so the queue's
+/// answer is the same either way: only this rows-read comparison catches a regression to `DoneWindow::All` (every done
+/// story in the history fetched, then thrown away). A future queue read whose rows legitimately grow with done
+/// stories must update this test.
 #[tokio::test]
 async fn decision_queue_reads_no_done_story() {
     let (_c, pool) = common::pg_counted().await;
