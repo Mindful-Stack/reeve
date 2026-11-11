@@ -2,7 +2,7 @@ use super::*;
 use crate::domain::decision::*;
 use crate::domain::queue::{self, QueueEntry, QueueSummary};
 use crate::domain::readiness::satisfies;
-use reeve_protocol::{CheckResult, ClosureKind, DeliveryState, Key, Reversibility, TokenKind, Via};
+use reeve_protocol::{CheckResult, ClosureKind, Key, Reversibility, TokenKind, Via};
 use std::collections::HashSet;
 
 impl Handlers {
@@ -449,7 +449,6 @@ impl Handlers {
         let lineage = self.ports.reads.decision_lineage_in(tx, &items).await?;
         let affected: Vec<queue::AffectedStory> = stories
             .into_iter()
-            .filter(|s| s.story.delivery != DeliveryState::Done)
             .map(|s| queue::AffectedStory {
                 draft_goals: draft
                     .remove(&s.story.key)

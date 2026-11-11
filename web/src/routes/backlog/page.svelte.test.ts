@@ -941,6 +941,49 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		});
 	});
 
+	it('Show open stories superseded by another query does not move focus when the user later returns to the open query', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		data.hold = true;
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		// The query changes before the open rows land: the hand-off belonged to that landing, which never comes.
+		go('?q=yyy');
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		data.held[2]();
+		data.held[3]();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('No todo stories match');
+			expect(document.body.textContent).toContain('yyy');
+		});
+		data.held[0]();
+		data.held[1]();
+		await new Promise((r) => setTimeout(r, 10));
+		// Later the user returns to the open query, with focus on nothing in particular.
+		data.hold = false;
+		(document.activeElement as HTMLElement | null)?.blur();
+		go('?q=zzz&state=open');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-2"]')).not.toBeNull();
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(document.activeElement).toBe(document.body);
+	});
+
+	it('a row title opens the drawer without resetting the page (focus and scroll stay)', async () => {
+		data.stories = [row('S-1', 1, null), row('S-2', 2, 'E-1')];
+		await open('Title S-2');
+		const links = [...document.body.querySelectorAll<HTMLAnchorElement>('li[data-key] a.title')];
+		expect(links).toHaveLength(2);
+		for (const a of links) expect(a.getAttribute('data-sveltekit-reset')).toBe('false');
+	});
+
 	it('the empty state names a key that matched nothing, and says "No stories" when nothing is filtered', async () => {
 		go('?q=ABC-99&state=open');
 		await open('No item ABC-99');
