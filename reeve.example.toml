@@ -67,6 +67,9 @@ admins = ["admin@example.com"]
 [[repos]]
 name = "knowledge-base"
 url = "git@github.com:Acme/knowledge-base.git"
+# Optional: the repository's web address, for a record's link. Needed only when `url` uses an ssh host alias (a host with
+# no dot), from which no link can be derived; https only.
+# browse_url = "https://github.com/Acme/knowledge-base"
 adr_dir = "knowledge/adrs"
 
 [[repos]]

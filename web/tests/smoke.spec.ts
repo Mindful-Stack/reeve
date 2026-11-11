@@ -54,7 +54,8 @@ test('board shows ready and blocked stories and the drawer opens by url', async 
 	await page.goto('/board');
 	await expect(page.getByTestId(`card-${STORY}`)).toContainText('ready');
 	// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
-	await page.getByText(/^Not ready · \d+$/).click();
+	await expect(page.locator('details.not-ready > summary')).toContainText(/\b(waits|wait) on decisions$/);
+	await page.locator('details.not-ready > summary').click();
 	await expect(page.getByTestId(`card-${BLOCKED}`)).toContainText('no criteria');
 	await expect(page.getByTestId(`card-${DECISION_STORY}`)).toContainText('decision: no record');
 	await page.goto('/board?story=' + STORY);
@@ -217,7 +218,7 @@ test('the decision queue: classify, blocks, withdraw and decide', async ({ page 
 		idempotency_key: crypto.randomUUID(), title: 'Smoke story behind the queue', kind: 'chore', criteria: ['it is decided'], labels: [], epic: epic.key
 	});
 	await page.reload();
-	await expect(row.getByRole('button', { name: 'Blocks 1 story: Smoke one-way decision' })).toBeVisible();
+	await expect(row.getByRole('button', { name: 'Holds 1 story: Smoke one-way decision' })).toBeVisible();
 
 	await row.getByRole('button', { name: /^Actions for Smoke one-way decision on / }).click();
 	await expect(page.getByRole('menuitem', { name: 'Decide' })).toHaveCount(0); // a one-way decision is decided by its record
@@ -404,7 +405,7 @@ for (const view of ['board', 'backlog'] as const) {
 		let link: Locator;
 		if (view === 'board') {
 			// Blocked (and untriaged) cards sit in the collapsed "Not ready" disclosure.
-			await page.getByText(/^Not ready · \d+$/).click();
+			await page.locator('details.not-ready > summary').click();
 			link = page.getByTestId(`card-${opener.key}`).getByRole('link', { name: `Smoke ${view} focus opener` });
 		} else {
 			link = page.locator(`li[data-key="${opener.key}"]`).getByRole('link', { name: `Smoke ${view} focus opener` });
@@ -670,7 +671,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	const key = (await notice.textContent())!.match(/[A-Z]+-\d+/)![0];
 	await page.goto('/board?untriaged=1');
 	await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeChecked();
-	await page.getByText(/^Not ready · \d+$/).click();
+	await page.locator('details.not-ready > summary').click();
 	await expect(page.getByTestId(`card-${key}`)).toContainText('untriaged');
 	// The filter really filters: the similar story sits under an epic, so it is not listed here.
 	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
@@ -719,3 +720,49 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 		await expect(page.getByRole('dialog', { name: 'Report something' })).toBeVisible();
 	});
 }
+
+test('the board banner counts a decision needed this sprint, links to its lane, and a row title opens the decision drawer', async ({ page }) => {
+	const tag = crypto.randomUUID().slice(0, 8);
+	const title = `Banner smoke decision ${tag}`;
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Banner smoke epic ${tag}` });
+	await post(page, '/api/v1/decisions', { idempotency_key: crypto.randomUUID(), on: epic.key, title, decider: 'smoke@example.com' });
+	await post(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(), title: `Banner smoke story ${tag}`, kind: 'chore', criteria: ['it is decided'], labels: [], epic: epic.key
+	});
+
+	// A goal over the epic in an open sprint: the decision is needed this sprint. This test opens its own sprint (after the
+	// sprint cycle, which needs none active) and closes it at the end.
+	const { goal } = await post<{ goal: { id: number } }>(page, '/api/v1/goals', {
+		idempotency_key: crypto.randomUUID(), outcome: `Banner smoke goal ${tag}`, check: 'the banner shows it'
+	});
+	await post(page, `/api/v1/goals/${goal.id}/links`, { items: [epic.key] });
+	const listed = async () =>
+		((await (await page.request.get('/api/v1/sprints', { headers })).json()) as {
+			value: { active: { sprint: { id: number; version: number; goals: { id: number }[] } } | null; draft: { id: number; version: number } | null };
+		}).value;
+	const draft = (await listed()).draft!;
+	await post(page, `/api/v1/sprints/${draft.id}/open`, { version: draft.version });
+	const sprint = (await listed()).active!.sprint;
+
+	try {
+		await page.goto('/board');
+		const banner = page.getByRole('navigation', { name: 'Decisions needing attention' });
+		// Earlier tests link the draft goal to the initiative, so other decisions are needed this sprint too: the count is at least ours.
+		const link = banner.getByRole('link', { name: /^\d+ decisions? needed this sprint$/ });
+		await expect(link).toBeVisible();
+		await link.click();
+		await expect(page).toHaveURL(/\/decisions#this-sprint$/);
+		await expect(page.locator('h2#this-sprint')).toBeVisible();
+
+		await page.getByRole('link', { name: title, exact: true }).click();
+		const drawer = page.getByTestId('decision-drawer');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByRole('heading', { level: 2 }).locator('.h-title')).toHaveText(title);
+		await expect(page).toHaveURL(/[?&]decision=\d+/);
+	} finally {
+		await post(page, `/api/v1/sprints/${sprint.id}/close`, {
+			version: sprint.version,
+			verdicts: sprint.goals.map((g) => ({ goal_id: g.id, verdict: 'missed' }))
+		});
+	}
+});

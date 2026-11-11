@@ -2160,7 +2160,8 @@ async fn the_decision_queue_groups_orders_and_scopes() {
     // the satisfied one is never counted
     assert_eq!(
         b["value"]["summary"],
-        json!({"open":3,"blocking":3,"blocked_stories":3,"overdue":0})
+        // all three sit under a first-bucket initiative still in discovery, so each is needed next sprint
+        json!({"open":3,"blocking":3,"blocked_stories":3,"overdue":0,"review":0,"this_sprint":0,"next_sprint":3})
     );
 
     let (st, b) = get("?include_closed=true".into()).await;
@@ -2197,7 +2198,7 @@ async fn the_decision_queue_groups_orders_and_scopes() {
         assert_eq!(b["value"]["entries"], json!([]));
         assert_eq!(
             b["value"]["summary"],
-            json!({"open":0,"blocking":0,"blocked_stories":0,"overdue":0})
+            json!({"open":0,"blocking":0,"blocked_stories":0,"overdue":0,"review":0,"this_sprint":0,"next_sprint":0})
         );
     }
     let (st, b) = get(format!(
@@ -2217,6 +2218,377 @@ async fn the_decision_queue_groups_orders_and_scopes() {
         assert!(d["id"].as_i64().is_some());
         assert!(d.get("blocks").is_none());
     }
+}
+
+/// POSTs `body` as the admin and returns the `value`, failing the test on anything but 200.
+async fn admin_post(h: &Harness, path: &str, body: serde_json::Value) -> serde_json::Value {
+    let (st, v) = call(&h.app, Some(&h.admin_token), "POST", path, Some(body)).await;
+    assert_eq!(st, 200, "{path}: {v}");
+    v["value"].clone()
+}
+
+async fn admin_get(h: &Harness, path: &str) -> (u16, serde_json::Value) {
+    let (st, v) = call(&h.app, Some(&h.admin_token), "GET", path, None).await;
+    (st, v)
+}
+
+/// A chore (ready without an epic or criteria), left todo.
+async fn chore(h: &Harness, idem: &str) -> String {
+    admin_post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key":idem,"title":idem,"kind":"chore","criteria":[],"labels":[]}),
+    )
+    .await["key"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn open_decision(h: &Harness, idem: &str, on: &str) -> i64 {
+    admin_post(
+        h,
+        "/api/v1/decisions",
+        json!({"idempotency_key":idem,"on":on,"title":idem,"decider":"dan@example.com","due":null}),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap()
+}
+
+/// Spec "Decisions on the board": `GET /decisions/{id}/context` answers the queue entry of one decision (lane, window,
+/// next step, what it holds), 404 for an id that does not exist, and it is not captured by `/decisions/{id}`.
+#[tokio::test]
+async fn decision_context_route() {
+    let h = harness().await;
+    let s1 = chore(&h, "c-s1").await;
+    let d = open_decision(&h, "c-d", &s1).await;
+    let (st, v) = admin_get(&h, &format!("/api/v1/decisions/{d}/context")).await;
+    assert_eq!(st, 200, "{v}");
+    let e = &v["value"];
+    assert_eq!(e["decision"]["id"], d);
+    assert_eq!(e["group"], "blocking");
+    assert_eq!(e["lane"], "beyond", "{e}");
+    assert_eq!(e["next_step"], json!({"kind":"write_record"}), "{e}");
+    assert_eq!(e["blocks"].as_array().unwrap().len(), 1, "{e}");
+    assert_eq!(e["blocks"][0]["key"], s1);
+    assert_eq!(e["blocks"][0]["kind"], "chore");
+    assert_eq!(e["blocks"][0]["delivery"], "todo");
+    assert_eq!(e["under_way"], json!([]));
+    let (st, v) = admin_get(&h, "/api/v1/decisions/999999/context").await;
+    assert_eq!(st, 404, "{v}");
+}
+
+/// Spec A5.1: `browse_url` is derived from `[[repos]].url` on every response that carries a decision. An `https://`
+/// URL loses `.git`, a trailing `/` and any credentials; an scp-style `git@host:org/repo` and an `ssh://git@host:port/org/repo` URL give the https form; `http://` and a missing URL give none; each path
+/// segment is percent-encoded. The export keeps the field out.
+#[tokio::test]
+async fn browse_url_from_repo_config() {
+    let h = harness_with(|cfg| {
+        cfg.replace(
+            "[[repos]]\nname = \"orion\"\nadr_dir = \"docs/adr\"",
+            "[[repos]]\nname = \"orion\"\nadr_dir = \"docs/adr\"\nurl = \"https://github.com/acme/orion.git\"\n\
+             [[repos]]\nname = \"slash\"\nadr_dir = \"docs/adr\"\nurl = \"https://github.com/acme/slash/\"\n\
+             [[repos]]\nname = \"cred\"\nadr_dir = \"docs/adr\"\nurl = \"https://bot:SECRET-TOKEN@github.com/acme/cred.git\"\n\
+             [[repos]]\nname = \"plain\"\nadr_dir = \"docs/adr\"\nurl = \"http://git.example.com/acme/plain\"\n\
+             [[repos]]\nname = \"ssh\"\nadr_dir = \"docs/adr\"\nurl = \"git@github.com:acme/ssh.git\"\n\
+             [[repos]]\nname = \"sshurl\"\nadr_dir = \"docs/adr\"\nurl = \"ssh://git:SECRET@github.com:2222/acme/sshurl.git\"\n\
+             [[repos]]\nname = \"alias\"\nadr_dir = \"docs/adr\"\nurl = \"git@github-kb:acme/alias.git\"\n\
+             [[repos]]\nname = \"aliasset\"\nadr_dir = \"docs/adr\"\nurl = \"git@github-kb:acme/aliasset.git\"\nbrowse_url = \"https://github.com/acme/aliasset\"\n\
+             [[repos]]\nname = \"bare\"\nadr_dir = \"docs/adr\"",
+        )
+    })
+    .await;
+    let s = chore(&h, "b-s").await;
+    let cases: [(&str, &str, Option<&str>); 10] = [
+        (
+            "orion",
+            "docs/adr/0001.md",
+            Some("https://github.com/acme/orion/blob/HEAD/docs/adr/0001.md"),
+        ),
+        (
+            "slash",
+            "docs/adr/0002.md",
+            Some("https://github.com/acme/slash/blob/HEAD/docs/adr/0002.md"),
+        ),
+        (
+            "cred",
+            "docs/adr/0003.md",
+            Some("https://github.com/acme/cred/blob/HEAD/docs/adr/0003.md"),
+        ),
+        ("plain", "docs/adr/0004.md", None),
+        (
+            "ssh",
+            "docs/adr/0005.md",
+            Some("https://github.com/acme/ssh/blob/HEAD/docs/adr/0005.md"),
+        ),
+        ("bare", "docs/adr/0006.md", None),
+        ("alias", "docs/adr/0008.md", None),
+        (
+            "aliasset",
+            "docs/adr/0009.md",
+            Some("https://github.com/acme/aliasset/blob/HEAD/docs/adr/0009.md"),
+        ),
+        (
+            "sshurl",
+            "docs/adr/0007.md",
+            Some("https://github.com/acme/sshurl/blob/HEAD/docs/adr/0007.md"),
+        ),
+        // spaces, '#', '?' and '%' are encoded per segment; '/' stays
+        (
+            "orion",
+            "docs/a b/c#d?e%f.md",
+            Some("https://github.com/acme/orion/blob/HEAD/docs/a%20b/c%23d%3Fe%25f.md"),
+        ),
+    ];
+    let mut ids = Vec::new();
+    for (i, (repo, path, want)) in cases.iter().enumerate() {
+        let id = open_decision(&h, &format!("b-{i}"), &s).await;
+        let linked = admin_post(
+            &h,
+            &format!("/api/v1/decisions/{id}/link"),
+            json!({"repo":repo,"path":path,"record_id":"ADR-1","pr_url":null}),
+        )
+        .await;
+        let want = want.map(|w| json!(w));
+        assert_eq!(
+            linked["record"].get("browse_url").cloned(),
+            want,
+            "link {i}: {linked}"
+        );
+        ids.push((id, i, want));
+    }
+    for (id, i, want) in &ids {
+        let (st, one) = admin_get(&h, &format!("/api/v1/decisions/{id}")).await;
+        assert_eq!(st, 200, "{one}");
+        assert_eq!(
+            one["value"]["record"].get("browse_url").cloned(),
+            *want,
+            "get {i}"
+        );
+        let (_, ctx) = admin_get(&h, &format!("/api/v1/decisions/{id}/context")).await;
+        assert_eq!(
+            ctx["value"]["decision"]["record"]
+                .get("browse_url")
+                .cloned(),
+            *want,
+            "context {i}"
+        );
+        let check = admin_post(
+            &h,
+            &format!("/api/v1/decisions/{id}/check"),
+            json!({"record_id":"ADR-1","version":one["value"]["version"],"check":{"kind":"not_found"}}),
+        )
+        .await;
+        assert_eq!(
+            check["record"].get("browse_url").cloned(),
+            *want,
+            "check {i}"
+        );
+        let (_, one) = admin_get(&h, &format!("/api/v1/decisions/{id}")).await;
+        let (st, edited) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "PATCH",
+            &format!("/api/v1/decisions/{id}"),
+            Some(json!({"version":one["value"]["version"],"title":format!("edited {i}")})),
+        )
+        .await;
+        assert_eq!(st, 200, "{edited}");
+        assert_eq!(
+            edited["value"]["record"].get("browse_url").cloned(),
+            *want,
+            "edit {i}"
+        );
+    }
+    let (_, list) = admin_get(&h, "/api/v1/decisions").await;
+    let (_, queue) = admin_get(&h, "/api/v1/decisions/queue").await;
+    assert_eq!(list["value"].as_array().unwrap().len(), cases.len());
+    assert_eq!(
+        queue["value"]["entries"].as_array().unwrap().len(),
+        cases.len()
+    );
+    for (id, i, want) in &ids {
+        let in_list = list["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"] == *id)
+            .unwrap();
+        assert_eq!(
+            in_list["record"].get("browse_url").cloned(),
+            *want,
+            "list {i}"
+        );
+        let in_queue = queue["value"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["decision"]["id"] == *id)
+            .unwrap();
+        assert_eq!(
+            in_queue["decision"]["record"].get("browse_url").cloned(),
+            *want,
+            "queue {i}"
+        );
+    }
+    // the story context's decisions carry it too, each its own
+    let (_, sctx) = admin_get(&h, &format!("/api/v1/stories/{s}/context")).await;
+    let in_ctx = sctx["value"]["required_decisions"].as_array().unwrap();
+    assert_eq!(in_ctx.len(), cases.len(), "{sctx}");
+    for (id, i, want) in &ids {
+        let d = in_ctx.iter().find(|d| d["id"] == *id).unwrap();
+        assert_eq!(
+            d["record"].get("browse_url").cloned(),
+            *want,
+            "story context {i}"
+        );
+    }
+    // the export is a document of the planner's own facts: no derived link, and no credential from configuration
+    let (st, exp) = admin_get(&h, "/api/v1/export").await;
+    assert_eq!(st, 200);
+    let text = exp.to_string();
+    assert!(
+        text.contains("docs/adr/0001.md"),
+        "the export holds the decisions"
+    );
+    assert!(
+        !text.contains("browse_url"),
+        "the export must not carry browse_url"
+    );
+    assert!(!text.contains("SECRET-TOKEN"));
+    // close answers with it too
+    for (id, i, want) in &ids {
+        let closed = admin_post(
+            &h,
+            &format!("/api/v1/decisions/{id}/close"),
+            json!({"kind":"withdrawn","reason":"moot"}),
+        )
+        .await;
+        assert_eq!(
+            closed["record"].get("browse_url").cloned(),
+            *want,
+            "close {i}"
+        );
+    }
+    // a decision with no record has none
+    let bare = open_decision(&h, "b-none", &s).await;
+    let (_, one) = admin_get(&h, &format!("/api/v1/decisions/{bare}")).await;
+    assert_eq!(one["value"]["record"], serde_json::Value::Null);
+}
+
+/// Spec A5.2: the queue answers lanes in `QueueLane` order, whatever the group, so the groups interleave: an open-group
+/// entry in this_sprint comes before a blocking-group entry in next_sprint, and both before beyond and satisfied.
+#[tokio::test]
+async fn queue_entries_in_lane_order() {
+    let h = harness().await;
+    let mv = |key: String, version: serde_json::Value, to: &'static str| {
+        let h = &h;
+        async move {
+            admin_post(
+                h,
+                &format!("/api/v1/stories/{key}/move"),
+                json!({"version":version,"to":to,"override_reason":"test seeding"}),
+            )
+            .await
+        }
+    };
+    let this_story = chore(&h, "l-this").await;
+    let next_story = chore(&h, "l-next").await;
+    let far_story = chore(&h, "l-far").await;
+    let sat_story = chore(&h, "l-sat").await;
+    // goal one serves the this-sprint story; opening makes it active and creates the next draft
+    let g1 = admin_post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key":"l-g1","outcome":"Ship the thing","check":"shipped"}),
+    )
+    .await;
+    let g1id = g1["goal"]["id"].as_i64().unwrap();
+    admin_post(
+        &h,
+        &format!("/api/v1/goals/{g1id}/links"),
+        json!({"items":[this_story]}),
+    )
+    .await;
+    let (_, sp) = admin_get(&h, "/api/v1/sprints").await;
+    let draft = sp["value"]["draft"].clone();
+    admin_post(
+        &h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version":draft["version"]}),
+    )
+    .await;
+    // goal two (in the new draft) serves the next-sprint story
+    let g2 = admin_post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key":"l-g2","outcome":"Then this","check":"done"}),
+    )
+    .await;
+    let g2id = g2["goal"]["id"].as_i64().unwrap();
+    admin_post(
+        &h,
+        &format!("/api/v1/goals/{g2id}/links"),
+        json!({"items":[next_story]}),
+    )
+    .await;
+    // the this-sprint story is started before its decision exists, so the decision holds nothing (open group)
+    let st = admin_get(&h, &format!("/api/v1/stories/{this_story}"))
+        .await
+        .1["value"]
+        .clone();
+    mv(this_story.clone(), st["version"].clone(), "in_progress").await;
+
+    let d_far = open_decision(&h, "l-d-far", &far_story).await;
+    let d_next = open_decision(&h, "l-d-next", &next_story).await;
+    let d_this = open_decision(&h, "l-d-this", &this_story).await;
+    let d_sat = open_decision(&h, "l-d-sat", &sat_story).await;
+    let linked = admin_post(
+        &h,
+        &format!("/api/v1/decisions/{d_sat}/link"),
+        json!({"repo":"orion","path":"p.md","record_id":"ADR-9","pr_url":null}),
+    )
+    .await;
+    admin_post(&h, &format!("/api/v1/decisions/{d_sat}/check"), json!({"record_id":"ADR-9","version":linked["version"],"check":{"kind":"accepted","commit":"abc"}})).await;
+
+    let (st, q) = admin_get(&h, "/api/v1/decisions/queue").await;
+    assert_eq!(st, 200, "{q}");
+    let entries = q["value"]["entries"].as_array().unwrap();
+    // the count first, so an empty or one-entry answer fails here and not on an index
+    assert_eq!(entries.len(), 4, "{q}");
+    let got: Vec<(i64, &str, &str)> = entries
+        .iter()
+        .map(|e| {
+            (
+                e["decision"]["id"].as_i64().unwrap(),
+                e["group"].as_str().unwrap(),
+                e["lane"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (d_this, "open", "this_sprint"),
+            (d_next, "blocking", "next_sprint"),
+            (d_far, "blocking", "beyond"),
+            (d_sat, "satisfied", "satisfied"),
+        ],
+        "{q}"
+    );
+    assert_eq!(entries[0]["under_way"][0]["key"], this_story, "{q}");
+    assert_eq!(entries[0]["under_way"][0]["delivery"], "in_progress");
+    let sum = &q["value"]["summary"];
+    assert_eq!(
+        (
+            sum["review"].as_u64(),
+            sum["this_sprint"].as_u64(),
+            sum["next_sprint"].as_u64()
+        ),
+        (Some(0), Some(1), Some(1)),
+        "{sum}"
+    );
 }
 
 /// Every versioned write answers a stale version with the conflict envelope carrying the row's version now, so a CLI

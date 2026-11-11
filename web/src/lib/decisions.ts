@@ -1,5 +1,6 @@
 // Pure helpers for required decisions: the check label, the "mine" and "closed" filters, due dates and item links.
-import type { ClosureKind, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+import type { ClosureKind, NeededIn, NeededInReason, NextStep, QueueLane, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+import { age } from '#lib/format.ts';
 
 export type CheckResult = RequiredDecision['check'];
 
@@ -9,7 +10,7 @@ type Labels = { [K in CheckResult['kind']]: (c: Extract<CheckResult, { kind: K }
 
 const LABELS = {
 	unchecked: () => 'unchecked',
-	proposed_pr_open: () => 'proposed, PR open',
+	proposed_pr_open: () => 'proposed (PR linked)',
 	accepted: (c) => `accepted ${shortSha(c.commit)}`,
 	not_found: () => 'not found',
 	// Any other status is shown as the checker reported it ("id mismatch", "unparsable front matter", "rejected", …).
@@ -121,4 +122,66 @@ export function dateLine(d: Pick<RequiredDecision, 'due' | 'created_at'>, on: st
 export function recordMismatch(d: Pick<RequiredDecision, 'reversibility' | 'check'>): Reversibility | null {
 	const theirs = 'reversibility' in d.check ? d.check.reversibility : null;
 	return d.reversibility && theirs && theirs !== d.reversibility ? theirs : null;
+}
+
+/** A decision's reversibility as the lists and the drawer say it. */
+export const REVERSIBILITY_TEXT: Record<Reversibility, string> = { one_way: 'One-way', two_way: 'Two-way' };
+
+/** The queue's lanes, top to bottom. */
+export const LANE_ORDER: QueueLane[] = ['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed'];
+
+export const LANE_LABEL: Record<QueueLane, string> = {
+	review: 'Record to review',
+	this_sprint: 'Needed this sprint',
+	next_sprint: 'Needed next sprint',
+	beyond: 'Needed after next sprint',
+	open: 'Open, not blocking yet',
+	satisfied: 'Accepted',
+	closed: 'Closed'
+};
+
+/** The anchors of the lanes that have one on the decisions page. */
+export const LANE_ANCHOR: Partial<Record<QueueLane, string>> = { review: 'review', this_sprint: 'this-sprint', next_sprint: 'next-sprint' };
+
+/** What an open, unsatisfied decision needs next, as one line. `reversibility` decides whether closing is offered. */
+export function nextStepText(s: NextStep, reversibility: Reversibility | null | undefined, now: number = Date.now()): string {
+	switch (s.kind) {
+		case 'write_record':
+			return reversibility === 'one_way' ? 'Write a record' : 'Write a record, or close it';
+		case 'configure_repo':
+			return `Repository ${s.repo} is not checked: an admin adds it to the server's repos`;
+		case 'fix_record':
+			return `Fix the record: ${checkLabel(s.result)}`;
+		case 'review_record':
+			return 'Linked PR \u00b7 not accepted yet';
+		case 'await_check':
+			return `Waiting for the check (${s.checked_at ? `last ran ${age(s.checked_at, now)} ago` : 'never ran'})`;
+	}
+}
+
+/** Why the decision is needed when it is: the goal's outcome, or the discovery that waits on it. */
+export function neededInText(r: NeededInReason): string {
+	return r.kind === 'goal' ? `for goal: ${r.outcome}` : `${r.key} is in discovery`;
+}
+
+/** Where the item in discovery opens: its initiative or epic page (a discovery item is never a story, but the story
+ *  drawer is the fallback for one). Null for a goal reason, which names no item. */
+export function discoveryHref(r: NeededInReason): string | null {
+	if (r.kind !== 'discovery') return null;
+	const k = encodeURIComponent(r.key);
+	return r.level === 'initiative' ? `/initiatives/${k}` : r.level === 'epic' ? `/epics/${k}` : `/board?story=${k}`;
+}
+
+/** The sprint a decision is needed in. Shown beside `neededInText`, so a row in the review lane still says which sprint. */
+export function neededLabel(n: NeededIn): string {
+	switch (n) {
+		case 'this_sprint':
+			return 'Needed this sprint';
+		case 'next_sprint':
+			return 'Needed next sprint';
+		case 'beyond':
+			return 'Needed after next sprint';
+		case 'none':
+			return 'Not needed yet';
+	}
 }

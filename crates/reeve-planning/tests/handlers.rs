@@ -3345,7 +3345,7 @@ async fn snapshot_fixture(
 const PAUSE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Polls `pg_stat_activity` until exactly one backend of this database waits on a lock: the call, which took its
-/// snapshot on its first `stories` read and now waits on the `required_decisions` lock the test took before spawning
+/// snapshot on its first `stories` read and now waits on the table lock the test took before spawning
 /// it. A 10 s deadline fails the test.
 async fn wait_until_blocked(pool: &sqlx::PgPool) {
     tokio::time::timeout(PAUSE, async {
@@ -3363,7 +3363,7 @@ async fn wait_until_blocked(pool: &sqlx::PgPool) {
         }
     })
     .await
-    .expect("the call never blocked on the required_decisions lock");
+    .expect("the call never blocked on the table lock the test took");
 }
 
 /// Commits, while the call waits, changes to tables the lock does not cover: B done, a new edge T -> S, a pull request
@@ -5245,11 +5245,11 @@ async fn decision_queue_over_real_readiness() {
             (QueueGroup::Open, d_i2.id())
         ]
     );
-    let keys = |e: &QueueEntry| e.blocks.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
+    let keys = |e: &QueueEntry| e.held.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
     assert_eq!(keys(&all[0]), vec![s1.key().clone(), s2.key().clone()]);
-    assert_eq!(all[0].blocks[0].title, "S1");
+    assert_eq!(all[0].held[0].title, "S1");
     assert_eq!(keys(&all[1]), vec![s1.key().clone()]);
-    assert!(all[2].blocks.is_empty());
+    assert!(all[2].held.is_empty());
     assert_eq!(
         (summary.open, summary.blocking, summary.blocked_stories),
         (3, 2, 2)
@@ -5301,7 +5301,7 @@ async fn decision_queue_over_real_readiness() {
         .unwrap();
     let e1 = all.iter().find(|e| e.decision.id() == d1.id()).unwrap();
     assert_eq!(e1.group, QueueGroup::Satisfied);
-    assert!(e1.blocks.is_empty());
+    assert!(e1.held.is_empty());
     let e2 = all.iter().find(|e| e.decision.id() == d2.id()).unwrap();
     assert_eq!(
         (e2.group, keys(e2)),
@@ -5311,6 +5311,439 @@ async fn decision_queue_over_real_readiness() {
         (summary.open, summary.blocking, summary.blocked_stories),
         (2, 1, 1)
     );
+}
+
+/// Opens a sprint whose goal serves `active` and leaves a draft whose goal serves `draft` (items may be of any level);
+/// returns (active goal id, draft goal id).
+async fn sprints_serving(
+    h: &Handlers,
+    c: &Ctx,
+    tag: &str,
+    active: &[reeve_protocol::Key],
+    draft: &[reeve_protocol::Key],
+) -> (i64, i64) {
+    let (a, _) = h
+        .add_goal(
+            c,
+            &format!("{tag}-ga"),
+            "active outcome",
+            "check",
+            None,
+            "",
+            false,
+        )
+        .await
+        .unwrap();
+    h.link_goal(c, a.id, active).await.unwrap();
+    let d = h.sprints(c.now).await.unwrap().draft.unwrap();
+    h.open_sprint(c, d.id, d.version, None).await.unwrap();
+    let (g, _) = h
+        .add_goal(
+            c,
+            &format!("{tag}-gd"),
+            "draft outcome",
+            "check",
+            None,
+            "",
+            false,
+        )
+        .await
+        .unwrap();
+    h.link_goal(c, g.id, draft).await.unwrap();
+    (a.id, g.id)
+}
+
+/// A discovery-complete initiative and epic with `n` ready-but-for-decisions stories (one criterion each).
+async fn marked_epic_with_stories(
+    h: &Handlers,
+    c: &Ctx,
+    tag: &str,
+    n: usize,
+) -> (reeve_protocol::Key, Vec<Story>) {
+    let ini = h
+        .create_initiative(c, &format!("{tag}-i"), "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    h.mark_discovery(c, ItemType::Initiative, ini.key(), ini.version(), true)
+        .await
+        .unwrap();
+    let epic = h
+        .create_epic(
+            c,
+            &format!("{tag}-e"),
+            "E",
+            Some(ini.key().clone()),
+            "",
+            None,
+        )
+        .await
+        .unwrap();
+    h.mark_discovery(c, ItemType::Epic, epic.key(), epic.version(), true)
+        .await
+        .unwrap();
+    let mut stories = vec![];
+    for i in 0..n {
+        stories.push(
+            h.create_story(
+                c,
+                &format!("{tag}-s{i}"),
+                &format!("S{i}"),
+                Kind::Story,
+                Some(epic.key().clone()),
+                "",
+                vec!["works".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    (epic.key().clone(), stories)
+}
+
+async fn queue_all(h: &Handlers, c: &Ctx) -> (Vec<QueueEntry>, QueueSummary) {
+    h.decision_queue(
+        &DecisionScope::All {
+            include_closed: false,
+        },
+        c.now,
+    )
+    .await
+    .unwrap()
+}
+
+/// D1 on S1 (active goal) and D2 on S2 (draft goal) land in this_sprint and next_sprint with the goal as the reason, and
+/// the summary counts one each. Catches the draft read not wired and goals of the wrong sprint.
+#[tokio::test]
+async fn queue_needed_in_from_active_and_draft_goals() {
+    use reeve_protocol::{NeededIn, NeededInReason, QueueLane};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let (_e, ss) = marked_epic_with_stories(&h, &dan, "n", 2).await;
+    let d1 = h
+        .require_decision(&dan, "d1", ss[0].key(), "D1", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let d2 = h
+        .require_decision(&dan, "d2", ss[1].key(), "D2", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let (ga, gd) = sprints_serving(
+        &h,
+        &dan,
+        "n",
+        std::slice::from_ref(ss[0].key()),
+        std::slice::from_ref(ss[1].key()),
+    )
+    .await;
+    let (es, summary) = queue_all(&h, &dan).await;
+    let of = |id: i64| es.iter().find(|e| e.decision.id() == id).unwrap();
+    let (e1, e2) = (of(d1.id()), of(d2.id()));
+    assert_eq!(
+        (e1.needed_in, e1.lane, e1.needed_in_reason.clone()),
+        (
+            NeededIn::ThisSprint,
+            QueueLane::ThisSprint,
+            Some(NeededInReason::Goal {
+                goal_id: ga,
+                outcome: "active outcome".into()
+            })
+        )
+    );
+    assert_eq!(
+        (e2.needed_in, e2.lane, e2.needed_in_reason.clone()),
+        (
+            NeededIn::NextSprint,
+            QueueLane::NextSprint,
+            Some(NeededInReason::Goal {
+                goal_id: gd,
+                outcome: "draft outcome".into()
+            })
+        )
+    );
+    assert_eq!((summary.this_sprint, summary.next_sprint), (1, 1));
+}
+
+/// A decision on an initiative in discovery under the first bucket, with no stories, lands in next_sprint; under the
+/// second bucket it stays open. Catches the counted-but-no-lane case end to end.
+#[tokio::test]
+async fn queue_discovery_decision_counts_in_next_sprint_lane() {
+    use reeve_protocol::{NeededInReason, QueueLane};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now_ini = h
+        .create_initiative(&dan, "i-now", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let later_ini = h
+        .create_initiative(&dan, "i-later", "I2", "", "Later", None, None, None)
+        .await
+        .unwrap();
+    let d1 = h
+        .require_decision(
+            &dan,
+            "d1",
+            now_ini.key(),
+            "D1",
+            "dan@example.com",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let d2 = h
+        .require_decision(
+            &dan,
+            "d2",
+            later_ini.key(),
+            "D2",
+            "dan@example.com",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let (es, summary) = queue_all(&h, &dan).await;
+    let of = |id: i64| es.iter().find(|e| e.decision.id() == id).unwrap();
+    assert_eq!(of(d1.id()).lane, QueueLane::NextSprint);
+    assert_eq!(
+        of(d1.id()).needed_in_reason,
+        Some(NeededInReason::Discovery {
+            key: now_ini.key().clone(),
+            level: reeve_protocol::ItemType::Initiative
+        })
+    );
+    assert_eq!(of(d2.id()).lane, QueueLane::Open);
+    assert_eq!(summary.next_sprint, 1);
+}
+
+/// A started story still counts: D is on epic E, S (in progress by override) serves an active goal. Catches
+/// "unfinished" narrowed to todo.
+#[tokio::test]
+async fn queue_under_way_story_counts() {
+    use reeve_protocol::{NeededIn, QueueGroup};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let (epic, ss) = marked_epic_with_stories(&h, &dan, "u", 1).await;
+    let d = h
+        .require_decision(&dan, "d", &epic, "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let s = &ss[0];
+    h.move_story(
+        &dan,
+        s.key(),
+        s.version(),
+        DeliveryState::InProgress,
+        None,
+        Some("started before the decision".into()),
+    )
+    .await
+    .unwrap();
+    sprints_serving(&h, &dan, "u", std::slice::from_ref(s.key()), &[]).await;
+    let (es, _) = queue_all(&h, &dan).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert!(e.held.is_empty());
+    assert_eq!(
+        e.under_way
+            .iter()
+            .map(|u| u.key.clone())
+            .collect::<Vec<_>>(),
+        vec![s.key().clone()]
+    );
+    assert_eq!(e.needed_in, NeededIn::ThisSprint);
+    assert_eq!(e.group, QueueGroup::Open, "old clients see no change");
+}
+
+/// A record in a repository the server does not check needs the repository configured, not a wait. Catches the
+/// unconfigured-repo case shown as waiting for the check.
+#[tokio::test]
+async fn queue_next_step_configure_repo() {
+    use reeve_protocol::NextStep;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let (epic, _) = marked_epic_with_stories(&h, &dan, "r", 1).await;
+    let d = h
+        .require_decision(&dan, "d", &epic, "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    h.link_record(&dan, d.id(), "infra", "adr/1.md", "ADR-1", None)
+        .await
+        .unwrap();
+    let (es, _) = queue_all(&h, &dan).await;
+    assert_eq!(
+        es[0].next_step,
+        Some(NextStep::ConfigureRepo {
+            repo: "infra".into()
+        })
+    );
+}
+
+/// A held story is urgent when its epic is marked (lineage, kb/ADR-0017 R3). Catches `Urgency::default()` left in place.
+#[tokio::test]
+async fn queue_held_story_urgency_is_lineage() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let (epic, ss) = marked_epic_with_stories(&h, &dan, "g", 1).await;
+    h.require_decision(&dan, "d", ss[0].key(), "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let (before, _) = queue_all(&h, &dan).await;
+    assert!(!before[0].held[0].urgent);
+    h.mark_urgent(&dan, ItemType::Epic, &epic, None)
+        .await
+        .unwrap();
+    let (after, _) = queue_all(&h, &dan).await;
+    assert!(after[0].held[0].urgent);
+}
+
+/// The context is the queue's own entry for that decision. Catches a second implementation of the classifier.
+#[tokio::test]
+async fn decision_context_returns_one_entry() {
+    use reeve_protocol::QueueLane;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let (_e, ss) = marked_epic_with_stories(&h, &dan, "c", 2).await;
+    let d = h
+        .require_decision(&dan, "d", ss[0].key(), "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    let other = h
+        .require_decision(&dan, "d2", ss[1].key(), "D2", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    sprints_serving(&h, &dan, "c", std::slice::from_ref(ss[0].key()), &[]).await;
+    let (es, _) = queue_all(&h, &dan).await;
+    let want = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    let got = h.decision_context(d.id(), dan.now).await.unwrap();
+    let keys = |e: &QueueEntry| e.held.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        (got.lane, got.needed_in, got.next_step.clone(), keys(&got)),
+        (
+            want.lane,
+            want.needed_in,
+            want.next_step.clone(),
+            keys(want)
+        )
+    );
+    assert_eq!(got.lane, QueueLane::ThisSprint);
+    let o = h.decision_context(other.id(), dan.now).await.unwrap();
+    assert_eq!(o.lane, QueueLane::Beyond);
+    h.close_decision(
+        &dan,
+        d.id(),
+        reeve_protocol::ClosureKind::Withdrawn,
+        "not needed",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        h.decision_context(d.id(), dan.now).await.unwrap().lane,
+        QueueLane::Closed
+    );
+    assert!(matches!(
+        h.decision_context(9999, dan.now).await,
+        Err(HandlerError::NotFound)
+    ));
+}
+
+/// Goals, a draft sprint and an urgent mark add no statements: the queue costs the same with few and with many stories,
+/// goals and marks. Catches a per-goal or per-mark read that the goal-less baseline cannot.
+#[tokio::test]
+async fn decision_queue_costs_the_same_with_goals() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let a = seed_board(&h, "a", 3, 1).await;
+    sprints_serving(&h, &dan, "a", &a[..1], &a[1..2]).await;
+    h.mark_urgent(&dan, ItemType::Story, &a[2], None)
+        .await
+        .unwrap();
+    let q = || {
+        let h = h.clone();
+        let c = dan.clone();
+        async move {
+            queue_all(&h, &c).await;
+        }
+    };
+    q().await;
+    let few = common::statements(&pool, q).await;
+    assert!(few > 5, "the counter measured {few} statements");
+    let b = seed_board(&h, "b", 9, 100).await;
+    let c = seed_board(&h, "c", 4, 200).await;
+    // Grow the ACTIVE sprint's goals (even i, to_active) and the draft's (odd i), each linked to seeded stories.
+    for (i, k) in b.iter().chain(c.iter()).enumerate() {
+        let (g, _) = h
+            .add_goal(&dan, &format!("more-{i}"), "o", "c", None, "", i % 2 == 0)
+            .await
+            .unwrap();
+        h.link_goal(&dan, g.id, std::slice::from_ref(k))
+            .await
+            .unwrap();
+        if i % 3 == 0 {
+            h.mark_urgent(&dan, ItemType::Story, k, None).await.unwrap();
+        }
+    }
+    let many = common::statements(&pool, q).await;
+    assert_eq!(few, many);
+}
+
+/// The queue reads one snapshot: a goal link committed while the read waits does not change the lane the read reports;
+/// a fresh call sees it. Catches reads taken on separate snapshots.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn decision_queue_reads_one_snapshot() {
+    use reeve_protocol::QueueLane;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let (_e, ss) = marked_epic_with_stories(&h, &dan, "z", 1).await;
+    let d = h
+        .require_decision(&dan, "d", ss[0].key(), "D", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    // A draft goal exists but serves nothing yet.
+    let (_ga, gd) = sprints_serving(&h, &dan, "z", &[], &[]).await;
+    assert_eq!(queue_all(&h, &dan).await.0[0].lane, QueueLane::Beyond);
+
+    // The queue's statements run on one snapshot; the call waits on `initiatives` (read after its first statements),
+    // while the test commits a goal link, which touches no `initiatives` row.
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE initiatives IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let call = tokio::spawn({
+        let (h, c) = (h.clone(), dan.clone());
+        async move { queue_all(&h, &c).await }
+    });
+    wait_until_blocked(&pool).await;
+    tokio::time::timeout(PAUSE, async {
+        let mut w = pool.begin().await.unwrap();
+        h.ports
+            .sprints
+            .insert_goal_link(&mut w, gd, ss[0].key(), "dan@example.com", dan.now)
+            .await
+            .unwrap();
+        w.commit().await.unwrap();
+    })
+    .await
+    .expect("the commit never finished");
+    lock.rollback().await.unwrap();
+    let (es, _) = tokio::time::timeout(PAUSE, call)
+        .await
+        .expect("the queue never finished")
+        .unwrap();
+    assert_eq!(es[0].decision.id(), d.id());
+    assert_eq!(es[0].lane, QueueLane::Beyond, "the old lane");
+    assert_eq!(queue_all(&h, &dan).await.0[0].lane, QueueLane::NextSprint);
 }
 
 /// Marking and clearing: interactive only, logged under their own actions, renew replaces, clear is idempotent.

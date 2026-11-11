@@ -27,7 +27,7 @@ pub fn reason(r: &Reason) -> String {
             format!("decision #{decision_id} \"{title}\" has not been checked")
         }
         Reason::DecisionProposedPrOpen { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\" is proposed; its PR is open")
+            format!("decision #{decision_id} \"{title}\" is proposed; its PR is linked")
         }
         Reason::DecisionRecordNotFound { decision_id, title } => {
             format!("decision #{decision_id} \"{title}\": record not found on the default branch")
@@ -259,7 +259,7 @@ fn check_text(c: &CheckResult) -> String {
             Some(s) => format!("superseded by {s}, re-point"),
             None => status.clone(),
         },
-        CheckResult::ProposedPrOpen => "proposed, PR open".into(),
+        CheckResult::ProposedPrOpen => "proposed (PR linked)".into(),
         CheckResult::NotFound => "record not found".into(),
     }
 }

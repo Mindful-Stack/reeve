@@ -3,10 +3,21 @@ use serde::Deserialize;
 /// A repository of the team's household. `name` is the allowlist a record reference must match and the clone's directory
 /// under the household; `url` is what the scheduled check clones (`reeve-server repos`); `adr_dir` is instance
 /// configuration kb/ADR-0016 R2 requires, read by nothing yet.
+///
+/// A record's browse link is `<base>/blob/HEAD/<path>`, GitHub's layout, so a host that lays out its web pages
+/// differently gets links that do not resolve. The base is `browse_url` when set: an `https://` URL with a dotted host
+/// (anything else fails the configuration load), taken as is apart from userinfo, query, fragment, a trailing `/` and
+/// `.git`. Otherwise it is derived from `url` when that is an `https://host/org/repo` URL, an scp-style
+/// `git@host:org/repo` or an `ssh://git@host[:port]/org/repo` one (user, port and `.git` dropped). A host without a dot
+/// is an ssh host alias, not a web host, so it gives no link: set `browse_url` for such a repository. Any other URL
+/// gives no link.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepoConfig {
     pub name: String,
     pub url: Option<String>,
+    /// The repository's web address, for record links when `url` cannot give one (an ssh host alias).
+    #[serde(default)]
+    pub browse_url: Option<String>,
     pub adr_dir: String,
 }
 
@@ -403,6 +414,13 @@ impl ServerConfig {
                     "[[repos]] name {n:?} must be a single directory name: not empty, not starting with '.' or '-', without '/' or '\\'"
                 );
             }
+            if let Some(b) = &r.browse_url
+                && crate::state::explicit_browse_base(b).is_none()
+            {
+                anyhow::bail!(
+                    "[[repos]] {n:?}: browse_url {b:?} must be an https:// URL with a host name (a dot in it), like https://github.com/org/repo"
+                );
+            }
         }
         if self.oidc.is_some() && self.public_url.is_none() {
             anyhow::bail!(
@@ -613,6 +631,56 @@ mod tests {
             );
         }
         assert!(cfg("[[repos]]\nname = \"kb-2.x\"\nurl = \"u\"\nadr_dir = \"x\"").is_ok());
+    }
+
+    /// An explicit `browse_url` must be an https URL with a dotted host; anything else stops the load, like a bad
+    /// public_url does. Catches a quietly ignored typo that would leave records without links.
+    #[test]
+    fn a_repository_browse_url_must_be_https_with_a_dotted_host() {
+        for bad in [
+            "",
+            "http://github.com/o/r",
+            "git@github.com:o/r.git",
+            "ssh://git@github.com/o/r",
+            "https://localhost/o/r",
+            "https://github-kb/o/r",
+        ] {
+            let err = cfg(&format!(
+                "[[repos]]\nname = \"kb\"\nurl = \"u\"\nbrowse_url = \"{bad}\"\nadr_dir = \"x\""
+            ))
+            .unwrap_err();
+            assert!(err.to_string().contains("browse_url"), "{bad:?}: {err}");
+        }
+        let c = cfg(
+            "[[repos]]\nname = \"kb\"\nurl = \"u\"\nbrowse_url = \"https://github.com/o/r\"\nadr_dir = \"x\"\n[[repos]]\nname = \"other\"\nadr_dir = \"x\"",
+        )
+        .unwrap();
+        assert_eq!(
+            c.repos[0].browse_url.as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(c.repos[1].browse_url, None);
+    }
+
+    /// The browse base: an explicit `browse_url` wins (trimmed of `.git`, `/` and credentials); an ssh host alias gives none
+    /// on its own; an alias url with an explicit `browse_url` links from the explicit one.
+    #[test]
+    fn browse_urls_prefer_the_explicit_address_and_refuse_an_ssh_alias() {
+        let c = cfg(concat!(
+            "[[repos]]\nname = \"alias\"\nurl = \"git@github-knowledge-base:Acme/kb.git\"\nadr_dir = \"x\"\n",
+            "[[repos]]\nname = \"aliasset\"\nurl = \"git@github-knowledge-base:Acme/kb.git\"\n",
+            "browse_url = \"https://bot:SECRET@github.com/Acme/kb.git/?x=1#y\"\nadr_dir = \"x\"\n",
+            "[[repos]]\nname = \"over\"\nurl = \"git@github.com:Acme/derived.git\"\nbrowse_url = \"https://git.example.com/Acme/explicit/\"\nadr_dir = \"x\"\n",
+            "[[repos]]\nname = \"real\"\nurl = \"git@github.com:Acme/real.git\"\nadr_dir = \"x\"\n",
+            "[[repos]]\nname = \"urlalias\"\nurl = \"ssh://git@github-kb/Acme/kb.git\"\nadr_dir = \"x\"",
+        ))
+        .unwrap();
+        let urls = crate::state::browsable_repo_urls(&c);
+        assert_eq!(urls.get("alias"), None);
+        assert_eq!(urls.get("urlalias"), None);
+        assert_eq!(urls["aliasset"], "https://github.com/Acme/kb");
+        assert_eq!(urls["over"], "https://git.example.com/Acme/explicit");
+        assert_eq!(urls["real"], "https://github.com/Acme/real");
     }
 
     #[test]

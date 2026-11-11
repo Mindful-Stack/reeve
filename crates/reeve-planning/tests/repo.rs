@@ -1734,3 +1734,266 @@ async fn similar_stories_finds_reworded_titles_and_recent_done_only() {
             .is_empty()
     );
 }
+
+/// The draft read sees only the draft sprint's goals and the active read only the active sprint's, each with its
+/// nearest link. Catches a sprint-state filter dropped or swapped between the two reads.
+#[tokio::test]
+async fn draft_goals_of_stories_reads_only_the_draft_sprint() {
+    use reeve_protocol::{GoalVia, SprintState};
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let e = h
+        .create_epic(&dan(), "e", "E", None, "", None)
+        .await
+        .unwrap();
+    let s = story(&h, "s", Kind::Story, Some(e.key()), &["c"]).await;
+    let day = |d: u32| chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+    let now = day(3).and_hms_opt(9, 0, 0).unwrap().and_utc();
+    let ports = h.ports.clone();
+    let mut tx = pool.begin().await.unwrap();
+    let active = ports
+        .sprints
+        .insert_draft(&mut tx, day(3), day(17), now)
+        .await
+        .unwrap()
+        .unwrap();
+    let (a_goal, _) = ports
+        .sprints
+        .insert_goal(&mut tx, active.id, "active goal", "x", "dan", "", "ka", now)
+        .await
+        .unwrap();
+    ports
+        .sprints
+        .insert_goal_link(&mut tx, a_goal.id, e.key(), "dan", now)
+        .await
+        .unwrap();
+    let mut sp = ports
+        .sprints
+        .sprint_for_update(&mut tx, active.id)
+        .await
+        .unwrap();
+    sp.state = SprintState::Active;
+    sp.opened_at = Some(now);
+    ports.sprints.save_sprint(&mut tx, &sp).await.unwrap();
+    let draft = ports
+        .sprints
+        .insert_draft(&mut tx, day(17), day(30), now)
+        .await
+        .unwrap()
+        .unwrap();
+    let (d_goal, _) = ports
+        .sprints
+        .insert_goal(&mut tx, draft.id, "draft goal", "x", "dan", "", "kd", now)
+        .await
+        .unwrap();
+    ports
+        .sprints
+        .insert_goal_link(&mut tx, d_goal.id, s.key(), "dan", now)
+        .await
+        .unwrap();
+
+    let keys = [s.key().clone()];
+    let drafts = ports
+        .reads
+        .draft_goals_of_stories(&mut tx, &keys)
+        .await
+        .unwrap();
+    assert_eq!(
+        drafts[s.key()],
+        vec![(d_goal.id, "draft goal".to_string(), GoalVia::Story)]
+    );
+    let actives = ports
+        .reads
+        .active_goals_of_stories(&mut tx, &keys)
+        .await
+        .unwrap();
+    assert_eq!(
+        actives[s.key()],
+        vec![(a_goal.id, "active goal".to_string(), GoalVia::Epic)]
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The lineage runs nearest first and never includes the item's own story. Catches a level skipped, the horizon read
+/// from the wrong row, a story listed in its own lineage and a missing key invented.
+#[tokio::test]
+async fn decision_lineage_in_walks_story_epic_initiative() {
+    use reeve_planning::LineageItem;
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let c = dan();
+    let ini = h
+        .create_initiative(&c, "i", "I", "", "Later", None, None, None)
+        .await
+        .unwrap();
+    let epic = h
+        .create_epic(&c, "e", "E", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    let lone = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
+    let s = story(&h, "s", Kind::Story, Some(epic.key()), &["c"]).await;
+    // A second tree with another horizon, so a wrong join would pick up the wrong row.
+    let ini2 = h
+        .create_initiative(&c, "i2", "I2", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let epic2 = h
+        .create_epic(&c, "e3", "E3", Some(ini2.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&c, ItemType::Epic, epic.key(), epic.version(), true)
+        .await
+        .unwrap();
+
+    let ports = h.ports.clone();
+    let missing = Key::new("ABC", 999).unwrap();
+    let items = vec![
+        s.key().clone(),
+        epic.key().clone(),
+        ini.key().clone(),
+        lone.key().clone(),
+        missing.clone(),
+        epic2.key().clone(),
+    ];
+    let mut tx = pool.begin().await.unwrap();
+    let got = ports
+        .reads
+        .decision_lineage_in(&mut tx, &items)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    let e_row = LineageItem {
+        key: epic.key().clone(),
+        level: ItemType::Epic,
+        discovery_marked: true,
+        initiative_horizon: Some("Later".into()),
+    };
+    let i_row = LineageItem {
+        key: ini.key().clone(),
+        level: ItemType::Initiative,
+        discovery_marked: false,
+        initiative_horizon: Some("Later".into()),
+    };
+    assert_eq!(got[s.key()], vec![e_row.clone(), i_row.clone()]);
+    assert_eq!(got[epic.key()], vec![e_row, i_row.clone()]);
+    assert_eq!(got[ini.key()], vec![i_row]);
+    assert_eq!(
+        got[lone.key()],
+        vec![LineageItem {
+            key: lone.key().clone(),
+            level: ItemType::Epic,
+            discovery_marked: false,
+            initiative_horizon: None,
+        }]
+    );
+    assert!(!got.contains_key(&missing));
+    assert_eq!(
+        got[epic2.key()],
+        vec![
+            LineageItem {
+                key: epic2.key().clone(),
+                level: ItemType::Epic,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            },
+            LineageItem {
+                key: ini2.key().clone(),
+                level: ItemType::Initiative,
+                discovery_marked: false,
+                initiative_horizon: Some("Now".into()),
+            }
+        ]
+    );
+}
+
+/// One statement whatever the number of keys. Catches a read per key.
+#[tokio::test]
+async fn decision_lineage_in_costs_the_same_for_three_and_thirty() {
+    let (_c, pool) = common::pg_counted().await;
+    let h = handlers(&pool);
+    let mut keys = seed(&h, "a", 3, 2).await;
+    let measure = |keys: Vec<Key>| {
+        let pool = pool.clone();
+        let ports = h.ports.clone();
+        async move {
+            common::statements(&pool.clone(), || async move {
+                let mut tx = pool
+                    .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                    .await
+                    .unwrap();
+                ports
+                    .reads
+                    .decision_lineage_in(&mut tx, &keys)
+                    .await
+                    .unwrap();
+                tx.rollback().await.unwrap();
+            })
+            .await
+        }
+    };
+    let three = measure(keys.clone()).await;
+    keys.extend(seed(&h, "b", 27, 9).await);
+    assert_eq!(keys.len(), 30);
+    let thirty = measure(keys).await;
+    assert_eq!(three, thirty);
+}
+
+/// `unfinished` lists every story whose delivery is not done, and combines with the other filters. Catches a done story
+/// listed, a started story dropped, and the flag ignored.
+#[tokio::test]
+async fn unfinished_filter_excludes_done_and_keeps_started() {
+    let (_c, pool) = common::pg().await;
+    let h = handlers(&pool);
+    let e = h
+        .create_epic(&dan(), "e", "E", None, "", None)
+        .await
+        .unwrap();
+    let todo = story(&h, "t", Kind::Story, Some(e.key()), &["c"]).await;
+    let loose = story(&h, "l", Kind::Story, None, &[]).await;
+    let done = insert_imported_done(&pool).await;
+    let started = story(&h, "p", Kind::Chore, None, &[]).await;
+    h.move_story(
+        &dan(),
+        started.key(),
+        started.version(),
+        DeliveryState::InProgress,
+        None,
+        Some("started".into()),
+    )
+    .await
+    .unwrap();
+    let ports = h.ports.clone();
+    let list = |f: StoryFilter| {
+        let (ports, pool) = (ports.clone(), pool.clone());
+        async move {
+            let mut tx = pool.begin().await.unwrap();
+            let got = ports.stories.list_stories(&mut tx, &f, None).await.unwrap();
+            tx.rollback().await.unwrap();
+            got.iter().map(|s| s.key().clone()).collect::<Vec<_>>()
+        }
+    };
+    let all = list(StoryFilter::default()).await;
+    assert!(
+        all.contains(&done),
+        "without the flag a done story is listed"
+    );
+    let un = list(StoryFilter {
+        unfinished: true,
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(un.len(), 3);
+    assert!(
+        un.contains(todo.key()) && un.contains(loose.key()) && un.contains(started.key()),
+        "a started story is unfinished"
+    );
+    assert!(!un.contains(&done));
+    assert!(all.contains(started.key()));
+    let in_epic = list(StoryFilter {
+        unfinished: true,
+        epic: Some(e.key().clone()),
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(in_epic, vec![todo.key().clone()]);
+}

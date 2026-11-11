@@ -29,28 +29,21 @@ impl DecisionRepo for PgPlanningRepo {
         Ok((decision_from(&r)?, false))
     }
     async fn get_decision(&self, id: i64) -> Result<RequiredDecision, RepoError> {
-        let r = sqlx::query(&format!(
-            "SELECT {DECISION_COLS} FROM required_decisions WHERE id = $1"
-        ))
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(RepoError::NotFound)?;
-        Ok(decision_from(&r)?)
+        decision_by_id(&self.pool, id, false).await
+    }
+    async fn get_decision_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+    ) -> Result<RequiredDecision, RepoError> {
+        decision_by_id(&mut **tx, id, false).await
     }
     async fn get_decision_for_update(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
     ) -> Result<RequiredDecision, RepoError> {
-        let r = sqlx::query(&format!(
-            "SELECT {DECISION_COLS} FROM required_decisions WHERE id = $1 FOR UPDATE"
-        ))
-        .bind(id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or(RepoError::NotFound)?;
-        Ok(decision_from(&r)?)
+        decision_by_id(&mut **tx, id, true).await
     }
     async fn list_decisions_on(&self, on_key: &Key) -> Result<Vec<RequiredDecision>, RepoError> {
         decisions_on(&self.pool, on_key).await
@@ -113,4 +106,21 @@ impl DecisionRepo for PgPlanningRepo {
             Err(RepoError::NotFound)
         }
     }
+}
+
+/// One decision by id, optionally with a row lock (not allowed in a READ ONLY transaction).
+async fn decision_by_id<'e, E: sqlx::PgExecutor<'e>>(
+    e: E,
+    id: i64,
+    for_update: bool,
+) -> Result<RequiredDecision, RepoError> {
+    let lock = if for_update { " FOR UPDATE" } else { "" };
+    let r = sqlx::query(&format!(
+        "SELECT {DECISION_COLS} FROM required_decisions WHERE id = $1{lock}"
+    ))
+    .bind(id)
+    .fetch_optional(e)
+    .await?
+    .ok_or(RepoError::NotFound)?;
+    Ok(decision_from(&r)?)
 }

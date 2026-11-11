@@ -219,7 +219,7 @@
 					{/if}
 					<p class="counts">
 						{p?.completed ?? 0} completed · {p?.in_flight ?? 0} in flight ({p?.in_review ?? 0} in review) · {p?.todo ?? 0} todo ·
-						{blockedText(p?.blocked_decisions ?? 0)}
+						{#if p?.blocked_decisions}<a href="/decisions">{blockedText(p.blocked_decisions)}</a>{:else}{blockedText(0)}{/if}
 					</p>
 					{@render goalControls(g)}
 					{#if confidenceFor?.id === g.id}

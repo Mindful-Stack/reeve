@@ -77,6 +77,7 @@ async fn list(
         untriaged: q.untriaged,
         label: q.label,
         goal,
+        unfinished: false,
     };
     Ok(ok(s
         .handlers
@@ -213,7 +214,11 @@ async fn context(
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<StoryContextDto>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    Ok(ok(s.handlers.story_context(&key, c.ctx().now).await?))
+    let mut ctx = s.handlers.story_context(&key, c.ctx().now).await?;
+    for d in &mut ctx.required_decisions {
+        super::decisions::browse(&s, d);
+    }
+    Ok(ok(ctx))
 }
 #[utoipa::path(post, path = "/stories/{key}/blocks", params(("key" = String, Path)), request_body = BlockEdge, responses((status = 200, body = Response<Empty>)))]
 async fn block(
