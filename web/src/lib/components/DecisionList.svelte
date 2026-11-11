@@ -615,7 +615,7 @@
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
 		<div class="row">
-			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" data-sveltekit-noscroll href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
+			<span class="cell headline" data-col="title">{#if decisionHref}<a class="title" data-field="open" data-sveltekit-reset="false" href={decisionHref(d.id)}>{d.title}</a>{:else}<span class="title">{d.title}</span>{/if}{@render chip(d)}</span>
 			<span class="cell decider" data-col="decider" title={d.closed ? undefined : d.decider}>{#if !d.closed}{short(d.decider)}<span class="visually-hidden">{' decides'}</span>{/if}</span>
 			<span class="cell when" data-col="when"
 				>{#if !d.closed}<span class={when.tone}>{when.text}</span>

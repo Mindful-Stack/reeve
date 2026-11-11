@@ -121,6 +121,8 @@ describe('DecisionList entries', () => {
 		expect(link?.tagName).toBe('A');
 		expect(link?.getAttribute('href')).toBe('/decisions?decision=1');
 		expect(link?.getAttribute('data-field')).toBe('open');
+		// SvelteKit 3: a drawer opens over the view, which must not scroll or lose focus.
+		expect(link?.getAttribute('data-sveltekit-reset')).toBe('false');
 		unmount(app!);
 		document.body.innerHTML = '';
 		expect(mountWith(d, {}).row.querySelector('.title')?.tagName).toBe('SPAN');

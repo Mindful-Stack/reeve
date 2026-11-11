@@ -628,7 +628,7 @@
 								>
 								<span class="key"><Glyph level={levelOfKind(s.kind)} />{s.key}</span>
 								{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
-								<a class="title" data-sveltekit-noscroll href={storyHref(page.url, s.key)}>{s.title}</a>
+								<a class="title" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.title}</a>
 								<span
 									class="readiness"
 									title={item.readiness.ready ? undefined : item.readiness.reasons.map((r) => fullLabel(r)).join('\n')}

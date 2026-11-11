@@ -186,6 +186,7 @@ describe('DecisionDrawer', () => {
 			['under-way', 'Under way without it', ['/board?sort=rank&story=ABC-34']]
 		]);
 		for (const a of drawer.querySelectorAll('.held a.key')) expect(a.getAttribute('href')).not.toContain('decision');
+		for (const a of drawer.querySelectorAll('.held a.key')) expect(a.getAttribute('data-sveltekit-reset')).toBe('false');
 		expect(drawer.querySelector('.held h3:last-of-type')?.textContent).toBe('Under way without it');
 		// A row: kind glyph, key link, title, the urgent chip and the owner; an under-way story also says where it is.
 		const first = drawer.querySelector('.held li')!;

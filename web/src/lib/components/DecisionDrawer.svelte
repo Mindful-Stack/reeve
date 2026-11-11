@@ -111,7 +111,7 @@
 
 {#snippet storyRow(s: AffectedStory)}
 	<li>
-		<Glyph level={levelOfKind(s.kind)} /><a class="key" data-sveltekit-noscroll href={storyHref(page.url, s.key)}>{s.key}</a>
+		<Glyph level={levelOfKind(s.kind)} /><a class="key" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.key}</a>
 		<span class="story-title">{s.title}</span>
 		{#if s.urgent}<UrgentChip line="Urgent" />{/if}
 		{#if s.owner}<span class="muted">{short(s.owner)}</span>{/if}

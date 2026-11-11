@@ -88,7 +88,7 @@
 	{ondragend}
 >
 	<div class="head">
-		<a class="title" data-sveltekit-noscroll {href}>{s.title}</a>
+		<a class="title" data-sveltekit-reset="false" {href}>{s.title}</a>
 		{#if items.length}<ActionsMenu label="Actions for {s.key}" {items} control="menu" />{/if}
 	</div>
 	<div class="meta">
