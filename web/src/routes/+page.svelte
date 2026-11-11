@@ -2,11 +2,11 @@
      what to pick next (ready work nobody owns, with Start) and the active sprint. Everything comes from four reads the
      server already answers; Home only partitions them (#lib/home.ts) and stores nothing. -->
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
-	import type { AffectedStory, DecisionQueue, DecisionQueueEntry, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
+	import type { DecisionQueue, DecisionQueueEntry, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
 	import { COLUMN_LABEL } from '#lib/board.ts';
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import GoalsStrip from '#lib/components/GoalsStrip.svelte';
@@ -15,66 +15,52 @@
 	import { today } from '#lib/decisions.ts';
 	import { decisionHref } from '#lib/drawer.ts';
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
-	import { errorMessage } from '#lib/format.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
 	import { myDecisions, pickNext, sprintLine, underWay } from '#lib/home.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { postMove } from '#lib/moves.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
-	let sprints = $state<Sprints | null>(null);
-	let queue = $state<DecisionQueue | null>(null);
-	let mine = $state<StoryWithReadiness[] | null>(null);
-	let ready = $state<StoryWithReadiness[] | null>(null);
+	/** The four reads as the server last answered them, set together; null until the first answer. */
+	let data = $state<{ sprints: Sprints; queue: DecisionQueue; mine: StoryWithReadiness[]; ready: StoryWithReadiness[] } | null>(null);
 	let loadError = $state<string | null>(null);
-	let notice = $state<string | null>(null);
+	let notice = $state<{ text: string; tone: 'info' | 'error' } | null>(null);
 	let busy = $state(false);
 	/** A Start refused for readiness reasons, waiting for the person's written reason (kb/ADR-0018 R2). */
 	let override = $state<{ row: StoryWithReadiness; reasons: Reason[] } | null>(null);
 	let showMore = $state(false);
 
-	const loaded = $derived(queue !== null && ready !== null);
-	const me = $derived(session.me?.email ?? '');
 	/** The viewer's date, re-read every minute, so the sprint line rolls over at midnight without a refetch. */
 	const on = $derived(today(new Date(minuteClock.now)));
-	const active = $derived(sprints?.active ?? null);
-
-	const decided = $derived(myDecisions(queue?.entries ?? [], me));
+	const active = $derived(data?.sprints.active ?? null);
+	// The layout renders a page only after `session.me` has loaded.
+	const decided = $derived(myDecisions(data?.queue.entries ?? [], session.me!.email));
 	const listed = $derived(decided.listed.map((e) => e.decision));
+	// DecisionList reads each row's held stories from its entry.
 	const entries = $derived(new Map<number, DecisionQueueEntry>(decided.listed.map((e) => [e.decision.id, e])));
-	const blocks = $derived(new Map<number, AffectedStory[]>(decided.listed.map((e) => [e.decision.id, e.blocks])));
 	/** Every listed decision after the first three folds behind "n more". */
 	const more = $derived(new Set(listed.slice(3).map((d) => d.id)));
-	const anyDecision = $derived(decided.listed.length + decided.review + decided.later > 0);
-
-	const work = $derived(underWay(mine ?? []));
-	const pick = $derived(pickNext(ready ?? []));
-	/** Stories a decision keeps out of active work, each counted once (the queue's own count). */
-	const blocked = $derived(queue?.summary.blocked_stories ?? 0);
-
-	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+	const work = $derived(underWay(data?.mine ?? []));
+	const pick = $derived(pickNext(data?.ready ?? []));
+	/** Todo stories a decision holds, each counted once (the queue's own count). */
+	const held = $derived(data?.queue.summary.blocked_stories ?? 0);
 
 	// A write's own reload and a live refetch can overlap; only the latest request's answer (or failure) lands, and a
 	// failed reload keeps the last good page.
 	let latest = 0;
 	async function reload() {
 		const seq = ++latest;
-		const owner = session.me?.email;
 		try {
-			const [s, q, m, r] = await Promise.all([
+			const [sprints, queue, mine, ready] = await Promise.all([
 				unwrap(api.GET('/api/v1/sprints')),
 				unwrap(api.GET('/api/v1/decisions/queue')),
-				owner
-					? unwrap(api.GET('/api/v1/stories', { params: { query: { owner, done: 'none' } } }))
-					: Promise.resolve([] as StoryWithReadiness[]),
+				unwrap(api.GET('/api/v1/stories', { params: { query: { owner: session.me!.email, done: 'none' } } })),
 				// Ready already implies todo; `delivery=todo` spares the server every done story.
 				unwrap(api.GET('/api/v1/stories', { params: { query: { ready: true, delivery: 'todo' } } }))
 			]);
 			if (seq !== latest) return;
-			sprints = s;
-			queue = q;
-			mine = m;
-			ready = r;
+			data = { sprints, queue, mine, ready };
 			loadError = null;
 		} catch (e) {
 			if (seq !== latest) return;
@@ -86,31 +72,34 @@
 	// Any activity entry, and every (re)connect, refetches (kb/ADR-0011 R10, the web's refresh policy).
 	onLive(reload);
 
-	/** Start: the board's move to in progress. Starting a story nobody owns makes the mover its owner. */
+	/** Start: the board's move to in progress. Pick next lists only stories nobody owns, and starting one makes the mover
+	 *  its owner. After the move, focus goes to the story's row under Under way, as the board refocuses a moved card. */
 	async function start(row: StoryWithReadiness, overrideReason?: string) {
 		const key = row.story.key;
-		const wasFree = row.story.owner == null;
 		busy = true;
 		notice = null;
 		try {
-			const out = await postMove(row.story, 'in_progress', overrideReason ? { overrideReason } : {});
-			if (out.kind === 'moved') {
-				override = null;
-				await reload();
-				if (wasFree) notice = `${key} is yours now.`;
-			} else if (out.kind === 'override') {
+			const out = await postMove(row.story, 'in_progress', { overrideReason });
+			if (out.kind === 'override') {
 				override = { row, reasons: out.reasons };
-			} else {
-				override = null;
-				notice = out.notice;
+				return;
 			}
+			override = null;
+			if (out.kind === 'notice') {
+				notice = { text: out.notice, tone: 'error' };
+				return;
+			}
+			await reload();
+			notice = { text: `${key} is yours now.`, tone: 'info' };
+			await tick();
+			document.querySelector<HTMLElement>(`section[aria-labelledby="home-under-way"] [data-key="${key}"] a`)?.focus();
 		} catch (e) {
 			override = null;
 			if (e instanceof Conflict) {
-				notice = `Someone else changed ${key}; Home was reloaded.`;
+				notice = { text: `Someone else changed ${key}; Home was reloaded.`, tone: 'error' };
 				await reload();
 			} else {
-				notice = errorMessage(e);
+				notice = { text: errorMessage(e), tone: 'error' };
 			}
 		} finally {
 			busy = false;
@@ -118,24 +107,25 @@
 	}
 </script>
 
+<svelte:head><title>Home · Reeve</title></svelte:head>
+
 <div class="home">
-	<PageHeader title="Home" />
-	{#if sprints}
-		<p class="sprint-line">
-			<span>{active ? sprintLine(active.sprint, on) : 'No sprint is running'}</span>
+	<PageHeader title="Home">
+		{#if data}
+			<span class="sprint-line">{active ? sprintLine(active.sprint, on) : 'No sprint is running'}</span>
 			<a href="/sprint">Sprint →</a>
-		</p>
-	{/if}
+		{/if}
+	</PageHeader>
 
 	{#if loadError}
 		<Notice tone="error" onretry={reload}>Could not load Home: {loadError}</Notice>
 	{/if}
 	{#if notice}
-		<Notice ondismiss={() => (notice = null)}>{notice}</Notice>
+		<Notice tone={notice.tone} ondismiss={() => (notice = null)}>{notice.text}</Notice>
 	{/if}
 
-	{#if loaded}
-		{#if anyDecision}
+	{#if data}
+		{#if decided.listed.length + decided.review + decided.later > 0}
 			<section aria-labelledby="home-decisions">
 				<div class="head">
 					<h2 id="home-decisions">Decisions you decide</h2>
@@ -145,21 +135,31 @@
 					<DecisionList
 						decisions={listed}
 						{entries}
-						{blocks}
 						decisionHref={(id) => decisionHref(page.url, id)}
 						onchanged={reload}
 						poll={false}
 						rest={(d) => more.has(d.id)}
 						showRest={showMore}
 						restId="home-more-decisions"
-						between={more.size > 0 ? fold : undefined}
-					/>
+					>
+						{#snippet between()}
+							{#if more.size > 0}
+								<button
+									type="button"
+									class="ghost"
+									aria-expanded={showMore}
+									aria-controls={showMore ? 'home-more-decisions' : undefined}
+									onclick={() => (showMore = !showMore)}>{showMore ? 'Show fewer' : `${more.size} more`}</button
+								>
+							{/if}
+						{/snippet}
+					</DecisionList>
 				{/if}
 				{#if decided.review > 0}
 					<p class="line"><a href="/decisions?mine=1#review">{plural(decided.review, 'record', 'records')} to review →</a></p>
 				{/if}
 				{#if decided.later > 0}
-					<p class="line"><a href="/decisions?mine=1">{decided.later} more needed later →</a></p>
+					<p class="line muted">{decided.later} more beyond the next sprint or not blocking yet.</p>
 				{/if}
 			</section>
 		{/if}
@@ -167,11 +167,11 @@
 		<section aria-labelledby="home-under-way">
 			<div class="head"><h2 id="home-under-way">Under way</h2></div>
 			{#if work.started.length > 0}
-				<ul class="rows">
+				<ul class="stories">
 					{#each work.started as row (row.story.key)}<StoryRow {row} />{/each}
 				</ul>
 			{:else}
-				<p class="muted">Nothing under way. Pick something below.</p>
+				<p class="muted">Nothing under way.</p>
 			{/if}
 			{#if work.todo > 0}
 				<p class="line"><a href="/backlog?mine=1">{work.todo} of yours in todo, {work.ready} ready →</a></p>
@@ -180,18 +180,18 @@
 
 		<section aria-labelledby="home-pick-next">
 			<div class="head"><h2 id="home-pick-next">Pick next</h2></div>
-			{#if pick.shown.length > 0}
-				<ul class="rows">
-					{#each pick.shown as row (row.story.key)}<StoryRow {row} {busy} onstart={(r) => start(r)} />{/each}
+			{#if pick.length > 0}
+				<ul class="stories">
+					{#each pick as row (row.story.key)}<StoryRow {row} {busy} onstart={start} />{/each}
 				</ul>
 			{:else}
 				<p class="muted">Nothing ready and unowned.</p>
 			{/if}
 			<p class="line"><a href="/backlog?ready=1">All ready work →</a></p>
-			{#if blocked > 0}
+			{#if held > 0}
 				<p class="line flag">
-					<span aria-hidden="true">⚑</span>
-					{plural(blocked, 'story waits', 'stories wait')} on a decision. <a href="/board?notready=1">See what is not ready →</a>
+					<span class="glyph" aria-hidden="true">⚑</span>
+					{plural(held, 'story', 'stories')} held by a decision. <a href="/board?notready=1">See what is not ready →</a>
 				</p>
 			{/if}
 		</section>
@@ -202,20 +202,15 @@
 					<h2 id="home-sprint">The sprint</h2>
 					<a href="/sprint">Sprint →</a>
 				</div>
-				<!-- The strip's chips are its filter toggles; on Home choosing one opens the board filtered to it. -->
-				<GoalsStrip view={active} selected={null} onselect={(g) => goto(g === null ? '/board' : `/board?goal=${g}`)} />
+				<!-- The strip's chips are its filter toggles; with nothing selected a chip passes its goal, and Home opens the
+				     board filtered to it. -->
+				<GoalsStrip view={active} selected={null} onselect={(g) => goto(`/board?goal=${g}`)} />
 			</section>
 		{/if}
 	{:else if !loadError}
 		<p class="muted">Loading…</p>
 	{/if}
 </div>
-
-{#snippet fold()}
-	<button type="button" class="ghost" aria-expanded={showMore} aria-controls="home-more-decisions" onclick={() => (showMore = !showMore)}
-		>{showMore ? 'Show fewer' : `${more.size} more`}</button
-	>
-{/snippet}
 
 {#if override}
 	{@const o = override}
@@ -237,10 +232,6 @@
 		margin: 0 auto;
 	}
 	.sprint-line {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-		margin: -14px 0 0;
 		color: var(--muted);
 	}
 	section {
@@ -262,7 +253,7 @@
 		margin-left: auto;
 		font-size: 13px;
 	}
-	.rows {
+	.stories {
 		display: grid;
 		gap: 6px;
 		margin: 0;
@@ -272,7 +263,13 @@
 		margin: 0;
 		font-size: 13px;
 	}
+	/* The flag's text stays in the foreground colour on the soft warning ground (an AA pair); only the glyph is amber. */
 	.flag {
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: var(--warn-soft);
+	}
+	.glyph {
 		color: var(--warn);
 	}
 	.muted {

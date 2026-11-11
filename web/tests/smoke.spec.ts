@@ -388,8 +388,11 @@ test('the client loads nothing from outside the server', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
 	// The seed makes the smoke user the decider of a decision that holds a story, so the section and the flag show.
-	await expect(page.getByRole('heading', { level: 2, name: 'Decisions you decide' })).toBeVisible();
-	await expect(page.getByText(/stor(y waits|ies wait) on a decision/)).toBeVisible();
+	const decisions = page.getByRole('region', { name: 'Decisions you decide' });
+	await expect(decisions).toBeVisible();
+	// The seeded decision is not needed this sprint or next (no goal links it), so Home counts it rather than listing it.
+	await expect(decisions.getByText(/more beyond the next sprint or not blocking yet/)).toBeVisible();
+	await expect(page.getByText(/stor(y|ies) held by a decision/)).toBeVisible();
 	await page.goto('/planning');
 	await expect(page.getByRole('heading', { level: 1, name: 'Planning' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Now' })).toBeVisible();

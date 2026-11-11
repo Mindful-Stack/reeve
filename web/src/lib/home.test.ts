@@ -14,31 +14,28 @@ describe('pickNext', () => {
 		const urgent = withReadiness({ key: 'U-1', urgent_sources: [{ item: 'story', key: 'U-1' }] });
 		const owned = withReadiness({ key: 'O-1', owner: 'x@example.com', urgent_sources: [{ item: 'story', key: 'O-1' }] });
 		const plain2 = withReadiness({ key: 'P-2' });
-		const r = pickNext([plain, goal, owned, urgent, plain2]);
-		expect(r.shown.map((s) => s.story.key)).toEqual(['U-1', 'G-1', 'P-1', 'P-2']);
-		expect(r.total).toBe(4);
+		expect(pickNext([plain, goal, owned, urgent, plain2]).map((s) => s.story.key)).toEqual(['U-1', 'G-1', 'P-1', 'P-2']);
 	});
 
 	it('an urgent story serving a goal is listed once, with the urgent ones', () => {
 		const both = withReadiness({ key: 'B-1', urgent_sources: [{ item: 'story', key: 'B-1' }], goals: [{ id: 3, outcome: 'Ship it', via: 'story' }] });
 		const goal = withReadiness({ key: 'G-1', goals: [{ id: 3, outcome: 'Ship it', via: 'story' }] });
-		expect(pickNext([goal, both]).shown.map((s) => s.story.key)).toEqual(['B-1', 'G-1']);
+		expect(pickNext([goal, both]).map((s) => s.story.key)).toEqual(['B-1', 'G-1']);
 	});
 
-	it('shows at most the limit and counts them all', () => {
+	it('shows at most the limit, the first in order', () => {
 		const rows = Array.from({ length: 7 }, (_, i) => withReadiness({ key: `P-${i}` }));
-		const r = pickNext(rows);
-		expect(r.shown.map((s) => s.story.key)).toEqual(['P-0', 'P-1', 'P-2', 'P-3', 'P-4']);
-		expect(r.total).toBe(7);
+		expect(pickNext(rows).map((s) => s.story.key)).toEqual(['P-0', 'P-1', 'P-2', 'P-3', 'P-4']);
 	});
 });
 
 describe('underWay', () => {
-	it('keeps in progress, in review and testing as started, and counts todo and ready todo', () => {
+	it('keeps in progress, in review and testing as started in rank order, and counts todo and ready todo', () => {
+		// The server lists by delivery state, then rank; Home lists the started ones by rank alone.
 		const rows = [
-			withReadiness({ key: 'A', delivery: 'in_progress' }),
-			withReadiness({ key: 'B', delivery: 'testing' }),
-			withReadiness({ key: 'C', delivery: 'in_review' }),
+			withReadiness({ key: 'C', delivery: 'in_progress', rank: 30 }),
+			withReadiness({ key: 'A', delivery: 'in_review', rank: 10 }),
+			withReadiness({ key: 'B', delivery: 'testing', rank: 20 }),
 			withReadiness({ key: 'D' }),
 			withReadiness({ key: 'E' }, [{ reason: 'no_criteria' }])
 		];

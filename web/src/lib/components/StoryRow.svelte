@@ -5,8 +5,8 @@
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
 	import { COLUMN_LABEL } from '#lib/board.ts';
 	import { storyHref } from '#lib/drawer.ts';
-	import { truncate } from '#lib/sprint.ts';
 	import { urgentLine } from '#lib/urgency.ts';
+	import GoalChip from './GoalChip.svelte';
 	import UrgentChip from './UrgentChip.svelte';
 
 	let {
@@ -30,8 +30,7 @@
 		<a class="title" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.title}</a>
 		<span class="meta">
 			{#if s.urgent_sources.length > 0}<UrgentChip line={urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), () => undefined)} />{/if}
-			<!-- The first goal the server says the story serves (kb/ADR-0014 R3), as the story card shows it. -->
-			{#if s.goals[0]}<span class="goal" title={s.goals.map((g) => g.outcome).join('\n')}>goal: {truncate(s.goals[0].outcome, 40)}</span>{/if}
+			<GoalChip goals={s.goals} />
 			<span>{COLUMN_LABEL[s.delivery]}</span>
 			{#if s.epic}<span>{s.epic}</span>{/if}
 		</span>
@@ -80,12 +79,6 @@
 		gap: 2px 10px;
 		color: var(--muted);
 		font-size: 13px;
-	}
-	.goal {
-		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	@media (max-width: 600px) {
 		.row {

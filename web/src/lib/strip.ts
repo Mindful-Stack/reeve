@@ -1,4 +1,6 @@
 // The detail pages' status strip: what blocks progress, worded for a shared screen.
+import { plural } from '#lib/format.ts';
+
 export type BlockerInput = {
 	blockingDecisions: { onTitle: string }[];
 	storiesNeedingCriteria: number;
@@ -9,7 +11,6 @@ export type Cell =
 	| { blocking: true; text: string; detail: string | null; anchor: string }
 	| { blocking: false; text: string; detail: null; anchor: null };
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export function blockerCell({ blockingDecisions: d, storiesNeedingCriteria: c, criteriaAnchor }: BlockerInput): Cell {
 	if (d.length) {

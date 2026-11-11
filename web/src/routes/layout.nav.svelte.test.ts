@@ -114,6 +114,10 @@ describe('navigation', () => {
 	});
 
 	it('marks Home current only on / and Planning on /planning', async () => {
+		await open('/');
+		expect(link('Home')!.getAttribute('aria-current')).toBe('page');
+		expect(link('Planning')!.hasAttribute('aria-current')).toBe(false);
+		unmount(app!);
 		await open('/planning');
 		expect(link('Home')!.hasAttribute('aria-current')).toBe(false);
 		expect(link('Planning')!.getAttribute('aria-current')).toBe('page');
