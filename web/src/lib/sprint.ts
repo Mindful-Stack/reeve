@@ -3,7 +3,7 @@ import type { Confidence, GoalProgress, SprintCounts, SprintWarning, Story, Verd
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
 export const RULE = 'Counts the work completed in this sprint; work started but not finished shows as in flight.';
 
-const ACTIVE = new Set<Story['delivery']>(['in_progress', 'in_review', 'testing']);
+export const ACTIVE = new Set<Story['delivery']>(['in_progress', 'in_review', 'testing']);
 
 /** The start nudge: a move from todo or done into an active state, while a sprint is active, whose reply
  *  says the story serves no goal. `after` is the server's story from the move's reply, never the card before it. */

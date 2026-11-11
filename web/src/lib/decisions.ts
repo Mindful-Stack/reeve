@@ -90,7 +90,7 @@ function localDate(s: string): Date {
 	return new Date(y, m - 1, d);
 }
 
-function daysBetween(from: string, to: string): number {
+export function daysBetween(from: string, to: string): number {
 	return Math.round((localDate(to).getTime() - localDate(from).getTime()) / 86_400_000);
 }
 
