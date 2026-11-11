@@ -3,7 +3,8 @@
 import type { Origin } from '#lib/report.svelte.ts';
 
 export const links = [
-	{ href: '/', label: 'Planning' },
+	{ href: '/', label: 'Home' },
+	{ href: '/planning', label: 'Planning' },
 	{ href: '/backlog', label: 'Backlog' },
 	{ href: '/board', label: 'Board' },
 	{ href: '/sprint', label: 'Sprint' },

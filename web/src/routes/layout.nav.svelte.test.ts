@@ -104,19 +104,19 @@ async function open(path: string) {
 const link = (name: string) => [...document.body.querySelectorAll('nav[aria-label="Main"] a')].find((a) => a.textContent === name) as HTMLAnchorElement | undefined;
 
 describe('navigation', () => {
-	it('lists the five destinations, Sprint between Board and Decisions, and no Epics link', async () => {
+	it('lists the six destinations, Home first, Sprint between Board and Decisions, and no Epics link', async () => {
 		await open('/backlog');
 		expect([...document.body.querySelectorAll('nav[aria-label="Main"] a')].map((a) => a.textContent)).toEqual([
-			'Planning', 'Backlog', 'Board', 'Sprint', 'Decisions'
+			'Home', 'Planning', 'Backlog', 'Board', 'Sprint', 'Decisions'
 		]);
 		expect(link('Backlog')!.getAttribute('aria-current')).toBe('page');
 		expect(link('Epics')).toBeUndefined();
 	});
 
-	it('marks Planning current only on /', async () => {
-		await open('/board');
-		expect(link('Planning')!.hasAttribute('aria-current')).toBe(false);
-		expect(link('Board')!.getAttribute('aria-current')).toBe('page');
+	it('marks Home current only on / and Planning on /planning', async () => {
+		await open('/planning');
+		expect(link('Home')!.hasAttribute('aria-current')).toBe(false);
+		expect(link('Planning')!.getAttribute('aria-current')).toBe('page');
 	});
 
 	it('the live indicator links to activity and says offline, then live, for screen readers and the smoke', async () => {
