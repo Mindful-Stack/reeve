@@ -1012,6 +1012,39 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		});
 	});
 
+	it('Show open stories does not move focus when its answer lands in the same turn another query commits, before the query effect runs', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		data.hold = true;
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2));
+		// Svelte runs effects in a microtask of its own: delay that microtask so the open answer's continuation, already
+		// queued, runs first, as it does in the browser when the answer arrives just as another navigation commits.
+		const later = vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((fn) => void setTimeout(fn));
+		try {
+			data.held[0]();
+			data.held[1]();
+			(page.url as URL).href = 'http://localhost/backlog?q=yyy';
+			await new Promise((r) => setTimeout(r, 10));
+		} finally {
+			later.mockRestore();
+		}
+		await vi.waitFor(() => expect(data.held).toHaveLength(4));
+		data.held[2]();
+		data.held[3]();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.textContent).toContain('No todo stories match');
+			expect(document.body.textContent).toContain('yyy');
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect((document.activeElement as HTMLElement).closest('[role="group"][aria-label="State"]')).toBeNull();
+	});
+
 	it('Show open stories left for another query before either answers does not move focus when the user returns to the open query', async () => {
 		go('?q=zzz');
 		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
@@ -1037,7 +1070,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.activeElement).toBe(document.body);
 	});
 
-	it('a row title carries data-sveltekit-reset="false", so opening the drawer keeps focus and scroll (jsdom cannot observe either)', async () => {
+	it('a row title carries data-sveltekit-reset="false", so opening the drawer keeps focus and scroll (this pins the attribute; it does not exercise SvelteKit navigation)', async () => {
 		data.stories = [row('S-1', 1, null), row('S-2', 2, 'E-1')];
 		await open('Title S-2');
 		const links = [...document.body.querySelectorAll<HTMLAnchorElement>('li[data-key] a.title')];

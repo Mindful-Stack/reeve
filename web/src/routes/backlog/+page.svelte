@@ -143,14 +143,15 @@
 		afterLanding = { key: JSON.stringify(toStoryQuery(url, session.me?.email)), run: focusStateToggle };
 		return goto(url, { replace: true, reset: false });
 	}
-	/** Runs once an answer for the query `key` lands (applied or failed) and the page has rendered it. A landing for any
-	 *  other query (an older request that was still the latest when the hand-off was set) leaves it waiting. The query
-	 *  effect below cancels it once the URL's query moves to another key, so it never fires when the user returns to `key`
-	 *  later, whether or not the query in between ever landed. */
+	/** Runs once an answer for the query `key` lands (applied or failed) and the page has rendered it, if `key` is still
+	 *  the URL's query. A landing for any other query (an older request that was still the latest when the hand-off was
+	 *  set) leaves it waiting. So does one that lands after another navigation has committed but before the query effect
+	 *  below has run (effects run in a later microtask). That effect cancels it once the URL's query moves to another key,
+	 *  so it never fires when the user returns to `key` later, whether or not the query in between ever landed. */
 	let afterLanding: { key: string; run: () => void } | null = null;
 	function landed(key: string) {
 		const a = afterLanding;
-		if (a?.key !== key) return;
+		if (a?.key !== key || key !== queryKey) return;
 		afterLanding = null;
 		void tick().then(a.run);
 	}
