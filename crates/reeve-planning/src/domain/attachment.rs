@@ -97,17 +97,28 @@ pub fn strip_metadata(t: ImageType, b: Bytes) -> Result<Bytes, UploadError> {
         ImageType::Jpeg => strip_jpeg(&b)?,
         ImageType::Png => {
             let mut p = Png::from_bytes(b).map_err(bad)?;
+            let o = p.exif().and_then(|e| orientation(&e));
             p.chunks_mut().retain(|c| PNG_KEEP.contains(&c.kind()));
             let has = |k: &[u8; 4]| p.chunks().iter().any(|c| &c.kind() == k);
             if !(has(b"IHDR") && has(b"IDAT") && has(b"IEND")) {
                 return Err(UploadError::Unreadable);
             }
+            // Right after IHDR, before the image data, as an eXIf chunk must be.
+            p.set_exif(o.map(orientation_exif));
             p.encoder().bytes()
         }
         ImageType::Webp => {
             let mut w = WebP::from_bytes(b).map_err(bad)?;
             let o = w.exif().and_then(|e| orientation(&e));
             w.chunks_mut().retain(|c| WEBP_KEEP.contains(&c.id()));
+            // An animation frame carries chunks of its own: only its bitstream and alpha are kept.
+            for c in w.chunks_mut() {
+                if c.id() == *b"ANMF"
+                    && let img_parts::riff::RiffContent::Data(d) = c.content_mut()
+                {
+                    *d = webp_frame(d).ok_or(UploadError::Unreadable)?;
+                }
+            }
             if !w
                 .chunks()
                 .iter()
@@ -174,19 +185,32 @@ fn strip_jpeg(b: &[u8]) -> Result<Bytes, UploadError> {
         let end = i + 2 + len;
         let seg = b.get(i..end).ok_or(bad)?;
         let payload = &seg[4..];
-        let keep = match m {
+        // What of the segment is kept: all of it, a rebuilt form of it, or nothing.
+        let kept: Option<std::borrow::Cow<[u8]>> = match m {
             0xC0..=0xCF => {
                 if m != 0xC4 && m != 0xC8 && m != 0xCC {
                     frame = true;
                 }
-                true
+                Some(seg.into())
             }
-            0xDA..=0xDD => true,
-            0xE0 => payload.starts_with(b"JFIF\0"),
-            0xE2 => payload.starts_with(b"ICC_PROFILE\0"),
-            0xEE => payload.starts_with(b"Adobe"),
-            _ => false,
+            0xDA..=0xDD => Some(seg.into()),
+            // JFIF: version, units and density only; its thumbnail (an unredacted preview) and anything after it go.
+            0xE0 if payload.len() >= 12 && payload.starts_with(b"JFIF\0") => {
+                let mut v = vec![0xFF, 0xE0, 0, 16];
+                v.extend_from_slice(&payload[..12]);
+                v.extend_from_slice(&[0, 0]);
+                Some(v.into())
+            }
+            0xE2 => payload.starts_with(b"ICC_PROFILE\0").then_some(seg.into()),
+            // Adobe: its fixed twelve bytes (the colour transform), nothing after them.
+            0xEE if payload.len() >= 12 && payload.starts_with(b"Adobe") => {
+                let mut v = vec![0xFF, 0xEE, 0, 14];
+                v.extend_from_slice(&payload[..12]);
+                Some(v.into())
+            }
+            _ => None,
         };
+        let keep = kept.is_some();
         // The orientation block goes right after SOI and a JFIF APP0, before anything else.
         if !orientation_written && !(m == 0xE0 && keep) {
             if let Some(o) = exif {
@@ -198,8 +222,8 @@ fn strip_jpeg(b: &[u8]) -> Result<Bytes, UploadError> {
             }
             orientation_written = true;
         }
-        if keep {
-            out.extend_from_slice(seg);
+        if let Some(k) = kept {
+            out.extend_from_slice(&k);
         }
         i = end;
         if m == 0xDA {
@@ -217,7 +241,14 @@ fn strip_jpeg(b: &[u8]) -> Result<Bytes, UploadError> {
                 i += 1;
             }
             if i + 1 >= b.len() {
-                return Err(bad);
+                // A file cut short in its last scan, which browsers still draw: its data is kept and the end marker
+                // added.
+                out.extend_from_slice(&b[start..]);
+                if !frame {
+                    return Err(bad);
+                }
+                out.extend_from_slice(&[0xFF, 0xD9]);
+                return Ok(Bytes::from(out));
             }
             out.extend_from_slice(&b[start..i]);
         }
@@ -226,6 +257,27 @@ fn strip_jpeg(b: &[u8]) -> Result<Bytes, UploadError> {
         return Err(bad);
     }
     Ok(Bytes::from(out))
+}
+
+/// An ANMF payload with only the chunks that draw the frame: its 16-byte header, then ALPH, `VP8 ` and VP8L (padded
+/// to even lengths, as RIFF requires); None when its chunk list does not parse.
+fn webp_frame(d: &[u8]) -> Option<Bytes> {
+    let mut out = d.get(..16)?.to_vec();
+    let mut i = 16;
+    while i < d.len() {
+        let id: [u8; 4] = d.get(i..i + 4)?.try_into().ok()?;
+        let len = u32::from_le_bytes(d.get(i + 4..i + 8)?.try_into().ok()?) as usize;
+        let end = (i + 8).checked_add(len)?;
+        d.get(i + 8..end)?;
+        if matches!(&id, b"ALPH" | b"VP8 " | b"VP8L") {
+            out.extend_from_slice(&d[i..end]);
+            if len % 2 == 1 {
+                out.push(0);
+            }
+        }
+        i = end + len % 2;
+    }
+    Some(Bytes::from(out))
 }
 
 /// The non-upright orientation of a JPEG's EXIF (APP1 `Exif\0\0`) before its first scan, if it has one.
@@ -293,7 +345,10 @@ fn orientation_exif(o: u16) -> Bytes {
 /// at most 200 characters (keeping a short extension), and `image` when nothing is left.
 pub fn clean_filename(raw: &str) -> String {
     let last = raw.rsplit(['/', '\\']).next().unwrap_or("");
-    let name: String = last.chars().filter(|c| !c.is_control()).collect();
+    let name: String = last
+        .chars()
+        .filter(|c| !c.is_control() && !invisible(*c))
+        .collect();
     let name = name.trim();
     if name.is_empty() || name.chars().all(|c| c == '.') {
         return "image".into();
@@ -309,6 +364,14 @@ pub fn clean_filename(raw: &str) -> String {
     let keep = MAX_NAME - ext.chars().count();
     let stem: String = name.chars().take(keep).collect();
     format!("{stem}{ext}")
+}
+
+/// Format characters and line and paragraph separators (Unicode Cf, Zl, Zp): bidirectional overrides that make a name
+/// read differently from what it is, zero-width characters, and line breaks.
+fn invisible(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
 }
 
 /// The stored chunks of a file, in order (kb/ADR-0022 R1).
@@ -458,6 +521,19 @@ mod tests {
         assert_eq!(clean_filename("  "), "image");
         assert_eq!(clean_filename("dir/"), "image");
         assert_eq!(clean_filename(".."), "image");
+    }
+
+    #[test]
+    fn filenames_lose_invisible_and_direction_characters() {
+        // "invoice\u{202E}gnp.exe" reads as "invoiceexe.png".
+        assert_eq!(clean_filename("invoice\u{202E}gnp.exe"), "invoicegnp.exe");
+        assert_eq!(
+            clean_filename("a\u{200B}b\u{FEFF}c\u{2066}d.png"),
+            "abcd.png"
+        );
+        assert_eq!(clean_filename("one\u{2028}two\u{2029}.png"), "onetwo.png");
+        assert_eq!(clean_filename("\u{200B}"), "image");
+        assert_eq!(clean_filename("skärmbild ✓.png"), "skärmbild ✓.png");
     }
 
     #[test]

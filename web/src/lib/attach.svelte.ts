@@ -4,6 +4,7 @@
 // upload: one removed from the text before saving stays unclaimed until the server's sweep.
 import type { Attachment } from 'svelte/attachments';
 import { api, unwrap, ApiError } from '#lib/api/client.ts';
+import { session } from '#lib/me.svelte.ts';
 
 /** An upload this field knows: what the server answered, kept so `ids()` can tell which are still shown. */
 export type AttachmentRef = { id: string; url: string };
@@ -54,9 +55,50 @@ let seq = 0;
  *  another is still claimed by the write that saves it. */
 const stored = new Map<string, AttachmentRef>();
 
-/** The ids among `refs` and every upload this tab stored whose image `text` shows. */
+/** The same, shared with this browser's other tabs: an image line copied into another tab's editor is claimed by that
+ *  tab's save too, rather than left unclaimed (seen only by its uploader) until the sweep. Kept for as long as the
+ *  server keeps an unclaimed upload, per person, and the newest `SHARED_MAX`. */
+const SHARED = 'reeve:uploads';
+const SHARED_MAX = 200;
+const WEEK_MS = 7 * 24 * 3600 * 1000;
+type Shared = AttachmentRef & { email: string; at: number };
+const isShared = (x: unknown): x is Shared =>
+	typeof x === 'object' &&
+	x !== null &&
+	['id', 'url', 'email'].every((k) => typeof (x as Record<string, unknown>)[k] === 'string') &&
+	typeof (x as Record<string, unknown>).at === 'number';
+
+function sharedRefs(now = Date.now()): Shared[] {
+	try {
+		const raw: unknown = JSON.parse(localStorage.getItem(SHARED) ?? '[]');
+		return Array.isArray(raw) ? raw.filter(isShared).filter((r) => now - r.at < WEEK_MS) : [];
+	} catch {
+		return [];
+	}
+}
+
+function remember(ref: AttachmentRef): void {
+	stored.set(ref.id, ref);
+	const email = session.me?.email;
+	if (!email) return;
+	try {
+		const list = [...sharedRefs().filter((r) => r.id !== ref.id), { ...ref, email, at: Date.now() }];
+		localStorage.setItem(SHARED, JSON.stringify(list.slice(-SHARED_MAX)));
+	} catch {
+		// Storage full or blocked: this tab's own map still has it.
+	}
+}
+
+/** The ids among `refs`, every upload this tab stored, and the signed-in person's uploads from this browser's other
+ *  tabs, whose image `text` shows. */
 export function shownIds(text: string, refs: AttachmentRef[] = []): string[] {
-	const all = new Map([...stored, ...refs.map((r) => [r.id, r] as const)]);
+	const email = session.me?.email;
+	const shared = email ? sharedRefs().filter((r) => r.email === email) : [];
+	const all = new Map<string, AttachmentRef>([
+		...shared.map((r) => [r.id, { id: r.id, url: r.url }] as const),
+		...stored,
+		...refs.map((r) => [r.id, r] as const)
+	]);
 	return [...all.values()].filter((r) => text.includes(`(${r.url})`)).map((r) => r.id);
 }
 
@@ -222,7 +264,7 @@ export class ImageUploads {
 				})
 			);
 			const ref = { id: dto.id, url: dto.url };
-			stored.set(ref.id, ref);
+			remember(ref);
 			// Removed or reset while it uploaded: nothing more to show for it.
 			if (!this.pending.some((x) => x.token === p.token)) return;
 			this.added = [...this.added, ref];

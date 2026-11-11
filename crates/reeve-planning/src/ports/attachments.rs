@@ -60,10 +60,18 @@ pub trait AttachmentRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         id: Uuid,
     ) -> Result<Option<Attachment>, RepoError>;
-    /// Deletes every unclaimed attachment uploaded before `older_than`; the caller computes the cutoff.
+    /// Deletes up to `limit` unclaimed attachments uploaded before `older_than`, skipping rows another transaction has
+    /// locked (a claim, or a concurrent sweep); the caller computes the cutoff. How many it deleted.
     async fn sweep_unclaimed_attachments(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         older_than: DateTime<Utc>,
+        limit: i64,
     ) -> Result<u64, RepoError>;
+    /// The bytes of `uploader`'s unclaimed attachments.
+    async fn unclaimed_bytes(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        uploader: &str,
+    ) -> Result<i64, RepoError>;
 }

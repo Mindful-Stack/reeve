@@ -531,3 +531,98 @@ fn every_prefix_of_every_fixture_is_refused_or_stripped_and_never_panics() {
         }
     }
 }
+
+#[test]
+fn a_jfif_thumbnail_and_bytes_after_the_adobe_header_go() {
+    let clean = encode(ImageFormat::Jpeg);
+    let mut j = Jpeg::from_bytes(clean.clone()).unwrap();
+    j.segments_mut().retain(|s| s.marker() != 0xE0);
+    // JFIF 1.01, aspect-ratio density 1x1, a 1x1 thumbnail (three RGB bytes), then trailing bytes.
+    let mut jfif = b"JFIF\0\x01\x01\0\0\x01\0\x01\x01\x01".to_vec();
+    jfif.extend_from_slice(b"\x10\x20\x30secret thumbnail");
+    let mut adobe = b"Adobe\0\x64\0\0\0\0\x01".to_vec();
+    adobe.extend_from_slice(b"secret after the header");
+    j.segments_mut()
+        .insert(0, JpegSegment::new_with_contents(0xEE, Bytes::from(adobe)));
+    j.segments_mut()
+        .insert(0, JpegSegment::new_with_contents(0xE0, Bytes::from(jfif)));
+    let out = strip_metadata(ImageType::Jpeg, j.encoder().bytes()).unwrap();
+    assert_nothing_planted(&out);
+    let segs = jpeg_segments(&out);
+    let app0 = segs.iter().find(|(m, _)| *m == 0xE0).expect("JFIF kept");
+    assert_eq!(
+        app0.1, b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0",
+        "version and density kept, thumbnail 0x0"
+    );
+    let app14 = segs.iter().find(|(m, _)| *m == 0xEE).expect("Adobe kept");
+    assert_eq!(app14.1, b"Adobe\0\x64\0\0\0\0\x01");
+    assert_eq!(pixels(&out), pixels(&clean));
+}
+
+#[test]
+fn a_jpeg_cut_short_in_its_scan_is_kept_with_an_end_marker() {
+    let clean = encode(ImageFormat::Jpeg);
+    let cut = clean.slice(..clean.len() - 40);
+    let out = strip_metadata(ImageType::Jpeg, cut.clone()).unwrap();
+    assert!(out.ends_with(&[0xFF, 0xD9]));
+    assert_eq!(&out[..out.len() - 2], &cut[..], "nothing else changed");
+    // Cut before any scan, there is nothing to draw.
+    let sos = clean.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+    assert!(strip_metadata(ImageType::Jpeg, clean.slice(..sos)).is_err());
+}
+
+#[test]
+fn a_rotated_png_keeps_only_its_orientation() {
+    let clean = encode(ImageFormat::Png);
+    let mut p = Png::from_bytes(clean.clone()).unwrap();
+    p.set_exif(Some(exif_with_orientation(6)));
+    let out = strip_metadata(ImageType::Png, p.encoder().bytes()).unwrap();
+    let kinds = png_chunks(&out);
+    assert_eq!(kinds[1], *b"eXIf", "right after IHDR, before IDAT");
+    let exif = Png::from_bytes(out.clone()).unwrap().exif().unwrap();
+    assert!(!exif.windows(3).any(|w| w == b"TPh"), "the model is gone");
+    assert_eq!(&exif[18..20], &[0, 6]);
+    assert_eq!(pixels(&out), pixels(&clean));
+}
+
+#[test]
+fn an_animation_frame_keeps_only_its_bitstream_and_alpha() {
+    use img_parts::riff::{RiffChunk, RiffContent};
+    // One frame: the 16-byte ANMF header, an odd-length ALPH (padded), a nested XMP and an unknown chunk, a VP8L.
+    let sub = |id: &[u8; 4], d: &[u8]| {
+        let mut v = id.to_vec();
+        v.extend_from_slice(&(d.len() as u32).to_le_bytes());
+        v.extend_from_slice(d);
+        if d.len() % 2 == 1 {
+            v.push(0);
+        }
+        v
+    };
+    let mut frame = vec![0u8; 16];
+    frame.extend(sub(b"ALPH", b"abc"));
+    frame.extend(sub(b"XMP ", XMP));
+    frame.extend(sub(b"zzzz", b"secret"));
+    frame.extend(sub(b"VP8L", b"bits"));
+    let mut expected = vec![0u8; 16];
+    expected.extend(sub(b"ALPH", b"abc"));
+    expected.extend(sub(b"VP8L", b"bits"));
+    let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+    w.chunks_mut().push(RiffChunk::new(
+        *b"ANMF",
+        RiffContent::Data(Bytes::from(frame)),
+    ));
+    let out = strip_metadata(ImageType::Webp, w.encoder().bytes()).unwrap();
+    assert_nothing_planted(&out);
+    let kept = img_parts::webp::WebP::from_bytes(out).unwrap();
+    let anmf = kept.chunk_by_id(*b"ANMF").unwrap();
+    assert_eq!(anmf.content().data().unwrap().as_ref(), expected.as_slice());
+    // A frame whose chunk list runs past its end does not parse.
+    let mut w = img_parts::webp::WebP::from_bytes(encode(ImageFormat::WebP)).unwrap();
+    let mut broken = vec![0u8; 16];
+    broken.extend_from_slice(b"VP8L\xff\xff\0\0bits");
+    w.chunks_mut().push(RiffChunk::new(
+        *b"ANMF",
+        RiffContent::Data(Bytes::from(broken)),
+    ));
+    assert!(strip_metadata(ImageType::Webp, w.encoder().bytes()).is_err());
+}

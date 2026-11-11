@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response as HttpResponse},
 };
-use reeve_planning::{Attachment, MAX_BYTES, attachment_dto};
+use reeve_planning::{Attachment, CHUNK, MAX_BYTES, attachment_dto};
 use reeve_protocol::*;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -112,13 +112,19 @@ async fn get(
         return Ok((StatusCode::NOT_MODIFIED, headers).into_response());
     }
     let handlers = Arc::new(s.handlers.clone());
+    // As many chunks as the size says: no query past the last one.
+    let count = (a.byte_size() as u64).div_ceil(CHUNK as u64) as i32;
     let body = futures_util::stream::unfold(Some(0i32), move |n| {
         let handlers = handlers.clone();
         async move {
-            let n = n?;
+            let n = n.filter(|n| *n < count)?;
             match handlers.attachment_chunk(id, n).await {
                 Ok(Some(b)) => Some((Ok(b), Some(n + 1))),
-                Ok(None) => None,
+                Ok(None) => {
+                    // Deleted while it was being sent: the response is cut short of its Content-Length.
+                    tracing::warn!(%id, chunk = n, "attachment gone mid-stream");
+                    Some((Err(std::io::Error::other("attachment gone")), None))
+                }
                 Err(e) => {
                     tracing::error!(error = ?e, %id, chunk = n, "attachment chunk");
                     Some((Err(std::io::Error::other("attachment chunk")), None))

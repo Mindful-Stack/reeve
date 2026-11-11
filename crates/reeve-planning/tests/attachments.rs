@@ -225,7 +225,7 @@ mod attachments {
         claim(&repo, &pool, &[kept], "a@x", ItemType::Story, "GRA-3").await;
         let mut tx = pool.begin().await.unwrap();
         let n = repo
-            .sweep_unclaimed_attachments(&mut tx, now() - Duration::days(7))
+            .sweep_unclaimed_attachments(&mut tx, now() - Duration::days(7), 100)
             .await
             .unwrap();
         tx.commit().await.unwrap();

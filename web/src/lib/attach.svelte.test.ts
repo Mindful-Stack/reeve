@@ -173,6 +173,54 @@ describe('ImageUploads', () => {
 		expect(elsewhere.ids()).toEqual(['moved']);
 	});
 
+	it('claims an image whose line was copied in from another tab, and only the signed-in person’s', async () => {
+		const { session } = await import('./me.svelte.ts');
+		const { me } = await import('./test/fixtures');
+		session.me = me({ email: 'a@x' });
+		// Node's own `localStorage` (undefined without --localstorage-file) hides jsdom's: an in-memory one stands in.
+		const mem = new Map<string, string>();
+		vi.stubGlobal('localStorage', {
+			getItem: (k: string) => mem.get(k) ?? null,
+			setItem: (k: string, v: string) => void mem.set(k, String(v)),
+			removeItem: (k: string) => void mem.delete(k),
+			clear: () => mem.clear()
+		});
+		try {
+			const release = deferred('mine');
+			u.add([file('shot.png')], el);
+			release();
+			await until(() => !u.busy);
+			const saved = JSON.parse(localStorage.getItem('reeve:uploads') ?? '[]');
+			expect(saved).toEqual([expect.objectContaining({ id: 'mine', email: 'a@x', url: '/api/v1/attachments/mine' })]);
+			// What another tab of this browser wrote: a fresh upload of mine, someone else's, and a week-old one of mine.
+			const now = Date.now();
+			const week = 7 * 24 * 3600 * 1000;
+			localStorage.setItem(
+				'reeve:uploads',
+				JSON.stringify([
+					...saved,
+					{ id: 'tab2', url: '/api/v1/attachments/tab2', email: 'a@x', at: now },
+					{ id: 'theirs', url: '/api/v1/attachments/theirs', email: 'b@x', at: now },
+					{ id: 'old', url: '/api/v1/attachments/old', email: 'a@x', at: now - week - 1 },
+					{ id: 42 }
+				])
+			);
+			const text = ['mine', 'tab2', 'theirs', 'old'].map((i) => `![x](/api/v1/attachments/${i})`).join('\n');
+			const other = new ImageUploads(() => text, () => {});
+			expect(other.ids().sort()).toEqual(['mine', 'tab2']);
+			// Signed out (or not loaded yet), nothing from other tabs counts.
+			session.me = null;
+			expect(other.ids()).toEqual(['mine']);
+			// Malformed storage is ignored, never thrown.
+			session.me = me({ email: 'a@x' });
+			localStorage.setItem('reeve:uploads', '{not json');
+			expect(other.ids()).toEqual(['mine']);
+		} finally {
+			session.me = null;
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it('ends an insertion on a line of its own', () => {
 		deferred('mid');
 		el.value = model = 'foobar';

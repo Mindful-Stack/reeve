@@ -34,3 +34,5 @@ CREATE TABLE attachment_chunks (
     CHECK (n >= 0),
     PRIMARY KEY (attachment_id, n)
 );
+-- Image bytes are already compressed: stored out of line without a compression attempt (PostgreSQL, "TOAST").
+ALTER TABLE attachment_chunks ALTER COLUMN bytes SET STORAGE EXTERNAL;

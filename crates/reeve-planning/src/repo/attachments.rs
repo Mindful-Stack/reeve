@@ -185,14 +185,27 @@ impl AttachmentRepo for PgPlanningRepo {
         &self,
         tx: Tx<'_, '_>,
         older_than: DateTime<Utc>,
+        limit: i64,
     ) -> Result<u64, RepoError> {
+        // A bounded batch, locked in id order and skipping locked rows: a sweep never waits on a claim or on another
+        // sweep, and never deadlocks with one (PostgreSQL, "The Locking Clause", SKIP LOCKED).
         let r = sqlx::query(&format!(
-            "DELETE FROM attachments WHERE {UNCLAIMED} AND uploaded_at < $1"
+            "DELETE FROM attachments WHERE id IN (SELECT id FROM attachments WHERE {UNCLAIMED} AND uploaded_at < $1 \
+             ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)"
         ))
         .bind(older_than)
+        .bind(limit)
         .execute(&mut **tx)
         .await?;
         Ok(r.rows_affected())
+    }
+    async fn unclaimed_bytes(&self, tx: Tx<'_, '_>, uploader: &str) -> Result<i64, RepoError> {
+        Ok(sqlx::query_scalar(&format!(
+            "SELECT COALESCE(SUM(byte_size), 0)::bigint FROM attachments WHERE uploaded_by = $1 AND {UNCLAIMED}"
+        ))
+        .bind(uploader)
+        .fetch_one(&mut **tx)
+        .await?)
     }
 }
 

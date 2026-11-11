@@ -714,4 +714,114 @@ mod attachment_handlers {
             .unwrap();
         assert_eq!(owner(&w, i).await.unwrap().0, ItemType::Epic);
     }
+
+    /// `n` unclaimed rows of `size` bytes each for `who`, without chunks: only their sizes count toward the cap.
+    async fn held(w: &World, who: &str, n: usize, size: i64) -> Vec<Uuid> {
+        let mut ids = Vec::new();
+        for _ in 0..n {
+            let id = Uuid::new_v4();
+            sqlx::query("INSERT INTO attachments (id, uploaded_by, uploaded_at, filename, content_type, byte_size, sha256) VALUES ($1, $2, $3, 'h.png', 'image/png', $4, $5)")
+                .bind(id)
+                .bind(who)
+                .bind(ctx(who).now)
+                .bind(size)
+                .bind(vec![0u8; 32])
+                .execute(&w.pool)
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn unsaved_uploads_are_capped_per_person_and_saving_frees_room() {
+        let w = world().await;
+        let ids = held(&w, "a@x", 20, MAX_UNCLAIMED_BYTES / 20).await;
+        assert!(matches!(
+            w.h.upload_attachment(&ctx("a@x"), "x.png", None, png()).await,
+            Err(HandlerError::Validation(m)) if m.starts_with("you have too many images not yet saved")
+        ));
+        // Another person is not held back by mine.
+        up(&w, "b@x").await;
+        // Saved with an epic, one stops counting.
+        w.h.create_epic_attaching(&ctx("a@x"), "e", "E", None, "", None, &ids[..1])
+            .await
+            .unwrap();
+        up(&w, "a@x").await;
+    }
+
+    #[tokio::test]
+    async fn an_idempotency_key_with_a_control_character_is_refused() {
+        let w = world().await;
+        for k in ["a\0b", "line\nbreak"] {
+            assert!(
+                matches!(
+                    w.h.upload_attachment(&ctx("a@x"), "x.png", Some(k), png()).await,
+                    Err(HandlerError::Validation(m)) if m.contains("control characters")
+                ),
+                "{k:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_sweep_takes_a_bounded_batch_and_skips_rows_a_claim_holds() {
+        let w = world().await;
+        let mut old = ctx("a@x");
+        old.now -= Duration::days(8);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                w.h.upload_attachment(&old, "s.png", None, png())
+                    .await
+                    .unwrap()
+                    .id(),
+            );
+        }
+        // Another transaction holds the first row, as a claim in flight would.
+        let mut holder = w.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM attachments WHERE id = $1 FOR UPDATE")
+            .bind(ids[0])
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let ports = make_planning_ports(w.pool.clone());
+        let mut tx = w.pool.begin().await.unwrap();
+        let n = ports
+            .attachments
+            .sweep_unclaimed_attachments(&mut tx, ctx("a@x").now - Duration::days(7), 1)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(n, 1, "one batch of one, without waiting on the held row");
+        holder.rollback().await.unwrap();
+        assert!(
+            w.h.attachment_meta(ids[0], "a@x").await.is_ok(),
+            "the held row was swept"
+        );
+        let left = remaining(&w, &ids).await;
+        assert_eq!(left, 2);
+    }
+
+    async fn remaining(w: &World, ids: &[Uuid]) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM attachments WHERE id = ANY($1)")
+            .bind(ids)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn one_upload_sweeps_more_than_one_batch() {
+        let w = world().await;
+        let ids = held(&w, "a@x", 250, 10).await;
+        sqlx::query("UPDATE attachments SET uploaded_at = uploaded_at - interval '8 days' WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&w.pool)
+            .await
+            .unwrap();
+        up(&w, "b@x").await;
+        assert_eq!(remaining(&w, &ids).await, 0);
+    }
 }

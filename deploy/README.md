@@ -329,10 +329,11 @@ next upload after that.
 
 ### Releases and rollback
 
-Migration 1011 adds the `attachments` and `attachment_chunks` tables. The image before it neither reads nor writes them,
-so a rollback to that image leaves them in place and unused: images stop showing (their links answer 404 from the old
-server) and come back with the next upgrade. Dropping the tables loses every image; restoring the pre-release backup
-does the same for images added since.
+Migration 1011 adds the `attachments` and `attachment_chunks` tables. The server refuses to start on a database that
+has a migration it does not know (sqlx's `VersionMissing`, kept strict on purpose), and `reeve-server export` refuses
+it too, so the image from before this release cannot run against a database that 1011 has been applied to. A rollback
+past this release therefore restores the pre-release backup (see "Restore after an incident"), and every image
+uploaded since that backup is lost; the Markdown that showed them keeps links that answer 404 after the next upgrade.
 
 Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 

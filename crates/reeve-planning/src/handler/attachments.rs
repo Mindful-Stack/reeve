@@ -12,6 +12,10 @@ pub const MAX_CLAIM: usize = 50;
 const UNCLAIMED_DAYS: i64 = 7;
 /// The longest upload idempotency key.
 const MAX_KEY: usize = 200;
+/// How many expired uploads one sweep transaction deletes; the sweep runs as many as it needs.
+const SWEEP_BATCH: i64 = 100;
+/// The most a person may hold in uploads not yet saved with any text, in bytes (twenty full-size images).
+pub const MAX_UNCLAIMED_BYTES: i64 = 200 * 1_048_576;
 
 /// A write's attachment ids, deduplicated and sorted (so two writes claiming the same set lock rows in one order),
 /// and at most `MAX_CLAIM` of them.
@@ -31,6 +35,18 @@ fn upload_error(e: UploadError) -> HandlerError {
     HandlerError::Validation(e.to_string())
 }
 
+/// An upload refused for its content, logged with what the server saw: the person sees only the message.
+fn refused(
+    actor: &str,
+    filename: &str,
+    len: usize,
+    t: Option<ImageType>,
+    e: UploadError,
+) -> HandlerError {
+    tracing::info!(%actor, %filename, bytes = len, sniffed = ?t, reason = %e, "attachment upload refused");
+    upload_error(e)
+}
+
 impl Handlers {
     /// Stores an upload, unclaimed: size, then type by its bytes, then metadata removed, then the chunks, after the
     /// sweep, in one transaction. A repeated idempotency key returns the first upload (to its uploader only) and
@@ -42,21 +58,25 @@ impl Handlers {
         idem: Option<&str>,
         body: Bytes,
     ) -> Result<Attachment, HandlerError> {
-        // The sweep runs for every upload attempt, accepted or not, in a transaction of its own (kb/ADR-0022 R4).
-        let mut sweep = self.pool.begin().await?;
-        self.ports
-            .attachments
-            .sweep_unclaimed_attachments(&mut sweep, c.now - chrono::Duration::days(UNCLAIMED_DAYS))
-            .await?;
-        sweep.commit().await?;
-        if body.len() > MAX_BYTES {
-            return Err(upload_error(UploadError::TooLarge));
+        // The sweep runs for every upload attempt, accepted or not, in a transaction of its own (kb/ADR-0022 R4). It is
+        // housekeeping: a failure is logged and the upload goes on.
+        if let Err(e) = self.sweep(c.now).await {
+            tracing::warn!(error = ?e, "sweeping unclaimed attachments failed");
         }
-        // An empty key is no key; a long one would not fit the index.
+        if body.len() > MAX_BYTES {
+            return Err(refused(
+                &c.actor,
+                filename,
+                body.len(),
+                None,
+                UploadError::TooLarge,
+            ));
+        }
+        // An empty key is no key; a long one would not fit the index, and PostgreSQL text cannot hold a NUL.
         let idem = idem.filter(|k| !k.is_empty());
-        if idem.is_some_and(|k| k.chars().count() > MAX_KEY) {
+        if idem.is_some_and(|k| k.chars().count() > MAX_KEY || k.chars().any(char::is_control)) {
             return Err(HandlerError::Validation(format!(
-                "idempotency_key must be at most {MAX_KEY} characters"
+                "idempotency_key must be at most {MAX_KEY} characters, without control characters"
             )));
         }
         if let Some(k) = idem
@@ -68,10 +88,27 @@ impl Handlers {
         {
             return self.visible(a, &c.actor);
         }
-        let t = ImageType::sniff(&body).ok_or_else(|| upload_error(UploadError::Unsupported))?;
-        let stored = strip_metadata(t, body).map_err(upload_error)?;
+        let len = body.len();
+        let t = ImageType::sniff(&body)
+            .ok_or_else(|| refused(&c.actor, filename, len, None, UploadError::Unsupported))?;
+        let stored =
+            strip_metadata(t, body).map_err(|e| refused(&c.actor, filename, len, Some(t), e))?;
         let a = Attachment::new(Uuid::new_v4(), &c.actor, c.now, filename, t, &stored);
         let mut tx = self.pool.begin().await?;
+        // Two uploads racing past this check can overshoot it by one file each; it bounds a runaway client, not a
+        // determined one.
+        let held = self
+            .ports
+            .attachments
+            .unclaimed_bytes(&mut tx, &c.actor)
+            .await?;
+        if held + a.byte_size() > MAX_UNCLAIMED_BYTES {
+            tracing::info!(actor = %c.actor, held, "attachment upload refused: unsaved uploads over the cap");
+            return Err(HandlerError::Validation(
+                "you have too many images not yet saved with any text; save or discard what you are writing first"
+                    .into(),
+            ));
+        }
         if !self
             .ports
             .attachments
@@ -96,6 +133,29 @@ impl Handlers {
         }
         tx.commit().await?;
         Ok(a)
+    }
+
+    /// The sweep: batches of `SWEEP_BATCH`, each in its own short transaction, until one comes back short. Rows a
+    /// claim holds are skipped, not waited for; they are being claimed.
+    async fn sweep(&self, now: chrono::DateTime<chrono::Utc>) -> Result<u64, HandlerError> {
+        let mut total = 0;
+        loop {
+            let mut tx = self.pool.begin().await?;
+            let n = self
+                .ports
+                .attachments
+                .sweep_unclaimed_attachments(
+                    &mut tx,
+                    now - chrono::Duration::days(UNCLAIMED_DAYS),
+                    SWEEP_BATCH,
+                )
+                .await?;
+            tx.commit().await?;
+            total += n;
+            if n < SWEEP_BATCH as u64 {
+                return Ok(total);
+            }
+        }
     }
 
     /// kb/ADR-0023 R6: anyone sees a claimed attachment, only its uploader an unclaimed one; anyone else is told it does
