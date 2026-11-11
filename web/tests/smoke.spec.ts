@@ -35,8 +35,9 @@ const chore = (page: Page, title: string, epic: string | null = EPIC) =>
 // Sign in through the real browser flow against the static provider: /auth/login → provider → /auth/callback sets the
 // cookie.
 test.beforeEach(async ({ page, context }) => {
-	await page.goto('/auth/login?next=/');
-	await expect(page).toHaveURL(/\/$/);
+	// Lands on Planning, which loads no story list, so a test that counts story requests sees only its own page's.
+	await page.goto('/auth/login?next=/planning');
+	await expect(page).toHaveURL(/\/planning$/);
 	const session = (await context.cookies()).find((c) => c.name === 'reeve_session');
 	expect(session).toBeDefined();
 	expect(session!.httpOnly).toBe(true);
@@ -45,9 +46,24 @@ test.beforeEach(async ({ page, context }) => {
 });
 
 test('planning view shows the seeded initiative in Now', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/planning');
 	await expect(page.getByRole('heading', { name: 'Now' })).toBeVisible();
 	await expect(page.getByText('Smoke initiative')).toBeVisible();
+});
+
+test('Home lists a ready unowned story under Pick next and Start makes it mine', async ({ page }) => {
+	const title = `Home smoke ${crypto.randomUUID().slice(0, 8)}`;
+	// Its own story with a criterion under the discovery-complete smoke epic (ready), never SMOKE_STORY, which other tests move.
+	const s = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(), title, kind: 'chore', criteria: ['it starts'], labels: [], epic: EPIC
+	});
+	// This runs before the tests that add ready stories, so the new story is among the five Pick next shows.
+	await page.goto('/');
+	const pick = page.getByRole('region', { name: 'Pick next' });
+	await pick.getByRole('button', { name: `Start ${s.key}` }).click();
+	await expect(page.getByText(`${s.key} is yours now.`)).toBeVisible();
+	await expect(page.getByRole('region', { name: 'Under way' })).toContainText(title);
+	await expect(pick.getByRole('button', { name: `Start ${s.key}` })).toHaveCount(0);
 });
 
 test('board shows ready and blocked stories and the drawer opens by url', async ({ page }) => {
@@ -251,7 +267,7 @@ test('the decision queue: classify, blocks, withdraw and decide', async ({ page 
 });
 
 test('the planning loop runs in the browser: initiative, epic, story, backlog', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/planning');
 	await page.getByRole('button', { name: 'New initiative' }).click();
 	const form = page.getByRole('dialog').getByRole('form', { name: 'New initiative' });
 	await form.getByLabel('Title').fill('Smoke created initiative');
@@ -370,6 +386,11 @@ test('the client loads nothing from outside the server', async ({ page }) => {
 	// Wait for each page to render its data (not networkidle: the event stream never idles). Headings alone are not
 	// enough: the loading placeholders carry them too, so each page waits for a seeded row or card.
 	await page.goto('/');
+	await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
+	// The seed makes the smoke user the decider of a decision that holds a story, so the section and the flag show.
+	await expect(page.getByRole('heading', { level: 2, name: 'Decisions you decide' })).toBeVisible();
+	await expect(page.getByText(/stor(y waits|ies wait) on a decision/)).toBeVisible();
+	await page.goto('/planning');
 	await expect(page.getByRole('heading', { level: 1, name: 'Planning' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Now' })).toBeVisible();
 	await expect(page.getByText('Smoke initiative')).toBeVisible();
@@ -546,7 +567,7 @@ test('decision rows keep every cell within its column at desktop widths', async 
 
 test('the header goal picker links an initiative and, after navigating by click, one of its epics', async ({ page }) => {
 	const outcome = `Picker smoke ${crypto.randomUUID().slice(0, 8)}`;
-	await page.goto('/');
+	await page.goto('/planning');
 	await page.getByRole('button', { name: 'Goals ▾' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Sprint goals' });
 	await dialog.getByRole('button', { name: '+ Add goal' }).click();
@@ -588,7 +609,7 @@ test('the header goal picker links an initiative and, after navigating by click,
 test('an initiative marked urgent from its card shows in the War room with its reason, and End war room clears it', async ({ page }) => {
 	const title = `Urgent smoke ${crypto.randomUUID().slice(0, 8)}`;
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title, horizon: 'Now' });
-	await page.goto('/');
+	await page.goto('/planning');
 	const warRoom = page.locator('section[aria-label="War room"]');
 	await expect(warRoom).toHaveCount(0); // nothing is marked yet
 
