@@ -147,13 +147,20 @@
 	 *  the URL's query. A landing for any other query (an older request that was still the latest when the hand-off was
 	 *  set) leaves it waiting. So does one that lands after another navigation has committed but before the query effect
 	 *  below has run (effects run in a later microtask). That effect cancels it once the URL's query moves to another key,
-	 *  so it never fires when the user returns to `key` later, whether or not the query in between ever landed. */
+	 *  so it never fires when the user returns to `key` later, whether or not the query in between ever landed. The query
+	 *  is checked again after the render tick, since another one can commit in between. Both orderings are valid
+	 *  interleavings; whether a browser produces them is unverified, so these checks are defensive hardening. */
 	let afterLanding: { key: string; run: () => void } | null = null;
 	function landed(key: string) {
 		const a = afterLanding;
 		if (a?.key !== key || key !== queryKey) return;
-		afterLanding = null;
-		void tick().then(a.run);
+		// Still armed through the tick: the query effect can cancel it meanwhile. Run only if it was not cancelled or
+		// replaced and the URL still reads its query.
+		void tick().then(() => {
+			if (afterLanding !== a || a.key !== queryKey) return;
+			afterLanding = null;
+			a.run();
+		});
 	}
 
 	let latest = 0;
