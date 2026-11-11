@@ -12,6 +12,12 @@
 		await tick();
 		if (focusIsFree(null)) document.querySelector<HTMLElement>('[data-filters-toggle]')?.focus();
 	}
+
+	/** After a control that removed itself by changing the state (the empty state's Show open stories): focus the State
+	 *  control's selected button, unless the user has put focus somewhere already. */
+	export function focusStateToggle(): void {
+		if (focusIsFree(null)) document.querySelector<HTMLElement>('[role="group"][aria-label="State"] button[aria-pressed="true"]')?.focus();
+	}
 </script>
 
 <script lang="ts">

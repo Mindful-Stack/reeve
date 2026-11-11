@@ -39,22 +39,36 @@ export async function headerTarget(text: string, url: URL, lookup: (q: string) =
 
 /** The layout's submit: every submission (key or text) supersedes the ones before it, so a lookup that answers late
  *  never navigates; nor does one whose page moved on meanwhile (`current()`, the page's href, differs from `url`'s), since
- *  its target was built from the page as it was. `onbusy` is true while the latest submission is pending. */
+ *  its target was built from the page as it was. `cancel` (Escape) supersedes the pending submission without a new one.
+ *  `onbusy` is true while the latest submission is pending. */
 export function headerSearch(
 	lookup: (q: string) => Promise<SearchHit[]>,
 	navigate: (to: HeaderTarget) => Promise<unknown>,
 	onbusy: (busy: boolean) => void,
 	current: () => string
-): (text: string, url: URL) => Promise<void> {
+): { submit: (text: string, url: URL) => Promise<void>; cancel: () => void } {
 	let latest = 0;
-	return async (text, url) => {
-		const seq = ++latest;
-		onbusy(true);
-		try {
-			const to = await headerTarget(text, url, lookup);
-			if (seq === latest && to && current() === url.href) await navigate(to);
-		} finally {
-			if (seq === latest) onbusy(false);
+	let pending = false;
+	return {
+		async submit(text, url) {
+			const seq = ++latest;
+			pending = true;
+			onbusy(true);
+			try {
+				const to = await headerTarget(text, url, lookup);
+				if (seq === latest && to && current() === url.href) await navigate(to);
+			} finally {
+				if (seq === latest) {
+					pending = false;
+					onbusy(false);
+				}
+			}
+		},
+		cancel() {
+			latest++;
+			if (!pending) return;
+			pending = false;
+			onbusy(false);
 		}
 	};
 }

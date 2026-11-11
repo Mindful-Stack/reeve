@@ -42,14 +42,14 @@ vi.mock('#lib/components/ReportDialog.svelte', () => ({
 		dialog.props = props;
 	}
 }));
-const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void> }));
+const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void>, searchHold: null as null | Promise<void> }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
 	const { me, epic } = await import('#lib/test/fixtures.ts');
 	installFetch(({ method, path }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
-		if (path === '/api/v1/search') return [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }];
+		if (path === '/api/v1/search') return Promise.resolve(net.searchHold).then(() => [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }]);
 		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
 		return failure('unexpected', 404);
 	});
@@ -84,6 +84,7 @@ afterEach(() => {
 	dialog.props = null;
 	net.gets.length = 0;
 	net.hold = null;
+	net.searchHold = null;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
 	if (app) unmount(app);
@@ -269,6 +270,25 @@ describe('top bar search field', () => {
 		input.focus();
 		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 		expect(document.activeElement).not.toBe(input);
+	});
+	it('Escape while a key lookup is pending cancels it: the form is no longer busy and the answer opens nothing', async () => {
+		vi.mocked(goto).mockClear();
+		let release: () => void = () => {};
+		net.searchHold = new Promise((r) => (release = r));
+		await open('/board');
+		submit('ABC-12');
+		await vi.waitFor(() => expect(net.gets).toContain('GET /api/v1/search'));
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('true');
+		const input = document.body.querySelector('input[type="search"]') as HTMLInputElement;
+		input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		flushSync();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
+		release();
+		await new Promise((r) => setTimeout(r, 20));
+		flushSync();
+		expect(vi.mocked(goto)).not.toHaveBeenCalled();
+		expect(document.body.querySelector('form[role="search"]')!.getAttribute('aria-busy')).toBe('false');
 	});
 	it("Escape restores the page's text instead of clearing the field", async () => {
 		await open('/backlog?q=zebra');

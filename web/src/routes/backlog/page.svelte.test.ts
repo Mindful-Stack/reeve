@@ -750,6 +750,26 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		});
 	});
 
+	it('after a move under Open, a reload that lands late leaves focus the user moved elsewhere', async () => {
+		go('?state=open');
+		data.refuseMoves = false;
+		data.stories = [row('S-1', 1, 'E-1'), row('S-2', 2, 'E-1')];
+		await open('Title S-2');
+		data.hold = true;
+		choose('S-1', 'Move to in progress').click();
+		await vi.waitFor(() => expect(data.held).toHaveLength(2)); // the write's reload: the todo list and the Open rows
+		const all = [...document.body.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="State"] button')].find((b) => b.textContent === 'All')!;
+		all.focus();
+		for (const answer of data.held) answer();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-1"] .rank')!.textContent).toBe('in progress');
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(document.activeElement).toBe(all);
+	});
+
 	it('after an epic change that hides the row under an epic filter, focus goes to the next shown row', async () => {
 		go('?epic=E-1');
 		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
@@ -903,6 +923,22 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.title).toBe('Backlog: “zzz” · Reeve');
 		[...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!.click();
 		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog?q=zzz&state=open'));
+	});
+
+	it('Show open stories hands focus to the State control once the open rows replace it', async () => {
+		go('?q=zzz');
+		data.stories = [row('S-1', 1, null), row('S-2', 2, null, true, 'story', false, { title: 'zzz', delivery: 'in_progress' })];
+		await open('No todo stories match');
+		const show = [...document.body.querySelectorAll<HTMLButtonElement>('.empty button')].find((b) => b.textContent?.trim() === 'Show open stories')!;
+		show.focus();
+		show.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('li[data-key="S-2"]')).not.toBeNull();
+			const active = document.activeElement as HTMLElement;
+			expect(active.closest('[role="group"][aria-label="State"]')).not.toBeNull();
+			expect(active.textContent).toBe('Open');
+		});
 	});
 
 	it('the empty state names a key that matched nothing, and says "No stories" when nothing is filtered', async () => {

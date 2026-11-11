@@ -54,7 +54,7 @@ describe('headerSearch', () => {
 		const lookup = (_: string) => new Promise<SearchHit[]>((resolve) => answers.push(resolve));
 		const navigate = vi.fn(async () => {});
 		const busy: boolean[] = [];
-		const submit = headerSearch(lookup, navigate, (b) => busy.push(b), () => 'http://localhost/board');
+		const { submit } = headerSearch(lookup, navigate, (b) => busy.push(b), () => 'http://localhost/board');
 		const first = submit('GRA-1', at('/board'));
 		const second = submit('GRA-2', at('/board'));
 		answers[1]([hit('GRA-2', 'epic')]);
@@ -64,10 +64,23 @@ describe('headerSearch', () => {
 		expect(navigate.mock.calls).toEqual([[{ href: '/epics/GRA-2', kind: 'item' }]]);
 		expect(busy).toEqual([true, true, false]);
 	});
+	it('cancel drops a pending lookup: it clears busy at once and the answer never navigates', async () => {
+		let answer: (h: SearchHit[]) => void = () => {};
+		const navigate = vi.fn(async () => {});
+		const busy: boolean[] = [];
+		const search = headerSearch(() => new Promise((resolve) => (answer = resolve)), navigate, (b) => busy.push(b), () => 'http://localhost/board');
+		const key = search.submit('GRA-1', at('/board'));
+		search.cancel();
+		expect(busy).toEqual([true, false]);
+		answer([hit('GRA-1', 'epic')]);
+		await key;
+		expect(navigate).not.toHaveBeenCalled();
+		expect(busy).toEqual([true, false]);
+	});
 	it('a text submitted while a key lookup is pending wins over the lookup', async () => {
 		let answer: (h: SearchHit[]) => void = () => {};
 		const navigate = vi.fn(async () => {});
-		const submit = headerSearch(() => new Promise((resolve) => (answer = resolve)), navigate, () => {}, () => 'http://localhost/board');
+		const { submit } = headerSearch(() => new Promise((resolve) => (answer = resolve)), navigate, () => {}, () => 'http://localhost/board');
 		const key = submit('GRA-1', at('/board'));
 		await submit('zebra', at('/board'));
 		answer([hit('GRA-1', 'epic')]);
@@ -79,7 +92,7 @@ describe('headerSearch', () => {
 		const navigate = vi.fn(async () => {});
 		let href = 'http://localhost/board';
 		const busy: boolean[] = [];
-		const submit = headerSearch(() => new Promise((resolve) => answers.push(resolve)), navigate, (b) => busy.push(b), () => href);
+		const { submit } = headerSearch(() => new Promise((resolve) => answers.push(resolve)), navigate, (b) => busy.push(b), () => href);
 		const jump = submit('GRA-1', at('/board'));
 		href = 'http://localhost/sprint';
 		answers[0]([hit('GRA-1', 'epic')]);

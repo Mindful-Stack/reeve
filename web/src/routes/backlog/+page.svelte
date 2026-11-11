@@ -27,7 +27,7 @@
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { rankStory } from '#lib/rank.ts';
 	import { isKeyShaped } from '#lib/search.ts';
-	import BacklogFilters, { focusFiltersToggle } from '#lib/components/BacklogFilters.svelte';
+	import BacklogFilters, { focusFiltersToggle, focusStateToggle } from '#lib/components/BacklogFilters.svelte';
 	import BacklogList from '#lib/components/BacklogList.svelte';
 	import NewEpicForm from '#lib/components/NewEpicForm.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
@@ -135,11 +135,21 @@
 		await goto(withoutFilters(page.url), { replace: true, reset: false });
 		await focusFiltersToggle();
 	}
-	/** The Todo empty state under text: the same text over every open story. */
+	/** The Todo empty state under text: the same text over every open story. The button goes once the open rows land, so
+	 *  focus then moves to the State control (if it went with the button). */
 	function showOpen() {
 		const url = new URL(page.url.href);
 		url.searchParams.set('state', 'open');
+		afterLanding = { key: JSON.stringify(toStoryQuery(url, session.me?.email)), run: focusStateToggle };
 		return goto(url, { replace: true, reset: false });
+	}
+	/** Runs once an answer for the query `key` lands (applied or failed) and the page has rendered it. */
+	let afterLanding: { key: string; run: () => void } | null = null;
+	function landed(key: string) {
+		const a = afterLanding;
+		if (a?.key !== key) return;
+		afterLanding = null;
+		void tick().then(a.run);
 	}
 
 	let latest = 0;
@@ -172,10 +182,11 @@
 				const still = shown.some((s) => s.story.key === l.key);
 				// Once the row is gone from the page, and unless the user has put focus somewhere else meanwhile.
 				void tick().then(() => {
-					if (still) void refocus(l.key);
+					if (still) void refocus(l.key, true);
 					else if (focusIsFree(null)) l.apply();
 				});
 			}
+			landed(key);
 			epics = e;
 			initiatives = i;
 			loadError = stale = null;
@@ -190,6 +201,7 @@
 				loaded = null;
 				loadError = m;
 			}
+			landed(key);
 			return null;
 		}
 	}
@@ -216,10 +228,13 @@
 	const rowOf = (key: string) =>
 		[...document.querySelectorAll<HTMLElement>('li[data-key]')].find((el) => el.dataset.key === key);
 
-	/** After a write and its reload, focus the row's actions trigger (the menu closed), or nothing if the row is gone. */
-	async function refocus(key: string) {
+	/** After a write and its reload, focus the row's actions trigger (the menu closed), or nothing if the row is gone.
+	 *  `onlyIfFree`: not when the user has since moved focus out of the row (a reload that lands late). */
+	async function refocus(key: string, onlyIfFree = false) {
 		await tick();
-		rowOf(key)?.querySelector<HTMLElement>('[data-control="menu"]')?.focus();
+		const row = rowOf(key);
+		if (onlyIfFree && !focusIsFree(row)) return;
+		row?.querySelector<HTMLElement>('[data-control="menu"]')?.focus();
 	}
 
 	/** Places `key` before `before` in the complete todo list (filters only hide rows); a no-op sends nothing. */

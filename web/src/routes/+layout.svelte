@@ -51,7 +51,7 @@
 	// The one text box (kb/ADR-0021): a key jumps to the item it names, any other text filters the backlog
 	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup, and a lookup whose page moved on is dropped.
 	let searching = $state(false);
-	const submitSearch = headerSearch(
+	const headerBox = headerSearch(
 		(text) => unwrap(api.GET('/api/v1/search', { params: { query: { q: text } } })),
 		async (to) => {
 			// Text on the backlog edits its URL in place, as its filters do.
@@ -63,10 +63,12 @@
 		(busy) => (searching = busy),
 		() => page.url.href
 	);
-	/** Escape gives the box back its mirrored text (a search field would clear itself) and leaves it. */
+	/** Escape gives the box back its mirrored text (a search field would clear itself) and leaves it; a pending lookup
+	 *  is dropped with it. */
 	function searchKey(e: KeyboardEvent) {
 		if (e.key !== 'Escape') return;
 		e.preventDefault();
+		headerBox.cancel();
 		q = mirrorOf(page.url) ?? '';
 		search?.blur();
 	}
@@ -259,7 +261,7 @@
 				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
-				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void submitSearch(q, new URL(page.url.href)); }}>
+				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void headerBox.submit(q, new URL(page.url.href)); }}>
 					<input bind:this={search} bind:value={q} type="search" placeholder="Search or jump to a key" aria-label="Search" onkeydown={searchKey} />
 					<kbd aria-hidden="true">/</kbd>
 				</form>
