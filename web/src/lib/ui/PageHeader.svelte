@@ -2,7 +2,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	let { title, count, children }: { title: string; count?: number; children?: Snippet } = $props();
+	let { title, count, children }: { title: string; count?: number | string; children?: Snippet } = $props();
 </script>
 
 <div class="page-header">
@@ -25,6 +25,8 @@
 		gap: 8px 12px;
 		/* Below about 18rem beside the title, the actions take their own row instead of a narrow column. */
 		flex: 1 1 18rem;
+		/* Never wider than the page: a wide control (a select with long options) shrinks instead of scrolling the page. */
+		min-width: 0;
 		font-size: 14px;
 	}
 </style>

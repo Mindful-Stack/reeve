@@ -945,10 +945,11 @@
         "type": "object"
       },
       "DoneFilter": {
-        "description": "Which done stories `GET /stories` lists: every one (the default), or only those that entered done within the\ninstance's `[board] done_window_days`. Stories in other states are always listed.",
+        "description": "Which done stories `GET /stories` lists: every one (the default), only those that entered done within the\ninstance's `[board] done_window_days`, or none. Stories in other states are always listed.",
         "enum": [
           "recent",
-          "all"
+          "all",
+          "none"
         ],
         "type": "string"
       },
@@ -7982,6 +7983,14 @@
         ],
         "type": "object"
       },
+      "StorySort": {
+        "description": "The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the\nstory whose key or external reference equals the text first, then title matches, then the rest; within each,\nthe `rank` order).",
+        "enum": [
+          "rank",
+          "relevance"
+        ],
+        "type": "string"
+      },
       "StoryWithReadiness": {
         "description": "One row of `GET /stories`.",
         "properties": {
@@ -13172,7 +13181,7 @@
             }
           },
           {
-            "description": "`recent`: done stories only when they entered done within `[board] done_window_days`; default `all`.",
+            "description": "`recent`: done stories only when they entered done within `[board] done_window_days`; `none`: no done\nstories; default `all`.",
             "in": "query",
             "name": "done",
             "required": false,
@@ -13187,6 +13196,52 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external\nreference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly. The length bounds count\ncharacters of the trimmed text, so padding around 200 characters is accepted.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Kind"
+            }
+          },
+          {
+            "description": "An initiative key or external reference: stories whose epic belongs to it. A reference that matches nothing,\nor an initiative with no epics, yields an empty list, not 404.",
+            "in": "query",
+            "name": "initiative",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/KeyRef"
+            }
+          },
+          {
+            "description": "Only stories shown as urgent (non-empty `urgent_sources`).",
+            "in": "query",
+            "name": "urgent",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "`rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external\nreference equals `q` first, then title matches, then the rest, each in `rank` order.",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/StorySort"
             }
           }
         ],

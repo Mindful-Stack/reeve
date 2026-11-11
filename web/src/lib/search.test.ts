@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { highlight, hitHref, hitLevel } from './search.ts';
+import { story } from '#lib/test/fixtures.ts';
+import { highlight, hitHref, hitLevel, isKeyShaped, matchedBy } from './search.ts';
 
 const hit = (item: 'initiative' | 'epic' | 'story', kind: 'story' | 'bug' | 'chore' | null = null) => ({
 	key: 'ABC-7',
@@ -56,5 +57,48 @@ describe('highlight', () => {
 	it('returns the title whole for an empty query or no match', () => {
 		expect(highlight('Title', '  ')).toEqual([{ text: 'Title', match: false }]);
 		expect(highlight('Title', 'zz')).toEqual([{ text: 'Title', match: false }]);
+	});
+});
+
+describe('isKeyShaped', () => {
+	it.each(['12', '#12', 'TST-12', 'tst-12', 'SCRUM-40', ' GRA-7 '])('%s names a key or a Jira reference', (q) => {
+		expect(isKeyShaped(q)).toBe(true);
+	});
+	it.each(['invoice', '12 apples', 'TST-', '-12', 'a-b', '#', '', 'TST-12-3', '1-2'])('%s is text', (q) => {
+		expect(isKeyShaped(q)).toBe(false);
+	});
+});
+
+describe('matchedBy', () => {
+	const s = story({ key: 'ABC-12', title: 'Invoice export', description: 'Sends the ZEBRA file', external_ref: 'SCRUM-40' });
+	it('is null without text or when the title matches (the title is highlighted instead)', () => {
+		expect(matchedBy(s, null, 'ABC')).toBeNull();
+		expect(matchedBy(s, 'invoice', 'ABC')).toBeNull();
+	});
+	it('names the field the text matched otherwise', () => {
+		expect(matchedBy(s, 'zebra', 'ABC')).toBe('matched description');
+		expect(matchedBy(s, 'scrum-4', 'ABC')).toBe('matched SCRUM-40');
+		expect(matchedBy(s, '12', 'ABC')).toBe('matched key');
+		expect(matchedBy(s, '#12', 'ABC')).toBe('matched key');
+		expect(matchedBy(s, 'abc-12', 'ABC')).toBe('matched key');
+	});
+	it('says "matched key" only for text that names the row\'s key; otherwise no tag', () => {
+		// A bare number names a key under the current prefix, as the server reads it.
+		expect(matchedBy(s, '12', 'OLD')).toBeNull();
+		expect(matchedBy(s, '1', 'ABC')).toBeNull();
+		expect(matchedBy(s, 'abc-1', 'ABC')).toBeNull();
+		expect(matchedBy(s, '012', 'ABC')).toBeNull();
+		// A match the client cannot see (a field the row does not carry): no guess.
+		expect(matchedBy(s, 'pdf', 'ABC')).toBeNull();
+	});
+	it('matches as highlight does (one escaped iu RegExp): a title highlight never comes with a tag', () => {
+		// Under the u flag 'ſ' (long s) folds to 's'; toLowerCase leaves it alone.
+		const t = story({ key: 'ABC-1', title: 'ſtar chart', description: 'about ſtars' });
+		expect(highlight(t.title, 'star').some((p) => p.match)).toBe(true);
+		expect(matchedBy(t, 'star', 'ABC')).toBeNull();
+		expect(matchedBy({ ...t, title: 'x' }, 'STAR', 'ABC')).toBe('matched description');
+		// Regex characters are literal.
+		expect(matchedBy(story({ key: 'ABC-1', title: 'x', description: 'a.b' }), 'a?b', 'ABC')).toBeNull();
+		expect(matchedBy(story({ key: 'ABC-1', title: 'x', description: 'a.b' }), 'a.b', 'ABC')).toBe('matched description');
 	});
 });

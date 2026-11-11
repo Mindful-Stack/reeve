@@ -11,6 +11,7 @@
 	import { connect, live } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
+	import { headerSearch } from '#lib/headerSearch.ts';
 	import { isCurrent, links, reportContext } from '#lib/nav.ts';
 	import { discardDraft, hasDraft, openReport, persist, report, reportLabel, restoreDraft, type EpicRef } from '#lib/report.svelte.ts';
 	import type { Story } from '#lib/api/types.ts';
@@ -38,10 +39,41 @@
 	]);
 	let search: HTMLInputElement | undefined = $state();
 	let q = $state('');
-	// On /search the field shows the query in the URL, trimmed as the page searches it, so a reload keeps it.
+	// On /backlog and /search the field shows the URL's text, trimmed as those pages read it, so a reload keeps it. Only
+	// when that text changes: toggling a filter or opening the drawer never rewrites what is being typed.
+	/** The text the box mirrors on `url`: the URL's `q` on /backlog and /search, null elsewhere. */
+	const mirrorOf = (url: { readonly pathname: string; readonly searchParams: Pick<URLSearchParams, 'get'> }) => (url.pathname === '/backlog' || url.pathname === '/search' ? (url.searchParams.get('q')?.trim() ?? '') : null);
+	let mirrored: string | null = null;
 	$effect(() => {
-		if (page.url.pathname === '/search') q = page.url.searchParams.get('q')?.trim() ?? '';
+		const text = mirrorOf(page.url);
+		if (text !== null && text !== mirrored) q = text;
+		mirrored = text;
 	});
+
+	// The one text box (kb/ADR-0021): a key jumps to the item it names, any other text filters the backlog
+	// (#lib/headerSearch.ts). A newer submission supersedes a pending lookup, and a lookup whose page moved on is dropped.
+	let searching = $state(false);
+	const headerBox = headerSearch(
+		(text) => unwrap(api.GET('/api/v1/search', { params: { query: { q: text } } })),
+		async (to) => {
+			// Text on the backlog edits its URL in place, as its filters do.
+			if (to.kind === 'filter') return page.url.pathname === '/backlog' ? goto(to.href, { replace: true, reset: false }) : goto(to.href);
+			// A story opens over the current view. After a jump the key is spent: the box shows the page's own text again.
+			await (to.kind === 'story' ? goto(to.href, { reset: false }) : goto(to.href));
+			q = mirrorOf(page.url) ?? '';
+		},
+		(busy) => (searching = busy),
+		() => page.url.href
+	);
+	/** Escape gives the box back its mirrored text (a search field would clear itself) and leaves it; a pending lookup
+	 *  is dropped with it. */
+	function searchKey(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		e.preventDefault();
+		headerBox.cancel();
+		q = mirrorOf(page.url) ?? '';
+		search?.blur();
+	}
 
 	/** "/" focuses search, except where it is typed as text or a dialog is open. */
 	function shortcut(e: KeyboardEvent) {
@@ -237,8 +269,8 @@
 				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
 				</button>
-				<form role="search" aria-label="Site search" onsubmit={(e) => { e.preventDefault(); if (q.trim()) goto(`/search?q=${encodeURIComponent(q.trim())}`); }}>
-					<input bind:this={search} bind:value={q} type="search" placeholder="Search" aria-label="Search" />
+				<form role="search" aria-label="Site search" aria-busy={searching} onsubmit={(e) => { e.preventDefault(); void headerBox.submit(q, new URL(page.url.href)); }}>
+					<input bind:this={search} bind:value={q} type="search" placeholder="Search or jump to a key" aria-label="Search" onkeydown={searchKey} />
 					<kbd aria-hidden="true">/</kbd>
 				</form>
 				<a class="live" class:on={live.connected} href="/activity" title={live.connected ? 'Live: changes appear as they happen' : 'Not connected: reconnecting'}>
@@ -324,6 +356,11 @@
 	form[role='search'] input {
 		width: 100%;
 		padding-right: 28px;
+	}
+	/* A key lookup is pending: the box stays usable (a new submit supersedes it) but reads as working. */
+	form[role='search'][aria-busy='true'] input {
+		color: var(--muted);
+		cursor: progress;
 	}
 	kbd {
 		position: absolute;

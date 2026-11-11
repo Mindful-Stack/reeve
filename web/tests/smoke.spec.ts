@@ -721,6 +721,73 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 	});
 }
 
+test('the header box filters the open backlog by relevance, links to search all, and jumps to a key', async ({ page }) => {
+	const word = `zebra${Date.now()}`;
+	const story = (title: string, description: string) =>
+		post<{ key: string }>(page, '/api/v1/stories', { idempotency_key: crypto.randomUUID(), title, description, kind: 'chore', epic: EPIC, criteria: [], labels: [] });
+	// Ranked first, but only its description matches; the title match ranks below it and sorts above it by relevance.
+	const byDescription = await story('Smoke relevance first', `Mentions ${word} in passing`);
+	const byTitle = await story(`Smoke ${word} in the title`, '');
+	await page.goto('/board');
+	const box = page.getByRole('search', { name: 'Site search' }).getByRole('searchbox');
+	await box.fill(word);
+	await box.press('Enter');
+	await expect(page).toHaveURL(`/backlog?q=${word}&state=open&view=relevance`);
+	const rows = page.locator('ol.rows li[data-key]');
+	await expect(rows).toHaveCount(2);
+	expect(await rows.evaluateAll((li) => li.map((x) => x.getAttribute('data-key')))).toEqual([byTitle.key, byDescription.key]);
+	await expect(rows.first().locator('mark')).toHaveText(word);
+	await expect(rows.nth(1)).toContainText('matched description');
+	await expect(box).toHaveValue(word);
+	// Ranking is offered only outside relevance.
+	await page.getByRole('button', { name: `Actions for ${byTitle.key}`, exact: true }).click();
+	await expect(page.getByRole('menuitem', { name: 'Move to in progress' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: 'Move up' })).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	// Not here? Search all items: /search?q=, where a key typed in the header box opens its drawer over the search.
+	await page.getByRole('link', { name: /^Search all items, including epics, initiatives and done work/ }).click();
+	await expect(page).toHaveURL(`/search?q=${word}`);
+	await expect(page.getByRole('link', { name: new RegExp(`${byTitle.key}.*${word}`) })).toBeVisible();
+	await box.fill(byDescription.key);
+	await box.press('Enter');
+	await expect(page).toHaveURL(`/search?q=${word}&story=${byDescription.key}`);
+	await expect(page.getByRole('complementary')).toContainText('Smoke relevance first');
+});
+
+for (const width of [320, 720, 1280]) {
+	test(`the backlog's filter bar fits at ${width}px with the filters open: no horizontal scroll`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 800 });
+		// The widest options the selects can hold: an epic with an 80-character title (the Epic select) and a long label
+		// on a todo story (the Label select).
+		const title = `Smoke epic at ${width}px with a title long enough to fill eighty characters`.padEnd(80, '.');
+		expect(title).toHaveLength(80);
+		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title });
+		await post(page, '/api/v1/stories', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Smoke filter bar at ${width}px`,
+			kind: 'chore',
+			epic: EPIC,
+			criteria: [],
+			labels: ['smoke-a-label-long-enough-to-name-a-whole-area-of-the-product-and-then-some-more']
+		});
+		await page.goto('/backlog?q=smoke&kind=chore&state=open');
+		await expect(page.getByRole('group', { name: 'Filters' })).toBeVisible(); // open on load: a filter is set
+		await expect(page.getByRole('button', { name: 'Filters (1)' })).toHaveAttribute('aria-expanded', 'true');
+		await expect(page.getByRole('button', { name: /^Remove the text filter/ })).toBeVisible();
+		await expect(page.locator('ol.rows li[data-key]').first()).toBeVisible();
+		const panel = page.getByRole('group', { name: 'Filters' });
+		await expect(panel.getByRole('combobox', { name: 'Epic' }).locator('option', { hasText: title })).toHaveCount(1);
+		await expect(panel.getByRole('combobox', { name: 'Label' }).locator('option', { hasText: 'smoke-a-label-long-enough' })).toHaveCount(1);
+		const m = await page.evaluate(() => ({
+			scroll: document.documentElement.scrollWidth,
+			client: document.documentElement.clientWidth,
+			// What sticks out, for the failure message.
+			wide: [...document.querySelectorAll('main *')].filter((e) => e.getBoundingClientRect().right > document.documentElement.clientWidth + 0.5).map((e) => e.tagName + '.' + e.className)
+		}));
+		expect(m.scroll, `wider than the page: ${m.wide.join(', ')}`).toBeLessThanOrEqual(m.client);
+	});
+}
+
 test('the board banner counts a decision needed this sprint, links to its lane, and a row title opens the decision drawer', async ({ page }) => {
 	const tag = crypto.randomUUID().slice(0, 8);
 	const title = `Banner smoke decision ${tag}`;

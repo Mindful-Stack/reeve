@@ -16,14 +16,16 @@ pub trait StoryRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
     ) -> Result<Story, RepoError>;
-    /// The stories matching `f`, on the caller's transaction: by delivery column, then rank, then key number. With
-    /// `done_since`, a done story is kept only if it entered done at or after that instant (one with no `done_at` is
-    /// not); stories in other states are unaffected.
+    /// The stories matching `f` (every field but `goal` and `urgent`), on the caller's transaction: by delivery
+    /// column, then rank, then key number; under `StorySort::Relevance` first by tier (the key `f.text` names, an
+    /// external reference equal to the text in any case, a title match, the rest). `done` keeps every done story, those
+    /// that entered done at or after an instant (one with no `done_at` is not), or none; stories in other states are
+    /// unaffected.
     async fn list_stories(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         f: &StoryFilter,
-        done_since: Option<DateTime<Utc>>,
+        done: DoneWindow,
     ) -> Result<Vec<Story>, RepoError>;
     /// Stories whose title is similar to `text` (pg_trgm `similarity` at or above `min`), not done or done at or after
     /// `done_since`; most similar first, then newest; at most `limit`. A done story with no `done_at` (imported) is

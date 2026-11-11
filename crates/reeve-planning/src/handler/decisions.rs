@@ -433,13 +433,9 @@ impl Handlers {
                     .await?
             }
         };
-        let unfinished = StoryFilter {
-            unfinished: true,
-            ..Default::default()
-        };
         let urg = self.urgency_in(tx, now).await?;
         let stories = self
-            .list_stories_in(tx, &unfinished, false, None, &urg)
+            .list_stories_in(tx, &StoryFilter::default(), false, DoneWindow::None, &urg)
             .await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.story.key.clone()).collect();
         let mut draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;

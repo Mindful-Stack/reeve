@@ -68,6 +68,7 @@ We decided to compute a story's readiness on every read as: it has an epic, what
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-10: `list_stories` (F2's source, now `crates/reeve-planning/src/repo/stories.rs`) carries kb/ADR-0021's text, kind, epic-set and not-done predicates, and the story list gains `q`, `kind`, `initiative`, `urgent`, `sort` and `done=none`. The untriaged predicate and its test are unchanged (`untriaged_filter_lists_every_kind_without_an_epic_and_agrees_with_readiness`); R4 holds and no trigger fired.
 
 ## See also
 - kb/ADR-0003 (replaced), kb/ADR-0002 (R2 is the story-kind case of R4 here; R3's discovery mark on standing epics), kb/ADR-0004, kb/ADR-0014.

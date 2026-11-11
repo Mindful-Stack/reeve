@@ -2,14 +2,27 @@ use crate::ids::Key;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Which done stories `GET /stories` lists: every one (the default), or only those that entered done within the
-/// instance's `[board] done_window_days`. Stories in other states are always listed.
+/// Which done stories `GET /stories` lists: every one (the default), only those that entered done within the
+/// instance's `[board] done_window_days`, or none. Stories in other states are always listed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DoneFilter {
     Recent,
     #[default]
     All,
+    /// No done stories: todo, in progress, in review and testing.
+    None,
+}
+
+/// The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the
+/// story whose key or external reference equals the text first, then title matches, then the rest; within each,
+/// the `rank` order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StorySort {
+    #[default]
+    Rank,
+    Relevance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
