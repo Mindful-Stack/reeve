@@ -12,7 +12,15 @@ chrono.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 url.workspace = true
+img-parts.workspace = true
+uuid.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
 reeve-testdb.workspace = true
+image.workspace = true
+img-parts.workspace = true
+bytes.workspace = true

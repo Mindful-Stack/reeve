@@ -10,6 +10,21 @@ impl Handlers {
         body: &str,
         idem: Option<&str>,
     ) -> Result<i64, HandlerError> {
+        self.comment_story_attaching(c, story, body, idem, &[])
+            .await
+    }
+
+    /// `comment_story`, claiming `attachments` for the story in the comment's transaction (kb/ADR-0022 R2); a
+    /// replayed comment claims nothing.
+    pub async fn comment_story_attaching(
+        &self,
+        c: &Ctx,
+        story: &Key,
+        body: &str,
+        idem: Option<&str>,
+        attachments: &[Uuid],
+    ) -> Result<i64, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         if body.trim().is_empty() {
             return Err(HandlerError::Validation("empty comment".into()));
         }
@@ -34,6 +49,8 @@ impl Handlers {
             tx.rollback().await?;
             return Ok(id);
         }
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Story, story)
+            .await?;
         self.activity
             .record(
                 &mut tx,
@@ -48,6 +65,23 @@ impl Handlers {
             .await?;
         tx.commit().await?;
         Ok(id)
+    }
+
+    /// `comment_decision`, refusing any attachment: a required decision holds no images (kb/ADR-0004).
+    pub async fn comment_decision_attaching(
+        &self,
+        c: &Ctx,
+        decision: i64,
+        body: &str,
+        idem: Option<&str>,
+        attachments: &[Uuid],
+    ) -> Result<i64, HandlerError> {
+        if !attachments.is_empty() {
+            return Err(HandlerError::Validation(
+                "images can't be attached to decisions".into(),
+            ));
+        }
+        self.comment_decision(c, decision, body, idem).await
     }
 
     pub async fn comment_decision(
@@ -107,8 +141,27 @@ impl Handlers {
         body: &str,
         idem: Option<&str>,
     ) -> Result<i64, HandlerError> {
+        self.comment_item_attaching(c, item, on, body, idem, &[])
+            .await
+    }
+
+    /// `comment_item`, claiming `attachments` for the item in the comment's transaction (kb/ADR-0022 R2).
+    pub async fn comment_item_attaching(
+        &self,
+        c: &Ctx,
+        item: ItemType,
+        on: &Key,
+        body: &str,
+        idem: Option<&str>,
+        attachments: &[Uuid],
+    ) -> Result<i64, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         let entity = match item {
-            ItemType::Story => return self.comment_story(c, on, body, idem).await,
+            ItemType::Story => {
+                return self
+                    .comment_story_attaching(c, on, body, idem, &attachments)
+                    .await;
+            }
             ItemType::Initiative => {
                 self.ports.initiatives.get_initiative(on).await?;
                 "initiative"
@@ -131,6 +184,8 @@ impl Handlers {
             tx.rollback().await?;
             return Ok(id);
         }
+        self.claim_attachments(&mut tx, c, &attachments, item, on)
+            .await?;
         self.activity
             .record(
                 &mut tx,

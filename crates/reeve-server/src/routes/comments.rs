@@ -27,7 +27,14 @@ async fn item_add(
 ) -> Result<Json<Response<Vec<CommentDto>>>, AppError> {
     let (t, key) = s.handlers.resolve_any(&key).await?;
     s.handlers
-        .comment_item(&c.ctx(), t, &key, &b.body, b.idempotency_key.as_deref())
+        .comment_item_attaching(
+            &c.ctx(),
+            t,
+            &key,
+            &b.body,
+            b.idempotency_key.as_deref(),
+            &b.attachments,
+        )
         .await?;
     Ok(ok(s.handlers.comments_for_item(t, &key).await?))
 }
@@ -49,7 +56,13 @@ async fn story_add(
 ) -> Result<Json<Response<Vec<CommentDto>>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
     s.handlers
-        .comment_story(&c.ctx(), &key, &b.body, b.idempotency_key.as_deref())
+        .comment_story_attaching(
+            &c.ctx(),
+            &key,
+            &b.body,
+            b.idempotency_key.as_deref(),
+            &b.attachments,
+        )
         .await?;
     Ok(ok(s.handlers.comments_for_story(&key).await?))
 }
@@ -69,7 +82,13 @@ async fn decision_add(
     ApiJson(b): ApiJson<AddComment>,
 ) -> Result<Json<Response<Vec<CommentDto>>>, AppError> {
     s.handlers
-        .comment_decision(&c.ctx(), id, &b.body, b.idempotency_key.as_deref())
+        .comment_decision_attaching(
+            &c.ctx(),
+            id,
+            &b.body,
+            b.idempotency_key.as_deref(),
+            &b.attachments,
+        )
         .await?;
     Ok(ok(s.handlers.comments_for_decision(id).await?))
 }

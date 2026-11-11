@@ -1,6 +1,6 @@
 use crate::{
-    ActivityEntryDto, CommentDto, EpicDto, InitiativeDto, RequiredDecisionDto, SprintDto, StoryDto,
-    UserDto,
+    ActivityEntryDto, AttachmentDto, CommentDto, EpicDto, InitiativeDto, RequiredDecisionDto,
+    SprintDto, StoryDto, UserDto,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,10 @@ pub struct ExportDto {
     pub sprints: Vec<SprintDto>,
     pub decisions: Vec<RequiredDecisionDto>,
     pub comments: Vec<CommentDto>,
+    /// Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump
+    /// (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentDto>,
     pub activity: Vec<ActivityEntryDto>,
     pub users: Vec<UserDto>,
 }

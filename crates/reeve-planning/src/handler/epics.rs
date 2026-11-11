@@ -14,7 +14,22 @@ impl Handlers {
         brief: &str,
         external_ref: Option<String>,
     ) -> Result<Epic, HandlerError> {
-        self.create_epic_reporting(c, idem, title, initiative, brief, external_ref)
+        self.create_epic_attaching(c, idem, title, initiative, brief, external_ref, &[])
+            .await
+    }
+
+    /// `create_epic`, claiming `attachments` for the new epic in its transaction (kb/ADR-0022 R2).
+    pub async fn create_epic_attaching(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        initiative: Option<Key>,
+        brief: &str,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Epic, HandlerError> {
+        self.create_epic_reporting(c, idem, title, initiative, brief, external_ref, attachments)
             .await
             .map(|(x, _)| x)
     }
@@ -28,7 +43,9 @@ impl Handlers {
         initiative: Option<Key>,
         brief: &str,
         external_ref: Option<String>,
+        attachments: &[Uuid],
     ) -> Result<(Epic, bool), HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         if let Some(k) = self
             .ports
             .keys
@@ -72,6 +89,8 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Epic, e.key())
+            .await?;
         self.activity
             .record(
                 &mut tx,
@@ -98,6 +117,24 @@ impl Handlers {
         initiative: Option<Option<Key>>,
         external_ref: Option<String>,
     ) -> Result<Epic, HandlerError> {
+        self.edit_epic_attaching(c, key, version, title, brief, initiative, external_ref, &[])
+            .await
+    }
+
+    /// `edit_epic`, claiming `attachments` for the epic in its transaction (kb/ADR-0022 R2).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn edit_epic_attaching(
+        &self,
+        c: &Ctx,
+        key: &Key,
+        version: i64,
+        title: Option<String>,
+        brief: Option<String>,
+        initiative: Option<Option<Key>>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Epic, HandlerError> {
+        let attachments = attachment_ids(attachments)?;
         let cur = self.ports.epics.get_epic(key).await?;
         let ini = initiative.unwrap_or(cur.initiative().cloned());
         if let Some(ik) = &ini {
@@ -125,6 +162,8 @@ impl Handlers {
         self.ports
             .epics
             .update_epic(&mut tx, &next, version, c.now)
+            .await?;
+        self.claim_attachments(&mut tx, c, &attachments, ItemType::Epic, key)
             .await?;
         self.activity
             .record(

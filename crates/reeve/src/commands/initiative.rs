@@ -131,6 +131,7 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
                     target_month,
                     owner,
                     external_ref,
+                    attachments: vec![],
                 })?,
             )
             .await?,

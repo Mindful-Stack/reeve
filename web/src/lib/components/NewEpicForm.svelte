@@ -8,6 +8,8 @@
 	import { CreateCycle } from '#lib/idempotency.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { planningOrder } from '#lib/planning.ts';
+	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
 	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a select of
 	// `initiatives` plus "none" picks it. Mount it under `{#key}` of the page's item so a draft never moves to another item.
@@ -32,6 +34,11 @@
 	 *  double submit. */
 	const cycle = new CreateCycle();
 	let error = $state<string | null>(null);
+	let briefEl = $state<HTMLTextAreaElement | null>(null);
+	const uploads = new ImageUploads(
+		() => draft.brief,
+		(t) => (draft.brief = t)
+	);
 	let formEl: HTMLFormElement | undefined;
 	let titleEl: HTMLInputElement | undefined;
 
@@ -51,7 +58,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
-		if (cycle.inFlight) return;
+		if (cycle.inFlight || uploads.busy) return;
 		// The callback of the parent this submit belongs to: once this form is unmounted (its dialog closed while the create
 		// was in flight), reading the prop again may give the callback of whatever the parent shows now.
 		const done = oncreated;
@@ -63,13 +70,14 @@
 		busy = true;
 		error = null;
 		const out = await cycle.send(p.text, (idempotency_key) =>
-			unwrap(api.POST('/api/v1/epics', { body: { ...p.body, idempotency_key } }))
+			unwrap(api.POST('/api/v1/epics', { body: { ...p.body, ...uploads.body(), idempotency_key } }))
 		);
 		if (out.kind === 'sent' && !mounted) await done(out.value);
 		if (!mounted) return;
 		busy = false;
 		if (out.kind === 'sent') {
 			draft = { title: '', brief: '', initiative: draft.initiative };
+			uploads.reset();
 			refocus();
 			await done(out.value);
 		} else if (out.kind === 'failed') {
@@ -90,9 +98,12 @@
 			</select>
 		</label>
 	{/if}
-	<label class="field">Brief (Markdown) <textarea bind:value={draft.brief} rows="3" disabled={busy}></textarea></label>
+	<div class="field">
+		<label class="field">Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="3" disabled={busy} {@attach attachable(uploads)}></textarea></label>
+		<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
+	</div>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	<button type="submit" class="primary" disabled={busy || !draft.title.trim()}>Create epic</button>
+	<button type="submit" class="primary" disabled={busy || uploads.busy || !draft.title.trim()}>{uploads.busy ? 'Uploading…' : 'Create epic'}</button>
 </form>
 
 <style>

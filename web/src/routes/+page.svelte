@@ -18,6 +18,8 @@
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
+	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
 	let initiatives = $state<Initiative[] | null>(null);
 	let decisions = $state<RequiredDecision[]>([]);
@@ -27,6 +29,11 @@
 
 	let creating = $state(false);
 	let draft = $state<InitiativeDraft>({ title: '', horizon: '', target_month: '', brief: '' });
+	let briefEl = $state<HTMLTextAreaElement | null>(null);
+	const uploads = new ImageUploads(
+		() => draft.brief,
+		(t) => (draft.brief = t)
+	);
 	/** The form's sends: its key survives cancel and reopen and is replaced only after a successful create. */
 	const cycle = new CreateCycle();
 	let createError = $state<string | null>(null);
@@ -191,12 +198,13 @@
 		if (busy) return; // a pending create keeps its dialog: its completion navigates or shows the error here
 		creating = false;
 		createError = null;
+		uploads.reset();
 		void tick().then(() => newButton?.focus());
 	}
 
 	async function createInitiative(e: SubmitEvent) {
 		e.preventDefault();
-		if (busy) return;
+		if (busy || uploads.busy) return;
 		const p = initiativeCreate(draft, configured);
 		if (!p.ok) {
 			createError = p.error;
@@ -205,11 +213,12 @@
 		busy = true;
 		createError = null;
 		const out = await cycle.send(p.text, (idempotency_key) =>
-			unwrap(api.POST('/api/v1/initiatives', { body: { ...p.body, idempotency_key } }))
+			unwrap(api.POST('/api/v1/initiatives', { body: { ...p.body, ...uploads.body(), idempotency_key } }))
 		);
 		busy = false;
 		if (out.kind === 'sent') {
 			draft = { title: '', horizon: configured[0] ?? '', target_month: '', brief: '' };
+			uploads.reset();
 			creating = false;
 			await goto(`/initiatives/${encodeURIComponent(out.value.key)}`);
 		} else if (out.kind === 'failed') createError = show(out.error); // the draft and its key stay for a retry
@@ -256,11 +265,18 @@
 				</select>
 			</label>
 			<label class="field">Target month <input bind:value={draft.target_month} placeholder="YYYY-MM" disabled={busy} /></label>
-			<label class="field">Brief (Markdown) <textarea bind:value={draft.brief} rows="4" disabled={busy}></textarea></label>
+			<div class="field">
+				<label class="field"
+					>Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="4" disabled={busy} {@attach attachable(uploads)}></textarea></label
+				>
+				<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
+			</div>
 			{#if createError}<p class="error" role="alert">{createError}</p>{/if}
 			<div class="actions">
 				<button type="button" onclick={cancelCreate} disabled={busy}>Cancel</button>
-				<button type="submit" class="primary" disabled={busy || !draft.title.trim()}>Create initiative</button>
+				<button type="submit" class="primary" disabled={busy || uploads.busy || !draft.title.trim()}
+					>{uploads.busy ? 'Uploading…' : 'Create initiative'}</button
+				>
 			</div>
 		</form>
 	</Dialog>

@@ -18,6 +18,7 @@ use reeve_protocol::{
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::{collections::HashMap, sync::Arc};
 
+mod attachments;
 mod comments;
 mod decisions;
 mod epics;
@@ -41,6 +42,7 @@ pub fn make_planning_ports(pool: PgPool) -> PlanningPorts {
     let r = Arc::new(PgPlanningRepo::new(pool));
     PlanningPorts {
         keys: r.clone(),
+        attachments: r.clone(),
         initiatives: r.clone(),
         epics: r.clone(),
         stories: r.clone(),

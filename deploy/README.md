@@ -106,7 +106,11 @@ The web client keeps one server-sent-events stream open per tab (`/api/v1/events
         proxy_pass http://127.0.0.1:7474;
     }
 
-with `listen 443 ssl; http2 on;` in the server block. Caddy's `reverse_proxy` streams server-sent events without buffering by default (no `flush_interval -1` needed) and serves HTTP/2 over TLS out of the box:
+with `listen 443 ssl; http2 on;` and `client_max_body_size 11m;` in the server block. The server accepts images up to
+10 MiB on `POST /api/v1/attachments` (kb/ADR-0023), and nginx refuses bodies over 1 MB by default: a proxy limit below
+the server's makes a screenshot upload fail with nginx's own 413 page instead of the server's message. Caddy sets no
+body limit by default. An upload's filename and idempotency key travel in its query string, so they reach the
+proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy` streams server-sent events without buffering by default (no `flush_interval -1` needed) and serves HTTP/2 over TLS out of the box:
 
     planner.example.com {
         reverse_proxy 127.0.0.1:7474
@@ -325,7 +329,19 @@ The household directory must hold a real `git clone` of each repository named in
 
 The restore source is a `pg_dump` archive of the planner's database. It holds everything: users, token hashes (people stay signed in and automation keeps working after a restore), idempotency keys (a create retried after the restore still deduplicates), the key sequence, the activity log with its ids, and the migration table. Store a dump like a secret: it holds every user's email and every token hash. The JSON export is the readable record taken beside it, and what a restore is checked against; nothing restores from the export.
 
+Attachments (images on items) are in the dump too, as 1 MiB chunks in the database (kb/ADR-0022), so the dump grows with
+them and the export lists only their metadata. A deleted image is gone from the database at once, but stays in every
+dump taken before the delete until that dump is rotated out: a request to erase an image is complete only once those
+backups are gone. An image uploaded and never saved with any text is kept for at least seven days, and deleted by the
+next upload after that.
+
 ### Releases and rollback
+
+Migration 1011 adds the `attachments` and `attachment_chunks` tables. The server refuses to start on a database that
+has a migration it does not know (sqlx's `VersionMissing`, kept strict on purpose), and `reeve-server export` refuses
+it too, so the image from before this release cannot run against a database that 1011 has been applied to. A rollback
+past this release therefore restores the pre-release backup (see "Restore after an incident"), and every image
+uploaded since that backup is lost; the Markdown that showed them keeps links that answer 404 after the next upgrade.
 
 Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 

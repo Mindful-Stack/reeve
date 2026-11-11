@@ -20,6 +20,10 @@ pub struct CreateInitiative {
     /// three types, and a later import of the same reference finds this item instead of creating another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_ref: Option<String>,
+    /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+    /// that is gone is ignored; one that belongs to another item or person refuses the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -32,6 +36,10 @@ pub struct CreateEpic {
     /// three types, and a later import of the same reference finds this item instead of creating another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_ref: Option<String>,
+    /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+    /// that is gone is ignored; one that belongs to another item or person refuses the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -50,6 +58,10 @@ pub struct CreateStory {
     /// The story's owner (email); it must be an allowed user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+    /// that is gone is ignored; one that belongs to another item or person refuses the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -104,6 +116,10 @@ pub struct EditItem {
     /// as on create; the reference it already has again is no change, and an existing one is never changed or cleared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_ref: Option<String>,
+    /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+    /// that is gone is ignored; one that belongs to another item or person refuses the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -193,6 +209,10 @@ pub struct AddComment {
     /// Caller-chosen key that makes a retried comment safe: a repeat returns the thread with the first comment only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
+    /// that is gone is ignored; one that belongs to another item or person refuses the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -12,8 +12,12 @@ pub enum AppError {
     Forbidden,
     NotFound,
     MethodNotAllowed,
-    Conflict { current: i64 },
+    Conflict {
+        current: i64,
+    },
     Validation(String),
+    /// A body over its route's limit: 413 with the `validation` code.
+    TooLarge(String),
     Refused(Vec<Reason>),
     Internal(anyhow::Error),
 }
@@ -109,6 +113,14 @@ impl IntoResponse for AppError {
                         format!("version conflict: current is {current}")
                     },
                     current: Some(current),
+                },
+            ),
+            AppError::TooLarge(m) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                reeve_protocol::Response::Error {
+                    code: ErrorCode::Validation,
+                    message: m,
+                    current: None,
                 },
             ),
             AppError::Validation(m) => (

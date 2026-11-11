@@ -9,7 +9,9 @@
 	import { errorMessage } from '#lib/format.ts';
 	import { levelOfKind } from '#lib/glyphs.ts';
 	import { draftKey } from '#lib/idempotency.ts';
-	import { report, discardDraft, isUntouched, payloadOf, payloadText, templateFor } from '#lib/report.svelte.ts';
+	import { report, discardDraft, isUntouched, payloadOf, payloadText, reportUploads, templateFor } from '#lib/report.svelte.ts';
+	import { attachable } from '#lib/attach.svelte.ts';
+	import ImageUploadsRow from './ImageUploadsRow.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Glyph from './Glyph.svelte';
 
@@ -31,6 +33,8 @@
 
 	// The form renders only while a draft exists (see the {#if} below): Discard and a create set it to null.
 	const d = $derived(report.draft!);
+	const uploads = $derived(report.draft ? reportUploads() : null);
+	let descriptionEl = $state<HTMLTextAreaElement | null>(null);
 	/** An edit after an uncertain send waits for "Send anyway". */
 	let confirmResend = $state(false);
 	let busy = $state(false);
@@ -148,7 +152,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
-		if (busy) return;
+		if (busy || uploads?.busy) return;
 		kindError = false;
 		if (!d.title.trim()) {
 			error = 'Give it a title.';
@@ -263,7 +267,19 @@
 				{/each}
 				<p class="hint">Pick the closest fit; the team can change it.</p>
 			</fieldset>
-			<label class="field">Description <textarea value={d.description} oninput={(e) => (d.description = e.currentTarget.value)} rows="6" disabled={busy}></textarea></label>
+			<div class="field">
+				<label class="field"
+					>Description <textarea
+						bind:this={descriptionEl}
+						value={d.description}
+						oninput={(e) => (d.description = e.currentTarget.value)}
+						rows="6"
+						disabled={busy}
+						{@attach uploads && attachable(uploads)}
+					></textarea></label
+				>
+				{#if uploads}<ImageUploadsRow {uploads} field={descriptionEl} disabled={busy} />{/if}
+			</div>
 			<p class="from">Reported from: <a href={d.origin.path}>{d.origin.label}</a></p>
 			{#if d.epic}
 				<p class="chip">
@@ -275,7 +291,9 @@
 			{/if}
 			{#if error}<p class="error" id="{id}-error" role="alert">{error}</p>{/if}
 			<div class="actions">
-				<button type="submit" class="primary" disabled={busy}>{confirmResend ? 'Send anyway' : 'Report'}</button>
+				<button type="submit" class="primary" disabled={busy || uploads?.busy}
+					>{uploads?.busy ? 'Uploading…' : confirmResend ? 'Send anyway' : 'Report'}</button
+				>
 				<button type="button" class="ghost" onclick={() => discardDraft()} disabled={busy}>Discard draft</button>
 			</div>
 		</form>

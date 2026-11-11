@@ -15,6 +15,8 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
 	const { epic } = await import('#lib/test/fixtures.ts');
 	installFetch(async ({ method, path, body }) => {
+		if (method === 'POST' && path === '/api/v1/attachments')
+			return { id: 'img-e', url: '/api/v1/attachments/img-e', filename: 'shot.png', content_type: 'image/png', byte_size: 4, uploaded_by: 'dan@example.com', uploaded_at: '2026-11-10T09:00:00Z' };
 		if (method !== 'POST' || path !== '/api/v1/epics') throw new Error(`unexpected ${method} ${path}`);
 		const posted = body as Posted;
 		net.posts.push(posted);
@@ -203,5 +205,24 @@ describe('NewEpicForm', () => {
 		expect(net.posts[0].initiative).toBe('ABC-2');
 		flushSync();
 		expect(field('Initiative').value).toBe('ABC-2');
+	});
+});
+
+describe('NewEpicForm images', () => {
+	it('sends the image shown in its brief, and empties the row after the create', async () => {
+		const { file } = await import('#lib/test/events.ts');
+		app = mount(NewEpicForm, { target: document.body, props: { initiative: 'ABC-1', oncreated: () => {} } });
+		flushSync();
+		const title = document.body.querySelector<HTMLInputElement>('input:not([type=file])')!;
+		title.value = 'An epic';
+		title.dispatchEvent(new Event('input', { bubbles: true }));
+		const input = document.body.querySelector<HTMLInputElement>('input[type=file]')!;
+		Object.defineProperty(input, 'files', { value: [file('shot.png')], configurable: true });
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+		await vi.waitFor(() => expect(document.body.querySelector('textarea')!.value).toContain('/api/v1/attachments/img-e'));
+		document.body.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+		await vi.waitFor(() => expect(net.posts).toHaveLength(1));
+		expect(net.posts[0]).toMatchObject({ attachments: ['img-e'] });
+		await vi.waitFor(() => expect(document.body.querySelector('.uploads li')).toBeNull());
 	});
 });

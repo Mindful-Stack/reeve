@@ -4,6 +4,10 @@ mod handler;
 mod ports;
 mod repo;
 pub use domain::{
+    attachment::{
+        Attachment, AttachmentOwner, CHUNK, ImageType, MAX_BYTES, UploadError, chunks,
+        clean_filename, strip_metadata,
+    },
     decision::{
         CheckOutcome, Closed, DecisionEdit, DecisionError, FieldChange, PrUrl, RecordRef,
         RequiredDecision,
@@ -23,9 +27,10 @@ pub use domain::{
 };
 pub use handler::*;
 pub use ports::{
-    ActivityRecord, ActivitySink, CommentRepo, DecisionRepo, DoneWindow, EpicRepo, GoalFilter,
-    InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads, PullRequestRepo, RepoError, SearchRow,
-    SprintRepo, StoryCounts, StoryFilter, StoryRepo, StoryText, UrgencyRepo,
+    ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
+    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads,
+    PullRequestRepo, RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryRepo,
+    StoryText, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;

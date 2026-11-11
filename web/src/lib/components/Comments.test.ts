@@ -6,12 +6,17 @@ import type { Comment } from '#lib/api/types.ts';
 import { comment as commentDto } from '#lib/test/fixtures.ts';
 import Comments from './Comments.svelte';
 
-const net = vi.hoisted(() => ({ sent: [] as string[] }));
+const net = vi.hoisted(() => ({ sent: [] as string[], bodies: [] as unknown[], hold: null as Promise<void> | null }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch } = await import('#lib/test/net.ts');
-	installFetch(({ method, path }) => {
+	installFetch(async ({ method, path, body }) => {
 		net.sent.push(`${method} ${path}`);
+		net.bodies.push(body);
+		if (path === '/api/v1/attachments') {
+			if (net.hold) await net.hold;
+			return { id: 'img1', url: '/api/v1/attachments/img1', filename: 'shot.png', content_type: 'image/png', byte_size: 4, uploaded_by: 'dan@example.com', uploaded_at: '2026-11-10T09:00:00Z' };
+		}
 		return [];
 	});
 	return orig();
@@ -66,5 +71,40 @@ describe('Comments composer', () => {
 		await vi.waitFor(() => expect(posted).toBe(true));
 		expect(net.sent).toEqual(['POST /api/v1/items/ABC-6/comments']);
 		expect(area.getAttribute('aria-label')).toBe('comment on ABC-6');
+	});
+});
+
+describe('Comments images', () => {
+	it('blocks posting while an image uploads, then sends it and empties the row', async () => {
+		const { file } = await import('#lib/test/events.ts');
+		let release!: () => void;
+		net.hold = new Promise((r) => (release = r));
+		net.sent = [];
+		net.bodies = [];
+		app = mount(Comments, { target: document.body, props: { itemKey: 'ABC-6', comments: [], onposted: () => {} } });
+		flushSync();
+		const input = document.body.querySelector<HTMLInputElement>('input[type=file]')!;
+		Object.defineProperty(input, 'files', { value: [file('shot.png')], configurable: true });
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+		flushSync();
+		const button = document.body.querySelector<HTMLButtonElement>('button[type=submit]')!;
+		await vi.waitFor(() => expect(button.textContent).toBe('Uploading…'));
+		expect(button.disabled).toBe(true);
+		release();
+		await vi.waitFor(() => expect(document.body.querySelector('textarea')!.value).toBe('![shot](/api/v1/attachments/img1)'));
+		flushSync();
+		expect(button.disabled).toBe(false);
+		document.body.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
+		await vi.waitFor(() => expect(net.sent).toContain('POST /api/v1/items/ABC-6/comments'));
+		expect(net.bodies.at(-1)).toMatchObject({ body: '![shot](/api/v1/attachments/img1)', attachments: ['img1'] });
+		await vi.waitFor(() => expect(document.body.querySelector('.uploads li')).toBeNull());
+		net.hold = null;
+	});
+
+	it('keeps Add image from submitting the form', () => {
+		app = mount(Comments, { target: document.body, props: { itemKey: 'ABC-6', comments: [], onposted: () => {} } });
+		flushSync();
+		const add = [...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Add image')!;
+		expect(add.type).toBe('button');
 	});
 });

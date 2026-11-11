@@ -338,6 +338,12 @@ impl PlanningReads for PgPlanningRepo {
             .await?;
         Ok(rows.iter().map(comment_from).collect())
     }
+    async fn attachments_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<crate::domain::attachment::Attachment>, RepoError> {
+        super::attachments::claimed_in(tx).await
+    }
     async fn urgency_lineage_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

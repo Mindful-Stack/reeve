@@ -23,7 +23,7 @@ async fn create(
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
     let i = s
         .handlers
-        .create_initiative(
+        .create_initiative_attaching(
             &c.ctx(),
             &b.idempotency_key,
             &b.title,
@@ -32,6 +32,7 @@ async fn create(
             b.target_month,
             b.owner,
             b.external_ref,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.initiative_dto(i.key(), c.ctx().now).await?))
@@ -54,7 +55,7 @@ async fn edit(
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Initiative).await?;
     s.handlers
-        .edit_initiative(
+        .edit_initiative_attaching(
             &c.ctx(),
             &key,
             b.version,
@@ -64,6 +65,7 @@ async fn edit(
             b.target_month,
             b.owner,
             b.external_ref,
+            &b.attachments,
         )
         .await?;
     Ok(ok(s.handlers.initiative_dto(&key, c.ctx().now).await?))

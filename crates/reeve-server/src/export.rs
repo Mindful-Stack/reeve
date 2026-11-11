@@ -109,6 +109,7 @@ pub async fn export_document_in(
     let sprints = src.handlers.export_sprints(&mut tx).await?;
     let decisions = src.handlers.export_decisions(&mut tx).await?;
     let comments = src.handlers.export_comments(&mut tx).await?;
+    let attachments = src.handlers.export_attachments(&mut tx).await?;
     let users = reeve_identity::list_users_in(&mut tx)
         .await?
         .into_iter()
@@ -144,6 +145,7 @@ pub async fn export_document_in(
         sprints,
         decisions,
         comments,
+        attachments,
         activity,
         users,
     })
@@ -312,6 +314,7 @@ mod tests {
             sprints: vec![],
             decisions: vec![],
             comments: vec![],
+            attachments: vec![],
             activity: vec![],
             users: vec![],
         };

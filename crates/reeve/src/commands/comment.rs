@@ -70,6 +70,7 @@ pub async fn run(c: &Client, cmd: Comment, json: bool) -> anyhow::Result<i32> {
                 serde_json::to_value(AddComment {
                     body,
                     idempotency_key: Some(idempotency_key),
+                    attachments: vec![],
                 })?,
             )
             .await?,

@@ -59,6 +59,7 @@ impl Handlers {
                     i.target_month.clone(),
                     i.owner.clone(),
                     i.external_ref.clone(),
+                    &[],
                 )
                 .await?;
             keys.insert(i.name.clone(), made.key().clone());
@@ -80,6 +81,7 @@ impl Handlers {
                     initiative,
                     e.brief.as_deref().unwrap_or(""),
                     e.external_ref.clone(),
+                    &[],
                 )
                 .await?;
             keys.insert(e.name.clone(), made.key().clone());
@@ -106,6 +108,7 @@ impl Handlers {
                     s.external_ref.clone(),
                     None,
                     s.delivery.unwrap_or(DeliveryState::Todo),
+                    &[],
                 )
                 .await?;
             keys.insert(s.name.clone(), made.key().clone());

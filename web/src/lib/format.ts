@@ -34,3 +34,14 @@ export function short(email: string): string {
 export function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
+
+/** An activity entry's action as people read it: an attachment's names its file (from the payload); any other is its
+ *  action with spaces. */
+export function actionLabel(action: string, payload: unknown): string {
+	if (action === 'attachment_added' || action === 'attachment_removed') {
+		const name =
+			payload && typeof payload === 'object' && 'filename' in payload && typeof payload.filename === 'string' ? ` ${payload.filename}` : '';
+		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name}`;
+	}
+	return action.replaceAll('_', ' ');
+}

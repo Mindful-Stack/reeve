@@ -1,3 +1,4 @@
+pub mod attachment;
 pub mod decision;
 pub mod findings;
 pub mod items;

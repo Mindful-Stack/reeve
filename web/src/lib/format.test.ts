@@ -51,3 +51,13 @@ describe('errorMessage', () => {
 		expect(errorMessage(42)).toBe('42');
 	});
 });
+
+describe('actionLabel', () => {
+	it('names the file of an attachment entry and spaces every other action', async () => {
+		const { actionLabel } = await import('./format.ts');
+		expect(actionLabel('attachment_added', { attachment_id: 'x', filename: 'shot.png' })).toBe('added attachment shot.png');
+		expect(actionLabel('attachment_removed', { filename: 'shot.png' })).toBe('deleted attachment shot.png');
+		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
+		expect(actionLabel('goal_linked', null)).toBe('goal linked');
+	});
+});

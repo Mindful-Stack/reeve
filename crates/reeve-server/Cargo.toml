@@ -42,6 +42,8 @@ rust-embed.workspace = true
 mime_guess.workspace = true
 base64.workspace = true
 reqwest.workspace = true
+uuid.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 tower.workspace = true
@@ -49,3 +51,5 @@ http-body-util.workspace = true
 testcontainers-modules.workspace = true
 reeve-testdb.workspace = true
 tempfile.workspace = true
+image.workspace = true
+img-parts.workspace = true

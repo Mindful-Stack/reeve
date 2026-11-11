@@ -125,3 +125,69 @@ describe('report draft', () => {
 		expect(() => payloadOf(report.draft!)).toThrow('a report needs a kind');
 	});
 });
+
+describe('report draft images', () => {
+	const ref = { id: 'img-1', url: '/api/v1/attachments/img-1' };
+
+	it('sends the images still in the description, and no attachments field without any', () => {
+		openReport({ path: '/board', label: 'Board', epic: null });
+		const d = report.draft!;
+		d.title = 'Broken export';
+		d.kind = 'bug';
+		d.description = 'It breaks';
+		const before = payloadText(d);
+		expect(payloadOf(d)).not.toHaveProperty('attachments');
+		// A ref whose image was removed from the text again changes nothing: the payload, and so the key, stay.
+		d.attachments = [ref];
+		expect(payloadText(d)).toBe(before);
+		d.description = `It breaks\n![shot](${ref.url})`;
+		expect(payloadOf(d).attachments).toEqual(['img-1']);
+	});
+
+	it('restores refs, accepts a draft saved before images, and strips placeholders a reload left', () => {
+		openReport({ path: '/board', label: 'Board', epic: null });
+		const d = report.draft!;
+		d.title = 'With image';
+		d.description = `See:\n![Uploading shot… ‹u4›]()\n![a](${ref.url})`;
+		d.attachments = [ref];
+		persist('dan@example.com');
+		discardDraft({ keepStorage: true });
+		expect(restoreDraft('dan@example.com')).toBe(true);
+		expect(report.draft!.description).toBe(`See:\n![a](${ref.url})`);
+		expect(report.draft!.attachments).toEqual([ref]);
+
+		// An older build's draft has no attachments field at all.
+		const old = { ...JSON.parse(JSON.stringify(report.draft)) };
+		delete old.attachments;
+		sessionStorage.setItem('reeve.report-draft', JSON.stringify({ email: 'dan@example.com', draft: old }));
+		discardDraft({ keepStorage: true });
+		expect(restoreDraft('dan@example.com')).toBe(true);
+		expect(report.draft!.attachments).toBeUndefined();
+	});
+
+	it('drops a stored draft whose attachments are malformed', () => {
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'x';
+		const bad = { ...JSON.parse(JSON.stringify(report.draft)), attachments: [{ id: 1 }] };
+		sessionStorage.setItem('reeve.report-draft', JSON.stringify({ email: 'dan@example.com', draft: bad }));
+		discardDraft({ keepStorage: true });
+		expect(restoreDraft('dan@example.com')).toBe(false);
+	});
+});
+
+describe('the report draft controller', () => {
+	it('is one per draft, seeded with its refs, and new after a discard', async () => {
+		const { reportUploads } = await import('./report.svelte.ts');
+		openReport({ path: '/board', label: 'Board', epic: null });
+		report.draft!.title = 'x';
+		report.draft!.attachments = [{ id: 'img-1', url: '/api/v1/attachments/img-1' }];
+		report.draft!.description = '![a](/api/v1/attachments/img-1)';
+		const a = reportUploads();
+		expect(reportUploads()).toBe(a);
+		expect(a.ids()).toEqual(['img-1']);
+		discardDraft();
+		openReport({ path: '/board', label: 'Board', epic: null });
+		expect(reportUploads()).not.toBe(a);
+		expect(reportUploads().ids()).toEqual([]);
+	});
+});

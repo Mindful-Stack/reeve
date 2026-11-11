@@ -31,7 +31,7 @@ vi.mock('#lib/events.svelte.ts', () => ({
 
 const net = vi.hoisted(() => ({
 	paths: [] as string[],
-	handler: (_c: { method: string; url: URL; path: string; body: unknown }): unknown => null
+	handler: (_c: import('#lib/test/net.ts').Call): unknown => null
 }));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch } = await import('#lib/test/net.ts');

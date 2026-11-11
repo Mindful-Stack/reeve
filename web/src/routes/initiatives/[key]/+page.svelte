@@ -29,6 +29,9 @@
 	import NewEpicForm from '#lib/components/NewEpicForm.svelte';
 	import { INITIATIVE_SAME, fieldsText, initiativeDetails, initiativeEdit, mergeDraft, type InitiativeDetails } from '#lib/forms.ts';
 	import { tick } from 'svelte';
+	import Attachments from '#lib/components/Attachments.svelte';
+	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 
 	const key = $derived(page.params.key ?? '');
@@ -56,6 +59,11 @@
 	 *  the base turns a change to the brief made meanwhile into a conflict instead of silently overwriting it, while a
 	 *  change to any other field advances the base (`followBase`). */
 	let briefBase: EditorBase = { version: 0, text: '' };
+	let briefField = $state<HTMLTextAreaElement | null>(null);
+	const briefUploads = new ImageUploads(
+		() => briefDraft,
+		(t) => (briefDraft = t)
+	);
 	let showClosed = $state(false);
 	/** Whether the decisions that block nothing (accepted, and closed ones when shown) are unfolded. */
 	/** The user's choice for the accepted fold; null follows the default (open when nothing blocks). */
@@ -280,6 +288,7 @@
 	}
 
 	function startEdit() {
+		briefUploads.reset();
 		briefDraft = initiative?.brief ?? '';
 		briefBase = { version: initiative?.version ?? 0, text: initiative?.brief ?? '' };
 		editing = true;
@@ -288,16 +297,19 @@
 	async function saveBrief(e: SubmitEvent) {
 		e.preventDefault();
 		const i = initiative;
-		if (!i) return;
+		if (!i || briefUploads.busy) return;
 		const ok = await write(() =>
 			unwrap(
 				api.PATCH('/api/v1/initiatives/{key}', {
 					params: { path: { key: i.key } },
-					body: { version: briefBase.version, brief: briefDraft }
+					body: { version: briefBase.version, brief: briefDraft, ...briefUploads.body() }
 				})
 			)
 		);
-		if (ok) editing = false;
+		if (ok) {
+			briefUploads.reset();
+			editing = false;
+		}
 		// Only a conflict (which reloaded and told the user) rebases on what is loaded now, so trying again can succeed. Any
 		// other failure keeps the base: a retry must not overwrite a colleague's text the user has not been shown.
 		else if (conflicted && initiative) briefBase = rebase({ version: initiative.version, text: initiative.brief ?? '' });
@@ -541,15 +553,30 @@
 			<h2 id="brief">Brief</h2>
 			{#if editing}
 				<form class="brief-edit" onsubmit={saveBrief}>
-					<textarea bind:value={briefDraft} rows="12" aria-label="brief (Markdown)"></textarea>
+					<textarea
+						bind:this={briefField}
+						bind:value={briefDraft}
+						disabled={busy}
+						rows="12"
+						aria-label="brief (Markdown)"
+						{@attach attachable(briefUploads)}
+					></textarea>
+					<ImageUploadsRow uploads={briefUploads} field={briefField} disabled={busy} />
 					<div class="actions">
-						<button type="button" onclick={() => (editing = false)}>Cancel</button>
-						<button type="submit" disabled={busy}>Save brief</button>
+						<button
+							type="button"
+							onclick={() => {
+								editing = false;
+								briefUploads.reset();
+							}}>Cancel</button
+						>
+						<button type="submit" disabled={busy || briefUploads.busy}>{briefUploads.busy ? 'Uploading…' : 'Save brief'}</button>
 					</div>
 				</form>
 			{:else}
 				<Brief markdown={i.brief} />
 			{/if}
+			<Attachments itemKey={i.key} />
 		</section>
 
 		<section id="epics" aria-labelledby="epics-h">

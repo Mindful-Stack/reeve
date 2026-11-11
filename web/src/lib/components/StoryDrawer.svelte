@@ -34,6 +34,9 @@
 	import { focusIsFree } from '#lib/focus.ts';
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import Brief from '#lib/components/Brief.svelte';
+	import Attachments from '#lib/components/Attachments.svelte';
+	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 	import Comments from '#lib/components/Comments.svelte';
 	import CriteriaEditor from '#lib/components/CriteriaEditor.svelte';
 	import DecisionList from '#lib/components/DecisionList.svelte';
@@ -100,6 +103,11 @@
 	 *  with the base turns a change to the description made meanwhile into a conflict instead of silently overwriting it,
 	 *  while a change to any other field advances the base (`followBase`). */
 	let descriptionBase: EditorBase = { version: 0, text: '' };
+	let descriptionField = $state<HTMLTextAreaElement | null>(null);
+	const descriptionUploads = new ImageUploads(
+		() => description,
+		(t) => (description = t)
+	);
 	let blocker = $state('');
 	let showClosed = $state(false);
 	let decision = $state({ title: '', decider: '', due: '' });
@@ -413,17 +421,24 @@
 	}
 
 	function startDescription() {
+		descriptionUploads.reset();
 		description = story?.description ?? '';
 		descriptionBase = { version: story?.version ?? 0, text: story?.description ?? '' };
 		editingDescription = true;
 		focusEditor('description', true);
 	}
 
-	const stopDescription = () => leave('description', () => (editingDescription = false));
+	const stopDescription = () =>
+		leave('description', () => {
+			editingDescription = false;
+			descriptionUploads.reset();
+		});
 
 	async function saveDescription(e: SubmitEvent) {
 		e.preventDefault();
-		if (await sending('description', () => patch({ description }, descriptionBase.version))) {
+		if (descriptionUploads.busy) return;
+		if (await sending('description', () => patch({ description, ...descriptionUploads.body() }, descriptionBase.version))) {
+			descriptionUploads.reset();
 			stopDescription();
 			return;
 		}
@@ -722,10 +737,20 @@
 			</div>
 			{#if editingDescription}
 				<form class="stack" id="drawer-description-form" onsubmit={saveDescription} onkeydown={cancelOnEscape('description')}>
-					<textarea bind:value={description} disabled={locked('description')} rows="10" aria-label="description (Markdown)"></textarea>
+					<textarea
+						bind:this={descriptionField}
+						bind:value={description}
+						disabled={locked('description')}
+						rows="10"
+						aria-label="description (Markdown)"
+						{@attach attachable(descriptionUploads)}
+					></textarea>
+					<ImageUploadsRow uploads={descriptionUploads} field={descriptionField} disabled={locked('description')} />
 					<div class="actions">
 						<button type="button" disabled={locked('description')} onclick={stopDescription}>Cancel</button>
-						<button type="submit" disabled={busy}>Save description</button>
+						<button type="submit" disabled={busy || descriptionUploads.busy}
+							>{descriptionUploads.busy ? 'Uploading…' : 'Save description'}</button
+						>
 					</div>
 				</form>
 			{:else if s.description.trim()}
@@ -733,6 +758,7 @@
 			{:else}
 				<p class="muted">No description.</p>
 			{/if}
+			<Attachments itemKey={s.key} />
 		</section>
 
 		<section class="fields" aria-labelledby="drawer-details">

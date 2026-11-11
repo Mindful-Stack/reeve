@@ -4,6 +4,7 @@ use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 pub mod access;
 pub mod activity;
+pub mod attachments;
 pub mod comments;
 pub mod config;
 pub mod decisions;
@@ -159,6 +160,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(stories::router())
         .merge(decisions::router())
         .merge(comments::router())
+        .merge(attachments::router())
         .merge(activity::router())
         .merge(events::router())
         .merge(tokens::router())

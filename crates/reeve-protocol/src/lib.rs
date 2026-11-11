@@ -1,5 +1,6 @@
 //! Wire types for the Reeve planner API. No behaviour beyond key parsing.
 pub mod activity;
+pub mod attachments;
 pub mod context;
 pub mod enums;
 pub mod envelope;
@@ -14,6 +15,7 @@ pub mod requests;
 pub mod sprints;
 pub mod urgency;
 pub use activity::*;
+pub use attachments::*;
 pub use context::*;
 pub use enums::*;
 pub use envelope::*;

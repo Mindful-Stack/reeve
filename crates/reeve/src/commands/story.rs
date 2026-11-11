@@ -304,6 +304,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                     labels,
                     external_ref,
                     owner,
+                    attachments: vec![],
                 })?,
             )
             .await?,
