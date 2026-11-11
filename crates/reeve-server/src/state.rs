@@ -37,15 +37,32 @@ pub struct AppState {
 /// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, port, query or fragment and
 /// without a trailing `.git` or `/`. Three shapes are browsable: `https://host/org/repo(.git)`, the scp-style
 /// `git@host:org/repo(.git)` and `ssh://git@host[:port]/org/repo(.git)` (production clones private repositories over
-/// ssh with deploy keys); the last two map to `https://host/org/repo`. A `http://` or other-scheme URL cannot be browsed
+/// ssh with deploy keys); the last two map to `https://host/org/repo`. A repository's own `browse_url`, when set, takes
+/// precedence; a host without a dot (an ssh host alias) gives none. A `http://` or other-scheme URL cannot be browsed
 /// safely and is left out. Userinfo (`https://user:token@host/...`, a clone URL) is dropped so a credential never reaches
 /// an API caller.
 pub(crate) fn browsable_repo_urls(config: &ServerConfig) -> HashMap<String, String> {
     config
         .repos
         .iter()
-        .filter_map(|r| Some((r.name.clone(), browse_base(r.url.as_deref()?)?)))
+        .filter_map(|r| {
+            // An explicit address wins over one derived from the clone url (validated at load, so it is Some here).
+            let base = match r.browse_url.as_deref() {
+                Some(b) => explicit_browse_base(b),
+                None => browse_base(r.url.as_deref()?),
+            };
+            Some((r.name.clone(), base?))
+        })
         .collect()
+}
+
+/// The base of an explicit `browse_url`: https only (the ssh forms that `browse_base` derives from are refused).
+pub(crate) fn explicit_browse_base(raw: &str) -> Option<String> {
+    let u = url::Url::parse(raw.trim()).ok()?;
+    if u.scheme() != "https" {
+        return None;
+    }
+    browse_base(raw)
 }
 
 fn browse_base(raw: &str) -> Option<String> {
@@ -69,7 +86,8 @@ fn browse_base(raw: &str) -> Option<String> {
         }
         _ => return None,
     }
-    if u.host_str().is_none_or(str::is_empty) {
+    // A host without a dot is no DNS name (an ssh host alias such as `github-kb`, or `localhost`): a link to it cannot resolve.
+    if u.host_str().is_none_or(|h| !h.contains('.')) {
         return None;
     }
     u.set_username("").ok()?;
@@ -317,6 +335,10 @@ mod tests {
             "git@:acme/orion.git",
             "git@github.com",
             "ssh://git@/acme/orion",
+            // No dot in the host: an ssh host alias (or localhost), not a web host.
+            "git@github-knowledge-base:Acme/kb.git",
+            "ssh://git@github-knowledge-base/Acme/kb.git",
+            "https://localhost/acme/orion",
             "orion",
         ] {
             assert_eq!(browse_base(raw), None, "{raw:?}");

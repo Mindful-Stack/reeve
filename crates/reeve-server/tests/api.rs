@@ -2293,12 +2293,14 @@ async fn browse_url_from_repo_config() {
              [[repos]]\nname = \"plain\"\nadr_dir = \"docs/adr\"\nurl = \"http://git.example.com/acme/plain\"\n\
              [[repos]]\nname = \"ssh\"\nadr_dir = \"docs/adr\"\nurl = \"git@github.com:acme/ssh.git\"\n\
              [[repos]]\nname = \"sshurl\"\nadr_dir = \"docs/adr\"\nurl = \"ssh://git:SECRET@github.com:2222/acme/sshurl.git\"\n\
+             [[repos]]\nname = \"alias\"\nadr_dir = \"docs/adr\"\nurl = \"git@github-kb:acme/alias.git\"\n\
+             [[repos]]\nname = \"aliasset\"\nadr_dir = \"docs/adr\"\nurl = \"git@github-kb:acme/aliasset.git\"\nbrowse_url = \"https://github.com/acme/aliasset\"\n\
              [[repos]]\nname = \"bare\"\nadr_dir = \"docs/adr\"",
         )
     })
     .await;
     let s = chore(&h, "b-s").await;
-    let cases: [(&str, &str, Option<&str>); 8] = [
+    let cases: [(&str, &str, Option<&str>); 10] = [
         (
             "orion",
             "docs/adr/0001.md",
@@ -2321,6 +2323,12 @@ async fn browse_url_from_repo_config() {
             Some("https://github.com/acme/ssh/blob/HEAD/docs/adr/0005.md"),
         ),
         ("bare", "docs/adr/0006.md", None),
+        ("alias", "docs/adr/0008.md", None),
+        (
+            "aliasset",
+            "docs/adr/0009.md",
+            Some("https://github.com/acme/aliasset/blob/HEAD/docs/adr/0009.md"),
+        ),
         (
             "sshurl",
             "docs/adr/0007.md",
