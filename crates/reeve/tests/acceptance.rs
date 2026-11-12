@@ -1498,4 +1498,128 @@ async fn flow() {
     );
     let body: serde_json::Value = serde_json::from_slice(&no_text.stdout).unwrap();
     assert_eq!(body["code"], "validation", "{body}");
+
+    // 11. Owner-scoped blocking (kb/ADR-0027 R5, R6): Dan's agent starts a dependent of Dan's story in review without an
+    // override and the dependent becomes Dan's; Mia is refused, told the blocker's state and owner; once the blocker
+    // reaches testing (merged), Mia may start.
+    let o_ini = ok(reeve(&human)
+        .args([
+            "initiative",
+            "create",
+            "--idempotency-key",
+            "own-i",
+            "--title",
+            "Owners",
+            "--horizon",
+            "Now",
+        ])
+        .output()
+        .unwrap());
+    let o_ini_key = o_ini["value"]["key"].as_str().unwrap().to_string();
+    ok(reeve(&human)
+        .args([
+            "initiative",
+            "discovery",
+            &o_ini_key,
+            "--version",
+            &o_ini["value"]["version"].to_string(),
+            "--complete",
+        ])
+        .output()
+        .unwrap());
+    let o_epic = ok(reeve(&human)
+        .args([
+            "epic",
+            "create",
+            "--idempotency-key",
+            "own-e",
+            "--title",
+            "Owners epic",
+            "--initiative",
+            &o_ini_key,
+        ])
+        .output()
+        .unwrap());
+    let o_epic_key = o_epic["value"]["key"].as_str().unwrap().to_string();
+    ok(reeve(&human)
+        .args([
+            "epic",
+            "discovery",
+            &o_epic_key,
+            "--version",
+            &o_epic["value"]["version"].to_string(),
+            "--complete",
+        ])
+        .output()
+        .unwrap());
+    let mk = |idem: &str, title: &str| {
+        let s = ok(reeve(&human)
+            .args([
+                "story",
+                "create",
+                "--idempotency-key",
+                idem,
+                "--title",
+                title,
+                "--epic",
+                &o_epic_key,
+                "--criterion",
+                "works",
+            ])
+            .output()
+            .unwrap());
+        s["value"]["key"].as_str().unwrap().to_string()
+    };
+    let base_key = mk("own-b", "Foundation");
+    let mine = mk("own-d1", "Built on the foundation");
+    let theirs = mk("own-d2", "Also built on it");
+    for dep in [&mine, &theirs] {
+        ok(reeve(&human)
+            .args(["story", "block", dep, "--by", &base_key])
+            .output()
+            .unwrap());
+    }
+    ok(reeve(&bot)
+        .args(["story", "mv", &base_key, "in-progress"])
+        .output()
+        .unwrap());
+    ok(reeve(&bot)
+        .args(["story", "mv", &base_key, "in-review"])
+        .output()
+        .unwrap());
+
+    let started = ok(reeve(&bot)
+        .args(["story", "mv", &mine, "in-progress"])
+        .output()
+        .unwrap());
+    assert_eq!(started["value"]["delivery"], "in_progress", "{started}");
+    assert_eq!(
+        started["value"]["owner"], "dan@example.com",
+        "the mover becomes the owner (R6)"
+    );
+
+    let refused = reeve(&member)
+        .args(["story", "mv", &theirs, "in-progress"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2), "refusal exits 2");
+    let refused: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(
+        refused["reasons"][0],
+        serde_json::json!({"reason": "blocked_by", "story": base_key, "delivery": "in_review", "owner": "dan@example.com"}),
+        "{refused}"
+    );
+
+    ok(reeve(&bot)
+        .args(["story", "mv", &base_key, "testing"])
+        .output()
+        .unwrap());
+    let now_free = ok(reeve(&member)
+        .args(["story", "mv", &theirs, "in-progress"])
+        .output()
+        .unwrap());
+    assert_eq!(
+        now_free["value"]["owner"], "mia@example.com",
+        "merged work blocks nobody"
+    );
 }
