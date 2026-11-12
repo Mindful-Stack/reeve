@@ -1,3 +1,4 @@
+use crate::promise::{EpicPromiseDto, StoryPromiseDto};
 use crate::urgency::{ItemRefDto, UrgentMarkDto};
 use crate::{enums::*, ids::Key};
 use chrono::{DateTime, Utc};
@@ -50,6 +51,11 @@ pub struct EpicDto {
     #[serde(default)]
     #[schema(required = true)]
     pub urgent_sources: Vec<ItemRefDto>,
+    /// The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an
+    /// older server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub promise: Option<EpicPromiseDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -90,6 +96,11 @@ pub struct StoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub urgent_sources: Vec<ItemRefDto>,
+    /// The story's promise, own and inherited, derived on read (kb/ADR-0025 R3–R5). Servers always send it; JSON
+    /// without it (an older server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub promise: Option<StoryPromiseDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

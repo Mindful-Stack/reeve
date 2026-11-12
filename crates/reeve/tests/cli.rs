@@ -2569,6 +2569,7 @@ fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::Sto
         goals: vec![],
         urgent_mark: None,
         urgent_sources: sources,
+        promise: None,
     }
 }
 
@@ -2647,6 +2648,7 @@ fn epic_show_prints_the_urgent_line_after_the_first_line() {
             key: "ABC-3".parse().unwrap(),
             item: reeve_protocol::ItemType::Initiative,
         }],
+        promise: None,
     };
     let (url, server) = serve(vec![
         (
@@ -2806,6 +2808,7 @@ fn epic_urgent_with_a_blank_reason_posts_null() {
             key: "ABC-40".parse().unwrap(),
             item: reeve_protocol::ItemType::Epic,
         }],
+        promise: None,
     };
     let (url, server) = serve(vec![(
         "POST /api/v1/epics/ABC-40/urgent",

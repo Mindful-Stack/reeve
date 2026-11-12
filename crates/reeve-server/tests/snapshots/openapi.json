@@ -1297,6 +1297,17 @@
           "key": {
             "$ref": "#/components/schemas/Key"
           },
+          "promise": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EpicPromiseDto",
+                "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -1329,7 +1340,50 @@
           "brief",
           "version",
           "urgent_mark",
-          "urgent_sources"
+          "urgent_sources",
+          "promise"
+        ],
+        "type": "object"
+      },
+      "EpicPromiseDto": {
+        "description": "An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is.",
+        "properties": {
+          "due": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseDue"
+              }
+            ]
+          },
+          "fact": {
+            "$ref": "#/components/schemas/PromiseFactDto"
+          },
+          "past": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fact",
+          "past"
+        ],
+        "type": "object"
+      },
+      "EpicPromiseRefDto": {
+        "description": "The epic whose promise a story inherits, and that promise.",
+        "properties": {
+          "fact": {
+            "$ref": "#/components/schemas/PromiseFactDto"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          }
+        },
+        "required": [
+          "key",
+          "fact"
         ],
         "type": "object"
       },
@@ -2738,6 +2792,62 @@
         ],
         "type": "string"
       },
+      "PromiseDue": {
+        "description": "An open promise's due period against the sprints' planned ends, derived on read (R5).",
+        "enum": [
+          "this_sprint",
+          "next_sprint",
+          "later"
+        ],
+        "type": "string"
+      },
+      "PromiseFactDto": {
+        "description": "A stored promise (kb/ADR-0025 R1): the date, who set it, when, and an optional recipient.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "on": {
+            "format": "date",
+            "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "on",
+          "by",
+          "at"
+        ],
+        "type": "object"
+      },
+      "PromiseHolder": {
+        "description": "Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).",
+        "enum": [
+          "own",
+          "epic"
+        ],
+        "type": "string"
+      },
+      "PromiseState": {
+        "description": "A story's promise state, derived on read (R4).",
+        "enum": [
+          "open",
+          "overdue",
+          "kept",
+          "late",
+          "dropped"
+        ],
+        "type": "string"
+      },
       "PullRequestDto": {
         "properties": {
           "number": {
@@ -4099,6 +4209,17 @@
                   "key": {
                     "$ref": "#/components/schemas/Key"
                   },
+                  "promise": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/EpicPromiseDto",
+                        "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+                      }
+                    ]
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -4131,7 +4252,8 @@
                   "brief",
                   "version",
                   "urgent_mark",
-                  "urgent_sources"
+                  "urgent_sources",
+                  "promise"
                 ],
                 "type": "object"
               }
@@ -5768,10 +5890,19 @@
                         "$ref": "#/components/schemas/SprintDto"
                       }
                     ]
+                  },
+                  "today": {
+                    "description": "The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The\nserver always fills it; it is optional only so that older JSON still parses.",
+                    "format": "date",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
-                  "closed"
+                  "closed",
+                  "today"
                 ],
                 "type": "object"
               }
@@ -6053,6 +6184,17 @@
                       "null"
                     ]
                   },
+                  "promise": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/StoryPromiseDto",
+                        "description": "The story's promise, own and inherited, derived on read (kb/ADR-0025 R3–R5). Servers always send it; JSON\nwithout it (an older server) reads as none."
+                      }
+                    ]
+                  },
                   "prs": {
                     "description": "Pull requests linked to this story (possibly none); informational, they never move it.",
                     "items": {
@@ -6114,7 +6256,8 @@
                   "prs",
                   "goals",
                   "urgent_mark",
-                  "urgent_sources"
+                  "urgent_sources",
+                  "promise"
                 ],
                 "type": "object"
               }
@@ -6627,6 +6770,17 @@
                     "key": {
                       "$ref": "#/components/schemas/Key"
                     },
+                    "promise": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/EpicPromiseDto",
+                          "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+                        }
+                      ]
+                    },
                     "title": {
                       "type": "string"
                     },
@@ -6659,7 +6813,8 @@
                     "brief",
                     "version",
                     "urgent_mark",
-                    "urgent_sources"
+                    "urgent_sources",
+                    "promise"
                   ],
                   "type": "object"
                 },
@@ -8163,10 +8318,19 @@
                 "$ref": "#/components/schemas/SprintDto"
               }
             ]
+          },
+          "today": {
+            "description": "The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The\nserver always fills it; it is optional only so that older JSON still parses.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "closed"
+          "closed",
+          "today"
         ],
         "type": "object"
       },
@@ -8296,6 +8460,17 @@
               "null"
             ]
           },
+          "promise": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StoryPromiseDto",
+                "description": "The story's promise, own and inherited, derived on read (kb/ADR-0025 R3–R5). Servers always send it; JSON\nwithout it (an older server) reads as none."
+              }
+            ]
+          },
           "prs": {
             "description": "Pull requests linked to this story (possibly none); informational, they never move it.",
             "items": {
@@ -8357,7 +8532,77 @@
           "prs",
           "goals",
           "urgent_mark",
-          "urgent_sources"
+          "urgent_sources",
+          "promise"
+        ],
+        "type": "object"
+      },
+      "StoryPromiseDto": {
+        "description": "A story's promise as derived on read (R3–R5): both promises shown, `on` the effective date, `holder` whose it is.",
+        "properties": {
+          "days": {
+            "description": "Days overdue or late, computed by the server.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "due": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseDue",
+                "description": "Only for `open`."
+              }
+            ]
+          },
+          "epic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EpicPromiseRefDto",
+                "description": "Only when the story inherits its epic's promise (R3)."
+              }
+            ]
+          },
+          "holder": {
+            "$ref": "#/components/schemas/PromiseHolder"
+          },
+          "on": {
+            "format": "date",
+            "type": "string"
+          },
+          "own": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseFactDto"
+              }
+            ]
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseState",
+                "description": "None only for a done story without a completion time."
+              }
+            ]
+          }
+        },
+        "required": [
+          "on",
+          "holder"
         ],
         "type": "object"
       },

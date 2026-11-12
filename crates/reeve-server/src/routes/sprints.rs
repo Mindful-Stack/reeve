@@ -35,9 +35,11 @@ async fn list(
     State(s): State<AppState>,
     c: Caller,
 ) -> Result<Json<Response<SprintsDto>>, AppError> {
-    let x = s.handlers.sprints(c.ctx().now).await?;
+    let now = c.ctx().now;
+    let x = s.handlers.sprints(now).await?;
     let line = s.handlers.settings.upkeep_line;
     Ok(ok(SprintsDto {
+        today: Some(now.date_naive()),
         active: x
             .active
             .as_ref()

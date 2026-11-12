@@ -620,6 +620,56 @@ async fn export_at_computes_urgency_at_that_instant() {
     assert!(out.stdout.is_empty());
 }
 
+/// `export --at` derives promises at that instant (kb/ADR-0025 R4): taken on the promised date the promise is open,
+/// taken the day after it is overdue by one day. The date comes from `--at`, never the wall clock.
+#[tokio::test]
+async fn export_at_computes_promises_at_that_instant() {
+    let h = harness().await;
+    let (st, b) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key":"s1","title":"Booking","kind":"story","criteria":["works"],"labels":[]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let key = b["value"]["key"].as_str().unwrap().to_string();
+    sqlx::query(
+        "UPDATE stories SET promised_on = '2030-03-10', promised_by = 'pm@x', \
+         promised_at = '2030-03-01T00:00:00Z', promised_to = 'Acme' WHERE key = $1",
+    )
+    .bind(&key)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = config_file(dir.path(), &h.url);
+    let export_at = |at: &'static str| {
+        let cfg = cfg.clone();
+        async move {
+            let out = reeve_server(&cfg, &["export", "--at", at]).await;
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+            doc["stories"][0]["promise"].clone()
+        }
+    };
+    let before = export_at("2030-03-10T23:59:59+00:00").await;
+    assert_eq!(before["on"], "2030-03-10");
+    assert_eq!(before["state"], "open");
+    assert_eq!(before["days"], Value::Null);
+    assert_eq!(before["own"]["to"], "Acme");
+    let after = export_at("2030-03-11T00:00:00+00:00").await;
+    assert_eq!(after["state"], "overdue");
+    assert_eq!(after["due"], Value::Null);
+    assert_eq!(after["days"], 1);
+}
+
 /// A grant committed after the snapshot is not in that export: roles come from the snapshot's own reads.
 #[tokio::test]
 async fn export_roles_come_from_the_snapshot_not_from_later_grants() {

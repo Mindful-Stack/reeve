@@ -148,6 +148,11 @@ pub struct SprintsDto {
     pub active: Option<SprintViewDto>,
     pub draft: Option<SprintDto>,
     pub closed: Vec<SprintDto>,
+    /// The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The
+    /// server always fills it; it is optional only so that older JSON still parses.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub today: Option<NaiveDate>,
 }
 
 /// `POST /goals`: the goal and its sprint's warnings after the add.

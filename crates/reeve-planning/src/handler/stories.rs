@@ -1,7 +1,8 @@
-use super::dto::urgent_fields;
+use super::dto::{story_promise_field, urgent_fields};
 use super::epics::epic_dto_of;
 use super::import::{Claim, with_ref};
 use super::*;
+use crate::domain::promise::{Clock, StoryFacts, story_promise};
 use crate::domain::{items::*, readiness::compute_readiness, urgency::Urgency};
 use reeve_protocol::{
     DeliveryState, DoneFilter, GoalContextDto, GoalRefDto, ItemType, Key, Kind, Readiness,
@@ -392,16 +393,18 @@ impl Handlers {
                 });
             }
             let urg = self.urgency_in(&mut tx, now).await?;
-            self.list_stories_in(&mut tx, &f, ready_only, done_window, &urg)
+            let clock = self.promise_clock_in(&mut tx, now).await?;
+            self.list_stories_in(&mut tx, &f, ready_only, done_window, &urg, &clock)
                 .await
         }
         .await;
         end_read(tx, out).await
     }
 
-    /// The story list for `f` on the caller's transaction, with `urg` as every row's urgency. `f.goal` and `f.urgent`
-    /// filter after the read; `f.urgent` keeps the rows `urg` shows urgent, so a default `Urgency` (a caller that
-    /// computed none) yields nothing under `f.urgent` rather than an unfiltered list.
+    /// The story list for `f` on the caller's transaction, with `urg` as every row's urgency and `clock` classifying
+    /// every row's promise. `f.goal` and `f.urgent` filter after the read; `f.urgent` keeps the rows `urg` shows urgent,
+    /// so a default `Urgency` (a caller that computed none) yields nothing under `f.urgent` rather than an unfiltered
+    /// list.
     pub(super) async fn list_stories_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -409,6 +412,7 @@ impl Handlers {
         ready_only: bool,
         done: DoneWindow,
         urg: &Urgency,
+        clock: &Clock,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
         let stories = self.ports.stories.list_stories(tx, f, done).await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
@@ -428,7 +432,7 @@ impl Handlers {
             }
         }
         let mut out: Vec<StoryWithReadiness> = self
-            .story_dtos_in(tx, &kept, urg)
+            .story_dtos_in(tx, &kept, urg, clock)
             .await?
             .into_iter()
             .zip(readiness)
@@ -660,26 +664,28 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
+            let clock = self.promise_clock_in(&mut tx, now).await?;
             let stories = self
                 .ports
                 .reads
                 .stories_by_keys(&mut tx, std::slice::from_ref(key))
                 .await?;
-            self.story_dtos_in(&mut tx, &stories, &urg).await
+            self.story_dtos_in(&mut tx, &stories, &urg, &clock).await
         }
         .await;
         end_read(tx, out).await?.pop().ok_or(HandlerError::NotFound)
     }
 
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in
-    /// one statement each, on the caller's transaction, in the order of `stories`, with the urgency the caller read on
-    /// that same transaction. Callers pass distinct stories: a repeated story gets its blockers and pull requests only on
-    /// its first occurrence.
+    /// one statement each, on the caller's transaction, in the order of `stories`, with the urgency and the promise clock
+    /// the caller read on that same transaction. Each promise is derived through `story_promise` (kb/ADR-0025 R3-R5).
+    /// Callers pass distinct stories: a repeated story gets its blockers and pull requests only on its first occurrence.
     pub async fn story_dtos_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         stories: &[Story],
         urg: &Urgency,
+        clock: &Clock,
     ) -> Result<Vec<StoryDto>, HandlerError> {
         if stories.is_empty() {
             return Ok(Vec::new());
@@ -688,6 +694,7 @@ impl Handlers {
         let mut blockers = self.ports.reads.blockers_of_many(tx, &keys).await?;
         let mut prs = self.ports.reads.pull_requests_for_many(tx, &keys).await?;
         let mut goals = self.ports.reads.active_goals_of_stories(tx, &keys).await?;
+        let mut promises = self.ports.reads.promise_facts_in(tx, &keys, &[]).await?;
         Ok(stories
             .iter()
             .map(|s| {
@@ -706,6 +713,15 @@ impl Handlers {
                     .map(|(id, outcome, via)| GoalRefDto { id, outcome, via })
                     .collect();
                 (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, s.key());
+                let row = promises.stories.remove(s.key()).unwrap_or_default();
+                let facts = StoryFacts {
+                    delivery: s.delivery(),
+                    resolution: s.resolution(),
+                    done_at: row.done_at,
+                    own: row.own.as_ref(),
+                    epic: row.epic.as_ref().map(|(k, p)| (k, p)),
+                };
+                dto.promise = story_promise_field(story_promise(&facts, clock).as_ref());
                 dto
             })
             .collect())
@@ -725,7 +741,8 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            self.story_context_in(&mut tx, key, &urg).await
+            let clock = self.promise_clock_in(&mut tx, now).await?;
+            self.story_context_in(&mut tx, key, &urg, &clock).await
         }
         .await;
         end_read(tx, out).await
@@ -736,6 +753,7 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
         urg: &Urgency,
+        clock: &Clock,
     ) -> Result<StoryContextDto, HandlerError> {
         let s = self
             .ports
@@ -783,13 +801,28 @@ impl Handlers {
             .unwrap_or_default();
         let mut stories = vec![s];
         stories.extend(self.ports.reads.stories_by_keys(tx, &blocker_keys).await?);
-        let mut dtos = self.story_dtos_in(tx, &stories, urg).await?.into_iter();
+        let mut dtos = self
+            .story_dtos_in(tx, &stories, urg, clock)
+            .await?
+            .into_iter();
+        let epic_promise = match &epic {
+            Some(e) => self
+                .ports
+                .reads
+                .promise_facts_in(tx, &[], std::slice::from_ref(e.key()))
+                .await?
+                .epics
+                .remove(e.key()),
+            None => None,
+        };
         let story = dtos.next().ok_or(HandlerError::NotFound)?;
         let blockers = dtos.collect();
         let goals = self.goals_context_in(tx, &story.goals).await?;
         Ok(StoryContextDto {
             story,
-            epic: epic.as_ref().map(|e| epic_dto_of(e, urg)),
+            epic: epic
+                .as_ref()
+                .map(|e| epic_dto_of(e, urg, epic_promise.as_ref(), clock)),
             initiative,
             required_decisions: required_decisions
                 .iter()

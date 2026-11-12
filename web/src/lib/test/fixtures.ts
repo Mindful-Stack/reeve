@@ -36,6 +36,7 @@ export function story(over: Partial<Story> = {}): Story {
 		goals: [],
 		urgent_mark: null,
 		urgent_sources: [],
+		promise: null,
 		criteria: [],
 		description: '',
 		delivery: 'todo',
@@ -63,6 +64,7 @@ export function epic(over: Partial<Epic> = {}): Epic {
 		version: 1,
 		urgent_mark: null,
 		urgent_sources: [],
+		promise: null,
 		...over
 	};
 }

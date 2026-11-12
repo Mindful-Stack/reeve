@@ -434,8 +434,16 @@ impl Handlers {
             }
         };
         let urg = self.urgency_in(tx, now).await?;
+        let clock = self.promise_clock_in(tx, now).await?;
         let stories = self
-            .list_stories_in(tx, &StoryFilter::default(), false, DoneWindow::None, &urg)
+            .list_stories_in(
+                tx,
+                &StoryFilter::default(),
+                false,
+                DoneWindow::None,
+                &urg,
+                &clock,
+            )
             .await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.story.key.clone()).collect();
         let mut draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;

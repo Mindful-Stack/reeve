@@ -9,6 +9,7 @@ mod import;
 mod initiatives;
 mod moves;
 mod plans;
+mod promise;
 mod prs;
 mod search;
 mod similar;
@@ -20,7 +21,9 @@ use attachments::attachment_ids;
 pub use attachments::{MAX_CLAIM, MAX_UNCLAIMED_BYTES};
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
-pub use dto::{attachment_dto, goal_dto, sprint_dto, sprint_view_dto};
+pub use dto::{
+    attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_view_dto, story_promise_field,
+};
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;
 pub use sprints::Sprints;

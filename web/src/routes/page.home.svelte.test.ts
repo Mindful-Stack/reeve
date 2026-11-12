@@ -81,7 +81,7 @@ beforeEach(() => {
 	live.fns.length = 0;
 	net.state = {
 		gets: [], posts: [], entries: [], blocked: 0, ready: [], mine: [],
-		sprints: { active: null, closed: [], draft: null }, failQueue: false, move: 'ok'
+		sprints: { active: null, closed: [], draft: null, today: '2026-11-12' }, failQueue: false, move: 'ok'
 	};
 	vi.mocked(goto).mockClear();
 });
@@ -181,7 +181,7 @@ describe('home', () => {
 
 	it('names the active sprint by its dates and opens the board filtered to a goal', async () => {
 		const s = sprint({ starts_on: '2026-11-10', ends_on: '2026-11-24', goals: [goal({ id: 7, outcome: 'ship home' })] });
-		net.state.sprints = { active: sprintView(s), closed: [], draft: null };
+		net.state.sprints = { active: sprintView(s), closed: [], draft: null, today: '2026-11-12' };
 		await open();
 		expect(text()).toContain(sprintLine(s, today()));
 		expect(heading('The sprint')).toBeDefined();

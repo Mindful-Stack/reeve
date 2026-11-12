@@ -51,7 +51,8 @@ fn story_dto_carries_every_field() {
             "key": "ABC-3", "title": "T", "kind": "bug", "epic": "ABC-2", "description": "D",
             "criteria": [{"text": "c", "done": true}], "owner": "o@x", "labels": ["l"], "rank": 4,
             "blocked_by": [], "delivery": "done", "resolution": "dropped", "external_ref": "SCRUM-9",
-            "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": []
+            "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": [],
+            "promise": null
         })
     );
 }
@@ -103,7 +104,8 @@ fn epic_dto_carries_every_field() {
         json!({
             "key": "ABC-2", "title": "Title", "initiative": "ABC-1", "brief": "Brief",
             "discovery_complete": {"at": "2026-11-09T07:00:00Z", "by": "disc@x"},
-            "external_ref": "SCRUM-2", "version": 6, "urgent_mark": null, "urgent_sources": []
+            "external_ref": "SCRUM-2", "version": 6, "urgent_mark": null, "urgent_sources": [],
+            "promise": null
         })
     );
 }
@@ -615,4 +617,106 @@ fn war_room_entry_dto_carries_every_field() {
             "mark": mark_json()
         })
     );
+}
+
+fn kept_promise(on: NaiveDate, by: &str, at: chrono::DateTime<Utc>, to: Option<&str>) -> Promise {
+    Promise::from_persisted(on, by.into(), at, to.map(str::to_string))
+}
+
+fn promise_clock(today: NaiveDate) -> PromiseClock {
+    PromiseClock {
+        today,
+        active_ends: Some(ymd(2026, 11, 24)),
+        draft_ends: Some(ymd(2026, 12, 8)),
+    }
+}
+
+/// Both promises, the effective date and its holder, the state, the due period and the days: every field distinct, so
+/// a renamed or dropped field shows. The epic's earlier date holds; on 21 Nov it is three days overdue.
+#[test]
+fn story_promise_dto_carries_every_field() {
+    let own = kept_promise(ymd(2026, 11, 20), "pm@x", t(5), Some("Acme"));
+    let epic = kept_promise(ymd(2026, 11, 18), "lead@x", t(4), None);
+    let epic_key = k("ABC-7");
+    let facts = StoryFacts {
+        delivery: DeliveryState::Todo,
+        resolution: None,
+        done_at: None,
+        own: Some(&own),
+        epic: Some((&epic_key, &epic)),
+    };
+    let sp = story_promise(&facts, &promise_clock(ymd(2026, 11, 21)));
+    assert_eq!(
+        v!(story_promise_field(sp.as_ref())),
+        json!({
+            "own": {"on": "2026-11-20", "by": "pm@x", "at": "2026-11-09T05:00:00Z", "to": "Acme"},
+            "epic": {"key": "ABC-7", "fact": {
+                "on": "2026-11-18", "by": "lead@x", "at": "2026-11-09T04:00:00Z", "to": null
+            }},
+            "on": "2026-11-18", "holder": "epic", "state": "overdue", "due": null, "days": 3
+        })
+    );
+    assert_eq!(story_promise_field(None), None);
+}
+
+/// An epic's own promise has no state: its due period while not past, `past` once its date is behind today.
+#[test]
+fn epic_promise_dto_carries_every_field() {
+    let p = kept_promise(ymd(2026, 12, 1), "lead@x", t(6), Some("Beta"));
+    let fact =
+        json!({"on": "2026-12-01", "by": "lead@x", "at": "2026-11-09T06:00:00Z", "to": "Beta"});
+    assert_eq!(
+        v!(epic_promise_field(
+            Some(&p),
+            &promise_clock(ymd(2026, 11, 21))
+        )),
+        json!({"fact": fact, "due": "next_sprint", "past": false})
+    );
+    assert_eq!(
+        v!(epic_promise_field(
+            Some(&p),
+            &promise_clock(ymd(2026, 12, 2))
+        )),
+        json!({"fact": fact, "due": null, "past": true})
+    );
+    assert_eq!(
+        epic_promise_field(None, &promise_clock(ymd(2026, 11, 21))),
+        None
+    );
+}
+
+/// An older server's story and epic (no `promise`) still read, as no promise.
+#[test]
+fn old_story_and_epic_json_without_promise_parse() {
+    let story = json!({
+        "key": "ABC-3", "title": "T", "kind": "bug", "epic": null, "description": "D", "criteria": [],
+        "owner": null, "labels": [], "rank": 4, "blocked_by": [], "delivery": "todo", "resolution": null,
+        "external_ref": null, "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": []
+    });
+    let s: StoryDto = serde_json::from_value(story).unwrap();
+    assert_eq!(s.promise, None);
+    let epic = json!({
+        "key": "ABC-2", "title": "Title", "initiative": null, "brief": "Brief", "discovery_complete": null,
+        "external_ref": null, "version": 6, "urgent_mark": null, "urgent_sources": []
+    });
+    let e: EpicDto = serde_json::from_value(epic).unwrap();
+    assert_eq!(e.promise, None);
+}
+
+/// `today` is on the wire under that name; an older server's sprints (without it) still read.
+#[test]
+fn sprints_dto_carries_today() {
+    let dto = SprintsDto {
+        active: None,
+        draft: None,
+        closed: vec![],
+        today: Some(ymd(2026, 11, 12)),
+    };
+    assert_eq!(
+        v!(&dto),
+        json!({"active": null, "draft": null, "closed": [], "today": "2026-11-12"})
+    );
+    let old: SprintsDto =
+        serde_json::from_value(json!({"active": null, "draft": null, "closed": []})).unwrap();
+    assert_eq!(old.today, None);
 }

@@ -771,6 +771,12 @@ async fn export_is_one_snapshot_across_readers() {
         .urgency_in(&mut tx, chrono::Utc::now())
         .await
         .unwrap();
+    let clock = h
+        .state
+        .handlers
+        .promise_clock_in(&mut tx, chrono::Utc::now())
+        .await
+        .unwrap();
     h.state
         .handlers
         .export_initiatives(&mut tx, &urgency)
@@ -890,13 +896,13 @@ async fn export_is_one_snapshot_across_readers() {
     let epics = h
         .state
         .handlers
-        .export_epics(&mut tx, &urgency)
+        .export_epics(&mut tx, &urgency, &clock)
         .await
         .unwrap();
     let stories = h
         .state
         .handlers
-        .export_stories(&mut tx, &urgency)
+        .export_stories(&mut tx, &urgency, &clock)
         .await
         .unwrap();
     let decisions = h.state.handlers.export_decisions(&mut tx).await.unwrap();

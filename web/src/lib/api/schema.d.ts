@@ -1520,12 +1520,24 @@ export interface components {
             external_ref?: string | null;
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
+            promise: null | components["schemas"]["EpicPromiseDto"];
             title: string;
             urgent_mark: null | components["schemas"]["UrgentMarkDto"];
             /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /** @description An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is. */
+        EpicPromiseDto: {
+            due?: null | components["schemas"]["PromiseDue"];
+            fact: components["schemas"]["PromiseFactDto"];
+            past: boolean;
+        };
+        /** @description The epic whose promise a story inherits, and that promise. */
+        EpicPromiseRefDto: {
+            fact: components["schemas"]["PromiseFactDto"];
+            key: components["schemas"]["Key"];
         };
         /** @enum {string} */
         ErrorCode: "not_found" | "conflict" | "forbidden" | "unauthenticated" | "validation" | "internal" | "rate_limited";
@@ -1907,6 +1919,30 @@ export interface components {
          * @enum {string}
          */
         PrStatus: "draft" | "open" | "merged" | "closed";
+        /**
+         * @description An open promise's due period against the sprints' planned ends, derived on read (R5).
+         * @enum {string}
+         */
+        PromiseDue: "this_sprint" | "next_sprint" | "later";
+        /** @description A stored promise (kb/ADR-0025 R1): the date, who set it, when, and an optional recipient. */
+        PromiseFactDto: {
+            /** Format: date-time */
+            at: string;
+            by: string;
+            /** Format: date */
+            on: string;
+            to?: string | null;
+        };
+        /**
+         * @description Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).
+         * @enum {string}
+         */
+        PromiseHolder: "own" | "epic";
+        /**
+         * @description A story's promise state, derived on read (R4).
+         * @enum {string}
+         */
+        PromiseState: "open" | "overdue" | "kept" | "late" | "dropped";
         PullRequestDto: {
             /** Format: int64 */
             number: number;
@@ -2295,6 +2331,7 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
                 /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
@@ -2797,6 +2834,12 @@ export interface components {
                 active?: null | components["schemas"]["SprintViewDto"];
                 closed: components["schemas"]["SprintDto"][];
                 draft?: null | components["schemas"]["SprintDto"];
+                /**
+                 * Format: date
+                 * @description The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The
+                 *     server always fills it; it is optional only so that older JSON still parses.
+                 */
+                today: string | null;
             };
         } | {
             /** @enum {string} */
@@ -2878,6 +2921,7 @@ export interface components {
                 kind: components["schemas"]["Kind"];
                 labels: string[];
                 owner?: string | null;
+                promise: null | components["schemas"]["StoryPromiseDto"];
                 /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
                 prs: components["schemas"]["PullRequestDto"][];
                 /** Format: int32 */
@@ -3033,6 +3077,7 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
                 /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
@@ -3474,6 +3519,12 @@ export interface components {
             active?: null | components["schemas"]["SprintViewDto"];
             closed: components["schemas"]["SprintDto"][];
             draft?: null | components["schemas"]["SprintDto"];
+            /**
+             * Format: date
+             * @description The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The
+             *     server always fills it; it is optional only so that older JSON still parses.
+             */
+            today: string | null;
         };
         /** @description `reeve story context`: everything an agent needs before starting a story. */
         StoryContextDto: {
@@ -3507,6 +3558,7 @@ export interface components {
             kind: components["schemas"]["Kind"];
             labels: string[];
             owner?: string | null;
+            promise: null | components["schemas"]["StoryPromiseDto"];
             /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
             prs: components["schemas"]["PullRequestDto"][];
             /** Format: int32 */
@@ -3518,6 +3570,21 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /** @description A story's promise as derived on read (R3–R5): both promises shown, `on` the effective date, `holder` whose it is. */
+        StoryPromiseDto: {
+            /**
+             * Format: int32
+             * @description Days overdue or late, computed by the server.
+             */
+            days?: number | null;
+            due?: null | components["schemas"]["PromiseDue"];
+            epic?: null | components["schemas"]["EpicPromiseRefDto"];
+            holder: components["schemas"]["PromiseHolder"];
+            /** Format: date */
+            on: string;
+            own?: null | components["schemas"]["PromiseFactDto"];
+            state?: null | components["schemas"]["PromiseState"];
         };
         /**
          * @description The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the

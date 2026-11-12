@@ -1912,9 +1912,13 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .await
         .unwrap();
     let urg = h.urgency_in(&mut tx, Utc::now()).await.unwrap();
-    let batched = h.story_dtos_in(&mut tx, &fresh, &urg).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, Utc::now()).await.unwrap();
+    let batched = h
+        .story_dtos_in(&mut tx, &fresh, &urg, &clock)
+        .await
+        .unwrap();
     assert!(
-        h.story_dtos_in(&mut tx, &[], &urg)
+        h.story_dtos_in(&mut tx, &[], &urg, &clock)
             .await
             .unwrap()
             .is_empty()
@@ -6476,9 +6480,10 @@ async fn every_item_dto_carries_its_urgency() {
         .await
         .unwrap();
     let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, now).await.unwrap();
     let ex_i = h.export_initiatives(&mut tx, &urg).await.unwrap();
-    let ex_e = h.export_epics(&mut tx, &urg).await.unwrap();
-    let ex_s = h.export_stories(&mut tx, &urg).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg, &clock).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg, &clock).await.unwrap();
     tx.rollback().await.unwrap();
     assert_eq!(source_keys(&ex_i[0].urgent_sources), sk);
     assert_eq!(source_keys(&ex_e[0].urgent_sources), sk);
@@ -7195,4 +7200,234 @@ async fn story_list_text_names_a_key() {
             "{t}"
         );
     }
+}
+
+/// 12 Nov 10:00Z: the fixed request time of the promise tests.
+fn promise_ctx() -> Ctx {
+    Ctx {
+        now: Utc.with_ymd_and_hms(2026, 11, 12, 10, 0, 0).unwrap(),
+        ..ctx("dan@example.com", false)
+    }
+}
+
+fn nov(d: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap()
+}
+
+/// An active sprint planned to end 24 Nov and a draft planned to end 8 Dec, made through the sprint handler.
+async fn promise_sprints(h: &Handlers, c: &Ctx) {
+    h.add_goal(c, "promise-g", "outcome", "check", None, "", false)
+        .await
+        .unwrap();
+    let d = h.sprints(c.now).await.unwrap().draft.unwrap();
+    h.open_sprint(c, d.id, d.version, Some(nov(24)))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sprints SET ends_on = '2026-12-08' WHERE state = 'draft'")
+        .execute(&h.pool)
+        .await
+        .unwrap();
+}
+
+async fn set_promise(h: &Handlers, item: ItemType, key: &Key, p: &Promise) {
+    let mut tx = h.pool.begin().await.unwrap();
+    assert!(
+        h.ports
+            .promises
+            .set_promise(&mut tx, item, key, p)
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+}
+
+async fn mark_done_at(h: &Handlers, key: &Key, at: chrono::DateTime<Utc>) {
+    sqlx::query(
+        "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = $2 WHERE key = $1",
+    )
+    .bind(key.to_string())
+    .bind(at)
+    .execute(&h.pool)
+    .await
+    .unwrap();
+}
+
+/// Every story and epic reader fills `promise` through the one rule: A shows its epic's earlier date with its own still
+/// visible; B, done after the epic's promise was set, inherits it and kept it; C, done the same day but before the
+/// epic's promise was set, has none (inheritance is keyed by `promised_at`, not its date). The epic shows its own
+/// promise with its due period and no state. Every reader agrees.
+#[tokio::test]
+async fn every_item_dto_carries_its_promise() {
+    use reeve_protocol::{PromiseDue, PromiseHolder, PromiseState};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let a = plain_story(&h, &c, "A", "A", Some(e.key())).await;
+    let b = plain_story(&h, &c, "B", "B", Some(e.key())).await;
+    let cc = plain_story(&h, &c, "C", "C", Some(e.key())).await;
+    let epic_p = Promise::from_persisted(
+        nov(18),
+        "lead@x".into(),
+        Utc.with_ymd_and_hms(2026, 11, 12, 9, 0, 0).unwrap(),
+        None,
+    );
+    set_promise(&h, ItemType::Epic, e.key(), &epic_p).await;
+    let own_p = Promise::from_persisted(nov(30), "pm@x".into(), now, Some("Beta".into()));
+    set_promise(&h, ItemType::Story, &a, &own_p).await;
+    mark_done_at(
+        &h,
+        &b,
+        Utc.with_ymd_and_hms(2026, 11, 12, 9, 30, 0).unwrap(),
+    )
+    .await;
+    mark_done_at(
+        &h,
+        &cc,
+        Utc.with_ymd_and_hms(2026, 11, 12, 8, 0, 0).unwrap(),
+    )
+    .await;
+
+    let a_dto = h.story_dto(&a, now).await.unwrap();
+    let ap = a_dto.promise.clone().expect("A is promised");
+    assert_eq!(
+        (ap.on, ap.holder, ap.state, ap.due, ap.days),
+        (
+            nov(18),
+            PromiseHolder::Epic,
+            Some(PromiseState::Open),
+            Some(PromiseDue::ThisSprint),
+            None
+        )
+    );
+    let own = ap.own.as_ref().expect("A's own promise stays visible");
+    assert_eq!(
+        (own.on, own.by.as_str(), own.to.as_deref()),
+        (nov(30), "pm@x", Some("Beta"))
+    );
+    let inherited = ap.epic.as_ref().expect("A inherits its epic's promise");
+    assert_eq!((&inherited.key, inherited.fact.on), (e.key(), nov(18)));
+    let b_dto = h.story_dto(&b, now).await.unwrap();
+    let bp = b_dto.promise.clone().expect("B inherits");
+    assert_eq!(
+        (bp.holder, bp.state, bp.on),
+        (PromiseHolder::Epic, Some(PromiseState::Kept), nov(18))
+    );
+    let c_dto = h.story_dto(&cc, now).await.unwrap();
+    assert_eq!(
+        c_dto.promise, None,
+        "done before the epic's promise was set"
+    );
+
+    let ep = h
+        .epic_dto(e.key(), now)
+        .await
+        .unwrap()
+        .promise
+        .expect("the epic's promise");
+    assert_eq!(
+        (ep.fact.on, ep.fact.by.as_str(), ep.due, ep.past),
+        (nov(18), "lead@x", Some(PromiseDue::ThisSprint), false)
+    );
+
+    // Every reader agrees.
+    let list = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap();
+    let row = |k: &Key| {
+        list.iter()
+            .find(|r| &r.story.key == k)
+            .unwrap()
+            .story
+            .promise
+            .clone()
+    };
+    assert_eq!(row(&a), a_dto.promise);
+    assert_eq!(row(&b), b_dto.promise);
+    assert_eq!(row(&cc), None);
+    let ctxd = h.story_context(&a, now).await.unwrap();
+    assert_eq!(ctxd.story.promise, a_dto.promise);
+    assert_eq!(ctxd.epic.unwrap().promise, Some(ep.clone()));
+    assert_eq!(h.epic_dtos(None, now).await.unwrap()[0].promise, Some(ep));
+}
+
+/// The promise fields read one snapshot: the clock (the sprints' planned ends) and the promise facts are read on the
+/// list's own transaction. The call takes its snapshot on its first statement, then waits on the `sprints` lock; the
+/// lock's holder moves the active sprint's end (A from this sprint to next) and A's own date, and commits as it
+/// releases the lock. A clock or promise read on another connection, or in a second snapshot, would see the new values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_promise_fields_read_one_snapshot() {
+    use reeve_protocol::PromiseDue;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let a = plain_story(&h, &c, "A", "A", None).await;
+    set_promise(
+        &h,
+        ItemType::Story,
+        &a,
+        &Promise::from_persisted(nov(20), "pm@x".into(), now, None),
+    )
+    .await;
+    let list = |h: Handlers| async move {
+        h.list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap()
+        .pop()
+        .unwrap()
+        .story
+        .promise
+        .unwrap()
+    };
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE sprints IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let call = tokio::spawn(list(h.clone()));
+    wait_until_blocked(&pool).await;
+    sqlx::query("UPDATE sprints SET ends_on = '2026-11-19' WHERE state = 'active'")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE stories SET promised_on = '2026-11-22' WHERE key = $1")
+        .bind(a.to_string())
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    lock.commit().await.unwrap();
+    let before = tokio::time::timeout(PAUSE, call)
+        .await
+        .expect("the list never finished")
+        .unwrap();
+    assert_eq!(
+        (before.on, before.due, before.own.unwrap().on),
+        (nov(20), Some(PromiseDue::ThisSprint), nov(20))
+    );
+
+    let after = list(h.clone()).await;
+    assert_eq!(
+        (after.on, after.due, after.own.unwrap().on),
+        (nov(22), Some(PromiseDue::NextSprint), nov(22))
+    );
 }

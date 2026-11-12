@@ -40,7 +40,7 @@ vi.mock('$app/state', async () => {
 type Patched = { version: number; title?: string; initiative?: string | null };
 
 const net = vi.hoisted(() => {
-	const fresh = (): Epic => ({ key: 'ABC-5', title: 'Login', brief: '', version: 3, initiative: 'ABC-1', discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] });
+	const fresh = (): Epic => ({ key: 'ABC-5', title: 'Login', brief: '', version: 3, initiative: 'ABC-1', discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [], promise: null });
 	// Built by hand: the fixtures cannot be imported into a hoisted block.
 	const ini = (key: string, title: string): Initiative => ({ key, title, brief: '', horizon: 'Now', version: 1, urgent_mark: null, urgent_sources: [] });
 	const freshInitiatives = () => [ini('ABC-1', 'Orion'), ini('ABC-2', 'Other')];

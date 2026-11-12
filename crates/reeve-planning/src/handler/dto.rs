@@ -2,6 +2,7 @@
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
+use crate::domain::promise::{self, Clock, Promise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
@@ -11,6 +12,10 @@ use reeve_protocol::{
     DemoStoryDto, DiscoveryMarkDto, EpicDto, GoalDto, GoalProgressDto, InitiativeDto, Key,
     PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintState,
     SprintViewDto, StoryDto,
+};
+use reeve_protocol::{
+    EpicPromiseDto, EpicPromiseRefDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
+    StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -50,6 +55,7 @@ impl From<&Epic> for EpicDto {
             version: e.version(),
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 }
@@ -82,6 +88,7 @@ impl From<&Story> for StoryDto {
             goals: vec![],
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 }
@@ -363,4 +370,74 @@ pub fn attachment_dto(a: &crate::domain::attachment::Attachment) -> reeve_protoc
             AttachmentOwner::Unclaimed => None,
         },
     }
+}
+
+impl From<&Promise> for PromiseFactDto {
+    fn from(p: &Promise) -> Self {
+        Self {
+            on: p.on(),
+            by: p.by().to_owned(),
+            at: p.at(),
+            to: p.to().map(str::to_owned),
+        }
+    }
+}
+
+impl From<promise::State> for PromiseState {
+    fn from(s: promise::State) -> Self {
+        match s {
+            promise::State::Open => PromiseState::Open,
+            promise::State::Overdue => PromiseState::Overdue,
+            promise::State::Kept => PromiseState::Kept,
+            promise::State::Late => PromiseState::Late,
+            promise::State::Dropped => PromiseState::Dropped,
+        }
+    }
+}
+
+impl From<promise::Due> for PromiseDue {
+    fn from(d: promise::Due) -> Self {
+        match d {
+            promise::Due::ThisSprint => PromiseDue::ThisSprint,
+            promise::Due::NextSprint => PromiseDue::NextSprint,
+            promise::Due::Later => PromiseDue::Later,
+        }
+    }
+}
+
+impl From<promise::Holder> for PromiseHolder {
+    fn from(h: promise::Holder) -> Self {
+        match h {
+            promise::Holder::Own => PromiseHolder::Own,
+            promise::Holder::Epic => PromiseHolder::Epic,
+        }
+    }
+}
+
+/// A story DTO's `promise`: the domain's derived view (`story_promise`) on the wire, or None without one.
+pub fn story_promise_field(sp: Option<&StoryPromise>) -> Option<StoryPromiseDto> {
+    sp.map(|sp| StoryPromiseDto {
+        own: sp.own.as_ref().map(Into::into),
+        epic: sp.epic.as_ref().map(|(k, p)| EpicPromiseRefDto {
+            key: k.clone(),
+            fact: p.into(),
+        }),
+        on: sp.on,
+        holder: sp.holder.into(),
+        state: sp.state.map(Into::into),
+        due: sp.due.map(Into::into),
+        days: sp.days,
+    })
+}
+
+/// An epic DTO's `promise`: its own promise with its due period while not past (`epic_due`), never a state (R4).
+pub fn epic_promise_field(p: Option<&Promise>, clock: &Clock) -> Option<EpicPromiseDto> {
+    p.map(|p| {
+        let due = epic_due(p, clock);
+        EpicPromiseDto {
+            fact: p.into(),
+            due: due.map(Into::into),
+            past: due.is_none(),
+        }
+    })
 }

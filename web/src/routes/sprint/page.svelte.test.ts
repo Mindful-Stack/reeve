@@ -64,7 +64,7 @@ const refused = (reasons: unknown[]) => new Response(JSON.stringify({ outcome: '
 
 let app: ReturnType<typeof mount> | null = null;
 beforeEach(() => {
-	net.sprints = { active: null, draft: null, closed: [] };
+	net.sprints = { active: null, draft: null, closed: [], today: '2026-11-12' };
 });
 afterEach(() => {
 	if (app) unmount(app);

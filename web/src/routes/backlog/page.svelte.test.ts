@@ -17,7 +17,7 @@ const row = (key: string, rank: number, epic: string | null, ready = true, kind:
 	);
 
 const data = vi.hoisted(() => {
-	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] };
+	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [], promise: null };
 	const fresh = () => ({
 		/** Every story the fake server holds, in any delivery state; a move changes the state, as the server does. */
 		stories: [] as StoryWithReadiness[],
