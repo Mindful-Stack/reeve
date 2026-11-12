@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // web/src/lib/ui/Dialog.svelte.test.ts
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Dialog from './Dialog.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
@@ -109,4 +109,43 @@ it('closable={false} shows the dialog again when the browser closes it without a
 	} finally {
 		delete proto.showModal;
 	}
+});
+
+describe('backdrop click', () => {
+	const rect = { left: 100, top: 100, right: 300, bottom: 300, width: 200, height: 200, x: 100, y: 100, toJSON() {} };
+	function open(closable = true) {
+		const onclose = vi.fn();
+		const children = createRawSnippet(() => ({ render: () => '<input aria-label="Title">' }));
+		app = mount(Dialog, { target: document.body, props: { title: 'T', onclose, closable, children } });
+		flushSync();
+		const d = document.body.querySelector('dialog')!;
+		d.getBoundingClientRect = () => rect as DOMRect;
+		return { d, onclose };
+	}
+	const at = (type: string, x: number, y: number) => new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+
+	it('closes when pressed and released outside the dialog box', () => {
+		const { d, onclose } = open();
+		d.dispatchEvent(at('pointerdown', 10, 10));
+		d.dispatchEvent(at('click', 10, 10));
+		expect(onclose).toHaveBeenCalledOnce();
+	});
+	it('stays open for a click on its own padding (target is the dialog, but inside its box)', () => {
+		const { d, onclose } = open();
+		d.dispatchEvent(at('pointerdown', 105, 105));
+		d.dispatchEvent(at('click', 105, 105));
+		expect(onclose).not.toHaveBeenCalled();
+	});
+	it('stays open when a drag starts inside and ends on the backdrop', () => {
+		const { d, onclose } = open();
+		d.querySelector('input')!.dispatchEvent(at('pointerdown', 150, 150));
+		d.dispatchEvent(at('click', 10, 10));
+		expect(onclose).not.toHaveBeenCalled();
+	});
+	it('stays open while not closable', () => {
+		const { d, onclose } = open(false);
+		d.dispatchEvent(at('pointerdown', 10, 10));
+		d.dispatchEvent(at('click', 10, 10));
+		expect(onclose).not.toHaveBeenCalled();
+	});
 });

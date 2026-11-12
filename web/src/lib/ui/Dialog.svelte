@@ -1,4 +1,4 @@
-<!-- web/src/lib/ui/Dialog.svelte: a modal dialog over <dialog>. Escape reports onclose; the parent unmounts it.
+<!-- web/src/lib/ui/Dialog.svelte: a modal dialog over <dialog>. Escape reports onclose, and so does a click on the backdrop; the parent unmounts it.
 	`closable={false}` (e.g. while a create is pending) disables × and swallows Escape without reporting onclose; a
 	browser that closes the dialog anyway (one that ignores a prevented cancel) gets it shown again. -->
 <script lang="ts">
@@ -15,6 +15,15 @@
 	let el: HTMLDialogElement;
 
 	let closing = false;
+
+	/** The press began on the backdrop: only then may the click that follows close the dialog. */
+	let pressedOutside = false;
+
+	function outside(e: MouseEvent): boolean {
+		if (e.target !== el) return false; // a child of the dialog
+		const r = el.getBoundingClientRect();
+		return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+	}
 
 	function show() {
 		if (typeof el.showModal === 'function') el.showModal();
@@ -39,8 +48,16 @@
 	});
 </script>
 
+<!-- Escape is the keyboard equivalent of a backdrop click. -->
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
 	bind:this={el}
+	onpointerdown={(e) => (pressedOutside = outside(e))}
+	onclick={(e) => {
+		const close = pressedOutside && outside(e);
+		pressedOutside = false;
+		if (close && closable) onclose();
+	}}
 	onclose={() => {
 		if (closing) return;
 		if (closable) onclose();

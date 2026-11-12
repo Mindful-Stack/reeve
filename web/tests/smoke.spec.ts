@@ -692,6 +692,10 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report something' });
 	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
+	await page.mouse.click(5, 5); // the backdrop: closes like Escape and keeps the draft
+	await expect(dialog).toBeHidden();
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue(`PDF export shows a blank page ${suffix}`);
 	const hit = dialog.locator(`[data-hit="${existing.key}"]`);
 	await expect(hit).toContainText(title); // "Already reported?" found it
 	await hit.click();
