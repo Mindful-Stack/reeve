@@ -4,8 +4,6 @@ import words from './promise.fixture.json';
 import {
 	promisesHeading,
 	blockedText,
-	goalsText,
-	staysText,
 	confidenceLabel,
 	confidenceTone,
 	countsDiffer,
@@ -159,10 +157,6 @@ describe('nowThen', () => {
 it('says how many decisions block, in the singular for one', () => {
 	expect(blockedText(1)).toBe('blocked by 1 decision');
 	expect(blockedText(0)).toBe('blocked by 0 decisions');
-	expect(goalsText(1)).toBe('1 goal');
-	expect(goalsText(3)).toBe('3 goals');
-	expect(staysText(1)).toBe('1 goal stays');
-	expect(staysText(2)).toBe('2 goals stay');
 	expect(blockedText(3)).toBe('blocked by 3 decisions');
 });
 

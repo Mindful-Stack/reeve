@@ -5,8 +5,8 @@
 	import { api, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { Sprint, SprintView, SprintWarning, Verdict } from '#lib/api/types.ts';
 	import { fullLabel } from '#lib/board.ts';
-	import { errorMessage } from '#lib/format.ts';
-	import { confidenceLabel, goalsText, staysText, verdictLabel, warningText } from '#lib/sprint.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
+	import { confidenceLabel, verdictLabel, warningText } from '#lib/sprint.ts';
 
 	let {
 		view,
@@ -154,8 +154,8 @@
 		<p role="status">The sprint is closed.</p>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		{#if draft}
-			{#if leaveOut.length}<p class="muted">{staysText(leaveOut.length)} in Next sprint.</p>{/if}
-			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {goalsText(goingIn)}</button>
+			{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint.</p>{/if}
+			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {plural(goingIn, 'goal', 'goals')}</button>
 		{:else}
 			<p class="muted">There is no draft to open: add a goal to start one.</p>
 		{/if}

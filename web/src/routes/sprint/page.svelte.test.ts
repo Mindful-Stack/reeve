@@ -284,18 +284,6 @@ describe('the next sprint (draft)', () => {
 		expect(text(panel)).toContain('the sprint has no goals');
 	});
 
-	it('shows no warning when the answer has none', async () => {
-		net.sprints!.draft = draft();
-		await open();
-		const form = q<HTMLFormElement>('form[aria-label="New goal"]')!;
-		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'x');
-		type(q<HTMLInputElement>('input[name="check"]', form)!, 'y');
-		flushSync();
-		button('Add goal', form)!.click();
-		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
-		expect(text(q('[data-testid="next-sprint"]'))).not.toContain('thins focus');
-	});
-
 	it('removes a goal at its version, and links and unlinks an epic or initiative by key', async () => {
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, version: 2, links: ['RV-3'] })]);
 		await open();

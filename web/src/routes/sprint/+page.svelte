@@ -10,8 +10,8 @@
 	import GoalForm from '#lib/components/GoalForm.svelte';
 	import SprintHistoryEntry from '#lib/components/SprintHistoryEntry.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { errorMessage } from '#lib/format.ts';
-	import { blockedText, confidenceLabel, goalsText, RULE, staysText, upkeepText, warningText } from '#lib/sprint.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
+	import { blockedText, confidenceLabel, RULE, upkeepText, warningText } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -280,10 +280,10 @@
 		<div class="panel-head">
 			<h2 id="next-title">Next sprint {#if draft}<span class="dates">{draft.starts_on} – {draft.ends_on}</span>{/if}</h2>
 			{#if draft && !active}
-				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {goalsText(goingIn)}</button>
+				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
 			{/if}
 		</div>
-		<p class="muted" role="status">{#if leaveOut.length}{staysText(leaveOut.length)} in Next sprint when it opens.{/if}</p>
+		{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
 		{#if openWarnings.length && active}
 			<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
 		{/if}
@@ -334,9 +334,6 @@
 {/if}
 
 <style>
-	p[role='status']:empty {
-		position: absolute;
-	}
 	.goes-in {
 		display: flex;
 		gap: 6px;
