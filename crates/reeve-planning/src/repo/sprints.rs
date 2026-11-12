@@ -194,7 +194,7 @@ fn verdict_of(s: Option<&str>) -> Result<Option<Verdict>, sqlx::Error> {
 }
 const SPRINT_COLS: &str = "id, state, starts_on, ends_on, opened_at, closed_at, version";
 const GOAL_COLS: &str = "id, sprint_id, outcome, check_text, owner, notes, confidence, confidence_note, confidence_at, \
-     suggested_confidence, suggested_note, suggested_at, suggested_by, verdict, verdict_note, version";
+     suggested_confidence, suggested_note, suggested_at, suggested_by, verdict, verdict_note, version, created_at";
 
 fn sprint_from(r: &sqlx::postgres::PgRow) -> Result<Sprint, sqlx::Error> {
     Ok(Sprint {
@@ -228,6 +228,7 @@ fn goal_from(r: &sqlx::postgres::PgRow) -> Result<Goal, sqlx::Error> {
         verdict: verdict_of(r.get::<Option<String>, _>("verdict").as_deref())?,
         verdict_note: r.get("verdict_note"),
         version: r.get("version"),
+        created_at: r.get("created_at"),
     })
 }
 async fn sprint_in_state(tx: Tx<'_, '_>, state: SprintState) -> Result<Option<Sprint>, RepoError> {

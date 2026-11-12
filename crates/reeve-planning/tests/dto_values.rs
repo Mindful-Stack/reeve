@@ -198,6 +198,7 @@ fn goal(id: i64, sprint_id: i64) -> Goal {
         verdict: Some(Verdict::PartlyMet),
         verdict_note: Some("v-note".into()),
         version: 8,
+        created_at: t(4),
     }
 }
 fn goal_json(id: i64, sprint_id: i64, links: Value) -> Value {

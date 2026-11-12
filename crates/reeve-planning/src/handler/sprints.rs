@@ -126,8 +126,11 @@ impl Handlers {
         Ok(())
     }
 
-    /// Adds a goal to the draft (or to the active sprint with `to_active`). Interactive only (kb/ADR-0014 R5); the owner
-    /// defaults to the caller. Returns the goal and the target sprint's warnings after the add.
+    /// Adds a goal to the draft (or to the active sprint with `to_active`), linked to `links` in the same transaction.
+    /// Interactive only (kb/ADR-0014 R5); the owner defaults to the caller. Each link is checked as `link_goal` checks it
+    /// (the item exists; an existing link writes nothing) and logged under the item; an unknown key refuses the whole
+    /// create, so no goal is made. A replay of the idempotency key returns the goal it created first, unchanged, whatever
+    /// `links` it sends. Returns the goal and the target sprint's warnings after the add.
     pub async fn add_goal(
         &self,
         c: &Ctx,
@@ -137,6 +140,7 @@ impl Handlers {
         owner: Option<String>,
         notes: &str,
         to_active: bool,
+        links: &[Key],
     ) -> Result<(Goal, Vec<SprintWarning>), HandlerError> {
         interactive(c)?;
         if outcome.trim().is_empty() || check.trim().is_empty() {
@@ -184,26 +188,47 @@ impl Handlers {
                 c.now,
             )
             .await?;
+        let mut entries = Vec::new();
+        if inserted {
+            entries.push(self.rec(
+                c,
+                "goal",
+                &g.id.to_string(),
+                "created",
+                serde_json::json!({"sprint_id": g.sprint_id, "outcome": g.outcome, "check": g.check, "owner": g.owner}),
+            ));
+            if !links.is_empty() {
+                // On this transaction: it holds the sprint's lock, so it must not wait for a second connection.
+                let types = self.ports.keys.item_types_in(&mut tx, links).await?;
+                let by = reeve_protocol::normalise_email(&c.actor);
+                for k in links {
+                    // Dropping `tx` here rolls the goal back: an unknown key creates nothing.
+                    let t = *types.get(k).ok_or(HandlerError::NotFound)?;
+                    if self
+                        .ports
+                        .sprints
+                        .insert_goal_link(&mut tx, g.id, k, &by, c.now)
+                        .await?
+                    {
+                        entries.push(self.rec(
+                            c,
+                            item_name(t),
+                            &k.to_string(),
+                            "goal_linked",
+                            serde_json::json!({"goal_id": g.id}),
+                        ));
+                    }
+                }
+            }
+        }
         let count = self
             .ports
             .sprints
             .goals_of_in(&mut tx, &[g.sprint_id])
             .await?
             .len();
-        if inserted {
-            self.activity
-                .record(
-                    &mut tx,
-                    self.rec(
-                        c,
-                        "goal",
-                        &g.id.to_string(),
-                        "created",
-                        serde_json::json!({"sprint_id": g.sprint_id, "outcome": g.outcome, "check": g.check, "owner": g.owner}),
-                    ),
-                )
-                .await?;
-        }
+        // Every write first, then the entries, immediately before commit.
+        self.record_all(&mut tx, entries).await?;
         tx.commit().await?;
         Ok((g, sprint::warnings(count)))
     }

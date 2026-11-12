@@ -132,6 +132,7 @@ async fn create_goal(
             b.owner,
             b.notes.as_deref().unwrap_or(""),
             b.active,
+            &[],
         )
         .await?;
     Ok(ok(CreatedGoalDto {

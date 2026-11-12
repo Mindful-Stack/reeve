@@ -764,6 +764,7 @@ mod lifecycle {
             None,
             "",
             false,
+            &[],
         )
         .await
         .unwrap()
@@ -899,7 +900,7 @@ mod lifecycle {
                 "{via:?} close"
             );
             assert!(
-                interactive_only(h.add_goal(&x, "g3", "o", "c", None, "", true).await),
+                interactive_only(h.add_goal(&x, "g3", "o", "c", None, "", true, &[]).await),
                 "{via:?} add"
             );
             assert!(
@@ -1248,21 +1249,21 @@ mod lifecycle {
         let (h, sink) = mk(pool.clone());
         let c = ctx(Via::Interactive, 2);
         assert!(refused_with(
-            h.add_goal(&c, "a", "o", "c", None, "", true).await,
+            h.add_goal(&c, "a", "o", "c", None, "", true, &[]).await,
             reeve_protocol::Reason::SprintNotActive
         ));
         assert!(matches!(
-            h.add_goal(&c, "b", " ", "c", None, "", false).await,
+            h.add_goal(&c, "b", " ", "c", None, "", false, &[]).await,
             Err(HandlerError::Validation(_))
         ));
         let (g, w) = h
-            .add_goal(&c, "g1", "o", "c", None, "", false)
+            .add_goal(&c, "g1", "o", "c", None, "", false, &[])
             .await
             .unwrap();
         assert!(w.is_empty());
         assert_eq!(g.owner, "dan@example.com");
         let (again, _) = h
-            .add_goal(&c, "g1", "o", "c", None, "", false)
+            .add_goal(&c, "g1", "o", "c", None, "", false, &[])
             .await
             .unwrap();
         assert_eq!(again.id, g.id);
@@ -1278,6 +1279,7 @@ mod lifecycle {
                 Some("Ann@Example.com".into()),
                 "",
                 true,
+                &[],
             )
             .await
             .unwrap();
@@ -1524,7 +1526,7 @@ mod lifecycle {
             .unwrap();
         let add = tokio::spawn({
             let (h, c) = (h.clone(), c.clone());
-            async move { h.add_goal(&c, "g2", "o", "c", None, "", false).await }
+            async move { h.add_goal(&c, "g2", "o", "c", None, "", false, &[]).await }
         });
         until_waiting_on_a_lock(&pool, "add_goal").await;
         opener.commit().await.unwrap();
@@ -2163,6 +2165,7 @@ mod views {
                 None,
                 "",
                 false,
+                &[],
             )
             .await
             .unwrap()
@@ -2219,9 +2222,18 @@ mod views {
             )
             .await
             .unwrap();
-        h.add_goal(&me(n1_open), "gm", "M outcome", "M check", None, "", false)
-            .await
-            .unwrap();
+        h.add_goal(
+            &me(n1_open),
+            "gm",
+            "M outcome",
+            "M check",
+            None,
+            "",
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
         let d = draft(&h).await;
         let n1 = h
             .open_sprint(&me(n1_open), d.id, d.version, None)
@@ -2341,7 +2353,7 @@ mod views {
         let a = mk_story("a", Some(e.key().clone())).await;
         let b = mk_story("b", None).await;
         let g1 = h
-            .add_goal(&me(2, 9), "g1", "o1", "c1", None, "", false)
+            .add_goal(&me(2, 9), "g1", "o1", "c1", None, "", false, &[])
             .await
             .unwrap()
             .0;
@@ -2396,7 +2408,7 @@ mod views {
             .await
             .unwrap();
         let g2 = h
-            .add_goal(&me(17, 18), "g2", "o2", "c2", None, "", false)
+            .add_goal(&me(17, 18), "g2", "o2", "c2", None, "", false, &[])
             .await
             .unwrap()
             .0;
@@ -2796,6 +2808,7 @@ mod views {
                     None,
                     "",
                     true,
+                    &[],
                 )
                 .await
                 .unwrap()
@@ -3109,5 +3122,119 @@ mod promises {
         assert_eq!(keys(&v1.promises), vec![p1, p8, p11]);
         let after = h.sprint_view(s2, now).await.unwrap().promises;
         assert_eq!(keys(&after), vec![p2, p5, p7, p3]);
+    }
+}
+
+/// GRA-610: a goal created with its links, and each goal's gates on one snapshot.
+mod planning_gates {
+    use super::lifecycle::mk;
+    use super::started_at::{at, ctx};
+    use reeve_planning::*;
+    use reeve_protocol::{Key, Via};
+
+    /// A goal is created with its links in one transaction or not at all; a replay returns the first goal unchanged.
+    #[tokio::test]
+    async fn a_goal_is_created_with_its_links_or_not_at_all() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, sink) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        let e = h.create_epic(&me, "e", "E", None, "", None).await.unwrap();
+        let other = h
+            .create_epic(&me, "e2", "E2", None, "", None)
+            .await
+            .unwrap();
+        let before = sink.0.lock().unwrap().len();
+
+        let unknown: Key = "ABC-999".parse().unwrap();
+        assert!(matches!(
+            h.add_goal(
+                &me,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                &[e.key().clone(), unknown]
+            )
+            .await,
+            Err(HandlerError::NotFound)
+        ));
+        let none = h.sprints(at(2, 0)).await.unwrap();
+        assert!(none.goals.is_empty(), "no goal was created");
+        assert!(
+            none.draft.is_none(),
+            "not even the draft it would have gone into"
+        );
+        assert_eq!(sink.0.lock().unwrap().len(), before, "nothing was logged");
+
+        // The same idempotency key with a valid link: the refused attempt left nothing behind.
+        let (g, _) = h
+            .add_goal(
+                &me,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                std::slice::from_ref(e.key()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(g.created_at, me.now);
+        assert_eq!(
+            h.goal(g.id).await.unwrap().1,
+            vec![GoalLink {
+                goal_id: g.id,
+                item_key: e.key().clone(),
+            }]
+        );
+        let logged: Vec<(String, String, String, serde_json::Value)> = sink.0.lock().unwrap()
+            [before..]
+            .iter()
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.action.to_string(),
+                    r.payload.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            logged
+                .iter()
+                .map(|(t, k, a, _)| (t.as_str(), k.clone(), a.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("goal", g.id.to_string(), "created"),
+                ("epic", e.key().to_string(), "goal_linked"),
+            ]
+        );
+        assert_eq!(logged[1].3, serde_json::json!({"goal_id": g.id}));
+
+        // A replay with other links: the first goal, unchanged, and nothing linked or logged.
+        let n = sink.0.lock().unwrap().len();
+        let (again, _) = h
+            .add_goal(
+                &me,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                std::slice::from_ref(other.key()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again, g);
+        assert_eq!(
+            h.goal(g.id).await.unwrap().1.len(),
+            1,
+            "the replay linked nothing"
+        );
+        assert_eq!(sink.0.lock().unwrap().len(), n);
     }
 }

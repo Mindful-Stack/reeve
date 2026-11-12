@@ -38,6 +38,8 @@ pub struct Goal {
     pub verdict: Option<Verdict>,
     pub verdict_note: Option<String>,
     pub version: i64,
+    /// When the goal was created (stored since `1008_sprints.sql`): the draft panel's "Waiting since".
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
