@@ -44,6 +44,15 @@ pub trait AttachmentRepo: Send + Sync {
         item: ItemType,
         key: &Key,
     ) -> Result<Vec<Attachment>, RepoError>;
+    /// The attachments the story context shows, on its transaction, in one statement: the story's, then the epic's,
+    /// then the initiative's, each oldest first. A `None` owner matches nothing; claimed rows only.
+    async fn list_context_attachments_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        story: &Key,
+        epic: Option<&Key>,
+        initiative: Option<&Key>,
+    ) -> Result<Vec<Attachment>, RepoError>;
     /// Gives the caller's unclaimed uploads among `ids` to the item, in one conditional statement; the claimed ones come
     /// back in the order of `ids`.
     async fn claim_attachments(

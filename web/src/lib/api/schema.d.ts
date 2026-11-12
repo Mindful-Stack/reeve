@@ -3016,6 +3016,11 @@ export interface components {
             outcome: "ok";
             /** @description `reeve story context`: everything an agent needs before starting a story. */
             value: {
+                /**
+                 * @description The attachments of the story (its comments' included), then its epic's, then its initiative's, each oldest
+                 *     first; claimed ones only. Always sent; JSON without it (an older server) reads as none.
+                 */
+                attachments: components["schemas"]["AttachmentDto"][];
                 blockers: components["schemas"]["StoryDto"][];
                 comments: components["schemas"]["CommentDto"][];
                 epic?: null | components["schemas"]["EpicDto"];
@@ -3778,6 +3783,11 @@ export interface components {
         };
         /** @description `reeve story context`: everything an agent needs before starting a story. */
         StoryContextDto: {
+            /**
+             * @description The attachments of the story (its comments' included), then its epic's, then its initiative's, each oldest
+             *     first; claimed ones only. Always sent; JSON without it (an older server) reads as none.
+             */
+            attachments: components["schemas"]["AttachmentDto"][];
             blockers: components["schemas"]["StoryDto"][];
             comments: components["schemas"]["CommentDto"][];
             epic?: null | components["schemas"]["EpicDto"];

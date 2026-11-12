@@ -362,6 +362,30 @@ main() {
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_sprints "$reeve" || exit 1
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_promise "$reeve" || exit 1
 
+	log "seeding a story with one screenshot, under an epic and an initiative (the fake's GRA-31 has both)"
+	local shot_story attachment shot_initiative shot_epic
+	# One CLI call with the automation token; prints the created key, or the CLI's answer on failure.
+	shot_key() {
+		local out
+		out="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json "$@")" || { echo "seeding the screenshot story: reeve $* answered $out" >&2; return 1; }
+		node -e 'process.stdout.write(JSON.parse(process.argv[1]).value.key)' "$out"
+	}
+	shot_initiative="$(shot_key initiative create --title "Skill smoke screenshot initiative" --horizon Now \
+		--idempotency-key skill-smoke-shot:1)" || exit 1
+	shot_epic="$(shot_key epic create --title "Skill smoke screenshot epic" --initiative "$shot_initiative" \
+		--idempotency-key skill-smoke-shot:2)" || exit 1
+	attachment="$(
+		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/octet-stream' \
+			--data-binary "@$root/crates/reeve/tests/fixtures/one.png" "$url/api/v1/attachments?filename=one.png" |
+			node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.id))'
+	)" || { echo "uploading the screenshot failed" >&2; exit 1; }
+	shot_story="$(
+		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/json' \
+			-d "{\"idempotency_key\":\"skill-smoke-shot\",\"title\":\"Skill smoke story with a screenshot\",\"kind\":\"chore\",\"epic\":\"$shot_epic\",\"criteria\":[],\"labels\":[],\"attachments\":[\"$attachment\"]}" \
+			"$url/api/v1/stories" |
+			node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))'
+	)" || { echo "seeding the screenshot story failed" >&2; exit 1; }
+
 	log "building the household: $work/household/kb with an accepted record on main"
 	local household="$work/household"
 	mkdir -p "$household/kb/adrs"
@@ -380,9 +404,9 @@ main() {
 	g -C "$household/kb" remote set-head origin -a >/dev/null
 
 	node -e '
-		const [file, household, email] = process.argv.slice(1);
-		const seed = { household, email, repo: "kb", record: { id: "kb/ADR-0001", path: "adrs/0001-x.md" } };
-		require("node:fs").writeFileSync(file, JSON.stringify(seed, null, 2) + "\n");' "$work/seed.json" "$household" "$email"
+		const [file, household, email, story] = process.argv.slice(1);
+		const seed = { household, email, repo: "kb", record: { id: "kb/ADR-0001", path: "adrs/0001-x.md" }, shot: { story } };
+		require("node:fs").writeFileSync(file, JSON.stringify(seed, null, 2) + "\n");' "$work/seed.json" "$household" "$email" "$shot_story"
 
 	log "running the Lorekeeper skill smoke in $lorekeeper"
 	local tap="$work/lorekeeper.tap"

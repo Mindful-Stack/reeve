@@ -17,4 +17,9 @@ pub struct StoryContextDto {
     #[serde(default)]
     #[schema(required = true)]
     pub goals: Vec<crate::sprints::GoalContextDto>,
+    /// The attachments of the story (its comments' included), then its epic's, then its initiative's, each oldest
+    /// first; claimed ones only. Always sent; JSON without it (an older server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub attachments: Vec<crate::attachments::AttachmentDto>,
 }

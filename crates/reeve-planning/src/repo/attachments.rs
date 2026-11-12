@@ -124,6 +124,26 @@ impl AttachmentRepo for PgPlanningRepo {
         .await?;
         Ok(rows.iter().map(attachment_from).collect::<Result<_, _>>()?)
     }
+    async fn list_context_attachments_in(
+        &self,
+        tx: Tx<'_, '_>,
+        story: &Key,
+        epic: Option<&Key>,
+        initiative: Option<&Key>,
+    ) -> Result<Vec<Attachment>, RepoError> {
+        // A NULL bind compares unknown, so an absent epic or initiative matches no row; each row has one owner
+        // (kb/ADR-0022 R2), so the two IS NULL keys order story, then epic, then initiative.
+        let rows = sqlx::query(&format!(
+            "SELECT {COLS} FROM attachments WHERE story_key = $1 OR epic_key = $2 OR initiative_key = $3 \
+             ORDER BY (story_key IS NULL), (epic_key IS NULL), uploaded_at, id"
+        ))
+        .bind(story.to_string())
+        .bind(epic.map(|k| k.to_string()))
+        .bind(initiative.map(|k| k.to_string()))
+        .fetch_all(&mut **tx)
+        .await?;
+        Ok(rows.iter().map(attachment_from).collect::<Result<_, _>>()?)
+    }
     async fn claim_attachments(
         &self,
         tx: Tx<'_, '_>,
