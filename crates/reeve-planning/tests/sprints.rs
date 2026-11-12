@@ -3401,7 +3401,6 @@ mod planning_gates {
             title: title.into(),
         };
         let planned = h.sprint_planning().await.unwrap();
-        assert!(planned.iter().all(|g| g.goal_id != gx.id));
         assert_eq!(
             planned,
             vec![

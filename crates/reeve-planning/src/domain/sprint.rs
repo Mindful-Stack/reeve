@@ -155,11 +155,21 @@ pub fn warnings(goal_count: usize) -> Vec<SprintWarning> {
 
 /// Which goals a story serves: links to it, to its epic or to its epic's initiative. The nearest link wins `via`.
 pub fn serves(s: &StoryTimes, links: &[GoalLink]) -> Vec<(i64, GoalVia)> {
+    serving(&s.key, s.epic.as_ref(), s.initiative.as_ref(), links)
+}
+
+/// `serves` over a story's lineage: its own key, its epic and that epic's initiative.
+fn serving(
+    story: &Key,
+    epic: Option<&Key>,
+    initiative: Option<&Key>,
+    links: &[GoalLink],
+) -> Vec<(i64, GoalVia)> {
     let mut out: Vec<(i64, GoalVia)> = Vec::new();
     for (k, via) in [
-        (Some(&s.key), GoalVia::Story),
-        (s.epic.as_ref(), GoalVia::Epic),
-        (s.initiative.as_ref(), GoalVia::Initiative),
+        (Some(story), GoalVia::Story),
+        (epic, GoalVia::Epic),
+        (initiative, GoalVia::Initiative),
     ] {
         let Some(k) = k else { continue };
         for l in links.iter().filter(|l| &l.item_key == k) {
@@ -205,7 +215,7 @@ pub struct DecisionGate {
 
 /// Each goal's gates, in `goals` order. A goal's items are a linked initiative and its epics, a linked epic and its
 /// initiative, and a linked story's epic and that epic's initiative; a linked story itself is one of the goal's
-/// stories, not an item. Its stories are the ones `serves` gives it, done ones included but not those resolved as
+/// stories, not an item. Its stories are the ones `serving` (as `serves`) gives it, done ones included but not those resolved as
 /// dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate
 /// is an initiative or epic among the items without its mark, whatever its horizon, as readiness treats every
 /// ancestor. The goal's decisions are those on its items and stories, withdrawn ones excluded; a gate is one for which
@@ -215,34 +225,25 @@ pub fn goal_gates(
     goals: &[i64],
     links: &[GoalLink],
     items: (&[Initiative], &[Epic], &[Story]),
-    decisions: &[(RequiredDecision, DecisionFact)],
+    decisions: &[RequiredDecision],
+    fact: impl Fn(&RequiredDecision) -> DecisionFact,
 ) -> Vec<GoalGates> {
     use std::collections::{HashMap, HashSet};
     let (initiatives, epics, stories) = items;
     let initiative: HashMap<&Key, &Initiative> = initiatives.iter().map(|i| (i.key(), i)).collect();
     let epic: HashMap<&Key, &Epic> = epics.iter().map(|e| (e.key(), e)).collect();
     let story: HashMap<&Key, &Story> = stories.iter().map(|s| (s.key(), s)).collect();
-    // The stories each goal serves, from `serves`, dropped ones left out.
+    // The stories each goal serves, from `serving`, dropped ones left out.
     let mut served: HashMap<i64, Vec<&Key>> = HashMap::new();
     for s in stories {
         if s.resolution() == Some(Resolution::Dropped) {
             continue; // never delivered, as `summarise` skips it
         }
-        let times = StoryTimes {
-            key: s.key().clone(),
-            title: String::new(),
-            epic: s.epic().cloned(),
-            initiative: s
-                .epic()
-                .and_then(|e| epic.get(e).copied())
-                .and_then(Epic::initiative)
-                .cloned(),
-            delivery: s.delivery(),
-            resolution: s.resolution(),
-            started_at: None,
-            done_at: None,
-        };
-        for (g, _) in serves(&times, links) {
+        let initiative_of = s
+            .epic()
+            .and_then(|e| epic.get(e).copied())
+            .and_then(Epic::initiative);
+        for (g, _) in serving(s.key(), s.epic(), initiative_of, links) {
             served.entry(g).or_default().push(s.key());
         }
     }
@@ -251,8 +252,14 @@ pub fn goal_gates(
         .map(|&goal_id| {
             let mut goal_items: HashSet<&Key> = HashSet::new();
             let mut goal_initiatives: Vec<Key> = Vec::new();
-            for l in links.iter().filter(|l| l.goal_id == goal_id) {
-                let k = &l.item_key;
+            // In key-number order whatever the prefixes: the page's group order follows it.
+            let mut own: Vec<&Key> = links
+                .iter()
+                .filter(|l| l.goal_id == goal_id)
+                .map(|l| &l.item_key)
+                .collect();
+            own.sort_by_key(|k| (k.number(), k.to_string()));
+            for k in own {
                 let parent: Option<&Key> = if initiative.contains_key(k) {
                     goal_items.extend(
                         epics
@@ -313,8 +320,7 @@ pub fn goal_gates(
             under.extend(served.get(&goal_id).into_iter().flatten().copied());
             let mut gates = Vec::new();
             let mut decisions_total = 0u32;
-            for (d, fact) in decisions {
-                debug_assert_eq!(d.id(), fact.id, "a decision paired with another's fact");
+            for d in decisions {
                 let withdrawn = d
                     .closed()
                     .is_some_and(|c| matches!(c.kind, Some(ClosureKind::Withdrawn)));
@@ -322,7 +328,7 @@ pub fn goal_gates(
                     continue;
                 }
                 decisions_total += 1;
-                if let Some(reason) = decision_reason(fact) {
+                if let Some(reason) = decision_reason(&fact(d)) {
                     gates.push(DecisionGate {
                         on: d.on().clone(),
                         reason,
@@ -978,15 +984,15 @@ mod tests {
         )
     }
     /// A decision on `on`: open when `closed` is None, else closed with that kind (`Some(None)`: closed before close
-    /// kinds existed). Its fact comes from the one builder, as the handler builds it.
+    /// kinds existed). Its fact comes from the one builder, which the tests pass as the closure.
     fn dec(
         id: i64,
         on: &str,
         on_type: ItemType,
         check: CheckResult,
         closed: Option<Option<ClosureKind>>,
-    ) -> (RequiredDecision, DecisionFact) {
-        let d = RequiredDecision::from_persisted(
+    ) -> RequiredDecision {
+        RequiredDecision::from_persisted(
             id,
             k(on),
             on_type,
@@ -1007,12 +1013,10 @@ mod tests {
             }),
             t(1, 0),
             1,
-        );
-        let f = decision_fact(&d);
-        (d, f)
+        )
     }
     /// Open, unchecked, no record: a `DecisionNoRecord` gate.
-    fn pending(id: i64, on: &str, on_type: ItemType) -> (RequiredDecision, DecisionFact) {
+    fn pending(id: i64, on: &str, on_type: ItemType) -> RequiredDecision {
         dec(id, on, on_type, CheckResult::Unchecked, None)
     }
     fn lk(goal_id: i64, key: &str) -> GoalLink {
@@ -1063,7 +1067,8 @@ mod tests {
                 &[1],
                 &[lk(1, "ABC-4")],
                 (&i[..], &e[..], &s[..]),
-                &decisions
+                &decisions,
+                decision_fact
             ),
             vec![GoalGates {
                 goal_id: 1,
@@ -1095,6 +1100,7 @@ mod tests {
             &[lk(1, "ABC-2"), lk(2, "ABC-9")],
             (&i[..], &e[..], &s[..]),
             &decisions,
+            decision_fact,
         );
         assert_eq!(
             got,
@@ -1171,6 +1177,7 @@ mod tests {
             &[lk(1, "ABC-2")],
             (&i[..], &e[..], &s[..]),
             &decisions,
+            decision_fact,
         )[0];
         assert_eq!(
             g.decisions,
@@ -1208,7 +1215,8 @@ mod tests {
                 &[1],
                 &[lk(1, "ABC-6")],
                 (&i[..], &e[..], &s[..]),
-                &decisions
+                &decisions,
+                decision_fact
             ),
             vec![GoalGates {
                 goal_id: 1,
@@ -1221,7 +1229,8 @@ mod tests {
         );
     }
 
-    /// Each link resolves to its initiative in link order (links come by key number), once.
+    /// Each link resolves to its initiative in link order (links come by key number, whatever the prefixes), once; a
+    /// decision on the story reached through two links counts once.
     #[test]
     fn gates_initiatives_in_link_order_once() {
         let i = [ini("ABC-10", true), ini("ABC-11", true)];
@@ -1230,17 +1239,35 @@ mod tests {
             epic("ABC-3", Some("ABC-10"), true),
         ];
         let s = [story("ABC-4", Some("ABC-2")), story("ABC-5", Some("ABC-3"))];
+        let decisions = [pending(1, "ABC-4", ItemType::Story)];
         let got = goal_gates(
             &[1],
             &[lk(1, "ABC-2"), lk(1, "ABC-4"), lk(1, "ABC-5")],
             (&i[..], &e[..], &s[..]),
-            &[],
+            &decisions,
+            decision_fact,
         );
         assert_eq!(got[0].initiatives, vec![k("ABC-11"), k("ABC-10")]);
+        assert_eq!(got[0].decisions_total, 1);
+
+        // Mixed prefixes: ABC-12 sorts before OLD-3 as text but after it by number.
+        let i = [ini("ABC-1", true), ini("OLD-1", true)];
+        let e = [
+            epic("ABC-12", Some("ABC-1"), true),
+            epic("OLD-3", Some("OLD-1"), true),
+        ];
+        let got = goal_gates(
+            &[1],
+            &[lk(1, "ABC-12"), lk(1, "OLD-3")],
+            (&i[..], &e[..], &[]),
+            &[],
+            decision_fact,
+        );
+        assert_eq!(got[0].initiatives, vec![k("OLD-1"), k("ABC-1")]);
     }
 
-    /// A done story's decisions still count; a dropped story is not the goal's, so its open decision is neither a gate
-    /// nor in the total.
+    /// A done story's decisions still count; a dropped story is not the goal's, whether reached through its epic or
+    /// linked directly, so its open decision is neither a gate nor in the total.
     #[test]
     fn gates_done_story_counts_dropped_story_does_not() {
         let i = [ini("ABC-1", true)];
@@ -1257,14 +1284,22 @@ mod tests {
             pending(1, "ABC-4", ItemType::Story),
             pending(2, "ABC-5", ItemType::Story),
         ];
-        let g = &goal_gates(
-            &[1],
-            &[lk(1, "ABC-2")],
-            (&i[..], &e[..], &s[..]),
-            &decisions,
-        )[0];
-        assert_eq!(g.decisions, vec![no_record(1, "ABC-4")]);
-        assert_eq!(g.decisions_total, 1);
+        for link in ["ABC-2", "ABC-5"] {
+            let g = &goal_gates(
+                &[1],
+                &[lk(1, link)],
+                (&i[..], &e[..], &s[..]),
+                &decisions,
+                decision_fact,
+            )[0];
+            let want = usize::from(link == "ABC-2");
+            assert_eq!(
+                (g.decisions.len(), g.decisions_total as usize),
+                (want, want),
+                "{link}"
+            );
+            assert_eq!(g.initiatives, vec![k("ABC-1")]);
+        }
     }
 
     /// A link to an item that no longer exists adds nothing.
@@ -1280,7 +1315,8 @@ mod tests {
                 &[1],
                 &[lk(1, "ABC-99")],
                 (&i[..], &e[..], &s[..]),
-                &decisions
+                &decisions,
+                decision_fact
             ),
             vec![GoalGates {
                 goal_id: 1,
@@ -1291,27 +1327,5 @@ mod tests {
                 decisions_total: 0,
             }]
         );
-    }
-
-    /// A dropped story linked directly is neither an item nor served: its open decision is not the goal's.
-    #[test]
-    fn gates_directly_linked_dropped_story_does_not_count() {
-        let i = [ini("ABC-1", true)];
-        let e = [epic("ABC-2", Some("ABC-1"), true)];
-        let s = [story_with(
-            "ABC-5",
-            Some("ABC-2"),
-            DeliveryState::Done,
-            Some(Resolution::Dropped),
-        )];
-        let decisions = [pending(1, "ABC-5", ItemType::Story)];
-        let g = &goal_gates(
-            &[1],
-            &[lk(1, "ABC-5")],
-            (&i[..], &e[..], &s[..]),
-            &decisions,
-        )[0];
-        assert_eq!((g.decisions.len(), g.decisions_total), (0, 0));
-        assert_eq!(g.initiatives, vec![k("ABC-1")]);
     }
 }
