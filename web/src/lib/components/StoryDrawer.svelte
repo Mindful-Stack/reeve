@@ -589,7 +589,7 @@
 			<h2 tabindex="-1" bind:this={heading}>
 				<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
 			</h2>
-			<CopyKey key={storyKey} />
+			<CopyKey key={story?.key ?? storyKey} />
 			{#if story}<span class="chip">{story.kind}</span>{/if}
 			{#if story?.external_ref}<span class="muted" title="External reference">from {story.external_ref}</span>{/if}
 		</div>

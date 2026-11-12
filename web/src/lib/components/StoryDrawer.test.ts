@@ -164,6 +164,14 @@ describe('StoryDrawer opened by an external reference', () => {
 		expect(activity.map((u) => u.searchParams.get('entity_key'))).toEqual(['RV-5']);
 	});
 
+	it('copies the story\'s own key, not the reference it was opened by', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'SCRUM-11', onclose: () => {} } });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="story-drawer"] header button[aria-label="Copy RV-5"]')).not.toBeNull();
+		});
+	});
+
 	it('names the reference the story came from', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'SCRUM-11', onclose: () => {} } });
 		await vi.waitFor(() => {
