@@ -8637,7 +8637,7 @@ async fn only_unfinished_promises_pull_decisions() {
     assert_eq!(e.decision.due(), due);
 }
 
-/// Open promises through the real story list and `promise_window`: with the active sprint planned to end 24 Nov and the
+/// Open promises through the real story list and `PromiseWindow::of`: with the active sprint planned to end 24 Nov and the
 /// draft 8 Dec, a decision on a story promised 20 Nov is needed this sprint, one promised 1 Dec next sprint, and one
 /// promised 20 Dec beyond, with no reason. Catches the due period lost or swapped between the DTO and the domain.
 #[tokio::test]
@@ -8684,4 +8684,65 @@ async fn open_promises_pull_decisions_by_due_period() {
     assert_eq!(of(ids[0]), (NeededIn::ThisSprint, reason(0, nov(20))));
     assert_eq!(of(ids[1]), (NeededIn::NextSprint, reason(1, dec)));
     assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
+}
+
+/// kb/ADR-0025 R5: `promised` keeps only unfinished stories, so done ones are never read. A done promised story is not
+/// listed, and adding done promised stories changes neither the statements nor the rows the list reads, with the
+/// default `done=all`.
+#[tokio::test]
+async fn the_promised_filter_reads_no_done_story() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    let promise = Promise::from_persisted(nov(20), "pm@x".into(), now, None);
+    let open = plain_story(&h, &c, "o", "O", None).await;
+    set_promise(&h, ItemType::Story, &open, &promise).await;
+    let add_done = |n: usize| {
+        let (h, c, promise) = (h.clone(), c.clone(), promise.clone());
+        async move {
+            for i in 0..n {
+                let k = plain_story(&h, &c, &format!("d{n}-{i}"), "D", None).await;
+                set_promise(&h, ItemType::Story, &k, &promise).await;
+                mark_done_at(&h, &k, now).await;
+            }
+        }
+    };
+    add_done(1).await;
+    let list = || {
+        let h = h.clone();
+        async move {
+            let f = StoryFilter {
+                promised: Some(reeve_protocol::PromisedFilter::Any),
+                ..Default::default()
+            };
+            let got: Vec<Key> = h
+                .list_stories(&f, None, None, false, DoneFilter::All, now)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|s| s.story.key)
+                .collect();
+            got
+        }
+    };
+    assert_eq!(
+        list().await,
+        vec![open.clone()],
+        "the done promised story is not listed"
+    );
+    let run = || async {
+        list().await;
+    };
+    let rows = common::rows(&pool, run).await;
+    let statements = common::statements(&pool, run).await;
+    assert!(rows > 0, "the counter measured {rows} rows");
+    add_done(5).await;
+    assert_eq!(list().await, vec![open]);
+    assert_eq!(
+        common::rows(&pool, run).await,
+        rows,
+        "rows of done stories were read"
+    );
+    assert_eq!(common::statements(&pool, run).await, statements);
 }

@@ -598,14 +598,23 @@ async fn promised_between_in(
     after: Option<NaiveDate>,
     upto: NaiveDate,
 ) -> Result<Vec<PromisedStoryRow>, RepoError> {
+    // Two branches, each a range on one partial index (`stories_promised_idx`, `epics_promised_idx`): the stories whose
+    // own date is in range, and the stories under an epic whose date is in range. `UNION` drops the story both find
+    // (the rows are identical). An `OR` across the join would scan every story.
     let rows = sqlx::query(
-        "SELECT s.key, s.title, s.delivery, s.resolution, s.epic_key, s.done_at,
-                s.promised_on AS p_on, s.promised_by AS p_by, s.promised_at AS p_at, s.promised_to AS p_to,
-                e.promised_on AS e_on, e.promised_by AS e_by, e.promised_at AS e_at, e.promised_to AS e_to
-           FROM stories s LEFT JOIN epics e ON e.key = s.epic_key AND e.promised_on IS NOT NULL
-          WHERE (s.promised_on <= $2 AND ($1::date IS NULL OR s.promised_on > $1))
-             OR (e.promised_on <= $2 AND ($1::date IS NULL OR e.promised_on > $1))
-          ORDER BY length(s.key), s.key",
+        "SELECT * FROM (
+           SELECT s.key, s.title, s.delivery, s.resolution, s.epic_key, s.done_at,
+                  s.promised_on AS p_on, s.promised_by AS p_by, s.promised_at AS p_at, s.promised_to AS p_to,
+                  e.promised_on AS e_on, e.promised_by AS e_by, e.promised_at AS e_at, e.promised_to AS e_to
+             FROM stories s LEFT JOIN epics e ON e.key = s.epic_key AND e.promised_on IS NOT NULL
+            WHERE s.promised_on > COALESCE($1::date, '-infinity'::date) AND s.promised_on <= $2
+           UNION
+           SELECT s.key, s.title, s.delivery, s.resolution, s.epic_key, s.done_at,
+                  s.promised_on, s.promised_by, s.promised_at, s.promised_to,
+                  e.promised_on, e.promised_by, e.promised_at, e.promised_to
+             FROM epics e JOIN stories s ON s.epic_key = e.key
+            WHERE e.promised_on > COALESCE($1::date, '-infinity'::date) AND e.promised_on <= $2
+         ) u ORDER BY length(u.key), u.key",
     )
     .bind(after)
     .bind(upto)

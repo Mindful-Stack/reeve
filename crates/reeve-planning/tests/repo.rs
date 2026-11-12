@@ -1921,6 +1921,8 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         ("ABC-21", Some("ABC-20"), "done", Some(pday(11, 20))),
         ("ABC-22", None, "done", Some(pday(11, 12))),
         ("ABC-23", Some("ABC-1"), "todo", Some(pday(12, 3))),
+        // Its own date and its epic's are both in range: both branches find it, and it is listed once.
+        ("ABC-24", Some("ABC-1"), "todo", Some(pday(11, 20))),
     ] {
         promise_story(&pool, key, epic, delivery).await;
         if let Some(on) = on {
@@ -1940,13 +1942,17 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         .promised_between_in(&mut tx, Some(pday(11, 10)), pday(11, 24))
         .await
         .unwrap();
-    // Ordered by key; ABC-4 and ABC-8 share a date. ABC-23's own date is out of range, its epic's is in.
+    // Ordered by key; ABC-4 and ABC-8 share a date. ABC-23's own date is out of range, its epic's is in. ABC-24 is
+    // found by its own date and by its epic's, and listed once.
     assert_eq!(
         keys(&got),
         [
-            "ABC-4", "ABC-5", "ABC-6", "ABC-8", "ABC-21", "ABC-22", "ABC-23"
+            "ABC-4", "ABC-5", "ABC-6", "ABC-8", "ABC-21", "ABC-22", "ABC-23", "ABC-24"
         ]
     );
+    let both = got.iter().find(|r| r.key.to_string() == "ABC-24").unwrap();
+    assert_eq!(both.row.own.as_ref().unwrap().on(), pday(11, 20));
+    assert_eq!(both.row.epic.as_ref().unwrap().1.on(), pday(11, 15));
     let by = |k: &str| got.iter().find(|r| r.key.to_string() == k).unwrap();
     let inherited = by("ABC-6");
     assert_eq!(inherited.title, "T ABC-6");
@@ -1986,13 +1992,13 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         .await
         .unwrap();
     assert!(!keys(&got).contains(&"ABC-6".to_string()));
-    // Done before its epic promised: not inheriting, but its own date is in the window (17 Nov, 1 Dec].
+    // Done before its epic promised: not inheriting, but its own date is in the range (17 Nov, 1 Dec]; ABC-24 by its own.
     let got = ports
         .reads
         .promised_between_in(&mut tx, Some(pday(11, 17)), pday(12, 1))
         .await
         .unwrap();
-    assert_eq!(keys(&got), ["ABC-5", "ABC-21"]);
+    assert_eq!(keys(&got), ["ABC-5", "ABC-21", "ABC-24"]);
     tx.rollback().await.unwrap();
 }
 

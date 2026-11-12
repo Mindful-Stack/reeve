@@ -380,6 +380,13 @@ impl Handlers {
                 .map_or(DoneWindow::All, DoneWindow::Since),
             DoneFilter::None => DoneWindow::None,
         };
+        // `promised` keeps only unfinished stories (`Filter::matches` passes open and overdue promises), so done ones
+        // are not read at all rather than read and dropped.
+        let done_window = if f.promised.is_some() {
+            DoneWindow::None
+        } else {
+            done_window
+        };
         f.owner = f.owner.map(|o| reeve_protocol::normalise_email(&o));
         let mut tx = self
             .pool
