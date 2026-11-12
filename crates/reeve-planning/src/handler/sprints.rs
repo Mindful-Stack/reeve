@@ -655,7 +655,7 @@ impl Handlers {
     }
 
     /// Every sprint with its goals and links, and the active sprint's numbers up to `now`, from one read-only snapshot.
-    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (GRA-610), so
+    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (a follow-up of GRA-608), so
     /// this read, made on every board load, does not pay for it.
     pub async fn sprints(&self, now: DateTime<Utc>) -> Result<Sprints, HandlerError> {
         let mut tx = self
