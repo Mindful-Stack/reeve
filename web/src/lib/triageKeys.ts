@@ -15,7 +15,7 @@ export type KeyContext = {
 };
 
 /** What `command` reads of a keydown. Shift is not read: `?` is typed with it on most layouts. */
-export type Key = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'repeat' | 'isComposing' | 'defaultPrevented'>;
+export type Key = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'repeat' | 'isComposing' | 'defaultPrevented'>;
 
 const LETTERS: Record<string, Command> = {
 	j: { kind: 'next' }, k: { kind: 'prev' }, e: { kind: 'epic' }, t: { kind: 'kind' }, c: { kind: 'criteria' },

@@ -4,7 +4,7 @@ import { command, type Command, type Key, type KeyContext } from './triageKeys.t
 
 const ctx = (over: Partial<KeyContext> = {}): KeyContext => ({ typing: false, inList: false, overlay: false, ...over });
 const key = (k: string, over: Partial<Key> = {}): Key => ({
-	key: k, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, isComposing: false, defaultPrevented: false, ...over
+	key: k, ctrlKey: false, metaKey: false, altKey: false, repeat: false, isComposing: false, defaultPrevented: false, ...over
 });
 
 describe('command', () => {
@@ -14,8 +14,14 @@ describe('command', () => {
 			d: { kind: 'drop' }, s: { kind: 'skip' }, o: { kind: 'open' }, u: { kind: 'undo' }, '3': { kind: 'duplicate', n: 3 }
 		};
 		for (const [k, want] of Object.entries(map)) expect(command(key(k), ctx()), k).toEqual(want);
-		expect(command(key('?', { shiftKey: true }), ctx())).toEqual({ kind: 'help' }); // Shift is how most layouts type ?
+		expect(command(key('?'), ctx())).toEqual({ kind: 'help' });
 		expect(command(key('6'), ctx())).toBeNull();
+		expect(command(key('0'), ctx())).toBeNull();
+		expect(command(key('1'), ctx())).toEqual({ kind: 'duplicate', n: 1 });
+		expect(command(key('5'), ctx())).toEqual({ kind: 'duplicate', n: 5 });
+	});
+	it('Cmd or Ctrl or Alt with a letter does nothing', () => {
+		for (const over of [{ metaKey: true }, { ctrlKey: true }, { altKey: true }]) expect(command(key('j', over), ctx()), JSON.stringify(over)).toBeNull();
 	});
 	it('arrows move only in the queue list', () => {
 		expect(command(key('ArrowDown'), ctx({ inList: true }))).toEqual({ kind: 'next' });

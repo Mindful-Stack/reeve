@@ -3,19 +3,17 @@
 // item triaged), the merge after a reload or a conflict, duplicate drops, and the drop arm.
 import type { EditItem, SimilarStory, Story } from '#lib/api/types.ts';
 import type { Kind } from '#lib/board.ts';
-import { changed, mergeDraft, type Edit, type Same } from '#lib/forms.ts';
+import { BLANK_TITLE, changed, exact, mergeDraft, trimmed, type Edit, type Same } from '#lib/forms.ts';
 
 type Criterion = Story['criteria'][number];
 
-const keyNumber = (key: string) => {
-	const n = Number(key.slice(key.lastIndexOf('-') + 1));
-	return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
-};
+/** Keys are `PREFIX-<n>`, one prefix per instance. */
+const keyNumber = (key: string) => Number(key.slice(key.lastIndexOf('-') + 1));
 
 /** The queue oldest first: keys go up with creation, so the number after the dash orders them (kb/ADR-0021 R1: the
  *  server filtered; this only sorts what it sent, or an item Undo put back). */
 export function byKey(stories: Story[]): Story[] {
-	return [...stories].sort((a, b) => keyNumber(a.key) - keyNumber(b.key) || a.key.localeCompare(b.key));
+	return [...stories].sort((a, b) => keyNumber(a.key) - keyNumber(b.key));
 }
 
 /** The form's fields as text: epic ('' for none), kind, title, criteria one per line. */
@@ -25,8 +23,6 @@ export type Base = { version: number; fields: Fields; criteria: Criterion[] };
 export type Draft = { base: Base; fields: Fields; duplicate: string | null };
 
 const lines = (t: string) => t.split('\n').map((l) => l.trim()).filter((l) => l !== '');
-const exact = (a: string, b: string) => a === b;
-const trimmed = (a: string, b: string) => a.trim() === b.trim();
 const sameLines = (a: string, b: string) => JSON.stringify(lines(a)) === JSON.stringify(lines(b));
 const TRIAGE_SAME: Same<Fields> = { epic: exact, kind: exact, title: trimmed, criteria: sameLines };
 export const FIELD_LABEL: Record<keyof Fields, string> = { epic: 'Epic', kind: 'Kind', title: 'Title', criteria: 'Criteria' };
@@ -54,7 +50,7 @@ export function criteriaFromText(text: string, base: Criterion[]): Criterion[] {
  *  something to send. */
 export function placeEdit(d: Draft): Exclude<Edit<EditItem>, { kind: 'unchanged' }> {
 	if (!d.fields.epic) return { kind: 'invalid', error: 'Pick an epic first.' };
-	if (!d.fields.title.trim()) return { kind: 'invalid', error: 'Title must not be blank.' };
+	if (!d.fields.title.trim()) return { kind: 'invalid', error: BLANK_TITLE };
 	const body: EditItem = { version: d.base.version };
 	for (const k of changed(TRIAGE_SAME, d.base.fields, d.fields)) {
 		if (k === 'epic') body.epic = d.fields.epic;
@@ -70,9 +66,12 @@ export function placeEdit(d: Draft): Exclude<Edit<EditItem>, { kind: 'unchanged'
 export function rebaseAfterConflict(d: Draft, s: Story): { draft: Draft; clashes: { field: keyof Fields; value: string }[] } {
 	const server = fieldsOf(s);
 	const clashes = changed(TRIAGE_SAME, d.base.fields, d.fields)
-		.filter((k) => !TRIAGE_SAME[k](d.base.fields[k], server[k]))
+		.filter((k) => !TRIAGE_SAME[k](d.base.fields[k], server[k]) && !TRIAGE_SAME[k](d.fields[k], server[k]))
 		.map((k) => ({ field: k, value: server[k] }));
-	return { draft: { base: baseOf(s), fields: mergeDraft(TRIAGE_SAME, d.base.fields, d.fields, server), duplicate: d.duplicate }, clashes };
+	const fields = mergeDraft(TRIAGE_SAME, d.base.fields, d.fields, server);
+	// What the user typed stays wherever it already means what the server has (spacing, a line being typed).
+	for (const k of Object.keys(fields) as (keyof Fields)[]) if (TRIAGE_SAME[k](d.fields[k], server[k])) (fields as Record<string, string>)[k] = d.fields[k];
+	return { draft: { base: baseOf(s), fields, duplicate: d.duplicate }, clashes };
 }
 
 /** On a reload: the base follows the server unless a field the user changed has changed there too; then the draft is kept
@@ -80,7 +79,7 @@ export function rebaseAfterConflict(d: Draft, s: Story): { draft: Draft; clashes
  *  An unchanged item leaves the draft alone: the merge would put the server's text over a field that differs only by
  *  spacing (a trailing space or a new empty line, the one being typed). */
 export function followDraft(d: Draft, s: Story): Draft {
-	if (s.version === d.base.version) return d;
+	if (s.version <= d.base.version) return d;
 	const r = rebaseAfterConflict(d, s);
 	return r.clashes.length ? d : r.draft;
 }

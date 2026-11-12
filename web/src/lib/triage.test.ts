@@ -52,6 +52,12 @@ describe('placeEdit', () => {
 		d.fields.criteria = 'Renders\n\n';
 		expect(placeEdit(d)).toEqual({ kind: 'send', body: { version: 7, epic: 'GRA-7' } });
 	});
+	it('sends the trimmed title when only the title changed', () => {
+		const d = draftOf(s);
+		d.fields.epic = 'GRA-7';
+		d.fields.title = '  New title ';
+		expect(placeEdit(d)).toEqual({ kind: 'send', body: { version: 7, epic: 'GRA-7', title: 'New title' } });
+	});
 	it('refuses a blank title', () => {
 		const d = draftOf(s);
 		d.fields.epic = 'GRA-7';
@@ -95,6 +101,33 @@ describe('followDraft and rebaseAfterConflict', () => {
 	});
 });
 
+describe('followDraft and rebaseAfterConflict: what the user typed', () => {
+	const crit = [{ text: 'Renders', done: false }];
+	const s = story({ key: 'GRA-5', title: 'Blank PDF', criteria: crit, version: 3 });
+	it('keeps the typed spacing of a field that means what the server has, when something else changed', () => {
+		const d = draftOf(s);
+		d.fields.criteria = 'Renders\n';
+		d.fields.title = 'Blank PDF ';
+		const server = story({ key: 'GRA-5', title: 'Blank PDF', criteria: crit, labels: ['x'], version: 4 });
+		for (const f of [followDraft(d, server), rebaseAfterConflict(d, server).draft]) {
+			expect(f.base.version).toBe(4);
+			expect(f.fields.criteria).toBe('Renders\n');
+			expect(f.fields.title).toBe('Blank PDF ');
+		}
+	});
+	it('an older late answer leaves the draft and its base alone', () => {
+		const d = draftOf(story({ key: 'GRA-5', title: 'Blank PDF', version: 5 }));
+		expect(followDraft(d, story({ key: 'GRA-5', title: 'Older', version: 4 }))).toBe(d);
+	});
+	it('a field both sides changed to the same value is not a clash', () => {
+		const d = draftOf(s);
+		d.fields.title = 'Same';
+		const r = rebaseAfterConflict(d, story({ key: 'GRA-5', title: 'Same', criteria: crit, version: 4 }));
+		expect(r.clashes).toEqual([]);
+		expect(followDraft(d, story({ key: 'GRA-5', title: 'Same', criteria: crit, version: 4 })).base.version).toBe(4);
+	});
+});
+
 describe('undoEdit', () => {
 	it('restores the base value of every field the Place sent, at the placed version', () => {
 		const s = story({ key: 'GRA-5', kind: 'bug', criteria: [{ text: 'Renders', done: true }], version: 3 });
@@ -106,6 +139,13 @@ describe('undoEdit', () => {
 			kind: 'bug',
 			criteria: [{ text: 'Renders', done: true }]
 		});
+	});
+});
+
+describe('undoEdit title', () => {
+	it('restores the base title when the Place sent one', () => {
+		const d = draftOf(story({ key: 'GRA-5', title: 'Old', version: 3 }));
+		expect(undoEdit(story({ key: 'GRA-5', version: 4 }), d, { version: 3, title: 'New' })).toEqual({ version: 4, title: 'Old' });
 	});
 });
 
@@ -127,11 +167,18 @@ describe('small helpers', () => {
 		expect(similarQuery('  short ')).toBeNull();
 		expect(similarQuery(' Blank PDF ')).toBe('Blank PDF');
 		expect(similarQuery('x'.repeat(201))).toBeNull();
+		expect(similarQuery('x'.repeat(7))).toBeNull();
+		expect(similarQuery('x'.repeat(8))).toBe('x'.repeat(8));
+		expect(similarQuery('x'.repeat(200))).toBe('x'.repeat(200));
 		expect(similarQuery('😀'.repeat(150))).toBe('😀'.repeat(150)); // 300 UTF-16 units, 150 characters
 	});
 	it('whereNow names the epic, or done and the resolution', () => {
 		expect(whereNow(story({ key: 'GRA-5', epic: 'GRA-7' }))).toBe('Placed elsewhere: GRA-5 is under GRA-7.');
 		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: 'dropped' }))).toBe('GRA-5 is done (dropped).');
+	});
+	it('whereNow: done without a resolution is completed; no epic and not done is changed', () => {
+		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: null }))).toBe('GRA-5 is done (completed).');
+		expect(whereNow(story({ key: 'GRA-5', epic: null, delivery: 'todo' }))).toBe('GRA-5 changed.');
 	});
 	it('armedFor: the same item and version within 3 seconds', () => {
 		const arm = { key: 'GRA-5', version: 2, at: 1000 };
