@@ -3327,26 +3327,27 @@ fn serve_raw(
 
 const ATTACHMENT_ID: &str = "0193a6a2-7b1c-7d2e-9f00-000000000001";
 
-fn get_with_tmpdir(url: &str, tmp: &std::path::Path) -> std::process::Output {
+fn get_into(url: &str, dir: &std::path::Path) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
     Command::cargo_bin("reeve")
         .unwrap()
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
-        .env("REEVE_CONFIG_DIR", tmp)
-        .env("TMPDIR", tmp)
-        .args(["attachment", "get", ATTACHMENT_ID, "--json"])
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .args(["attachment", "get", ATTACHMENT_ID, "--json", "--dir"])
+        .arg(dir)
         .timeout(Duration::from_secs(60))
         .output()
         .unwrap()
 }
 
-/// Without --dir the image goes to <temp>/reeve-attachments/<id>.<ext>, a directory only its owner can enter; the
-/// extension comes from the answer's type.
+/// A missing --dir is created (parents too) owner-only, and the extension comes from the answer's type.
 #[test]
-fn attachment_get_defaults_to_a_private_temp_directory() {
+fn attachment_get_creates_a_private_directory() {
     let (url, server) = serve_raw(200, "image/webp", b"RIFF....WEBP");
     let tmp = tempfile::tempdir().unwrap();
-    let out = get_with_tmpdir(&url, tmp.path());
+    let dir = tmp.path().join("a").join("b");
+    let out = get_into(&url, &dir);
     assert_eq!(
         server.join().unwrap(),
         format!("GET /api/v1/attachments/{ATTACHMENT_ID} HTTP/1.1")
@@ -3356,7 +3357,6 @@ fn attachment_get_defaults_to_a_private_temp_directory() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let dir = tmp.path().join("reeve-attachments");
     let want = dir.join(format!("{ATTACHMENT_ID}.webp"));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["value"]["path"], want.to_str().unwrap());
@@ -3376,40 +3376,27 @@ fn attachment_get_defaults_to_a_private_temp_directory() {
 fn attachment_get_refuses_another_content_type() {
     let (url, server) = serve_raw(200, "text/html", b"<html>");
     let tmp = tempfile::tempdir().unwrap();
-    let out = get_with_tmpdir(&url, tmp.path());
+    let out = get_into(&url, tmp.path());
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(1));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["code"], "internal");
     assert!(v["message"].as_str().unwrap().contains("text/html"), "{v}");
-    let dir = tmp.path().join("reeve-attachments");
-    assert!(
-        std::fs::read_dir(&dir)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(true)
-    );
+    assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
 }
 
-/// A default directory another user pre-created with open permissions is refused and nothing is written in it.
-#[cfg(unix)]
+/// --dir is required: the CLI has no shared default location for private screenshots.
 #[test]
-fn attachment_get_refuses_a_shared_default_directory() {
-    use std::os::unix::fs::PermissionsExt;
-    let (url, server) = serve_raw(200, "image/png", b"\x89PNG");
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("reeve-attachments");
-    std::fs::create_dir(&dir).unwrap();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
-    let out = get_with_tmpdir(&url, tmp.path());
-    server.join().unwrap();
+fn attachment_get_requires_a_directory() {
+    let out = Command::cargo_bin("reeve")
+        .unwrap()
+        .env("REEVE_URL", "http://127.0.0.1:9")
+        .env("REEVE_TOKEN", "reeve_test")
+        .args(["attachment", "get", ATTACHMENT_ID, "--json"])
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1));
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(
-        v["message"]
-            .as_str()
-            .unwrap()
-            .contains("not a private directory"),
-        "{v}"
-    );
-    assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--dir"));
 }

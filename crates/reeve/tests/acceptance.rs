@@ -794,7 +794,13 @@ async fn flow() {
         );
     }
     let missing = reeve(&bot)
-        .args(["attachment", "get", "00000000-0000-4000-8000-000000000000"])
+        .args([
+            "attachment",
+            "get",
+            "00000000-0000-4000-8000-000000000000",
+            "--dir",
+        ])
+        .arg(dir.path())
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(1));
