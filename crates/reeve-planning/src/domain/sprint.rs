@@ -140,23 +140,6 @@ pub fn open_dates(
     Ok((starts, ends))
 }
 
-/// A goal asked to be left out that the draft does not hold.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("goal {0} is not in the sprint")]
-pub struct UnknownGoal(pub i64);
-
-/// The goals an opening leaves out (kb/ADR-0026 R1): the asked ids, id-ordered and counted once; the first id (in that
-/// order) the draft does not hold refuses the whole opening.
-pub fn left_out(held: &[i64], ask: &[i64]) -> Result<Vec<i64>, UnknownGoal> {
-    let mut out = ask.to_vec();
-    out.sort_unstable();
-    out.dedup();
-    match out.iter().find(|g| !held.contains(g)) {
-        Some(g) => Err(UnknownGoal(*g)),
-        None => Ok(out),
-    }
-}
-
 pub fn warnings(goal_count: usize) -> Vec<SprintWarning> {
     match goal_count {
         0 => vec![SprintWarning::NoGoals],
@@ -299,14 +282,6 @@ pub fn summarise(
 mod tests {
     use super::*;
     use chrono::{NaiveDate, TimeZone, Utc};
-
-    #[test]
-    fn left_out_dedups_orders_and_checks_membership() {
-        assert_eq!(left_out(&[1, 2, 3], &[3, 1, 3]), Ok(vec![1, 3]));
-        assert_eq!(left_out(&[1, 2, 3], &[]), Ok(vec![]));
-        assert_eq!(left_out(&[1, 2, 3], &[2, 9, 8]), Err(UnknownGoal(8)));
-        assert_eq!(left_out(&[], &[1]), Err(UnknownGoal(1)));
-    }
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()

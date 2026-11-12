@@ -248,21 +248,17 @@ impl Handlers {
         }
         // Under the draft's lock: `add_goal` and `remove_goal` wait on it, so the draft's goals cannot change before the
         // move below.
-        let left_out = if leave_out.is_empty() {
-            Vec::new()
-        } else {
-            let held: Vec<i64> = self
-                .ports
-                .sprints
-                .goals_of_in(&mut tx, &[id])
-                .await?
-                .iter()
-                .map(|g| g.id)
-                .collect();
-            sprint::left_out(&held, leave_out).map_err(|sprint::UnknownGoal(gid)| {
-                HandlerError::Validation(format!("goal {gid} is not in sprint {id}"))
-            })?
-        };
+        let mut left_out = leave_out.to_vec();
+        left_out.sort_unstable();
+        left_out.dedup();
+        if !left_out.is_empty() {
+            let held = self.ports.sprints.goals_of_in(&mut tx, &[id]).await?;
+            if let Some(gid) = left_out.iter().find(|g| !held.iter().any(|h| h.id == **g)) {
+                return Err(HandlerError::Validation(format!(
+                    "goal {gid} is not in sprint {id}"
+                )));
+            }
+        }
         let (starts, ends) = sprint::open_dates(c.now, ends_on, self.settings.sprint_length_days)
             .map_err(|e| HandlerError::Validation(e.to_string()))?;
         s.state = SprintState::Active;
