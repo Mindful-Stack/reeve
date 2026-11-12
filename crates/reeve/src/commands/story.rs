@@ -367,7 +367,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             .await?
         }
         Story::Promise { key, args } => {
-            super::promise::<StoryDto>(
+            super::promise::<StoryDto, StoryPromiseCleared>(
                 c,
                 format!("/stories/{key}"),
                 args,

@@ -1345,6 +1345,22 @@
         ],
         "type": "object"
       },
+      "EpicPromiseCleared": {
+        "description": "`DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now.",
+        "properties": {
+          "cleared": {
+            "type": "boolean"
+          },
+          "epic": {
+            "$ref": "#/components/schemas/EpicDto"
+          }
+        },
+        "required": [
+          "cleared",
+          "epic"
+        ],
+        "type": "object"
+      },
       "EpicPromiseDto": {
         "description": "An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is.",
         "properties": {
@@ -4390,6 +4406,98 @@
           }
         ]
       },
+      "Response_EpicPromiseCleared": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now.",
+                "properties": {
+                  "cleared": {
+                    "type": "boolean"
+                  },
+                  "epic": {
+                    "$ref": "#/components/schemas/EpicDto"
+                  }
+                },
+                "required": [
+                  "cleared",
+                  "epic"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_ExportDto": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -6343,6 +6451,98 @@
                   "urgent_mark",
                   "urgent_sources",
                   "promise"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_StoryPromiseCleared": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.\n`cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).",
+                "properties": {
+                  "cleared": {
+                    "type": "boolean"
+                  },
+                  "story": {
+                    "$ref": "#/components/schemas/StoryDto"
+                  }
+                },
+                "required": [
+                  "cleared",
+                  "story"
                 ],
                 "type": "object"
               }
@@ -8731,6 +8931,22 @@
           "urgent_mark",
           "urgent_sources",
           "promise"
+        ],
+        "type": "object"
+      },
+      "StoryPromiseCleared": {
+        "description": "`DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.\n`cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).",
+        "properties": {
+          "cleared": {
+            "type": "boolean"
+          },
+          "story": {
+            "$ref": "#/components/schemas/StoryDto"
+          }
+        },
+        "required": [
+          "cleared",
+          "story"
         ],
         "type": "object"
       },
@@ -11514,7 +11730,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Response_EpicDto"
+                  "$ref": "#/components/schemas/Response_EpicPromiseCleared"
                 }
               }
             },
@@ -11576,7 +11792,7 @@
             "bearer": []
           }
         ],
-        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only."
+        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request\ncleared the epic's promise; the epic is read after the write."
       },
       "post": {
         "operationId": "epics_key_promise_set_promise",
@@ -15579,7 +15795,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Response_StoryDto"
+                  "$ref": "#/components/schemas/Response_StoryPromiseCleared"
                 }
               }
             },
@@ -15641,7 +15857,7 @@
             "bearer": []
           }
         ],
-        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only."
+        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request\ncleared the story's own promise; the story is read after the write."
       },
       "post": {
         "operationId": "stories_key_promise_set_promise",

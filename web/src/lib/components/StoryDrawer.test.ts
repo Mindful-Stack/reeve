@@ -1031,8 +1031,9 @@ describe('StoryDrawer promise', () => {
 				if (method === 'POST' && failPost) return failure('boom');
 				if (method === 'DELETE' && failDelete) return failure('no clearing');
 				const body = net.bodies.at(-1)?.body as { on?: string } | undefined;
+				const cleared = method === 'DELETE' && current.promise?.own != null;
 				current = { ...current, promise: method === 'POST' ? own(body?.on ?? '2026-11-24') : null };
-				return current;
+				return method === 'DELETE' ? { cleared, story: current } : current;
 			}
 			if (url.pathname === '/api/v1/sprints') {
 				if (failSprints) return failure('sprints are down');

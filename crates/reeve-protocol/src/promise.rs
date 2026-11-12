@@ -1,5 +1,6 @@
 //! Promise wire types (kb/ADR-0025): a stored promise and what the server derives from it on read.
 use crate::ids::Key;
+use crate::items::{EpicDto, StoryDto};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -133,4 +134,19 @@ pub struct SprintPromiseDto {
     pub done_on: Option<NaiveDate>,
     /// Days overdue or late, computed by the server.
     pub days: Option<u32>,
+}
+
+/// `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
+/// `cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct StoryPromiseCleared {
+    pub cleared: bool,
+    pub story: StoryDto,
+}
+
+/// `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct EpicPromiseCleared {
+    pub cleared: bool,
+    pub epic: EpicDto,
 }

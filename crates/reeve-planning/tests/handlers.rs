@@ -7617,7 +7617,7 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
             ),
             format!("{k} is done: a done story cannot be promised")
         );
-        h.clear_promise(&c, ItemType::Story, k).await.unwrap();
+        assert!(!h.clear_promise(&c, ItemType::Story, k).await.unwrap());
         assert_eq!(stored(&pool, ItemType::Story, k).await, None);
         assert!(promise_entries(&pool, k).await.is_empty());
     }
@@ -7630,7 +7630,7 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
         &Promise::from_persisted(nov(20), "pm@x".into(), c.now, None),
     )
     .await;
-    h.clear_promise(&c, ItemType::Story, &done).await.unwrap();
+    assert!(h.clear_promise(&c, ItemType::Story, &done).await.unwrap());
     assert_eq!(stored(&pool, ItemType::Story, &done).await, None);
     assert_eq!(
         promise_entries(&pool, &done).await,
@@ -7671,7 +7671,11 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
         "an initiative cannot be promised"
     );
     assert_eq!(
-        validation_text(h.clear_promise(&c, ItemType::Initiative, &ini).await),
+        validation_text(
+            h.clear_promise(&c, ItemType::Initiative, &ini)
+                .await
+                .map(|_| ())
+        ),
         "an initiative cannot be promised"
     );
     assert!(promise_entries(&pool, &ini).await.is_empty());
@@ -7873,9 +7877,15 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
             HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
         ));
         assert!(stored(&pool, item, &k).await.is_some(), "{name}");
-        h.clear_promise(&c, item, &k).await.unwrap();
+        assert!(
+            h.clear_promise(&c, item, &k).await.unwrap(),
+            "{name}: cleared"
+        );
         assert_eq!(stored(&pool, item, &k).await, None);
-        h.clear_promise(&c, item, &k).await.unwrap();
+        assert!(
+            !h.clear_promise(&c, item, &k).await.unwrap(),
+            "{name}: nothing left to clear"
+        );
 
         let want = |action: &str, payload: serde_json::Value| {
             (name.to_string(), action.to_string(), payload)
@@ -8126,7 +8136,7 @@ async fn a_set_waits_for_a_concurrent_writer_and_logs_its_promise_as_previous() 
                 hh.set_promise(&cc, item, &kk, promise_body(Some(nov(27)), None, None))
                     .await
             } else {
-                hh.clear_promise(&cc, item, &kk).await
+                hh.clear_promise(&cc, item, &kk).await.map(|_| ())
             }
         });
         wait_until_blocked(&pool).await;
@@ -8771,7 +8781,7 @@ async fn queued_promise_writes_chain_their_entries() {
                 hh.set_promise(&cc, item, &kk, promise_body(Some(nov(30)), None, None))
                     .await
             } else {
-                hh.clear_promise(&cc, item, &kk).await
+                hh.clear_promise(&cc, item, &kk).await.map(|_| ())
             }
         });
         wait_until_waiting(&pool, 2).await;

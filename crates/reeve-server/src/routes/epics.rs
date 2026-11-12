@@ -128,17 +128,21 @@ async fn set_promise(
         .await?;
     Ok(ok(s.handlers.epic_dto(&key, ctx.now).await?))
 }
-/// Clears the promise (R2); clearing none changes nothing. Interactive only.
-#[utoipa::path(delete, path = "/epics/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<EpicDto>)))]
+/// Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+/// cleared the epic's promise; the epic is read after the write.
+#[utoipa::path(delete, path = "/epics/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<EpicPromiseCleared>)))]
 async fn clear_promise(
     State(s): State<AppState>,
     c: Caller,
     ApiPath(key): ApiPath<String>,
-) -> Result<Json<Response<EpicDto>>, AppError> {
+) -> Result<Json<Response<EpicPromiseCleared>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
     let ctx = c.ctx();
-    s.handlers.clear_promise(&ctx, ItemType::Epic, &key).await?;
-    Ok(ok(s.handlers.epic_dto(&key, ctx.now).await?))
+    let cleared = s.handlers.clear_promise(&ctx, ItemType::Epic, &key).await?;
+    Ok(ok(EpicPromiseCleared {
+        cleared,
+        epic: s.handlers.epic_dto(&key, ctx.now).await?,
+    }))
 }
 #[utoipa::path(post, path = "/epics/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<EpicDto>)))]
 async fn mark_urgent(

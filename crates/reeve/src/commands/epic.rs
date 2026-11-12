@@ -143,7 +143,7 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
             .await?
         }
         Epic::Promise { key, args } => {
-            super::promise::<EpicDto>(
+            super::promise::<EpicDto, EpicPromiseCleared>(
                 c,
                 format!("/epics/{key}"),
                 args,

@@ -3474,71 +3474,64 @@ fn story_promise_answers_with_what_was_written() {
     );
 }
 
-/// `--clear` reads the story first, so its answer says what the DELETE changed, worded only from the two answers: a
-/// cleared promise; an own promise cleared while the epic's still applies; nothing to clear (the server answers a clear
-/// of none with the unchanged story, as it does one that cleared).
+/// `--clear` makes one DELETE and words its answer from it alone: whether it cleared, and the story after. A cleared
+/// promise; an own promise cleared while the epic's still applies; no own promise while the epic's applies; nothing.
 #[test]
 fn story_promise_clear_prints_what_was_cleared() {
     let mut cleared = urgent_story(vec![]);
     cleared.key = "ABC-12".parse().unwrap();
     let cleared = serde_json::to_value(cleared).unwrap();
     let story = glyph(reeve::glyphs::Level::Story, "ABC-12");
-    let rows: [(serde_json::Value, serde_json::Value, String); 4] = [
+    let answer = |cleared: bool, story: serde_json::Value| {
+        ok(serde_json::json!({"cleared": cleared, "story": story}))
+    };
+    let rows: [(serde_json::Value, String); 4] = [
         (
-            promised_story("2026-11-20", Some("Acme")),
-            cleared.clone(),
+            answer(true, cleared.clone()),
             format!("{story} · promise cleared\n"),
         ),
         (
-            story_with_both_promises(),
-            story_promised_via_epic(),
+            answer(true, story_promised_via_epic()),
             format!("{story} · own promise cleared; still promised by 18 Nov via ABC-7\n"),
         ),
         (
-            cleared.clone(),
-            cleared.clone(),
-            format!("{story} · no promise to clear\n"),
+            answer(false, story_promised_via_epic()),
+            format!("{story} · no own promise to clear; promised by 18 Nov via ABC-7\n"),
         ),
         (
-            story_promised_via_epic(),
-            story_promised_via_epic(),
+            answer(false, cleared.clone()),
             format!("{story} · no promise to clear\n"),
         ),
     ];
-    for (before, after, want) in rows {
-        let (url, server) = serve(vec![
-            ("GET /api/v1/stories/ABC-12", 200, ok(before)),
-            ("DELETE /api/v1/stories/ABC-12/promise", 200, ok(after)),
-        ]);
+    for (body, want) in rows {
+        let (url, server) = serve(vec![("DELETE /api/v1/stories/ABC-12/promise", 200, body)]);
         let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
         let bodies = server.join().unwrap();
-        assert_eq!(bodies[1], "", "a DELETE carries no body");
+        assert_eq!(bodies, vec![String::new()], "one bodiless DELETE, no read");
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(out_text(&out), want);
     }
 
-    // `--json` prints the DELETE's envelope, after the same read.
-    let (url, server) = serve(vec![
-        (
-            "GET /api/v1/stories/ABC-12",
-            200,
-            ok(story_with_both_promises()),
-        ),
-        (
-            "DELETE /api/v1/stories/ABC-12/promise",
-            200,
-            ok(story_promised_via_epic()),
-        ),
-    ]);
+    // `--json` prints the DELETE's envelope.
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/stories/ABC-12/promise",
+        200,
+        answer(true, story_promised_via_epic()),
+    )]);
     let out = reeve_at(&url, &["--json", "story", "promise", "ABC-12", "--clear"]);
     server.join().unwrap();
     let env: serde_json::Value = serde_json::from_str(&out_text(&out)).unwrap();
-    assert_eq!(env["value"]["promise"]["holder"], "epic", "{env}");
+    assert_eq!(env["value"]["cleared"], true, "{env}");
+    assert_eq!(env["value"]["story"]["promise"]["holder"], "epic", "{env}");
 
-    // A read that fails ends there: nothing is cleared.
+    // A DELETE that fails says so.
     let missing =
         serde_json::json!({"outcome":"error","code":"not_found","message":"no story ABC-12"});
-    let (url, server) = serve(vec![("GET /api/v1/stories/ABC-12", 404, missing)]);
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/stories/ABC-12/promise",
+        404,
+        missing,
+    )]);
     let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
     assert_eq!(server.join().unwrap().len(), 1);
     assert_ne!(out.status.code(), Some(0));
@@ -3693,20 +3686,17 @@ fn epic_promise_works_the_same() {
     let mut cleared = promised_epic(false);
     cleared["promise"] = serde_json::Value::Null;
     let epic = glyph(reeve::glyphs::Level::Epic, "ABC-7");
-    for (before, want) in [
-        (promised_epic(false), format!("{epic} · promise cleared\n")),
-        (cleared.clone(), format!("{epic} · no promise to clear\n")),
+    for (was, want) in [
+        (true, format!("{epic} · promise cleared\n")),
+        (false, format!("{epic} · no promise to clear\n")),
     ] {
-        let (url, server) = serve(vec![
-            ("GET /api/v1/epics/ABC-7", 200, ok(before)),
-            (
-                "DELETE /api/v1/epics/ABC-7/promise",
-                200,
-                ok(cleared.clone()),
-            ),
-        ]);
+        let (url, server) = serve(vec![(
+            "DELETE /api/v1/epics/ABC-7/promise",
+            200,
+            ok(serde_json::json!({"cleared": was, "epic": cleared.clone()})),
+        )]);
         let out = reeve_at(&url, &["epic", "promise", "ABC-7", "--clear"]);
-        server.join().unwrap();
+        assert_eq!(server.join().unwrap(), vec![String::new()]);
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(out_text(&out), want);
     }

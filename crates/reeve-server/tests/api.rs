@@ -3062,13 +3062,18 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
                "message": format!("{done} is done: a done story cannot be promised")})
     );
 
-    for p in [
-        format!("/api/v1/stories/{story}/promise"),
-        format!("/api/v1/epics/{epic}/promise"),
+    // A clear answers whether it cleared, and the item as it is now; clearing again clears nothing.
+    for (p, item, k) in [
+        (format!("/api/v1/stories/{story}/promise"), "story", &story),
+        (format!("/api/v1/epics/{epic}/promise"), "epic", &epic),
     ] {
-        let (st, v) = call(&h.app, t, "DELETE", &p, None).await;
-        assert_eq!(st, 200, "{p}: {v}");
-        assert_eq!(v["value"]["promise"], serde_json::Value::Null, "{p}");
+        for cleared in [true, false] {
+            let (st, v) = call(&h.app, t, "DELETE", &p, None).await;
+            assert_eq!(st, 200, "{p}: {v}");
+            assert_eq!(v["value"]["cleared"], cleared, "{p}: {v}");
+            assert_eq!(v["value"][item]["key"], k.as_str(), "{p}");
+            assert_eq!(v["value"][item]["promise"], serde_json::Value::Null, "{p}");
+        }
     }
     // With no promise, a request without a date or a shortcut has nothing to change, and says which item.
     let (st, body) = call(

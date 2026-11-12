@@ -96,8 +96,9 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			if (s.promiseFail) return failure('boom');
 			const on = (body as { on?: string } | null)?.on ?? '2026-11-24';
 			const fact = { on, to: 'Acme', by: 'dan@example.com', at: '2026-11-12T08:00:00Z' };
+			const cleared = method === 'DELETE' && s.epic.promise != null;
 			s.epic = { ...s.epic, promise: method === 'POST' ? { fact, due: 'this_sprint', past: false } : null };
-			return s.epic;
+			return method === 'DELETE' ? { cleared, epic: s.epic } : s.epic;
 		}
 		if (method === 'GET' && path === '/api/v1/sprints') {
 			if (s.sprintsGate) await s.sprintsGate;

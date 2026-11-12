@@ -106,29 +106,31 @@ impl Handlers {
     }
 
     /// Clears the promise on a story or an epic (R2), logged as `promise_cleared`. Interactive only; allowed on a done
-    /// story (R2 refuses only setting). No entry when there was no promise; NotFound when no item of that type has the key.
+    /// story (R2 refuses only setting). Answers whether it cleared one: false, with no entry, when the item had no
+    /// promise of its own (a story may still inherit its epic's); NotFound when no item of that type has the key.
     pub async fn clear_promise(
         &self,
         c: &Ctx,
         item: ItemType,
         key: &Key,
-    ) -> Result<(), HandlerError> {
+    ) -> Result<bool, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
-        self.clear_promise_in(&mut tx, c, item, key).await?;
+        let cleared = self.clear_promise_in(&mut tx, c, item, key).await?;
         tx.commit().await?;
-        Ok(())
+        Ok(cleared)
     }
 
     /// Inside the caller's transaction: lock the row, clear, and record the entry last, with the promise read under the
-    /// lock as `previous`. GRA-632 composes it with an urgent mark's actions.
+    /// lock as `previous`. Whether it cleared is decided under the row lock. GRA-632 composes it with an urgent mark's
+    /// actions.
     pub(super) async fn clear_promise_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         c: &Ctx,
         item: ItemType,
         key: &Key,
-    ) -> Result<(), HandlerError> {
+    ) -> Result<bool, HandlerError> {
         interactive(c)?;
         let which = promisable(item)?;
         let target = self
@@ -138,7 +140,7 @@ impl Handlers {
             .await?
             .ok_or(HandlerError::NotFound)?;
         let Some(prev) = target.promise else {
-            return Ok(());
+            return Ok(false);
         };
         self.ports.promises.clear_promise(tx, which, key).await?;
         let name = item_name(item);
@@ -154,6 +156,6 @@ impl Handlers {
                 ),
             )
             .await?;
-        Ok(())
+        Ok(true)
     }
 }

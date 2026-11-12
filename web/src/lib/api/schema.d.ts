@@ -366,7 +366,10 @@ export interface paths {
          *     the recipient. Interactive only; takes no version.
          */
         post: operations["epics_key_promise_set_promise"];
-        /** Clears the promise (R2); clearing none changes nothing. Interactive only. */
+        /**
+         * Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+         *     cleared the epic's promise; the epic is read after the write.
+         */
         delete: operations["epics_key_promise_clear_promise"];
         options?: never;
         head?: never;
@@ -982,7 +985,10 @@ export interface paths {
          *     the recipient. Interactive only; takes no version.
          */
         post: operations["stories_key_promise_set_promise"];
-        /** Clears the promise (R2); clearing none changes nothing. Interactive only. */
+        /**
+         * Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+         *     cleared the story's own promise; the story is read after the write.
+         */
         delete: operations["stories_key_promise_clear_promise"];
         options?: never;
         head?: never;
@@ -1569,6 +1575,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
+        EpicPromiseCleared: {
+            cleared: boolean;
+            epic: components["schemas"]["EpicDto"];
         };
         /** @description An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is. */
         EpicPromiseDto: {
@@ -2430,6 +2441,35 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_EpicPromiseCleared: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
+            value: {
+                cleared: boolean;
+                epic: components["schemas"]["EpicDto"];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_ExportDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -3017,6 +3057,38 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_StoryPromiseCleared: {
+            /** @enum {string} */
+            outcome: "ok";
+            /**
+             * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
+             *     `cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).
+             */
+            value: {
+                cleared: boolean;
+                story: components["schemas"]["StoryDto"];
             };
         } | {
             /** @enum {string} */
@@ -3707,6 +3779,14 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /**
+         * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
+         *     `cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).
+         */
+        StoryPromiseCleared: {
+            cleared: boolean;
+            story: components["schemas"]["StoryDto"];
         };
         /** @description A story's promise as derived on read (R3–R5): both promises shown, `on` the effective date, `holder` whose it is. */
         StoryPromiseDto: {
@@ -5804,7 +5884,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Response_EpicDto"];
+                    "application/json": components["schemas"]["Response_EpicPromiseCleared"];
                 };
             };
             /** @description validation error */
@@ -9005,7 +9085,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Response_StoryDto"];
+                    "application/json": components["schemas"]["Response_StoryPromiseCleared"];
                 };
             };
             /** @description validation error */

@@ -321,19 +321,24 @@ async fn set_promise(
         .await?;
     Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
 }
-/// Clears the promise (R2); clearing none changes nothing. Interactive only.
-#[utoipa::path(delete, path = "/stories/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<StoryDto>)))]
+/// Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+/// cleared the story's own promise; the story is read after the write.
+#[utoipa::path(delete, path = "/stories/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<StoryPromiseCleared>)))]
 async fn clear_promise(
     State(s): State<AppState>,
     c: Caller,
     ApiPath(key): ApiPath<String>,
-) -> Result<Json<Response<StoryDto>>, AppError> {
+) -> Result<Json<Response<StoryPromiseCleared>>, AppError> {
     let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
     let ctx = c.ctx();
-    s.handlers
+    let cleared = s
+        .handlers
         .clear_promise(&ctx, ItemType::Story, &key)
         .await?;
-    Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
+    Ok(ok(StoryPromiseCleared {
+        cleared,
+        story: s.handlers.story_dto(&key, ctx.now).await?,
+    }))
 }
 #[utoipa::path(post, path = "/stories/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<StoryDto>)))]
 async fn mark_urgent(

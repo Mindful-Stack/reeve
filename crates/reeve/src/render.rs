@@ -144,44 +144,37 @@ pub fn story_promise_answer(s: &StoryDto) -> String {
     }
 }
 
-/// The answer to `story promise --clear`, from the story read before the DELETE and the one it answered: `<key> · no
-/// promise to clear` when the story had no promise of its own (its epic's is not the story's to clear); `<key> · own
-/// promise cleared; still promised by <day> via <epic>` when its epic's promise still applies; else `<key> · promise
-/// cleared`. If the answer still carries an own promise (set again in between), it is shown as promising shows it.
-pub fn story_promise_cleared(before: &StoryDto, after: &StoryDto) -> String {
-    let key = mark(Level::of_kind(after.kind), &after.key);
-    if before
-        .promise
-        .as_ref()
-        .and_then(|p| p.own.as_ref())
-        .is_none()
-    {
-        return format!("{key} · no promise to clear");
-    }
-    match &after.promise {
-        Some(p) if p.own.is_some() => story_promise_answer(after),
-        Some(p) => match &p.epic {
-            Some(e) => format!(
-                "{key} · own promise cleared; still promised by {} via {}",
-                promise::day_label(e.fact.on),
-                e.key
-            ),
-            None => format!("{key} · promise cleared"),
-        },
-        None => format!("{key} · promise cleared"),
+/// The answer to `story promise --clear`, from the DELETE's answer alone: `<key> · promise cleared`, or `<key> · no
+/// promise to clear` when the story had no promise of its own; when its epic's promise still applies, `<key> · own
+/// promise cleared; still promised by <day> via <epic>` or `<key> · no own promise to clear; promised by <day> via
+/// <epic>` (the epic's promise is not the story's to clear).
+pub fn story_promise_cleared(c: &StoryPromiseCleared) -> String {
+    let key = mark(Level::of_kind(c.story.kind), &c.story.key);
+    let epic = c.story.promise.as_ref().and_then(|p| p.epic.as_ref());
+    match (c.cleared, epic) {
+        (true, None) => format!("{key} · promise cleared"),
+        (false, None) => format!("{key} · no promise to clear"),
+        (true, Some(e)) => format!(
+            "{key} · own promise cleared; still promised by {} via {}",
+            promise::day_label(e.fact.on),
+            e.key
+        ),
+        (false, Some(e)) => format!(
+            "{key} · no own promise to clear; promised by {} via {}",
+            promise::day_label(e.fact.on),
+            e.key
+        ),
     }
 }
 
-/// The answer to `epic promise --clear`, from the epic read before the DELETE: `<key> · promise cleared`, or `<key> · no
-/// promise to clear` when it had none.
-pub fn epic_promise_cleared(before: &EpicDto, after: &EpicDto) -> String {
-    let key = mark(Level::Epic, &after.key);
-    if before.promise.is_none() {
-        format!("{key} · no promise to clear")
-    } else if after.promise.is_some() {
-        epic_promise_answer(after)
-    } else {
+/// The answer to `epic promise --clear`, from the DELETE's answer: `<key> · promise cleared`, or `<key> · no promise to
+/// clear` when it had none.
+pub fn epic_promise_cleared(c: &EpicPromiseCleared) -> String {
+    let key = mark(Level::Epic, &c.epic.key);
+    if c.cleared {
         format!("{key} · promise cleared")
+    } else {
+        format!("{key} · no promise to clear")
     }
 }
 
