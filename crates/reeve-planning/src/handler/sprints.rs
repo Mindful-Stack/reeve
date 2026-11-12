@@ -129,8 +129,8 @@ impl Handlers {
     /// Adds a goal to the draft (or to the active sprint with `to_active`), linked to `links` in the same transaction.
     /// Interactive only (kb/ADR-0014 R5); the owner defaults to the caller. Each link is checked as `link_goal` checks it
     /// (the item exists; an existing link writes nothing) and logged under the item; an unknown key refuses the whole
-    /// create, so no goal is made. A replay of the idempotency key returns the goal it created first, unchanged, whatever
-    /// `links` it sends. Returns the goal and the target sprint's warnings after the add.
+    /// create, so no goal is made. A replay of the idempotency key returns the goal as it now stands, unchanged by this call,
+    /// whatever `links` it sends. Returns the goal and the target sprint's warnings after the add.
     pub async fn add_goal(
         &self,
         c: &Ctx,

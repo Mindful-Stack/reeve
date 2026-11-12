@@ -3178,7 +3178,7 @@ mod planning_gates {
                 None,
                 "",
                 false,
-                std::slice::from_ref(e.key()),
+                &[e.key().clone(), e.key().clone()],
             )
             .await
             .unwrap();
@@ -3212,13 +3212,15 @@ mod planning_gates {
                 ("epic", e.key().to_string(), "goal_linked"),
             ]
         );
+        assert_eq!(logged.len(), 2, "a duplicated key links and logs once");
         assert_eq!(logged[1].3, serde_json::json!({"goal_id": g.id}));
 
         // A replay with other links: the first goal, unchanged, and nothing linked or logged.
         let n = sink.0.lock().unwrap().len();
+        let later = ctx(Via::Interactive, 3);
         let (again, _) = h
             .add_goal(
-                &me,
+                &later,
                 "g1",
                 "o",
                 "c",
