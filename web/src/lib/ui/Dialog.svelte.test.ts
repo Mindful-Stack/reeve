@@ -154,4 +154,21 @@ describe('backdrop click', () => {
 		d.dispatchEvent(at('click', 10, 10));
 		expect(onclose).not.toHaveBeenCalled();
 	});
+	// Once something is typed or picked, only × and Escape close: a stray click must not throw the form away.
+	it('stays open after a field was edited, and Escape still closes it', () => {
+		const { d, onclose } = open();
+		d.querySelector('input')!.dispatchEvent(new Event('input', { bubbles: true }));
+		d.dispatchEvent(at('pointerdown', 10, 10));
+		d.dispatchEvent(at('click', 10, 10));
+		expect(onclose).not.toHaveBeenCalled();
+		d.dispatchEvent(new Event('cancel', { cancelable: true }));
+		expect(onclose).toHaveBeenCalledOnce();
+	});
+	it('stays open after a choice changed (a select or a checkbox reports change, not input)', () => {
+		const { d, onclose } = open();
+		d.querySelector('input')!.dispatchEvent(new Event('change', { bubbles: true }));
+		d.dispatchEvent(at('pointerdown', 10, 10));
+		d.dispatchEvent(at('click', 10, 10));
+		expect(onclose).not.toHaveBeenCalled();
+	});
 });

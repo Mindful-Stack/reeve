@@ -714,10 +714,15 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	const title = `Smoke export PDF is blank ${suffix}`;
 	const existing = await chore(page, title); // an existing item to be found as similar (under SMOKE_EPIC)
 	await page.goto('/board');
-	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	await page.mouse.click(5, 5); // the backdrop closes an untouched dialog
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
-	await page.mouse.click(5, 5); // the backdrop: closes like Escape and keeps the draft
+	await page.mouse.click(5, 5); // the backdrop: ignored once something is typed
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press('Escape'); // closes and keeps the draft
 	await expect(dialog).toBeHidden();
 	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click();
 	await expect(dialog.getByLabel('Title')).toHaveValue(`PDF export shows a blank page ${suffix}`);
