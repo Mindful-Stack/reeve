@@ -585,11 +585,14 @@
 <!-- svelte-ignore a11y_no_redundant_roles, a11y_no_noninteractive_element_interactions -->
 <aside class="drawer" role="complementary" aria-label="Story {storyKey}" data-testid="story-drawer" bind:this={panel} onkeydown={keydown}>
 	<header class="top">
-		<h2 tabindex="-1" bind:this={heading}>
-			<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span><CopyKey key={storyKey} />
+		<div class="heading-line">
+			<h2 tabindex="-1" bind:this={heading}>
+				<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
+			</h2>
+			<CopyKey key={storyKey} />
 			{#if story}<span class="chip">{story.kind}</span>{/if}
 			{#if story?.external_ref}<span class="muted" title="External reference">from {story.external_ref}</span>{/if}
-		</h2>
+		</div>
 		{#if story}
 			{#if story.epic}
 				{@const e = story.epic}
@@ -1084,12 +1087,14 @@
 		border: 0;
 		background: none;
 	}
-	h2 {
+	.heading-line {
 		display: flex;
 		flex-wrap: wrap;
 		min-width: 0;
 		gap: 0.5rem;
 		align-items: center;
+	}
+	h2 {
 		margin: 0;
 		font-size: 18px;
 	}

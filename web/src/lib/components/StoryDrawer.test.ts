@@ -225,7 +225,7 @@ describe('StoryDrawer removes a block', () => {
 		remove.click();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(document.body.querySelector('[role="status"]:not(.copy-said)')?.textContent).toContain('no story RV-6');
+			expect(document.body.querySelector('.notice[role="status"]')?.textContent).toContain('no story RV-6');
 		});
 		const b = document.body.querySelector<HTMLButtonElement>('button[aria-label="Remove block by RV-6"]');
 		expect(b).not.toBeNull();
@@ -892,7 +892,7 @@ describe('StoryDrawer urgent mark', () => {
 			expect(document.body.querySelector('dialog [role="alert"]')).not.toBeNull();
 		});
 		expect(document.body.querySelector('dialog [role="alert"]')!.textContent).toContain('boom');
-		expect(d.querySelector('.notice, [role="status"]:not(.copy-said), [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice')).toBeNull();
 	});
 
 	it('a mark on a done story reads "Urgent mark · done" with Clear and no chip', async () => {

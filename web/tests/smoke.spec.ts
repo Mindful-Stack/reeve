@@ -132,6 +132,31 @@ test('a move refused by the gate shows the override prompt and the override move
 	expect(body.value.some((e) => e.payload.reason === 'smoke override')).toBe(true);
 });
 
+test('the card\'s copy button does not start the card\'s drag, and does not make the meta row tall', async ({ page }) => {
+	const s = await chore(page, `Smoke copy drag ${crypto.randomUUID().slice(0, 6)}`);
+	await page.goto('/board');
+	// A new chore is not ready, so its card sits in the collapsed "Not ready" disclosure; dragging it would open the override prompt.
+	const openNotReady = async () => {
+		const nr = page.locator('details.not-ready');
+		if ((await nr.getAttribute('open')) === null) await nr.locator('summary').click();
+	};
+	await openNotReady();
+	const card = page.getByTestId(`card-${s.key}`);
+	await expect(card).toBeVisible();
+	expect((await card.locator('.meta').boundingBox())!.height).toBeLessThan(24);
+	await page.evaluate(() => {
+		(window as unknown as { dragStarts: number }).dragStarts = 0;
+		document.addEventListener('dragstart', () => (window as unknown as { dragStarts: number }).dragStarts++);
+	});
+	await card.getByRole('button', { name: `Copy ${s.key}` }).dragTo(page.getByTestId('column-in_progress'));
+	expect(await page.evaluate(() => (window as unknown as { dragStarts: number }).dragStarts)).toBe(0); // the browser starts the card's drag from a non-draggable descendant
+	await expect(page.getByRole('dialog')).toHaveCount(0); // the override prompt a drop would open
+	await page.reload();
+	await openNotReady();
+	await expect(page.getByTestId('column-todo').getByTestId(`card-${s.key}`)).toBeVisible();
+	await expect(page.getByTestId('column-in_progress').getByTestId(`card-${s.key}`)).toHaveCount(0);
+});
+
 test('a move made elsewhere reaches an open board over the event stream, without a reload', async ({ page, browser }) => {
 	// The board loads once on mount and refetches once 500 ms after the stream opens. Wait for both before the other
 	// browser moves the story, so the card can only reach in progress through an `activity` frame: with the stream's
@@ -737,7 +762,9 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
 	// The key and its glyph stay on one line; only the chips after it may wrap.
-	expect((await drawer.locator('h2 .key').boundingBox())!.height).toBeLessThan(30);
+	const key = drawer.locator('h2 .key');
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
+	expect(await key.evaluate((el) => getComputedStyle(el).whiteSpace)).toBe('nowrap');
 	await expect(drawer.getByRole('button', { name: `Copy ${s.key}` })).toBeVisible();
 });
 
