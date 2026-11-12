@@ -1840,7 +1840,9 @@ export interface components {
             version: number;
         };
         /**
-         * @description When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).
+         * @description When an open, unsatisfied decision is needed, derived on read from goals, discovery and the promises of the stories it
+         *     affects (never stored, kb/ADR-0014 R6, kb/ADR-0025 R7). The variant order is the order of urgency, earliest first:
+         *     the queue takes the earliest of several windows with `min`, so the variants must not be reordered.
          * @enum {string}
          */
         NeededIn: "this_sprint" | "next_sprint" | "beyond" | "none";

@@ -70,7 +70,7 @@ pub struct QueueStory {
     pub delivery: DeliveryState,
     pub owner: Option<String>,
     pub urgent: bool,
-    /// The story's own window: `this_sprint`, `next_sprint` or `beyond`, by its goals.
+    /// The story's own window: `this_sprint`, `next_sprint` or `beyond`, the earlier of its goals' and its promise's.
     pub needed_in: NeededIn,
 }
 
@@ -1202,8 +1202,10 @@ mod tests {
         );
     }
 
-    /// A promise due later (window `none`) gives no reason: the decision is beyond, as for any affected story. Catches
-    /// a later promise named as the reason or lifting the decision out of beyond.
+    /// A promise due later (window `none`) gives no reason: the decision is beyond, as for any affected story. This
+    /// pins the outcome only: without `needed_in`'s window filter the `beyond` candidate would still win, because the
+    /// promised story is itself affected and `beyond` sorts before `none`. The filter is what keeps a promise from ever
+    /// being the reason outside this sprint and next sprint.
     #[test]
     fn a_later_promise_gives_beyond_without_a_reason() {
         let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
@@ -1259,14 +1261,17 @@ mod tests {
             needed(&stories, false).1,
             Some(promise_reason(4, ItemType::Story, nov(8).unwrap(), false))
         );
-        // Same lane and date: the lower key number.
+        // Same lane and date: the lower key number, compared as a number ("ABC-10" sorts before "ABC-9" as text).
         let stories = [
-            mk(12, 9, NeededIn::ThisSprint),
-            mk(11, 9, NeededIn::ThisSprint),
+            mk(10, 9, NeededIn::NextSprint),
+            mk(9, 9, NeededIn::NextSprint),
         ];
         assert_eq!(
-            needed(&stories, false).1,
-            Some(promise_reason(11, ItemType::Story, nov(9).unwrap(), false))
+            needed(&stories, false),
+            (
+                NeededIn::NextSprint,
+                Some(promise_reason(9, ItemType::Story, nov(9).unwrap(), false))
+            )
         );
     }
 

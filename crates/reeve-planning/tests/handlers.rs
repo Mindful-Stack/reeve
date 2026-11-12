@@ -8630,3 +8630,52 @@ async fn only_unfinished_promises_pull_decisions() {
     );
     assert_eq!(e.decision.due(), due);
 }
+
+/// Open promises through the real story list and `promise_window`: with the active sprint planned to end 24 Nov and the
+/// draft 8 Dec, a decision on a story promised 20 Nov is needed this sprint, one promised 1 Dec next sprint, and one
+/// promised 20 Dec beyond, with no reason. Catches the due period lost or swapped between the DTO and the domain.
+#[tokio::test]
+async fn open_promises_pull_decisions_by_due_period() {
+    use reeve_protocol::{NeededIn, NeededInReason};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let c = promise_ctx();
+    promise_sprints(&h, &c).await;
+    let (_epic, ss) = marked_epic_with_stories(&h, &c, "op", 3).await;
+    let dec = chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap();
+    let late = chrono::NaiveDate::from_ymd_opt(2026, 12, 20).unwrap();
+    let mut ids = vec![];
+    for (i, (s, on)) in ss.iter().zip([nov(20), dec, late]).enumerate() {
+        let p = Promise::from_persisted(on, "pm@x".into(), c.now, None);
+        set_promise(&h, ItemType::Story, s.key(), &p).await;
+        let d = h
+            .require_decision(
+                &c,
+                &format!("op-d{i}"),
+                s.key(),
+                "D",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        ids.push(d.id());
+    }
+    let (es, _) = queue_all(&h, &c).await;
+    let of = |id: i64| {
+        let e = es.iter().find(|e| e.decision.id() == id).unwrap();
+        (e.needed_in, e.needed_in_reason.clone())
+    };
+    let reason = |i: usize, on| {
+        Some(NeededInReason::Promise {
+            key: ss[i].key().clone(),
+            level: ItemType::Story,
+            on,
+            overdue: false,
+        })
+    };
+    assert_eq!(of(ids[0]), (NeededIn::ThisSprint, reason(0, nov(20))));
+    assert_eq!(of(ids[1]), (NeededIn::NextSprint, reason(1, dec)));
+    assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
+}

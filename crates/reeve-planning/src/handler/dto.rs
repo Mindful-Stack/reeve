@@ -440,6 +440,8 @@ pub fn promise_window(s: &StoryDto) -> Option<PromiseWindow> {
     let p = s.promise.as_ref()?;
     let (key, level) = match p.holder {
         PromiseHolder::Own => (s.key.clone(), ItemType::Story),
+        // `story_promise_field` fills `epic` whenever the holder is the epic (holder == Epic implies epic is present);
+        // were that ever broken, the story counts as unpromised here rather than panicking.
         PromiseHolder::Epic => (p.epic.as_ref()?.key.clone(), ItemType::Epic),
     };
     let state = p.state.map(promise::State::from);
