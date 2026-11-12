@@ -11,7 +11,7 @@
 	import SprintHistoryEntry from '#lib/components/SprintHistoryEntry.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { blockedText, confidenceLabel, RULE, upkeepText, warningText } from '#lib/sprint.ts';
+	import { blockedText, confidenceLabel, goalsText, RULE, staysText, upkeepText, warningText } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -72,8 +72,8 @@
 			notice = explain(e);
 			return false;
 		} finally {
-			busy = false;
 			await reload();
+			busy = false;
 		}
 	}
 
@@ -112,7 +112,6 @@
 	/** What an opening sends: unticked ids still in the draft, so a removed goal is never sent and a new one is ticked. */
 	const leaveOut = $derived((draft?.goals ?? []).filter((g) => leftOut.has(g.id)).map((g) => g.id));
 	const goingIn = $derived((draft?.goals.length ?? 0) - leaveOut.length);
-	const goalsWord = (n: number) => `${n} ${n === 1 ? 'goal' : 'goals'}`;
 	/** Advice before the opening, from the goals that go in (the server warns again after it). */
 	const draftWarning = $derived<SprintWarning[]>(
 		goingIn > 3 ? ['more_than_three_goals'] : draft?.goals.length && goingIn === 0 ? ['no_goals'] : []
@@ -281,12 +280,10 @@
 		<div class="panel-head">
 			<h2 id="next-title">Next sprint {#if draft}<span class="dates">{draft.starts_on} – {draft.ends_on}</span>{/if}</h2>
 			{#if draft && !active}
-				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {goalsWord(goingIn)}</button>
+				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {goalsText(goingIn)}</button>
 			{/if}
 		</div>
-		{#if leaveOut.length}
-			<p class="muted">{goalsWord(leaveOut.length)} {leaveOut.length === 1 ? 'stays' : 'stay'} in Next sprint when it opens.</p>
-		{/if}
+		<p class="muted" role="status">{#if leaveOut.length}{staysText(leaveOut.length)} in Next sprint when it opens.{/if}</p>
 		{#if openWarnings.length && active}
 			<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
 		{/if}

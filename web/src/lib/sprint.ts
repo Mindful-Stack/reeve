@@ -78,6 +78,12 @@ export function nowThen(now: number, atClose: number | undefined): string {
 /** "blocked by 1 decision", "blocked by 3 decisions". */
 export const blockedText = (n: number): string => `blocked by ${n} decision${n === 1 ? '' : 's'}`;
 
+/** "1 goal", "3 goals". */
+export const goalsText = (n: number): string => `${n} ${n === 1 ? 'goal' : 'goals'}`;
+
+/** "1 goal stays", "3 goals stay". */
+export const staysText = (n: number): string => `${goalsText(n)} ${n === 1 ? 'stays' : 'stay'}`;
+
 const VERDICT_LABEL: Record<Verdict, string> = { met: 'met', partly_met: 'partly met', missed: 'missed' };
 export const verdictLabel = (v: Verdict): string => VERDICT_LABEL[v];
 

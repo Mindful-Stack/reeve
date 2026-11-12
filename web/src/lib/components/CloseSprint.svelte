@@ -6,7 +6,7 @@
 	import type { Sprint, SprintView, SprintWarning, Verdict } from '#lib/api/types.ts';
 	import { fullLabel } from '#lib/board.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { confidenceLabel, verdictLabel, warningText } from '#lib/sprint.ts';
+	import { confidenceLabel, goalsText, staysText, verdictLabel, warningText } from '#lib/sprint.ts';
 
 	let {
 		view,
@@ -49,7 +49,6 @@
 	let warnings = $state<SprintWarning[] | null>(null);
 
 	const goingIn = $derived((draft?.goals.length ?? 0) - leaveOut.length);
-	const goalsWord = (n: number) => `${n} ${n === 1 ? 'goal' : 'goals'}`;
 
 	const complete = $derived(goals.every((g) => (verdicts[g.id] ?? null) !== null));
 
@@ -155,8 +154,8 @@
 		<p role="status">The sprint is closed.</p>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		{#if draft}
-			{#if leaveOut.length}<p class="muted">{goalsWord(leaveOut.length)} {leaveOut.length === 1 ? 'stays' : 'stay'} in Next sprint.</p>{/if}
-			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {goalsWord(goingIn)}</button>
+			<p class="muted" role="status">{#if leaveOut.length}{staysText(leaveOut.length)} in Next sprint.{/if}</p>
+			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {goalsText(goingIn)}</button>
 		{:else}
 			<p class="muted">There is no draft to open: add a goal to start one.</p>
 		{/if}

@@ -518,6 +518,31 @@ describe('the close step', () => {
 		await settle(() => expect(writes('/api/v1/sprints/2/open')).toHaveLength(1));
 		expect(writes('/api/v1/sprints/2/open')[0].body).toEqual({ version: 8, leave_out: [8] });
 	});
+
+	it('reloads when the opening is refused as a validation error, dropping the unticked id the draft no longer has', async () => {
+		const step = await openClose();
+		verdict(step, 1, 'met');
+		verdict(step, 2, 'missed');
+		button('Close sprint', step)!.click();
+		await settle(() => expect(button(/^Open next sprint/, step)).toBeDefined());
+		expect(text(step)).toContain('1 goal stays in Next sprint.');
+		net.answer = (w) => {
+			if (w.path.endsWith('/open')) {
+				// Goal 8 was removed meanwhile: the server refuses the stale id, and the draft now lacks it.
+				net.sprints!.draft = sprint({ id: 2, state: 'draft', opened_at: null, version: 8, goals: [goal({ id: 7, sprint_id: 2, outcome: 'Seven' })] });
+				return new Response(JSON.stringify({ outcome: 'error', code: 'validation', message: 'goal 8 is not in this draft' }), { status: 200 });
+			}
+			return {};
+		};
+		button(/^Open next sprint/, step)!.click();
+		await settle(() => expect(text(step)).toContain('goal 8 is not in this draft'));
+		await settle(() => expect(text(button(/^Open next sprint/, step))).toBe('Open next sprint with 1 goal'));
+		expect(text(step)).not.toContain('stays in Next sprint');
+		net.answer = null;
+		button(/^Open next sprint/, step)!.click();
+		await settle(() => expect(writes('/api/v1/sprints/2/open')).toHaveLength(2));
+		expect(writes('/api/v1/sprints/2/open')[1].body).toEqual({ version: 8, leave_out: [] });
+	});
 });
 
 describe('the history', () => {
