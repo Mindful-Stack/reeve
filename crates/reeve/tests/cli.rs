@@ -3326,6 +3326,24 @@ fn promised_story(on: &str, to: Option<&str>) -> serde_json::Value {
     serde_json::to_value(s).unwrap()
 }
 
+/// ABC-12 with its own promise (30 Nov, to Beta) and its epic ABC-7's (18 Nov, to Acme): the epic's earlier date counts,
+/// due this sprint.
+fn story_with_both_promises() -> serde_json::Value {
+    let mut s = promised_story("2026-11-30", Some("Beta"));
+    s["promise"]["epic"] = serde_json::json!({"key":"ABC-7","fact":{
+        "on":"2026-11-18","by":"dana@example.com","at":"2026-11-12T09:00:00Z","to":"Acme"}});
+    s["promise"]["on"] = "2026-11-18".into();
+    s["promise"]["holder"] = "epic".into();
+    s
+}
+
+/// ABC-12 promised only through its epic ABC-7 (18 Nov), due this sprint.
+fn story_promised_via_epic() -> serde_json::Value {
+    let mut s = story_with_both_promises();
+    s["promise"]["own"] = serde_json::Value::Null;
+    s
+}
+
 /// `story promise` sends a shortcut, a date, or only a recipient, and nothing it was not given (the server refuses
 /// unknown fields, and a missing `to` keeps the recipient while `""` clears it).
 #[test]
@@ -3354,9 +3372,12 @@ fn story_promise_sends_a_shortcut_a_date_or_only_a_recipient() {
         let bodies = server.join().unwrap();
         let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
         assert_eq!(sent, want, "{args:?}");
+        // The body is one the server's own type accepts (it refuses unknown fields).
+        serde_json::from_value::<reeve_protocol::SetPromise>(sent).unwrap();
         assert_eq!(out.status.code(), Some(0), "{args:?}");
         let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
         assert_eq!(env["outcome"], "ok");
+        assert_eq!(env["value"]["promise"]["on"], "2026-11-24", "{env}");
     }
     let (url, server) = serve(vec![(
         "POST /api/v1/stories/ABC-12/promise",
@@ -3386,6 +3407,51 @@ fn story_promise_sends_a_shortcut_a_date_or_only_a_recipient() {
     );
 }
 
+/// The answer confirms what was written. `--to ''` clears the recipient, so none is named. When the epic's earlier
+/// date counts, the chip names the epic and the drawer line follows with both promises and the story's own recipient.
+#[test]
+fn story_promise_answers_with_what_was_written() {
+    let story = glyph(reeve::glyphs::Level::Story, "ABC-12");
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/ABC-12/promise",
+        200,
+        ok(promised_story("2026-11-24", None)),
+    )]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--to", ""]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!("{story} · Promised 24 Nov · this sprint\n")
+    );
+
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/ABC-12/promise",
+        200,
+        ok(story_with_both_promises()),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "story",
+            "promise",
+            "ABC-12",
+            "--on",
+            "2026-11-30",
+            "--to",
+            "Beta",
+        ],
+    );
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{story} · Promised 18 Nov · this sprint · via ABC-7\n  Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts.\n"
+        )
+    );
+}
+
 #[test]
 fn story_promise_clear_prints_what_was_cleared() {
     let mut cleared = urgent_story(vec![]);
@@ -3406,31 +3472,78 @@ fn story_promise_clear_prints_what_was_cleared() {
             glyph(reeve::glyphs::Level::Story, "ABC-12")
         )
     );
+
+    // The epic's promise still applies: the answer says so.
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/stories/ABC-12/promise",
+        200,
+        ok(story_promised_via_epic()),
+    )]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} · promise cleared · Promised 18 Nov · this sprint · via ABC-7\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-12")
+        )
+    );
 }
 
-/// Usage errors exit 1 (2 is kept for refusals) and never reach the server.
+/// Usage errors exit 1 (2 is kept for refusals) and never reach the server; each is clap's own message for its cause.
 #[test]
 fn story_promise_usage_errors_exit_1() {
-    for args in [
-        &[
-            "story",
-            "promise",
-            "ABC-12",
-            "--on",
-            "2026-11-20",
-            "--clear",
-        ][..],
-        &["story", "promise", "ABC-12", "--to", "Acme", "--clear"][..],
-        &["story", "promise", "ABC-12"][..],
-        &["story", "promise", "ABC-12", "--on", "2026-13-01"][..],
-        &["story", "promise", "ABC-12", "--on", "someday"][..],
-        &["epic", "promise", "ABC-7"][..],
-    ] {
+    let rows: [(&[&str], &str); 9] = [
+        (
+            &[
+                "story",
+                "promise",
+                "ABC-12",
+                "--on",
+                "2026-11-20",
+                "--clear",
+            ],
+            "cannot be used with",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--to", "Acme", "--clear"],
+            "cannot be used with",
+        ),
+        (
+            &["epic", "promise", "ABC-7", "--on", "this-sprint", "--clear"],
+            "cannot be used with",
+        ),
+        (
+            &["story", "promise", "ABC-12"],
+            "required arguments were not provided",
+        ),
+        (
+            &["epic", "promise", "ABC-7"],
+            "required arguments were not provided",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "2026-13-01"],
+            "invalid value",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "someday"],
+            "invalid value",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "2026-1-5"],
+            "invalid value",
+        ),
+        (
+            &["epic", "promise", "ABC-7", "--on", "2026-11-5"],
+            "invalid value",
+        ),
+    ];
+    for (args, want) in rows {
         let out = reeve_at("http://127.0.0.1:9", args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("error:"), "{args:?}: {err}");
-        assert!(!err.contains("unrecognized subcommand"), "{args:?}: {err}");
+        assert!(err.contains(want), "{args:?}: {err}");
     }
 }
 
@@ -3616,7 +3729,10 @@ fn show_prints_the_promise_chip_and_line() {
     server.join().unwrap();
     let text = out_text(&out);
     let lines: Vec<&str> = text.lines().collect();
-    assert!(lines[0].ends_with(" · Past 27 Nov"), "{text}");
+    assert!(
+        lines[0].contains(" Hosting · Past 27 Nov (version: 1)"),
+        "{text}"
+    );
     assert_eq!(
         lines[1], "  Promised 27 Nov to Acme · set by dana · past",
         "{text}"

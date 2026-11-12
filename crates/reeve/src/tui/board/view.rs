@@ -79,15 +79,11 @@ fn readiness_style(s: &State, e: &Entry) -> Style {
     }
 }
 
-/// The tags after a card's status line, in both layouts: the promise chip, epic, then PR, then goal. `fit` cuts a
-/// too-narrow line from the end, so these tags go before the status, and the goal tag, last, goes first; the chip, a
-/// commitment to someone outside the team, is cut last. Its words are the server's values (`crate::promise`).
+/// The tags after a card's status line, in both layouts: epic, then PR, then goal. `fit` cuts a too-narrow line from the
+/// end, so these tags go before the status, and the goal tag, last, goes first.
 fn meta(e: &Entry) -> String {
     let story = &e.item.story;
     let mut m = String::new();
-    if let Some(p) = &story.promise {
-        m.push_str(&format!(" · {}", crate::promise::chip_text(p, true)));
-    }
     if let Some(ep) = &story.epic {
         m.push_str(&format!(" · epic {ep}"));
     }
@@ -101,6 +97,36 @@ fn meta(e: &Entry) -> String {
         m.push_str(&format!(" · goal {}", g.id));
     }
     m
+}
+
+/// The promise chip, from the server's values (`crate::promise`), without the epic it is via: the card names the
+/// story's epic, the only one it can be via.
+fn chip(e: &Entry) -> Option<String> {
+    e.item
+        .story
+        .promise
+        .as_ref()
+        .map(|p| crate::promise::chip_text(p, false))
+}
+
+/// `parts` on one line of `w` columns, each in its own style, cut from the end like `fit`.
+fn fit_spans(parts: Vec<(String, Style)>, w: usize) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (text, style) in parts {
+        let room = w.saturating_sub(used);
+        if room == 0 {
+            break;
+        }
+        let t = fit(&text, room);
+        let cut = t != text;
+        used += t.width();
+        spans.push(Span::styled(t, style));
+        if cut {
+            break;
+        }
+    }
+    Line::from(spans)
 }
 
 fn owner_tag(s: &State, e: &Entry) -> String {
@@ -248,7 +274,11 @@ fn columns(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now:
                 fit(&third, w),
                 st.patch(readiness_style(s, e)),
             )));
-            lines.push(Line::raw(""));
+            // The fourth row, a spacer otherwise, is the promise chip's own: no readiness colour, and room for the state.
+            lines.push(match chip(e) {
+                Some(c) => Line::styled(fit(&format!("  {c}"), w), st),
+                None => Line::raw(""),
+            });
         }
         f.render_widget(Paragraph::new(lines), inner);
     }
@@ -288,11 +318,14 @@ fn list(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now: In
                 "",
                 &story.title,
             ));
-            let second = format!("    {}{}", status_of(s, e), meta(e));
-            lines.push(Line::from(Span::styled(
-                fit(&second, w),
-                st.patch(readiness_style(s, e)),
-            )));
+            // The chip follows the status in the card's own style, so the tags after it are cut first.
+            let ready = st.patch(readiness_style(s, e));
+            let mut parts = vec![(format!("    {}", status_of(s, e)), ready)];
+            if let Some(c) = chip(e) {
+                parts.push((format!(" · {c}"), st));
+            }
+            parts.push((meta(e), ready));
+            lines.push(fit_spans(parts, w));
         }
     }
     let top = sel_line.map_or(0, |l| (l + 2).saturating_sub(area.height as usize));

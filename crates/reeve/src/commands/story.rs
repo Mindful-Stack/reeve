@@ -1,6 +1,6 @@
 use super::{finish, whoami};
 use crate::client::Client;
-use crate::glyphs::{Level, mark};
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -88,8 +88,8 @@ pub enum Story {
         /// lists nothing).
         #[arg(long)]
         open: bool,
-        /// Only stories whose promise (own or via the epic) is overdue or due this sprint, due next sprint, overdue,
-        /// or any of those (open or overdue); kept, late and dropped promises never match.
+        /// Only stories with a promise (their own, or their epic's) in this state; kept, late and dropped promises never
+        /// match.
         #[arg(long, value_enum)]
         promised: Option<PromisedArg>,
         /// The order: `rank` (the default) or `relevance` (needs --text: the exact key or external reference first,
@@ -246,11 +246,15 @@ impl From<SortArg> for StorySort {
 }
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum PromisedArg {
+    /// Overdue, or open and due by the end of the active sprint.
     #[value(name = "this-sprint")]
     ThisSprint,
+    /// Open and due by the end of the draft (next) sprint.
     #[value(name = "next-sprint")]
     NextSprint,
+    /// Overdue: past the date and not done.
     Overdue,
+    /// Every open or overdue promise.
     Any,
 }
 impl From<PromisedArg> for PromisedFilter {
@@ -368,7 +372,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                 format!("/stories/{key}"),
                 args,
                 json,
-                |s| mark(Level::of_kind(s.kind), &s.key),
+                crate::render::story_promise_cleared,
                 crate::render::story_promise_answer,
             )
             .await?

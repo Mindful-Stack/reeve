@@ -117,19 +117,46 @@ pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
     with_urgency(story(s), lines)
 }
 
-/// The answer to promising a story: `<key> · <chip>[ · to <recipient>]`, the recipient being that of the promise that
-/// sets the date.
+/// A recipient as the answer names it: ` · to <recipient>`, or nothing.
+fn to_text(to: Option<&str>) -> String {
+    to.filter(|t| !t.is_empty())
+        .map(|t| format!(" · to {t}"))
+        .unwrap_or_default()
+}
+
+/// The answer to promising a story, confirming what was written. One promise: `<key> · <chip>[ · to <recipient>]`,
+/// the recipient being the story's own. When its epic's earlier date counts, the chip names the epic and the drawer
+/// line follows, indented, giving both promises with the story's own recipient (no `to` on the first line, which
+/// would read as the epic's).
 pub fn story_promise_answer(s: &StoryDto) -> String {
     let key = mark(Level::of_kind(s.kind), &s.key);
     match &s.promise {
-        Some(p) => {
-            let to = promise::holder_to(p)
-                .map(|t| format!(" · to {t}"))
-                .unwrap_or_default();
-            format!("{key} · {}{to}", promise::chip_text(p, true))
-        }
+        Some(p) if p.holder == PromiseHolder::Epic => with_urgency(
+            format!("{key} · {}", promise::chip_text(p, true)),
+            vec![promise::line_text(p)],
+        ),
+        Some(p) => format!(
+            "{key} · {}{}",
+            promise::chip_text(p, true),
+            to_text(p.own.as_ref().and_then(|f| f.to.as_deref()))
+        ),
         None => format!("{key} · no promise"),
     }
+}
+
+/// The answer to clearing a story's promise: `<key> · promise cleared`, then the chip of the epic's promise that still
+/// applies, if one does.
+pub fn story_promise_cleared(s: &StoryDto) -> String {
+    format!(
+        "{} · promise cleared{}",
+        mark(Level::of_kind(s.kind), &s.key),
+        story_chip(s)
+    )
+}
+
+/// The answer to clearing an epic's promise.
+pub fn epic_promise_cleared(e: &EpicDto) -> String {
+    format!("{} · promise cleared", mark(Level::Epic, &e.key))
 }
 
 /// The answer to promising an epic: `<key> · <chip>[ · to <recipient>]`.
@@ -137,14 +164,11 @@ pub fn epic_promise_answer(e: &EpicDto) -> String {
     let key = mark(Level::Epic, &e.key);
     match &e.promise {
         Some(p) => {
-            let to = p
-                .fact
-                .to
-                .as_deref()
-                .filter(|t| !t.is_empty())
-                .map(|t| format!(" · to {t}"))
-                .unwrap_or_default();
-            format!("{key} · {}{to}", promise::epic_chip_text(p))
+            format!(
+                "{key} · {}{}",
+                promise::epic_chip_text(p),
+                to_text(p.fact.to.as_deref())
+            )
         }
         None => format!("{key} · no promise"),
     }
@@ -421,10 +445,11 @@ pub fn initiative(i: &InitiativeDto) -> String {
 
 pub fn epic(e: &EpicDto) -> String {
     let mut out = format!(
-        "{}{} {} (version: {})",
+        "{}{} {}{} (version: {})",
         mark(Level::Epic, &e.key),
         urgent_marker(&e.urgent_sources),
         e.title,
+        epic_chip(e),
         e.version
     );
     if let Some(i) = &e.initiative {
@@ -442,7 +467,6 @@ pub fn epic(e: &EpicDto) -> String {
             "open"
         }
     );
-    out.push_str(&epic_chip(e));
     out
 }
 

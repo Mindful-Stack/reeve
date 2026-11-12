@@ -222,16 +222,25 @@ pub fn parse_promise_on(s: &str) -> Result<PromiseOn, String> {
     match s {
         "this-sprint" => Ok(PromiseOn::Shortcut(PromiseShortcut::ThisSprint)),
         "next-sprint" => Ok(PromiseOn::Shortcut(PromiseShortcut::NextSprint)),
-        _ => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .map(PromiseOn::Date)
-            .map_err(|_| {
-                format!("`{s}` is neither this-sprint, next-sprint nor a date (YYYY-MM-DD)")
-            }),
+        // Exactly YYYY-MM-DD: chrono alone would also take `2026-1-5`.
+        _ if s.len() == 10
+            && s.bytes().enumerate().all(|(i, b)| match i {
+                4 | 7 => b == b'-',
+                _ => b.is_ascii_digit(),
+            }) =>
+        {
+            chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map(PromiseOn::Date)
+                .map_err(|_| format!("`{s}` is not a calendar date"))
+        }
+        _ => Err(format!(
+            "`{s}` is neither this-sprint, next-sprint nor a date (YYYY-MM-DD)"
+        )),
     }
 }
 
 /// `promise` for stories and epics, on the item at `item` (`/{epics|stories}/{key}`): `--clear` is a bodiless DELETE
-/// of its `/promise` route and prints `<key> · promise cleared`; otherwise a POST of only the fields given (a missing
+/// of its `/promise` route and prints `cleared`; otherwise a POST of only the fields given (a missing
 /// `to` keeps the recipient, `""` clears it; the server refuses unknown fields) prints `answer`. No version is sent,
 /// and nothing about the promise is computed here: the answer shows the server's values.
 pub async fn promise<T: Serialize + DeserializeOwned>(
@@ -239,14 +248,12 @@ pub async fn promise<T: Serialize + DeserializeOwned>(
     item: String,
     PromiseArgs { on, to, clear }: PromiseArgs,
     json: bool,
-    key: impl Fn(&T) -> String,
+    cleared: impl Fn(&T) -> String,
     answer: impl Fn(&T) -> String,
 ) -> anyhow::Result<i32> {
     let path = format!("{item}/promise");
     if clear {
-        return Ok(finish(c.delete::<T>(&path).await?, json, |v| {
-            format!("{} · promise cleared", key(v))
-        }));
+        return Ok(finish(c.delete::<T>(&path).await?, json, cleared));
     }
     let mut body = serde_json::Map::new();
     match on {

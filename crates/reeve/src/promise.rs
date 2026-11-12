@@ -149,358 +149,103 @@ pub fn epic_line_text(p: &EpicPromiseDto) -> String {
     )
 }
 
-/// The recipient of the promise that sets a story's date: its own, or its epic's.
-pub fn holder_to(p: &StoryPromiseDto) -> Option<&str> {
-    let fact = match p.holder {
-        PromiseHolder::Own => p.own.as_ref(),
-        PromiseHolder::Epic => p.epic.as_ref().map(|e| &e.fact),
-    };
-    fact.and_then(|f| f.to.as_deref()).filter(|t| !t.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
-    //! Row for row the tables in `web/src/lib/promise.test.ts`.
+    //! The word rows are `web/src/lib/promise.fixture.json`, which the web's `promise.test.ts` reads too, so the two
+    //! cannot drift.
     use super::*;
-    use reeve_protocol::EpicPromiseRefDto;
+    use serde::Deserialize;
+    use std::collections::BTreeMap;
 
-    fn date(s: &str) -> NaiveDate {
-        s.parse().unwrap()
+    #[derive(Deserialize)]
+    struct Row<P> {
+        label: String,
+        promise: P,
+        #[serde(default)]
+        via: Option<bool>,
+        text: String,
     }
 
-    fn fact_by(on: &str, to: Option<&str>, by: &str) -> PromiseFactDto {
-        PromiseFactDto {
-            on: date(on),
-            by: by.into(),
-            at: "2026-11-01T09:00:00Z".parse().unwrap(),
-            to: to.map(Into::into),
-        }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Words {
+        chip: Vec<Row<StoryPromiseDto>>,
+        epic_chip: Vec<Row<EpicPromiseDto>>,
+        line: Vec<Row<StoryPromiseDto>>,
+        epic_line: Vec<Row<EpicPromiseDto>>,
+        state_words: BTreeMap<String, [String; 2]>,
     }
 
-    fn fact(on: &str) -> PromiseFactDto {
-        fact_by(on, Some("Acme"), "Dana")
+    fn words() -> Words {
+        serde_json::from_str(include_str!("../../../web/src/lib/promise.fixture.json")).unwrap()
     }
-
-    fn epic_ref(on: &str) -> EpicPromiseRefDto {
-        EpicPromiseRefDto {
-            key: "ABC-7".parse().unwrap(),
-            fact: fact(on),
-        }
-    }
-
-    /// The web's `sp()`: an own open promise on 20 Nov, due later.
-    fn sp() -> StoryPromiseDto {
-        StoryPromiseDto {
-            own: Some(fact("2026-11-20")),
-            epic: None,
-            on: date("2026-11-20"),
-            holder: PromiseHolder::Own,
-            state: Some(PromiseState::Open),
-            due: Some(PromiseDue::Later),
-            days: None,
-        }
-    }
-
-    fn with(
-        state: Option<PromiseState>,
-        due: Option<PromiseDue>,
-        days: Option<u32>,
-    ) -> StoryPromiseDto {
-        StoryPromiseDto {
-            state,
-            due,
-            days,
-            ..sp()
-        }
-    }
-
-    use PromiseDue::*;
-    use PromiseState::*;
 
     #[test]
     fn chip_text_rows() {
-        let rows: [(&str, StoryPromiseDto, &str); 10] = [
-            (
-                "open, this sprint",
-                with(Some(Open), Some(ThisSprint), None),
-                "Promised 20 Nov · this sprint",
-            ),
-            (
-                "open, next sprint",
-                with(Some(Open), Some(NextSprint), None),
-                "Promised 20 Nov · next sprint",
-            ),
-            (
-                "open, later",
-                with(Some(Open), Some(Later), None),
-                "Promised 20 Nov",
-            ),
-            (
-                "overdue",
-                with(Some(Overdue), None, Some(3)),
-                "Overdue 3 d · 20 Nov",
-            ),
-            (
-                "overdue, no days",
-                with(Some(Overdue), None, None),
-                "Overdue · 20 Nov",
-            ),
-            ("kept", with(Some(Kept), None, None), "Kept · 20 Nov"),
-            (
-                "late",
-                with(Some(Late), None, Some(3)),
-                "Done 3 d late · 20 Nov",
-            ),
-            (
-                "late, no days",
-                with(Some(Late), None, None),
-                "Done late · 20 Nov",
-            ),
-            (
-                "dropped",
-                with(Some(Dropped), None, None),
-                "Dropped · 20 Nov",
-            ),
-            ("state null", with(None, None, None), "Promised 20 Nov"),
-        ];
-        for (label, p, want) in rows {
-            assert_eq!(chip_text(&p, true), want, "{label}");
+        let rows = words().chip;
+        assert!(!rows.is_empty());
+        for r in rows {
+            assert_eq!(
+                chip_text(&r.promise, r.via.unwrap_or(true)),
+                r.text,
+                "{}",
+                r.label
+            );
         }
-    }
-
-    fn inherited() -> StoryPromiseDto {
-        StoryPromiseDto {
-            own: None,
-            epic: Some(epic_ref("2026-11-20")),
-            holder: PromiseHolder::Epic,
-            due: Some(ThisSprint),
-            ..sp()
-        }
-    }
-
-    #[test]
-    fn chip_names_the_epic_when_the_epic_holds_the_date_unless_asked_not_to() {
-        assert_eq!(
-            chip_text(&inherited(), true),
-            "Promised 20 Nov · this sprint · via ABC-7"
-        );
-        assert_eq!(
-            chip_text(&inherited(), false),
-            "Promised 20 Nov · this sprint"
-        );
     }
 
     #[test]
     fn epic_chip_text_rows() {
-        let ep = |due, past| EpicPromiseDto {
-            fact: fact("2026-11-20"),
-            due,
-            past,
-        };
-        let rows = [
-            (ep(Some(ThisSprint), false), "Promised 20 Nov · this sprint"),
-            (ep(Some(NextSprint), false), "Promised 20 Nov · next sprint"),
-            (ep(Some(Later), false), "Promised 20 Nov"),
-            (ep(None, true), "Past 20 Nov"),
-        ];
-        for (p, want) in rows {
-            assert_eq!(epic_chip_text(&p), want);
+        for r in words().epic_chip {
+            assert_eq!(epic_chip_text(&r.promise), r.text, "{}", r.label);
         }
     }
 
     #[test]
     fn line_text_rows() {
-        let both_epic_earlier = StoryPromiseDto {
-            own: Some(fact_by("2026-11-30", Some("Beta"), "Dana")),
-            epic: Some(epic_ref("2026-11-18")),
-            on: date("2026-11-18"),
-            holder: PromiseHolder::Epic,
-            ..sp()
-        };
-        let both_own_earlier = StoryPromiseDto {
-            own: Some(fact_by("2026-11-18", Some("Beta"), "Dana")),
-            epic: Some(epic_ref("2026-11-30")),
-            on: date("2026-11-18"),
-            holder: PromiseHolder::Own,
-            ..sp()
-        };
-        let rows: Vec<(&str, StoryPromiseDto, &str)> = vec![
-            ("own only", sp(), "Promised 20 Nov to Acme · set by Dana"),
-            (
-                "own only, no recipient",
-                StoryPromiseDto {
-                    own: Some(fact_by("2026-11-20", None, "Dana")),
-                    ..sp()
-                },
-                "Promised 20 Nov · set by Dana",
-            ),
-            (
-                "epic only",
-                StoryPromiseDto {
-                    own: None,
-                    epic: Some(epic_ref("2026-11-20")),
-                    holder: PromiseHolder::Epic,
-                    ..sp()
-                },
-                "Promised 20 Nov via epic ABC-7 to Acme · set by Dana",
-            ),
-            (
-                "both, epic earlier",
-                both_epic_earlier,
-                "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts.",
-            ),
-            (
-                "both, own earlier",
-                both_own_earlier,
-                "Promised 18 Nov to Beta. Epic ABC-7 is promised 30 Nov.",
-            ),
-            (
-                "overdue",
-                with(Some(Overdue), None, Some(3)),
-                "Promised 20 Nov to Acme · set by Dana · overdue 3 d",
-            ),
-            (
-                "kept",
-                with(Some(Kept), None, None),
-                "Promised 20 Nov to Acme · set by Dana · kept",
-            ),
-            (
-                "late",
-                with(Some(Late), None, Some(3)),
-                "Promised 20 Nov to Acme · set by Dana · done 3 d late",
-            ),
-            (
-                "dropped",
-                with(Some(Dropped), None, None),
-                "Promised 20 Nov to Acme · set by Dana · dropped",
-            ),
-            (
-                "overdue, no days",
-                with(Some(Overdue), None, None),
-                "Promised 20 Nov to Acme · set by Dana · overdue",
-            ),
-            (
-                "late, no days",
-                with(Some(Late), None, None),
-                "Promised 20 Nov to Acme · set by Dana · done late",
-            ),
-        ];
-        for (label, p, want) in rows {
-            assert_eq!(line_text(&p), want, "{label}");
-        }
-    }
-
-    /// With two promises the line already ends in a sentence, so the state is a sentence of its own.
-    #[test]
-    fn line_text_with_both_promises_states_the_state_as_a_sentence() {
-        let both = |state, due, days| StoryPromiseDto {
-            own: Some(fact_by("2026-11-30", Some("Beta"), "Dana")),
-            epic: Some(epic_ref("2026-11-18")),
-            on: date("2026-11-18"),
-            holder: PromiseHolder::Epic,
-            state,
-            due,
-            days,
-        };
-        let lead =
-            "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts.";
-        let rows = [
-            (
-                "overdue",
-                both(Some(Overdue), None, Some(3)),
-                format!("{lead} Overdue 3 d."),
-            ),
-            (
-                "overdue, no days",
-                both(Some(Overdue), None, None),
-                format!("{lead} Overdue."),
-            ),
-            (
-                "kept",
-                both(Some(Kept), None, None),
-                format!("{lead} Kept."),
-            ),
-            (
-                "late",
-                both(Some(Late), None, Some(3)),
-                format!("{lead} Done 3 d late."),
-            ),
-            (
-                "late, no days",
-                both(Some(Late), None, None),
-                format!("{lead} Done late."),
-            ),
-            (
-                "dropped",
-                both(Some(Dropped), None, None),
-                format!("{lead} Dropped."),
-            ),
-            (
-                "open",
-                both(Some(Open), Some(Later), None),
-                lead.to_string(),
-            ),
-        ];
-        for (label, p, want) in rows {
-            assert_eq!(line_text(&p), want, "{label}");
+        for r in words().line {
+            assert_eq!(line_text(&r.promise), r.text, "{}", r.label);
         }
     }
 
     #[test]
-    fn line_text_shortens_an_email_to_its_local_part() {
-        let p = StoryPromiseDto {
-            own: Some(fact_by("2026-11-20", Some("Acme"), "dana@example.com")),
-            ..sp()
-        };
-        assert_eq!(line_text(&p), "Promised 20 Nov to Acme · set by dana");
+    fn epic_line_text_rows() {
+        for r in words().epic_line {
+            assert_eq!(epic_line_text(&r.promise), r.text, "{}", r.label);
+        }
     }
 
-    #[test]
-    fn epic_line_text_names_the_recipient_and_the_setter_and_says_past_once_the_date_is() {
-        let ep = |due, past| EpicPromiseDto {
-            fact: fact("2026-11-20"),
-            due,
-            past,
-        };
-        assert_eq!(
-            epic_line_text(&ep(Some(Later), false)),
-            "Promised 20 Nov to Acme · set by Dana"
-        );
-        assert_eq!(
-            epic_line_text(&ep(None, true)),
-            "Promised 20 Nov to Acme · set by Dana · past"
-        );
-    }
-
-    /// The web's `STATE_WORDS` table, with and without a day count.
+    /// The web's `STATE_WORDS` table, with and without a day count; open has no words.
     #[test]
     fn state_words_is_the_one_table() {
-        let rows = [
-            (Overdue, "overdue 3 d", "overdue"),
-            (Kept, "kept", "kept"),
-            (Late, "done 3 d late", "done late"),
-            (Dropped, "dropped", "dropped"),
-        ];
-        for (s, with_days, without) in rows {
-            assert_eq!(state_words(s, Some(3)).as_deref(), Some(with_days));
-            assert_eq!(state_words(s, None).as_deref(), Some(without));
+        let mut got = BTreeMap::new();
+        for s in [
+            PromiseState::Overdue,
+            PromiseState::Kept,
+            PromiseState::Late,
+            PromiseState::Dropped,
+        ] {
+            let name = serde_json::to_value(s)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string();
+            got.insert(
+                name,
+                [
+                    state_words(s, Some(3)).unwrap(),
+                    state_words(s, None).unwrap(),
+                ],
+            );
         }
-        assert_eq!(state_words(Open, Some(3)), None);
+        assert_eq!(got, words().state_words);
+        assert_eq!(state_words(PromiseState::Open, Some(3)), None);
     }
 
     #[test]
     fn day_labels_have_no_leading_zero() {
+        let date = |s: &str| s.parse::<NaiveDate>().unwrap();
         assert_eq!(day_label(date("2026-11-02")), "2 Nov");
         assert_eq!(day_label(date("2026-01-20")), "20 Jan");
-    }
-
-    #[test]
-    fn the_recipient_is_the_holders() {
-        assert_eq!(holder_to(&sp()), Some("Acme"));
-        let mut p = inherited();
-        p.own = Some(fact_by("2026-11-30", Some("Beta"), "Dana"));
-        assert_eq!(holder_to(&p), Some("Acme"));
-        p.epic.as_mut().unwrap().fact.to = None;
-        assert_eq!(holder_to(&p), None);
     }
 }

@@ -1,6 +1,6 @@
 use super::finish;
 use crate::client::Client;
-use crate::glyphs::{Level, mark};
+use crate::glyphs::Level;
 use clap::Subcommand;
 use reeve_protocol::*;
 
@@ -148,7 +148,7 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
                 format!("/epics/{key}"),
                 args,
                 json,
-                |e| mark(Level::Epic, &e.key),
+                crate::render::epic_promise_cleared,
                 crate::render::epic_promise_answer,
             )
             .await?
