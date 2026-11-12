@@ -191,7 +191,6 @@ pub fn change(
     at: DateTime<Utc>,
     clock: &Clock,
 ) -> Result<Option<Promise>, PromiseError> {
-    debug_assert_eq!(clock.today, at.date_naive(), "the clock is the request's");
     if item == Promisable::Story(DeliveryState::Done) {
         return Err(PromiseError::Done(key.clone()));
     }
