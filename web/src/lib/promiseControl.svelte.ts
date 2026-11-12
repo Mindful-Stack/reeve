@@ -1,7 +1,7 @@
 // web/src/lib/promiseControl.svelte.ts: the promise items of an item's actions menu and the state behind them (the
-// dialog, a done story's clear confirmation, the sprints the epic page fetches for the shortcuts), shared by the story
-// drawer and the epic page (kb/ADR-0025). The host owns the write (its busy flag, notice and reload); this only says
-// what is written where.
+// dialog, the clear confirmation of a done story or an epic, the sprints the epic page fetches for the shortcuts),
+// shared by the story drawer and the epic page (kb/ADR-0025). The host owns the write (its busy flag, notice and
+// reload); this only says what is written where.
 import { api, unwrap } from '#lib/api/client.ts';
 import type { SetPromise, Sprints } from '#lib/api/types.ts';
 import { promiseActions } from '#lib/promise.ts';
@@ -28,7 +28,7 @@ export class PromiseControl {
 	/** Whether the promise dialog is open, and the reason a failed save left in it. */
 	open = $state(false);
 	error = $state<string | null>(null);
-	/** Whether a done story's clear is awaiting its confirmation, and the reason a failed clear left in it. */
+	/** Whether a done story's or an epic's clear is awaiting its confirmation, and the reason a failed clear left in it. */
 	confirming = $state(false);
 	confirmError = $state<string | null>(null);
 	/** With `fetchSprints`: the sprints read when the dialog opened, null until they answer; `sprintsFailed` once the read
@@ -44,13 +44,14 @@ export class PromiseControl {
 		this.#host = host;
 	}
 
-	/** The menu items for an item with (`hasOwn`) or without its own promise; a done story offers only Clear, which asks
-	 *  first. An epic passes `done = false`. */
+	/** The menu items for an item with (`hasOwn`) or without its own promise; a done story offers only Clear. A done
+	 *  story's clear and every epic's clear ask first: neither can be put back as it was. An epic passes `done = false`. */
 	items(hasOwn: boolean, done: boolean, busy: boolean): MenuItem[] {
+		const ask = done || this.#host.path === 'epics';
 		return promiseActions(hasOwn, done).map((a) => ({
 			label: a.label,
 			disabled: busy,
-			onselect: a.kind === 'set' ? () => this.start() : done ? () => this.askClear() : () => void this.clear()
+			onselect: a.kind === 'set' ? () => this.start() : ask ? () => this.askClear() : () => void this.clear()
 		}));
 	}
 

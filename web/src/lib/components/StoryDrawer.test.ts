@@ -1140,13 +1140,39 @@ describe('StoryDrawer promise', () => {
 		items().find((b) => b.textContent === 'Clear promise')!.click();
 		flushSync();
 		await tick();
-		dialogButton('Clear promise')!.click();
+		// The story has no epic promise: the text says its own promise goes and the story leaves the sprint's list.
+		const text = dialog()?.querySelector('[data-testid="clear-promise-text"]')?.textContent?.replace(/\s+/g, ' ').trim();
+		expect(text).toBe('RV-5 is done, so its own promise cannot be set again once cleared, and the story leaves the promise list of the sprint its date falls in.');
+		// A browser drops the focus of a button that becomes disabled; after the failure it lands on Cancel again.
+		const confirm = dialogButton('Clear promise')!;
+		confirm.focus();
+		confirm.click();
+		confirm.blur();
 		await vi.waitFor(() => {
 			flushSync();
 			expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain('no clearing');
+			expect(document.activeElement).toBe(dialogButton('Cancel'));
 		});
 		expect(deletes()).toBe(1);
 		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+	});
+
+	it("asking before clearing a done story's own promise under a promised epic says it stays listed under the epic's date", async () => {
+		const both: NonNullable<Story['promise']> = {
+			...own('2026-11-20'),
+			epic: { key: 'RV-1', fact: fact('2026-11-24', 'Beta') },
+			state: 'kept',
+			due: null
+		};
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: both }));
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		const text = document.body.querySelector('dialog [data-testid="clear-promise-text"]')?.textContent?.replace(/\s+/g, ' ').trim();
+		expect(text).toBe("RV-5 is done, so its own promise cannot be set again once cleared. It stays listed under epic RV-1's date.");
+		expect(text).not.toContain('leaves');
 	});
 
 	it("clears a done story's promise once confirmed", async () => {

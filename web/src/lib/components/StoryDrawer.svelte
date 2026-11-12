@@ -1029,6 +1029,7 @@
 {#if promise.confirming && story}
 	<ClearPromiseDialog
 		item={story.key}
+		epic={story.promise?.epic?.key ?? null}
 		{busy}
 		error={promise.confirmError}
 		onconfirm={() => void promise.clear()}

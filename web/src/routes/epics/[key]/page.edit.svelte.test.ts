@@ -1106,15 +1106,35 @@ describe('epic page: promise', () => {
 		expect(document.body.querySelector('dialog input[type="date"]')).not.toBeNull();
 	});
 
-	it('with a promise offers Change and Clear, shows the line, and clears with DELETE', async () => {
+	it('with a promise offers Change and Clear, shows the line, and clears with DELETE once confirmed', async () => {
 		net.epic = { ...net.epic, promise: { fact, due: 'later', past: false } };
 		await open();
 		expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised by 20 Nov 2026 to Acme · set by dan');
 		const items = await menu();
 		expect(items.map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Change promise…', 'Clear promise']);
+		const dialogButton = (label: string) =>
+			[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent?.trim() === label);
+		// Every epic clear asks first, saying why it cannot be put back as it was; Cancel sends nothing.
 		item(items, 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Clear the promise on ABC-5?');
+		expect(document.body.querySelector('dialog [data-testid="clear-promise-text"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
+			'Its stories lose this date. If ABC-5 is promised again later, its stories done by then do not get the new promise, so they leave the promise lists of the sprints already closed.'
+		);
+		expect(document.activeElement).toBe(dialogButton('Cancel'));
+		dialogButton('Cancel')!.click();
+		flushSync();
+		expect(document.body.querySelector('dialog')).toBeNull();
+		expect(net.promiseWrites).toEqual([]);
+
+		item(await menu(), 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		dialogButton('Clear promise')!.click();
 		await vi.waitFor(() => {
 			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
 			expect(document.body.querySelector('[data-testid="promise-line"]')).toBeNull();
 			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
 		});

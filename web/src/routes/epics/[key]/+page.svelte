@@ -23,6 +23,7 @@
 	import PromiseChip from '#lib/components/PromiseChip.svelte';
 	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
 	import PromiseLine from '#lib/components/PromiseLine.svelte';
+	import ClearPromiseDialog from '#lib/components/ClearPromiseDialog.svelte';
 	import { PromiseControl } from '#lib/promiseControl.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
@@ -155,7 +156,7 @@
 		...(epic?.discovery_complete ? [{ label: 'Clear discovery', onselect: () => void discovery(false), disabled: busy }] : []),
 		{ label: 'Mark urgent…', onselect: openMark, disabled: busy },
 		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : []),
-		// An epic has no done state: the promise items depend only on whether it has a promise.
+		// An epic has no done state: the promise items depend only on whether it has a promise; its clear asks first.
 		...promise.items(epic?.promise != null, false, busy)
 	]);
 
@@ -822,6 +823,17 @@
 			error={promise.error}
 			onsave={(body) => void promise.save(body)}
 			onclose={() => promise.close(busy)}
+		/>
+	{/if}
+
+	{#if promise.confirming}
+		<ClearPromiseDialog
+			item={ep.key}
+			kind="epic"
+			{busy}
+			error={promise.confirmError}
+			onconfirm={() => void promise.clear()}
+			oncancel={() => promise.cancelClear(busy)}
 		/>
 	{/if}
 
