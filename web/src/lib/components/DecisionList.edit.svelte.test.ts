@@ -4,7 +4,7 @@
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AffectedStory, QueueGroup, RequiredDecision } from '#lib/api/types.ts';
-import { blockedStory, decision } from '#lib/test/fixtures.ts';
+import { blockedStory, decision, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { decisionDrafts, resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import { settle } from '#lib/test/net.ts';
 import DecisionList from './DecisionList.svelte';
@@ -18,12 +18,14 @@ const net = vi.hoisted(() => {
 		throw new Error(`unexpected request ${r.method} ${r.path}`);
 	};
 	const replies = { reply: unexpected, unexpected, ok, gate: null as null | Promise<void> };
-	return { sent, replies };
+	const sprints = { active: null as unknown, draft: null as unknown, closed: [], today: '2026-11-12' };
+	return { sent, replies, sprints };
 });
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, json } = await import('#lib/test/net.ts');
 	installFetch(async ({ method, path, body }) => {
+		if (path === '/api/v1/sprints') return json({ outcome: 'ok', value: net.sprints });
 		const r = { method, path, body };
 		net.sent.push(r);
 		if (net.replies.gate) await net.replies.gate;
@@ -66,6 +68,7 @@ afterEach(() => {
 	net.sent.length = 0;
 	net.replies.reply = net.replies.unexpected;
 	net.replies.gate = null;
+	net.sprints.active = null;
 });
 
 const rows = () => [...document.body.querySelectorAll('.decisions > li')];
@@ -1174,5 +1177,29 @@ describe('DecisionList blocks that go away', () => {
 		state.blocks = new Map();
 		flushSync();
 		expect(document.body.querySelector('.decisions > li .body')).toBeNull();
+	});
+});
+
+describe('the Due date', () => {
+	it('a sprint-end shortcut fills it and the save sends only that date', async () => {
+		net.sprints.active = sprintView(sprint({ ends_on: '2026-11-17' }));
+		net.replies.reply = () => net.replies.ok({ ...open, due: '2026-11-17', version: 2 });
+		show([open]);
+		edit(rows()[0]);
+		await vi.waitFor(() => expect(button(editor()!, 'End of this sprint (17 Nov)')).toBeDefined());
+		button(editor()!, 'End of this sprint (17 Nov)')!.click();
+		flushSync();
+		expect(field(editor()!, 'Due').value).toBe('2026-11-17');
+		button(editor()!, 'Save')!.click();
+		await vi.waitFor(() => expect(patches()).toEqual([['/api/v1/decisions/1', { version: 1, due: '2026-11-17' }]]));
+	});
+	it('clearing an existing date sends due: null', async () => {
+		net.replies.reply = () => net.replies.ok({ ...open, due: null, version: 2 });
+		show([open]);
+		edit(rows()[0]);
+		editor()!.querySelector<HTMLButtonElement>('[data-field="clear-due"]')!.click();
+		flushSync();
+		button(editor()!, 'Save')!.click();
+		await vi.waitFor(() => expect(patches()).toEqual([['/api/v1/decisions/1', { version: 1, due: null }]]));
 	});
 });

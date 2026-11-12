@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
@@ -752,6 +753,7 @@
 							Due
 							<input name="due" data-field="due" type="date" value={ed.draft.due} disabled={busy === d.id} oninput={(e) => setEdit(d.id, 'due', e.currentTarget.value)} />
 						</label>
+						<DueShortcuts bind:value={() => ed.draft.due, (on) => setEdit(d.id, 'due', on)} disabled={busy === d.id} />
 						<button type="button" data-field="clear-due" disabled={busy === d.id || !ed.draft.due} onclick={() => setEdit(d.id, 'due', '')}>Clear due date</button>
 						<label>
 							Reversibility

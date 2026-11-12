@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import { levelOfKind } from '#lib/glyphs.ts';
 	import { onMount, tick } from 'svelte';
@@ -740,6 +741,7 @@
 					<label>Title <input bind:value={decision.title} required disabled={busy} /></label>
 					<label>Decider <input type="email" bind:value={decision.decider} required disabled={busy} placeholder="name@example.com" /></label>
 					<label>Due <input type="date" bind:value={decision.due} disabled={busy} /></label>
+					<DueShortcuts bind:value={decision.due} disabled={busy} />
 					<div class="actions">
 						<button type="button" disabled={locked('decision')} onclick={() => cancel('decision')}>Cancel</button>
 						<button type="submit" disabled={busy || !decision.title.trim() || !decision.decider.trim()}
