@@ -1,19 +1,25 @@
 <!-- web/src/lib/components/SprintHistoryEntry.svelte: one closed sprint in the sprint page's history: its goals,
      confidence and verdicts, and on demand its numbers, derived on read (`GET /sprints/{id}`) beside its counts at close
-     (the `closed` activity entry) wherever a number differs (kb/ADR-0014 R6). -->
+     (the `closed` activity entry) wherever a number differs (kb/ADR-0014 R6), and its promises, derived on read too
+     (kb/ADR-0025 R8). -->
 <script lang="ts">
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { ActivityEntry, GoalProgress, Sprint, SprintCounts, SprintView } from '#lib/api/types.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { blockedText, confidenceLabel, countsDiffer, nowThen, RULE, upkeepTextAt, verdictLabel } from '#lib/sprint.ts';
+	import { sprintPromiseText } from '#lib/promise.ts';
+	import { blockedText, confidenceLabel, countsDiffer, nowThen, promisesHeading, RULE, upkeepTextAt, verdictLabel } from '#lib/sprint.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 
 	let {
 		sprint,
+		previousEnd = null,
 		refresh = 0
 	}: {
 		/** The closed sprint, as `GET /sprints` lists it. */
 		sprint: Sprint;
+		/** The previous sprint's planned end (`previousEnd` in #lib/sprint.ts), which the promise list's dates start after;
+		 *  null for the first sprint. */
+		previousEnd?: string | null;
 		/** Bumped by the page on every reload: open numbers refetch, since they are derived on read too. */
 		refresh?: number;
 	} = $props();
@@ -71,7 +77,7 @@
 	<div class="head">
 		<h3>Sprint {sprint.id} <span class="dates">{sprint.starts_on} – {sprint.ends_on}</span></h3>
 		<button type="button" class="ghost" aria-expanded={detail !== null} onclick={toggle}
-			>{detail === null ? 'Show numbers' : 'Hide numbers'}</button
+			>{detail === null ? 'Show numbers and promises' : 'Hide numbers and promises'}</button
 		>
 	</div>
 	<ul>
@@ -124,6 +130,20 @@
 					{/each}
 				</ul>
 			{/if}
+			{#if d.view.promises.length}
+				<section class="promises" data-testid="promises">
+					<h4>{promisesHeading(previousEnd, d.view.sprint.ends_on)}</h4>
+					<ul>
+						{#each d.view.promises as x (x.key)}
+							<li>
+								<a href="?story={x.key}" class="key">{x.key}</a>
+								{x.title}{x.to ? ` · to ${x.to}` : ''} · {sprintPromiseText(x)}
+							</li>
+						{/each}
+					</ul>
+					<p class="rule">A promise is to a date: work done after it counts as late, even inside the sprint.</p>
+				</section>
+			{/if}
 		</div>
 	{/if}
 </article>
@@ -172,6 +192,10 @@
 	}
 	.warn {
 		color: var(--warn);
+	}
+	.promises {
+		display: grid;
+		gap: 4px;
 	}
 	.key {
 		font-family: var(--mono);

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reason, Story } from '#lib/api/types.ts';
 import { epic as epicDto, initiative, withReadiness } from '#lib/test/fixtures.ts';
-import { activeFilterCount, backlogState, backlogView, groupBacklog, toStoryQuery, withoutFilters } from './backlog.ts';
+import { activeFilterCount, backlogFilters, backlogState, backlogView, FILTER_PARAMS, groupBacklog, stateParam, toStoryQuery, withoutFilters } from './backlog.ts';
 
 const ini = (key: string, horizon: string, title = key) => initiative({ key, title, horizon });
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: `Epic ${key}`, initiative });
@@ -144,5 +144,39 @@ describe('backlogState and backlogView', () => {
 	it('shows relevance without text as ranked', () => {
 		expect(backlogView(at('?view=relevance'))).toBe('rank');
 		expect(backlogView(at('?view=relevance&q=%20'))).toBe('rank');
+	});
+});
+
+describe('the promised filter', () => {
+	const at = (search: string) => new URL(`http://localhost/backlog${search}`);
+	const me = 'a@example.com';
+
+	it('accepts the four values and ignores any other', () => {
+		for (const v of ['this_sprint', 'next_sprint', 'overdue', 'any'] as const) expect(backlogFilters(at(`?promised=${v}`), me)).toEqual({ promised: v });
+		expect(backlogFilters(at('?promised=bogus'), me)).toEqual({});
+		expect(backlogFilters(at('?promised='), me)).toEqual({});
+	});
+	it('is a filter param: counted, and removed by Clear filters', () => {
+		expect(FILTER_PARAMS).toContain('promised');
+		expect(activeFilterCount(at('?promised=overdue'), me)).toBe(1);
+		expect(withoutFilters(at('?promised=overdue&state=all')).search).toBe('?state=all');
+	});
+	it('answers open when the URL names no state, so an unfinished story in progress still shows', () => {
+		expect(backlogState(at('?promised=this_sprint'))).toBe('open');
+		expect(backlogState(at('?promised=this_sprint&state=zz'))).toBe('open');
+		expect(backlogState(at('?promised=bogus'))).toBe('todo');
+		expect(toStoryQuery(at('?promised=this_sprint'), me)).toEqual({ done: 'none', promised: 'this_sprint' });
+		expect(toStoryQuery(at('?promised=this_sprint'), me)).not.toHaveProperty('delivery');
+	});
+	it('keeps an explicit state', () => {
+		expect(backlogState(at('?promised=any&state=todo'))).toBe('todo');
+		expect(toStoryQuery(at('?promised=any&state=todo'), me)).toEqual({ delivery: 'todo', promised: 'any' });
+		expect(toStoryQuery(at('?promised=any&state=all'), me)).toEqual({ done: 'all', promised: 'any' });
+	});
+	it('the State control names Todo explicitly while the filter would otherwise answer open', () => {
+		expect(stateParam('todo', at('?promised=any'))).toBe('todo');
+		expect(stateParam('todo', at(''))).toBeNull();
+		expect(stateParam('open', at('?promised=any'))).toBe('open');
+		expect(stateParam('all', at(''))).toBe('all');
 	});
 });

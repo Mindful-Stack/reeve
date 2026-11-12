@@ -71,4 +71,72 @@ describe('actionLabel', () => {
 		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
 		expect(actionLabel('goal_linked', null)).toBe('goal linked');
 	});
+
+	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file).
+	const promised = (on: string, to: string | null, previous: { on: string; to: string | null } | null) => ({ item_type: 'story', on, to, previous });
+	it.each<[string, string, unknown, string, string]>([
+		['a new promise', 'promised', promised('2026-11-20', 'Acme', null), 'promised by 20 Nov to Acme', 'promised ABC-12 by 20 Nov to Acme'],
+		['a new promise, no recipient', 'promised', promised('2026-11-20', null, null), 'promised by 20 Nov', 'promised ABC-12 by 20 Nov'],
+		[
+			'a new date',
+			'promised',
+			promised('2026-11-27', 'Acme', { on: '2026-11-20', to: 'Acme' }),
+			'changed the promise to 27 Nov',
+			'changed the promise on ABC-12 to 27 Nov'
+		],
+		[
+			'a new date and recipient',
+			'promised',
+			promised('2026-11-27', 'Beta', { on: '2026-11-20', to: 'Acme' }),
+			'changed the promise to 27 Nov to Beta',
+			'changed the promise on ABC-12 to 27 Nov to Beta'
+		],
+		[
+			'a new date, recipient removed',
+			'promised',
+			promised('2026-11-27', null, { on: '2026-11-20', to: 'Acme' }),
+			'changed the promise to 27 Nov and removed its recipient',
+			'changed the promise on ABC-12 to 27 Nov and removed its recipient'
+		],
+		[
+			'a new recipient',
+			'promised',
+			promised('2026-11-20', 'Beta', { on: '2026-11-20', to: 'Acme' }),
+			"changed the promise's recipient to Beta",
+			'changed the recipient of the promise on ABC-12 to Beta'
+		],
+		[
+			'a first recipient',
+			'promised',
+			promised('2026-11-20', 'Beta', { on: '2026-11-20', to: null }),
+			"changed the promise's recipient to Beta",
+			'changed the recipient of the promise on ABC-12 to Beta'
+		],
+		[
+			'the recipient removed',
+			'promised',
+			promised('2026-11-20', null, { on: '2026-11-20', to: 'Acme' }),
+			"removed the promise's recipient",
+			'removed the recipient of the promise on ABC-12'
+		],
+		[
+			'nothing changed',
+			'promised',
+			promised('2026-11-20', 'Acme', { on: '2026-11-20', to: 'Acme' }),
+			'promised by 20 Nov to Acme',
+			'promised ABC-12 by 20 Nov to Acme'
+		],
+		['cleared', 'unpromised', { item_type: 'story', previous: { on: '2026-11-20', to: 'Acme' } }, 'cleared the promise', 'cleared the promise on ABC-12'],
+		['an unreadable promise', 'promised', null, 'promised', 'promised ABC-12'],
+		['an unreadable clear', 'unpromised', null, 'cleared the promise', 'cleared the promise on ABC-12']
+	])('%s', async (_, action, payload, plain, keyed) => {
+		const { actionLabel } = await import('./format.ts');
+		expect(actionLabel(action, payload)).toBe(plain);
+		expect(actionLabel(action, payload, 'ABC-12')).toBe(keyed);
+	});
+	it('names its own words for attachments and promises only', async () => {
+		const { hasOwnWords } = await import('./format.ts');
+		expect(['attachment_added', 'attachment_removed', 'promised', 'unpromised'].every(hasOwnWords)).toBe(true);
+		expect(['moved', 'goal_linked', 'override'].some(hasOwnWords)).toBe(false);
+	});
 });

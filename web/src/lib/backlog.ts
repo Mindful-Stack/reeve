@@ -5,6 +5,7 @@
 import type { Epic, Initiative, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
 import { isKind, isUntriaged } from '#lib/board.ts';
 import { groupEpics } from '#lib/planning.ts';
+import { isPromisedFilter } from '#lib/promise.ts';
 
 export type Tone = 'ready' | 'warn' | 'muted';
 export type EpicRows = { epic: Epic; rows: StoryWithReadiness[]; summary: string; tone: Tone };
@@ -72,9 +73,17 @@ export function backlogText(url: BacklogUrl): string | null {
 	return url.searchParams.get('q')?.trim() || null;
 }
 
+/** The URL's state; with no state named, Todo, or Open while the Promise filter is set (an overdue story in progress
+ *  must still show, and a promise filter is about unfinished stories, not the rankable list). */
 export function backlogState(url: BacklogUrl): BacklogState {
 	const s = url.searchParams.get('state');
-	return s === 'open' || s === 'all' ? s : 'todo';
+	if (s === 'todo' || s === 'open' || s === 'all') return s;
+	return isPromisedFilter(url.searchParams.get('promised')) ? 'open' : 'todo';
+}
+
+/** The `state` param the State control writes for `v`: none for Todo, unless the Promise filter would then answer Open. */
+export function stateParam(v: BacklogState, url: BacklogUrl): BacklogState | null {
+	return v === 'todo' && !isPromisedFilter(url.searchParams.get('promised')) ? null : v;
 }
 
 /** `view`, else the legacy `group=rank`; Relevance without text shows as Ranked. */
@@ -92,6 +101,8 @@ export function backlogFilters(url: BacklogUrl, me: string | null | undefined): 
 	if (p.get('mine') === '1' && me) f.owner = me;
 	const kind = p.get('kind');
 	if (isKind(kind)) f.kind = kind;
+	const promised = p.get('promised');
+	if (isPromisedFilter(promised)) f.promised = promised;
 	for (const name of ['epic', 'initiative', 'label'] as const) {
 		const v = p.get(name);
 		if (v) f[name] = v;
@@ -101,7 +112,7 @@ export function backlogFilters(url: BacklogUrl, me: string | null | undefined): 
 }
 
 /** The URL params Filters (n) counts and Clear filters removes. */
-export const FILTER_PARAMS = ['mine', 'kind', 'epic', 'initiative', 'label', 'ready', 'untriaged', 'urgent'] as const;
+export const FILTER_PARAMS = ['mine', 'kind', 'epic', 'initiative', 'label', 'ready', 'untriaged', 'urgent', 'promised'] as const;
 
 /** Filters (n): the filters the URL sets, as the server is sent them (Mine counts only while signed in). */
 export function activeFilterCount(url: BacklogUrl, me: string | null | undefined): number {

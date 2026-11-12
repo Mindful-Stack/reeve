@@ -594,4 +594,62 @@ describe('the history', () => {
 		const numbers = q('[data-testid="numbers"]', await expand(7))!;
 		expect(q('[data-testid="no-close-record"]', numbers)).toBeNull();
 	});
+
+	describe('its promises', () => {
+		const promise = (key: string, over: Partial<SprintView['promises'][number]> = {}): SprintView['promises'][number] => ({
+			key,
+			title: `Title ${key}`,
+			on: '2026-11-20',
+			to: null,
+			holder: 'own',
+			epic: null,
+			state: 'kept',
+			done_on: '2026-11-19',
+			days: null,
+			...over
+		});
+		const dated = (id: number, starts_on: string, ends_on: string) => sprint({ id, state: 'closed', closed_at: `${ends_on}T16:00:00Z`, starts_on, ends_on });
+
+		it('lists them under the dates after the previous sprint\'s planned end, then the note', async () => {
+			net.sprints!.closed = [dated(7, '2026-11-11', '2026-11-24'), dated(6, '2026-10-28', '2026-11-10')];
+			net.views[7] = sprintView(dated(7, '2026-11-11', '2026-11-24'), {
+				promises: [
+					promise('ABC-12', { to: 'Acme' }),
+					promise('ABC-14', { on: '2026-11-21', state: 'late', done_on: '2026-11-23', days: 2 }),
+					promise('ABC-15', { on: '2026-11-24', state: 'overdue', done_on: null, days: 3, holder: 'epic', epic: 'ABC-7' })
+				]
+			});
+			const row = await expand(7);
+			expect(button(/^Hide numbers and promises$/, row)).toBeDefined();
+			const section = q('[data-testid="promises"]', row)!;
+			expect(text(q('h4', section))).toBe('Promises due 11–24 Nov');
+			const items = [...section.querySelectorAll('li')];
+			expect(items.map(text)).toEqual([
+				'ABC-12 Title ABC-12 · to Acme · Kept · 20 Nov',
+				'ABC-14 Title ABC-14 · Done 2 d late · 21 Nov',
+				'ABC-15 Title ABC-15 · Overdue 3 d · 24 Nov'
+			]);
+			expect(q('a', items[0])!.getAttribute('href')).toBe('?story=ABC-12');
+			expect(text(q('a', items[0]))).toBe('ABC-12');
+			expect(text(section)).toContain('A promise is to a date: work done after it counts as late, even inside the sprint.');
+		});
+
+		it('spans two months, and the first sprint takes every date up to its end', async () => {
+			net.sprints!.closed = [dated(7, '2026-10-28', '2026-11-10'), dated(6, '2026-10-14', '2026-10-27')];
+			net.views[7] = sprintView(dated(7, '2026-10-28', '2026-11-10'), { promises: [promise('ABC-12', { on: '2026-11-02' })] });
+			net.views[6] = sprintView(dated(6, '2026-10-14', '2026-10-27'), { promises: [promise('ABC-9', { on: '2026-10-20' })] });
+			expect(text(q('[data-testid="promises"] h4', await expand(7)))).toBe('Promises due 28 Oct–10 Nov');
+			button(/^Show numbers/, q('[data-testid="history-6"]')!)!.click();
+			await settle(() => expect(q('[data-testid="history-6"] [data-testid="promises"]')).not.toBeNull());
+			expect(text(q('[data-testid="history-6"] [data-testid="promises"] h4'))).toBe('Promises due up to 27 Oct');
+		});
+
+		it('shows no section without promises', async () => {
+			net.sprints!.closed = [dated(7, '2026-11-11', '2026-11-24')];
+			net.views[7] = sprintView(dated(7, '2026-11-11', '2026-11-24'));
+			const row = await expand(7);
+			expect(q('[data-testid="promises"]', row)).toBeNull();
+			expect(text(row)).not.toContain('A promise is to a date');
+		});
+	});
 });

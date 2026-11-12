@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, StoryPromise } from '#lib/api/types.ts';
-import { STATE_WORDS, chip, chipText, epicChipText, epicLineText, epicNote, inheritedEpic, isEpic, lineText, look, promiseActions, promisedMatches } from './promise.ts';
+import { PROMISED_OPTIONS, STATE_WORDS, chip, chipText, isPromisedFilter, sprintPromiseText, epicChipText, epicLineText, epicNote, inheritedEpic, isEpic, lineText, look, promiseActions, promisedMatches } from './promise.ts';
 
 const fact = (on: string, to: string | null = 'Acme', by = 'Dana'): PromiseFact => ({ on, to, by, at: '2026-11-01T09:00:00Z' });
 
@@ -180,5 +180,33 @@ describe('STATE_WORDS', () => {
 			late: ['done 3 d late', 'done late'],
 			dropped: ['dropped', 'dropped']
 		});
+	});
+});
+
+describe('the Promise filter', () => {
+	it('names its options in order, the empty one meaning no filter', () => {
+		expect(PROMISED_OPTIONS).toEqual([
+			{ value: 'any', label: 'Promised (open or overdue)' },
+			{ value: 'this_sprint', label: 'Due this sprint, incl. overdue' },
+			{ value: 'next_sprint', label: 'Due next sprint' },
+			{ value: 'overdue', label: 'Overdue' }
+		]);
+	});
+	it('accepts only its four values', () => {
+		expect(['any', 'this_sprint', 'next_sprint', 'overdue'].every(isPromisedFilter)).toBe(true);
+		expect([null, undefined, '', 'bogus', 'later'].some(isPromisedFilter)).toBe(false);
+	});
+});
+
+describe('sprintPromiseText', () => {
+	it.each<[Pick<StoryPromise, 'on' | 'state' | 'days'>, string]>([
+		[{ on: '2026-11-20', state: 'kept', days: null }, 'Kept · 20 Nov'],
+		[{ on: '2026-11-20', state: 'late', days: 2 }, 'Done 2 d late · 20 Nov'],
+		[{ on: '2026-11-20', state: 'overdue', days: 3 }, 'Overdue 3 d · 20 Nov'],
+		[{ on: '2026-11-20', state: 'dropped', days: null }, 'Dropped · 20 Nov'],
+		[{ on: '2026-11-20', state: 'open', days: null }, 'Promised 20 Nov']
+	])('%o', (p, text) => expect(sprintPromiseText(p)).toBe(text));
+	it('shares the chip\'s words', () => {
+		expect(sprintPromiseText({ on: '2026-11-20', state: 'late', days: 2 })).toBe(chipText(sp({ state: 'late', due: null, days: 2 })));
 	});
 });

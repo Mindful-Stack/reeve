@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalProgress, SprintCounts } from '#lib/api/types.ts';
 import {
+	previousEnd,
+	promisesHeading,
 	blockedText,
 	confidenceLabel,
 	confidenceTone,
@@ -179,5 +181,22 @@ describe('upkeepTextAt', () => {
 		expect(upkeepTextAt({ completed: 0, upkeep_completed: 0 }, { completed: 1, upkeep_completed: 1 }, 20)).toBe(
 			'0 of 0 completed stories were upkeep (at close: 1 of 1) · team line 20%'
 		);
+	});
+});
+
+describe('a closed sprint\'s promise dates', () => {
+	const s = (id: number, ends_on: string) => ({ id, ends_on });
+	it('previousEnd: the greatest planned end below this one among the others, a tie only from a lower id', () => {
+		expect(previousEnd(s(7, '2026-11-24'), [s(6, '2026-11-10'), s(5, '2026-10-27'), s(8, '2026-12-08')])).toBe('2026-11-10');
+		expect(previousEnd(s(7, '2026-11-24'), [s(7, '2026-11-24'), s(9, '2026-12-08')])).toBeNull();
+		expect(previousEnd(s(7, '2026-11-24'), [s(6, '2026-11-24')])).toBe('2026-11-24');
+		expect(previousEnd(s(7, '2026-11-24'), [s(8, '2026-11-24')])).toBeNull();
+	});
+	it('promisesHeading: the day after the previous end to this end, the month once when shared', () => {
+		expect(promisesHeading('2026-11-10', '2026-11-24')).toBe('Promises due 11–24 Nov');
+		expect(promisesHeading('2026-10-27', '2026-11-10')).toBe('Promises due 28 Oct–10 Nov');
+		expect(promisesHeading('2026-10-31', '2026-11-13')).toBe('Promises due 1–13 Nov');
+		expect(promisesHeading('2026-12-31', '2027-01-13')).toBe('Promises due 1–13 Jan');
+		expect(promisesHeading(null, '2026-10-27')).toBe('Promises due up to 27 Oct');
 	});
 });

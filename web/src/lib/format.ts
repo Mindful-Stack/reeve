@@ -44,14 +44,46 @@ export function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
 
-/** An activity entry's action as people read it: an attachment's names its file (from the payload); any other is its
- *  action with spaces. */
-export function actionLabel(action: string, payload: unknown): string {
-	if (action === 'attachment_added' || action === 'attachment_removed') {
-		const name =
-			payload && typeof payload === 'object' && 'filename' in payload && typeof payload.filename === 'string' ? ` ${payload.filename}` : '';
-		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name}`;
+/** The actions `actionLabel` words from their payload; every other one reads as its action with spaces. */
+export function hasOwnWords(action: string): boolean {
+	return action.startsWith('attachment_') || action === 'promised' || action === 'unpromised';
+}
+
+const field = (o: unknown, name: string): unknown => (o && typeof o === 'object' && name in o ? (o as Record<string, unknown>)[name] : undefined);
+const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+
+/** A `promised` entry's words, chosen by comparing `on` and `to` with `previous` (null for a new promise). `key` names
+ *  the item, for a note that is not already about it. */
+function promisedWords(payload: unknown, key: string | undefined): string {
+	const on = text(field(payload, 'on'));
+	if (on == null) return key == null ? 'promised' : `promised ${key}`;
+	const to = text(field(payload, 'to'));
+	const prev = field(payload, 'previous');
+	const promise = key == null ? 'the promise' : `the promise on ${key}`;
+	const recipient = key == null ? "the promise's recipient" : `the recipient of the promise on ${key}`;
+	const fresh = `promised ${key == null ? '' : `${key} `}by ${dayLabel(on)}${to == null ? '' : ` to ${to}`}`;
+	if (prev == null || typeof prev !== 'object') return fresh;
+	const prevOn = text(field(prev, 'on'));
+	const prevTo = text(field(prev, 'to'));
+	if (on !== prevOn) {
+		const change = `changed ${promise} to ${dayLabel(on)}`;
+		if (to === prevTo) return change;
+		return to == null ? `${change} and removed its recipient` : `${change} to ${to}`;
 	}
+	if (to === prevTo) return fresh;
+	return to == null ? `removed ${recipient}` : `changed ${recipient} to ${to}`;
+}
+
+/** An activity entry's action as people read it: an attachment's names its file, a promise's its date and recipient
+ *  (from the payload); any other is its action with spaces. `key` names the item in a promise's words, where the note is
+ *  not already about one item (`freshNote`). */
+export function actionLabel(action: string, payload: unknown, key?: string): string {
+	if (action === 'attachment_added' || action === 'attachment_removed') {
+		const name = text(field(payload, 'filename'));
+		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name == null ? '' : ` ${name}`}`;
+	}
+	if (action === 'promised') return promisedWords(payload, key);
+	if (action === 'unpromised') return key == null ? 'cleared the promise' : `cleared the promise on ${key}`;
 	return action.replaceAll('_', ' ');
 }
 

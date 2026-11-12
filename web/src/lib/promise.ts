@@ -184,3 +184,22 @@ export function promisedMatches(
 			return state === 'open' || state === 'overdue';
 	}
 }
+
+/** The Promise filter's options on the board and the backlog, after the empty "any" (no filter). */
+export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }[] = [
+	{ value: 'any', label: 'Promised (open or overdue)' },
+	{ value: 'this_sprint', label: 'Due this sprint, incl. overdue' },
+	{ value: 'next_sprint', label: 'Due next sprint' },
+	{ value: 'overdue', label: 'Overdue' }
+];
+
+/** Whether a URL value is one of the `promised` filter's values (as `isKind` is for kinds). */
+export function isPromisedFilter(s: string | null | undefined): s is PromisedFilter {
+	return PROMISED_OPTIONS.some((o) => o.value === s);
+}
+
+/** A row of a sprint's promise list: the chip's words without a period or an epic ("Kept · 20 Nov"), since the row is
+ *  about the sprint the date falls in. */
+export function sprintPromiseText(p: Pick<StoryPromise, 'on' | 'state' | 'days'>): string {
+	return storyChipBase({ ...p, due: null });
+}
