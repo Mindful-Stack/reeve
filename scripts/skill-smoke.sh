@@ -362,8 +362,14 @@ main() {
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_sprints "$reeve" || exit 1
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_promise "$reeve" || exit 1
 
-	log "seeding a story with one screenshot"
-	local shot_story attachment
+	log "seeding a story with one screenshot, under an epic and an initiative (the fake's GRA-31 has both)"
+	local shot_story attachment shot_initiative shot_epic
+	shot_initiative="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json initiative create --title "Skill smoke screenshot initiative" \
+		--horizon now --idempotency-key skill-smoke-shot:1 | node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))')" ||
+		{ echo "seeding the screenshot initiative failed" >&2; exit 1; }
+	shot_epic="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json epic create --title "Skill smoke screenshot epic" \
+		--initiative "$shot_initiative" --idempotency-key skill-smoke-shot:2 | node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))')" ||
+		{ echo "seeding the screenshot epic failed" >&2; exit 1; }
 	attachment="$(
 		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/octet-stream' \
 			--data-binary "@$root/crates/reeve/tests/fixtures/one.png" "$url/api/v1/attachments?filename=one.png" |
@@ -371,7 +377,7 @@ main() {
 	)" || { echo "uploading the screenshot failed" >&2; exit 1; }
 	shot_story="$(
 		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/json' \
-			-d "{\"idempotency_key\":\"skill-smoke-shot\",\"title\":\"Skill smoke story with a screenshot\",\"kind\":\"chore\",\"criteria\":[],\"labels\":[],\"attachments\":[\"$attachment\"]}" \
+			-d "{\"idempotency_key\":\"skill-smoke-shot\",\"title\":\"Skill smoke story with a screenshot\",\"kind\":\"chore\",\"epic\":\"$shot_epic\",\"criteria\":[],\"labels\":[],\"attachments\":[\"$attachment\"]}" \
 			"$url/api/v1/stories" |
 			node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))'
 	)" || { echo "seeding the screenshot story failed" >&2; exit 1; }
