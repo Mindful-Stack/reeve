@@ -650,6 +650,34 @@ test('decision rows keep every cell within its column at desktop widths', async 
 	}
 });
 
+// The Add decision form (GRA-636): every input and the sprint-end shortcut row stay inside the form's box, narrow and wide.
+for (const width of [320, 1280]) {
+	test(`the Add decision form keeps its fields and shortcuts inside its box at ${width}px`, async ({ page }) => {
+		const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Decision form smoke ${crypto.randomUUID().slice(0, 8)}`,
+			horizon: 'Now'
+		});
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto(`/initiatives/${ini.key}`);
+		const sprints = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/sprints');
+		await page.getByRole('button', { name: '+ Add decision' }).click();
+		const form = page.getByRole('dialog').getByRole('form', { name: 'Add decision' });
+		await expect(form).toBeVisible();
+		await sprints;
+		const box = (await form.boundingBox())!;
+		const inside = async (what: Locator) => {
+			for (const el of await what.all()) {
+				const b = (await el.boundingBox())!;
+				expect(b.x + b.width, `${await el.evaluate((e) => e.outerHTML.slice(0, 60))} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+				expect(b.x).toBeGreaterThanOrEqual(box.x - 0.5);
+			}
+		};
+		await inside(form.locator('input'));
+		await inside(form.getByRole('group', { name: 'Due date shortcuts' }));
+	});
+}
+
 test('the header goal picker links an initiative and, after navigating by click, one of its epics', async ({ page }) => {
 	const outcome = `Picker smoke ${crypto.randomUUID().slice(0, 8)}`;
 	await page.goto('/planning');

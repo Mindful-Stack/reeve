@@ -1015,6 +1015,12 @@
 	.decision-form {
 		display: grid;
 		gap: 12px;
+		min-width: 0;
+	}
+	.decision-form input {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
 	}
 	.decision-form button {
 		justify-self: start;
