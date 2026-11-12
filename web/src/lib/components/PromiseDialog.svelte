@@ -4,8 +4,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import type { PromiseFact, PromiseShortcut, SetPromise } from '#lib/api/types.ts';
-	import { dayLabel } from '#lib/format.ts';
-	import { epicNote } from '#lib/promise.ts';
+	import { epicNote, sprintEnds } from '#lib/promise.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let {
@@ -60,16 +59,7 @@
 	let toInput = $state<HTMLInputElement | null>(null);
 
 	/** A shortcut is offered only when its sprint's end is today or later (the server refuses a past one). */
-	const shortcuts = $derived(
-		today == null
-			? []
-			: (
-					[
-						['this_sprint', 'End of this sprint', activeEnds],
-						['next_sprint', 'End of next sprint', draftEnds]
-					] as const
-				).flatMap(([s, label, ends]) => (ends != null && ends >= today ? [{ s, label: `${label} (${dayLabel(ends)})`, ends }] : []))
-	);
+	const shortcuts = $derived(sprintEnds(activeEnds, draftEnds, today));
 	/** A new date may not be before today; an overdue promise's own date may be kept. */
 	const min = $derived(today == null ? undefined : startOn && startOn < today ? startOn : today);
 
