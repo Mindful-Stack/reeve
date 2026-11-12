@@ -109,13 +109,21 @@ fn chip(e: &Entry) -> Option<String> {
         .map(|p| crate::promise::chip_text(p, false))
 }
 
-/// `parts` on one line of `w` columns, each in its own style, cut from the end like `fit`.
+/// `parts` on one line of `w` columns, each in its own style, cut from the end like `fit`: a cut ends in `…`, also when
+/// the parts before fill the line exactly and a non-empty one is left.
 fn fit_spans(parts: Vec<(String, Style)>, w: usize) -> Line<'static> {
-    let mut spans = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
     let mut used = 0;
     for (text, style) in parts {
         let room = w.saturating_sub(used);
         if room == 0 {
+            if !text.is_empty()
+                && let Some(last) = spans.last_mut()
+            {
+                // `fit` to one column less than the last part's width cuts it with its own `…`.
+                let shown = last.content.to_string();
+                last.content = fit(&format!("{shown} "), shown.width()).into();
+            }
             break;
         }
         let t = fit(&text, room);
@@ -356,4 +364,32 @@ pub fn filter_menu(f: &mut Frame, area: Rect, b: &super::State, row: usize) {
         Paragraph::new(lines).block(Block::bordered().title(" filter ")),
         r,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_spans;
+    use ratatui::style::Style;
+
+    fn text(parts: &[&str], w: usize) -> String {
+        let line = fit_spans(
+            parts
+                .iter()
+                .map(|p| (p.to_string(), Style::new()))
+                .collect(),
+            w,
+        );
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Parts that fill the line exactly with more to come end in `…`, as a cut inside a part does; an empty part left
+    /// over is nothing cut.
+    #[test]
+    fn a_line_filled_exactly_with_more_to_come_ends_in_an_ellipsis() {
+        assert_eq!(text(&["abc", "de", "f"], 5), "abcd…");
+        assert_eq!(text(&["abc", "de", ""], 5), "abcde");
+        assert_eq!(text(&["abc", "de"], 5), "abcde");
+        assert_eq!(text(&["abc", "def"], 5), "abcd…");
+        assert_eq!(text(&["abc", "de"], 9), "abcde");
+    }
 }

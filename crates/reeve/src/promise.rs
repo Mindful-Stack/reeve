@@ -196,21 +196,27 @@ mod tests {
 
     #[test]
     fn epic_chip_text_rows() {
-        for r in words().epic_chip {
+        let rows = words().epic_chip;
+        assert!(!rows.is_empty());
+        for r in rows {
             assert_eq!(epic_chip_text(&r.promise), r.text, "{}", r.label);
         }
     }
 
     #[test]
     fn line_text_rows() {
-        for r in words().line {
+        let rows = words().line;
+        assert!(!rows.is_empty());
+        for r in rows {
             assert_eq!(line_text(&r.promise), r.text, "{}", r.label);
         }
     }
 
     #[test]
     fn epic_line_text_rows() {
-        for r in words().epic_line {
+        let rows = words().epic_line;
+        assert!(!rows.is_empty());
+        for r in rows {
             assert_eq!(epic_line_text(&r.promise), r.text, "{}", r.label);
         }
     }

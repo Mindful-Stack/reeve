@@ -769,6 +769,8 @@ mod tests {
         let (x, y) = at(&rows, "Overdue 3 d");
         let (_, status) = at(&rows, "no criteria");
         assert_eq!(y, status + 1, "{rows:#?}");
+        let (sx, _) = at(&rows, "no criteria");
+        assert_eq!(buf[(sx, status)].fg, Color::Yellow, "the status has it");
         assert_ne!(buf[(x, y)].fg, Color::Yellow, "no readiness colour");
     }
 
