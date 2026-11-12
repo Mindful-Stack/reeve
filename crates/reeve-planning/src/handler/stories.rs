@@ -2,7 +2,7 @@ use super::dto::{story_promise_field, urgent_fields};
 use super::epics::epic_dto_of;
 use super::import::{Claim, with_ref};
 use super::*;
-use crate::domain::promise::{Clock, StoryFacts, story_promise};
+use crate::domain::promise::{self, Clock, StoryFacts, StoryPromise, story_promise};
 use crate::domain::{items::*, readiness::compute_readiness, urgency::Urgency};
 use reeve_protocol::{
     DeliveryState, DoneFilter, GoalContextDto, GoalRefDto, ItemType, Key, Kind, Readiness,
@@ -402,7 +402,7 @@ impl Handlers {
     }
 
     /// The story list for `f` on the caller's transaction, with `urg` as every row's urgency and `clock` classifying
-    /// every row's promise. `f.goal` and `f.urgent` filter after the read; `f.urgent` keeps the rows `urg` shows urgent,
+    /// every row's promise. `f.goal`, `f.urgent` and `f.promised` filter after the read; `f.urgent` keeps the rows `urg` shows urgent,
     /// so a default `Urgency` (a caller that computed none) yields nothing under `f.urgent` rather than an unfiltered
     /// list.
     pub(super) async fn list_stories_in(
@@ -431,12 +431,17 @@ impl Handlers {
                 readiness.push(r);
             }
         }
+        // The promise filter classifies the promise each row shows, through the domain's one rule (kb/ADR-0025 R5).
+        let filter = f.promised.map(promise::Filter::from);
         let mut out: Vec<StoryWithReadiness> = self
-            .story_dtos_in(tx, &kept, urg, clock)
+            .story_rows_in(tx, &kept, urg, clock)
             .await?
             .into_iter()
             .zip(readiness)
-            .map(|(story, readiness)| StoryWithReadiness { story, readiness })
+            .filter(|((_, sp), _)| {
+                filter.is_none_or(|f| sp.as_ref().is_some_and(|sp| f.matches(sp)))
+            })
+            .map(|((story, _), readiness)| StoryWithReadiness { story, readiness })
             .collect();
         // Goal membership is read with the DTOs (one statement), so it filters after them; it only drops rows and never
         // changes what a kept row shows (a started story still lists under its goal).
@@ -688,6 +693,23 @@ impl Handlers {
         urg: &Urgency,
         clock: &Clock,
     ) -> Result<Vec<StoryDto>, HandlerError> {
+        Ok(self
+            .story_rows_in(tx, stories, urg, clock)
+            .await?
+            .into_iter()
+            .map(|(dto, _)| dto)
+            .collect())
+    }
+
+    /// `story_dtos_in`, with each story's derived promise beside its DTO, so a filter classifies through the domain
+    /// (`promise::Filter::matches`) and never re-reads the wire enums.
+    async fn story_rows_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        stories: &[Story],
+        urg: &Urgency,
+        clock: &Clock,
+    ) -> Result<Vec<(StoryDto, Option<StoryPromise>)>, HandlerError> {
         if stories.is_empty() {
             return Ok(Vec::new());
         }
@@ -725,8 +747,9 @@ impl Handlers {
                     own: row.own.as_ref(),
                     epic: row.epic.as_ref().map(|(k, p)| (k, p)),
                 };
-                dto.promise = story_promise_field(story_promise(&facts, clock).as_ref());
-                dto
+                let sp = story_promise(&facts, clock);
+                dto.promise = story_promise_field(sp.as_ref());
+                (dto, sp)
             })
             .collect())
     }

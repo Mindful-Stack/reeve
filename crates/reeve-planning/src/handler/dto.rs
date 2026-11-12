@@ -11,8 +11,8 @@ use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
     DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
     GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
-    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintState,
-    SprintViewDto, StoryDto, StoryPromiseDto,
+    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -407,6 +407,18 @@ impl From<promise::Holder> for PromiseHolder {
         match h {
             promise::Holder::Own => PromiseHolder::Own,
             promise::Holder::Epic => PromiseHolder::Epic,
+        }
+    }
+}
+
+/// The story list's `promised` parameter as the domain's filter; `Filter::matches` is the only rule that classifies.
+impl From<PromisedFilter> for promise::Filter {
+    fn from(f: PromisedFilter) -> Self {
+        match f {
+            PromisedFilter::ThisSprint => promise::Filter::ThisSprint,
+            PromisedFilter::NextSprint => promise::Filter::NextSprint,
+            PromisedFilter::Overdue => promise::Filter::Overdue,
+            PromisedFilter::Any => promise::Filter::Any,
         }
     }
 }

@@ -8381,3 +8381,101 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
     }
     assert_eq!(snapshot().await, before);
 }
+
+/// `promised` keeps exactly the stories whose derived promise passes `promise::Filter::matches`, ANDed with the other
+/// filters. The clock is 12 Nov; the active sprint ends 24 Nov and the draft 8 Dec. O is overdue (10 Nov, promised on
+/// 9 Nov) and in progress; T, N and L are open on 20 Nov, 1 Dec and 20 Dec; E inherits its epic's 22 Nov; K kept, D
+/// dropped; F was done before its epic promised; P has no promise. Distinguishes `this_sprint` without the overdue,
+/// done stories leaking in, and a missing AND with the other filters.
+#[tokio::test]
+async fn promised_selects_exact_sets() {
+    use std::collections::HashSet;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let own = |on, at| Promise::from_persisted(on, "pm@x".into(), at, None);
+    let early = Utc.with_ymd_and_hms(2026, 11, 12, 9, 0, 0).unwrap();
+
+    let o = plain_story(&h, &c, "O", "O", None).await;
+    set_promise(
+        &h,
+        ItemType::Story,
+        &o,
+        &own(
+            nov(10),
+            Utc.with_ymd_and_hms(2026, 11, 9, 10, 0, 0).unwrap(),
+        ),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE stories SET delivery = 'in_progress', owner = 'olive@example.com' WHERE key = $1",
+    )
+    .bind(o.to_string())
+    .execute(&h.pool)
+    .await
+    .unwrap();
+    let t = plain_story(&h, &c, "T", "T", None).await;
+    set_promise(&h, ItemType::Story, &t, &own(nov(20), early)).await;
+    let n = plain_story(&h, &c, "N", "N", None).await;
+    let dec = |d| chrono::NaiveDate::from_ymd_opt(2026, 12, d).unwrap();
+    set_promise(&h, ItemType::Story, &n, &own(dec(1), early)).await;
+    let l = plain_story(&h, &c, "L", "L", None).await;
+    set_promise(&h, ItemType::Story, &l, &own(dec(20), early)).await;
+    let ep = h.create_epic(&c, "pe", "PE", None, "", None).await.unwrap();
+    set_promise(&h, ItemType::Epic, ep.key(), &own(nov(22), early)).await;
+    let e = plain_story(&h, &c, "E", "E", Some(ep.key())).await;
+    let f = plain_story(&h, &c, "F", "F", Some(ep.key())).await;
+    mark_done_at(&h, &f, Utc.with_ymd_and_hms(2026, 11, 12, 8, 0, 0).unwrap()).await;
+    let k = plain_story(&h, &c, "K", "K", None).await;
+    set_promise(&h, ItemType::Story, &k, &own(nov(20), early)).await;
+    mark_done_at(&h, &k, early).await;
+    let d = plain_story(&h, &c, "D", "D", None).await;
+    set_promise(&h, ItemType::Story, &d, &own(nov(20), early)).await;
+    mark_done_at(&h, &d, early).await;
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = $1")
+        .bind(d.to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let _p = plain_story(&h, &c, "P", "P", None).await;
+
+    let set = |v: Vec<Key>| v.into_iter().collect::<HashSet<_>>();
+    let of = |ks: &[&Key]| ks.iter().map(|k| (*k).clone()).collect::<HashSet<_>>();
+    let promised = |p| StoryFilter {
+        promised: Some(p),
+        ..Default::default()
+    };
+    use reeve_protocol::PromisedFilter as P;
+    let cases = [
+        ("this_sprint", promised(P::ThisSprint), of(&[&o, &t, &e])),
+        ("next_sprint", promised(P::NextSprint), of(&[&n])),
+        ("overdue", promised(P::Overdue), of(&[&o])),
+        ("any", promised(P::Any), of(&[&o, &t, &n, &l, &e])),
+        (
+            "any with an owner",
+            StoryFilter {
+                owner: Some("olive@example.com".into()),
+                ..promised(P::Any)
+            },
+            of(&[&o]),
+        ),
+        (
+            "this_sprint with delivery=todo",
+            StoryFilter {
+                delivery: Some(DeliveryState::Todo),
+                ..promised(P::ThisSprint)
+            },
+            of(&[&t, &e]),
+        ),
+    ];
+    for (label, filter, want) in cases {
+        assert!(!want.is_empty(), "{label}: the expected set is not empty");
+        assert_eq!(
+            set(list_keys(&h, &filter, None, None, now).await),
+            want,
+            "{label}"
+        );
+    }
+}

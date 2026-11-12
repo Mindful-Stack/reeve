@@ -94,3 +94,15 @@ pub struct SetPromise {
     #[serde(default)]
     pub to: Option<String>,
 }
+
+/// The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open
+/// ones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or
+/// overdue promise. Kept, late and dropped promises never match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PromisedFilter {
+    ThisSprint,
+    NextSprint,
+    Overdue,
+    Any,
+}

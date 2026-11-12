@@ -3,7 +3,7 @@ pub mod decision;
 pub mod findings;
 pub mod items;
 pub mod progress;
-// The filter, the queue window and the sprint list have no caller until their handlers land; `expect` turns into an
+// The queue window and the sprint list have no caller until their handlers land; `expect` turns into an
 // error once every item is used, so it cannot outlive them.
 #[expect(
     dead_code,

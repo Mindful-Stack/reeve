@@ -1990,6 +1990,13 @@ export interface components {
          * @enum {string}
          */
         PromiseState: "open" | "overdue" | "kept" | "late" | "dropped";
+        /**
+         * @description The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open
+         *     ones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or
+         *     overdue promise. Kept, late and dropped promises never match.
+         * @enum {string}
+         */
+        PromisedFilter: "this_sprint" | "next_sprint" | "overdue" | "any";
         PullRequestDto: {
             /** Format: int64 */
             number: number;
@@ -8083,6 +8090,11 @@ export interface operations {
                 initiative?: components["schemas"]["KeyRef"];
                 /** @description Only stories shown as urgent (non-empty `urgent_sources`). */
                 urgent?: boolean;
+                /**
+                 * @description Only stories with a promise that is `overdue` or due `this_sprint` (overdue included), due `next_sprint`, or
+                 *     `any` open or overdue one (kb/ADR-0025 R5). Combines with every other filter.
+                 */
+                promised?: components["schemas"]["PromisedFilter"];
                 /**
                  * @description `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
                  *     reference equals `q` first, then title matches, then the rest, each in `rank` order.

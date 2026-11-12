@@ -2856,6 +2856,16 @@
         ],
         "type": "string"
       },
+      "PromisedFilter": {
+        "description": "The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open\nones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or\noverdue promise. Kept, late and dropped promises never match.",
+        "enum": [
+          "this_sprint",
+          "next_sprint",
+          "overdue",
+          "any"
+        ],
+        "type": "string"
+      },
       "PullRequestDto": {
         "properties": {
           "number": {
@@ -14438,6 +14448,15 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Only stories with a promise that is `overdue` or due `this_sprint` (overdue included), due `next_sprint`, or\n`any` open or overdue one (kb/ADR-0025 R5). Combines with every other filter.",
+            "in": "query",
+            "name": "promised",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PromisedFilter"
             }
           },
           {

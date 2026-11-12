@@ -57,6 +57,9 @@ pub struct StoryQuery {
     /// Only stories shown as urgent (non-empty `urgent_sources`).
     #[serde(default)]
     pub urgent: bool,
+    /// Only stories with a promise that is `overdue` or due `this_sprint` (overdue included), due `next_sprint`, or
+    /// `any` open or overdue one (kb/ADR-0025 R5). Combines with every other filter.
+    pub promised: Option<PromisedFilter>,
     /// `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
     /// reference equals `q` first, then title matches, then the rest, each in `rank` order.
     #[serde(default)]
@@ -114,6 +117,7 @@ async fn list(
         kind: q.kind,
         epics,
         urgent: q.urgent,
+        promised: q.promised,
         sort: q.sort,
     };
     Ok(ok(s

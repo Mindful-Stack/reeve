@@ -264,3 +264,46 @@ async fn relevance_puts_the_exact_reference_then_titles_first() {
         vec![exact, in_title, started, mention, longer]
     );
 }
+
+/// `promised` reaches the handler: the request's clock is the server's, so the dates are relative to today (the
+/// handler tests pin the exact boundaries). An active sprint ends today + 10; one story is promised today + 3, the
+/// other today + 20. An unknown value is refused like every other bad value.
+#[tokio::test]
+async fn promised_parameter_reaches_the_handler() {
+    let h = harness().await;
+    post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key": "g", "outcome": "o", "check": "c"}),
+    )
+    .await;
+    let today = chrono::Utc::now().date_naive();
+    let (st, all) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/sprints", None).await;
+    assert_eq!(st, 200, "{all}");
+    let draft = all["value"]["draft"].clone();
+    post(
+        &h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version": draft["version"], "ends_on": today + chrono::Days::new(10)}),
+    )
+    .await;
+    let soon = new_story(&h, "soon", json!({"title": "Soon"})).await;
+    let later = new_story(&h, "later", json!({"title": "Later"})).await;
+    let _unpromised = new_story(&h, "none", json!({"title": "None"})).await;
+    for (key, days) in [(&soon, 3), (&later, 20)] {
+        post(
+            &h,
+            &format!("/api/v1/stories/{key}/promise"),
+            json!({"on": today + chrono::Days::new(days)}),
+        )
+        .await;
+    }
+    assert_eq!(keys(&h, "promised=this_sprint").await, vec![soon.clone()]);
+    assert_eq!(
+        sorted(keys(&h, "promised=any").await),
+        sorted(vec![soon, later])
+    );
+    let (st, b) = get(&h, "promised=bogus").await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation", "{b}");
+}
