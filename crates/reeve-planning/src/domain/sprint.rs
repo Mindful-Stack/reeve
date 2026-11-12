@@ -201,12 +201,14 @@ pub struct DecisionGate {
     pub reason: Reason,
 }
 
-/// Each goal's gates, in `goals` order. A goal's items are what it links, their ancestors (an epic's initiative; a
-/// story's epic and that epic's initiative) and, for a linked initiative, its epics. Its stories are the ones `serves`
-/// gives it, done ones included but not those resolved as dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate is an initiative or
-/// epic among the items without its mark, whatever its horizon, as readiness treats every ancestor. The goal's
-/// decisions are those on its items and stories, withdrawn ones excluded; a gate is one for which `decision_reason`
-/// gives a reason. A link to an item that no longer exists adds nothing. Nothing here reads urgency (kb/ADR-0024 R7).
+/// Each goal's gates, in `goals` order. A goal's items are a linked initiative and its epics, a linked epic and its
+/// initiative, and a linked story's epic and that epic's initiative; a linked story itself is one of the goal's
+/// stories, not an item. Its stories are the ones `serves` gives it, done ones included but not those resolved as
+/// dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate
+/// is an initiative or epic among the items without its mark, whatever its horizon, as readiness treats every
+/// ancestor. The goal's decisions are those on its items and stories, withdrawn ones excluded; a gate is one for which
+/// `decision_reason` gives a reason. A link to an item that no longer exists adds nothing. Nothing here reads urgency
+/// (kb/ADR-0024 R7).
 pub fn goal_gates(
     goals: &[i64],
     links: &[GoalLink],
@@ -218,7 +220,7 @@ pub fn goal_gates(
     let initiative: HashMap<&Key, &Initiative> = initiatives.iter().map(|i| (i.key(), i)).collect();
     let epic: HashMap<&Key, &Epic> = epics.iter().map(|e| (e.key(), e)).collect();
     let story: HashMap<&Key, &Story> = stories.iter().map(|s| (s.key(), s)).collect();
-    // The stories each goal serves, decided by `serves` exactly as the sprint's numbers decide them.
+    // The stories each goal serves, from `serves`, dropped ones left out.
     let mut served: HashMap<i64, Vec<&Key>> = HashMap::new();
     for s in stories {
         if s.resolution() == Some(Resolution::Dropped) {
@@ -267,7 +269,9 @@ pub fn goal_gates(
                 } else {
                     continue; // removed since it was linked
                 };
-                goal_items.insert(k);
+                if !story.contains_key(k) {
+                    goal_items.insert(k); // a linked story is one of the goal's stories, not an item
+                }
                 if let Some(i) = parent {
                     goal_items.insert(i);
                     if !goal_initiatives.contains(i) {
@@ -1267,8 +1271,15 @@ mod tests {
         let i: [Initiative; 0] = [];
         let e: [Epic; 0] = [];
         let s: [Story; 0] = [];
+        // A decision still on the removed key (no foreign key) is not the goal's.
+        let decisions = [pending(1, "ABC-99", ItemType::Story)];
         assert_eq!(
-            goal_gates(&[1], &[lk(1, "ABC-99")], (&i[..], &e[..], &s[..]), &[]),
+            goal_gates(
+                &[1],
+                &[lk(1, "ABC-99")],
+                (&i[..], &e[..], &s[..]),
+                &decisions
+            ),
             vec![GoalGates {
                 goal_id: 1,
                 initiatives: vec![],
@@ -1278,5 +1289,27 @@ mod tests {
                 decisions_total: 0,
             }]
         );
+    }
+
+    /// A dropped story linked directly is neither an item nor served: its open decision is not the goal's.
+    #[test]
+    fn gates_directly_linked_dropped_story_does_not_count() {
+        let i = [ini("ABC-1", true)];
+        let e = [epic("ABC-2", Some("ABC-1"), true)];
+        let s = [story_with(
+            "ABC-5",
+            Some("ABC-2"),
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+        )];
+        let decisions = [pending(1, "ABC-5", ItemType::Story)];
+        let g = &goal_gates(
+            &[1],
+            &[lk(1, "ABC-5")],
+            (&i[..], &e[..], &s[..]),
+            &decisions,
+        )[0];
+        assert_eq!((g.decisions.len(), g.decisions_total), (0, 0));
+        assert_eq!(g.initiatives, vec![k("ABC-1")]);
     }
 }
