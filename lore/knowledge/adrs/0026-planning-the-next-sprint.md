@@ -78,6 +78,7 @@ losing its links and wording, and moving a goal that never belonged to an opened
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-12 (https://github.com/Mindful-Stack/reeve/pull/39): F3 now reads: goal writes read a goal's sprint unlocked, lock that sprint, then the goal, and compare the goal's sprint with the locked sprint before applying the sprint's state (`goal_locked`, which `unlink_goal` now uses too); on a mismatch they answer a conflict with no version (`current: -1`). R2 is implemented there; no trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0014 (sprints and goals), kb/ADR-0016 (sprint settings), kb/ADR-0018 (readiness), kb/ADR-0025 (promises classified against sprints).
