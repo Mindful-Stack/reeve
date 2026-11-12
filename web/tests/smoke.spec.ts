@@ -438,6 +438,21 @@ test('the backlog lists epic-less work under No epic and moves a row up through 
 	expect(down.a).toBeLessThan(down.b);
 	await page.goto('/backlog');
 	await expect(page.getByRole('region', { name: 'No epic' })).toContainText('Smoke backlog first');
+	// Change epic: the dialog focuses its picker; the open list floats past the dialog's edge and is not clipped by it.
+	await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: 'Smoke change epic target' });
+	await page.reload();
+	await page.getByRole('button', { name: `Actions for ${a.key}`, exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Change epic' }).click();
+	const changeEpic = page.getByRole('dialog');
+	await expect(changeEpic.getByRole('combobox', { name: 'Epic' })).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	// ratio 1: the whole list box intersects the viewport, after the clipping of every scrolling ancestor (the dialog).
+	await expect(changeEpic.getByRole('listbox', { name: 'Epic' })).toBeInViewport({ ratio: 1 });
+	await page.keyboard.press('Escape'); // the list only
+	await expect(changeEpic.getByRole('listbox')).toBeHidden();
+	await expect(changeEpic).toBeVisible();
+	await page.keyboard.press('Escape'); // now the dialog
+	await expect(changeEpic).toBeHidden();
 });
 
 test('the client loads nothing from outside the server', async ({ page }) => {

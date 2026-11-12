@@ -9,6 +9,7 @@ import { page } from '$app/state';
 import type { Epic, Initiative, PromisedFilter, Story, StoryPromise, StoryWithReadiness } from '#lib/api/types.ts';
 import { promisedMatches } from '#lib/promise.ts';
 import { epic, initiative, withReadiness } from '#lib/test/fixtures.ts';
+import { choose as pickOption, offered, picker } from '#lib/test/picker.ts';
 
 /** `untriaged` puts the server's untriaged reason on the row (the page never derives it from kind and epic). */
 const row = (key: string, rank: number, epic: string | null, ready = true, kind: Story['kind'] = 'story', untriaged = false, over: Partial<Story> = {}) =>
@@ -214,8 +215,7 @@ describe('backlog page', () => {
 		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New story')!.click();
 		flushSync();
 		const form = document.body.querySelector('form[aria-label="New story"]') as HTMLFormElement;
-		const selects = [...form.querySelectorAll('select')];
-		expect(selects.at(-1)!.value).toBe('');
+		expect(picker(form, 'Epic').value).toBe('No epic');
 		expect(form.querySelector('button[type="submit"]')!.textContent).toBe('Create story');
 	});
 
@@ -320,12 +320,9 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		expect([...select.options].map((o) => o.textContent)).toEqual(['No epic', 'E-1 Loose epic', 'E-2 Other epic']);
-		expect(select.value).toBe('E-1');
-		select.value = 'E-2';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		expect(offered(form, 'Epic')).toEqual(['No epic', 'E-1 Loose epic', 'E-2 Other epic']);
+		expect(picker(form, 'Epic').value).toBe('E-1 Loose epic');
+		pickOption(form, 'Epic', 'E-2');
 		const gets = data.storyGets;
 		form.requestSubmit();
 		await vi.waitFor(() => {
@@ -346,10 +343,7 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = '';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', '', 'No epic');
 		form.requestSubmit();
 		await vi.waitFor(() => expect(data.patches).toEqual([{ key: 'S-1', body: { version: 1, epic: null } }]));
 	});
@@ -542,10 +536,7 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = '';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', '', 'No epic');
 		form.requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();
@@ -836,10 +827,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = 'E-2';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', 'E-2');
 		form.requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();
