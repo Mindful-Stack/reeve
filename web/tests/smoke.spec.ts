@@ -698,7 +698,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(dialog).toBeHidden();
 	const drawer = page.getByRole('complementary');
 	await expect(drawer).toContainText(title); // the drawer is usable, not inert
-	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click(); // the drawer opens under the bar
 	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
 	await dialog.getByLabel("Something's broken").check();
 	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
@@ -713,7 +713,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
 });
 
-test('the story drawer header fits at 320px with a draft: Close stays on screen beside Resume report', async ({ page }) => {
+test('the story drawer header fits at 320px with a draft: Close stays on screen and the bar\'s Resume report stays usable', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 640 });
 	const s = await chore(page, `Smoke drawer header ${crypto.randomUUID().slice(0, 6)}`);
 	await page.goto('/board');
@@ -724,15 +724,14 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	await expect(dialog).toBeHidden();
 	await page.goto(`/board?story=${s.key}`);
 	const drawer = page.getByRole('complementary');
-	const resume = drawer.getByRole('button', { name: 'Resume report' });
+	const resume = page.getByRole('banner').getByRole('button', { name: 'Resume report' });
 	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
 	await expect(resume).toBeVisible();
 	await expect(close).toBeVisible();
 	await close.click({ trial: true }); // not covered by the sticky bar
-	const r = (await resume.boundingBox())!;
+	await resume.click({ trial: true }); // the bar's button is usable while the drawer is open
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
-	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
 });
 
 for (const width of [1280, 360]) {

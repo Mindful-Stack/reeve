@@ -87,28 +87,13 @@ describe('StoryDrawer Report action', () => {
 	const settled = () =>
 		vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
 
-	it('has a Report button that opens the dialog with no epic chip', async () => {
+	it('has no Report button of its own: the top bar stays usable above the drawer', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
 		await settled();
-		const b = [...document.body.querySelectorAll('header.top button')].find((x) => x.textContent === 'Report') as HTMLButtonElement;
-		expect(b).toBeDefined();
-		b.click();
-		flushSync();
-		expect(report.open).toBe(true);
-		expect(report.draft!.epic).toBeNull();
-		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
-	});
-
-	it('says Resume report while a draft exists', async () => {
-		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
-		await settled();
-		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
-		expect(btn().textContent).toBe('Report');
-		btn().click();
-		flushSync();
-		report.draft!.title = 'a draft in progress';
-		flushSync();
-		expect(btn().textContent).toBe('Resume report');
+		const labels = [...document.body.querySelectorAll('header.top button')].map((b) => b.textContent?.trim());
+		expect(labels).not.toContain('Report');
+		expect(labels).not.toContain('Resume report');
+		expect(document.body.querySelector('header.top button.close')).not.toBeNull(); // the header itself rendered
 	});
 });
 

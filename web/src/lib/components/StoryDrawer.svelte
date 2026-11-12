@@ -24,8 +24,6 @@
 	import { draftKey, newDraftKey } from '#lib/idempotency.ts';
 	import { followBase, rebase, type EditorBase } from '#lib/editorBase.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { reportContext } from '#lib/nav.ts';
-	import { openReport, reportLabel } from '#lib/report.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
@@ -602,8 +600,6 @@
 				<span class="muted epic-link">No epic</span>
 			{/if}
 		{/if}
-		<!-- The drawer covers the header's Report button at every width; the story never prefills the epic chip. -->
-		<button type="button" class="report-here" onclick={() => openReport({ ...reportContext(page.url), epic: null })}>{reportLabel()}</button>
 		<button type="button" class="close" aria-label="Close story {storyKey}" onclick={onclose}>×</button>
 	</header>
 
@@ -1226,13 +1222,6 @@
 		font-size: 14px;
 		white-space: nowrap;
 		text-overflow: ellipsis;
-	}
-	.report-here {
-		margin-left: auto;
-		margin-right: 8px;
-	}
-	.top .epic-link + .report-here {
-		margin-left: 0;
 	}
 	.close {
 		font-size: 18px;
