@@ -65,13 +65,7 @@ pub fn readiness_short(r: &Readiness) -> String {
 }
 
 pub fn state(s: DeliveryState) -> &'static str {
-    match s {
-        DeliveryState::Todo => "todo",
-        DeliveryState::InProgress => "in progress",
-        DeliveryState::InReview => "in review",
-        DeliveryState::Testing => "testing",
-        DeliveryState::Done => "done",
-    }
+    crate::render::state_phrase(s)
 }
 
 pub fn kind(k: Kind) -> &'static str {
@@ -225,10 +219,13 @@ mod tests {
         let table =
             &web[web.find("export const SHORT").unwrap()..web.find("export const FULL").unwrap()];
         let templates = [
+            (
+                "blocked by ABC-12 (in review)",
+                "blocked by ${r.story} (${COLUMN_LABEL[r.delivery]})",
+            ),
             ("ABC-7", "${r.item}"),
             ("ABC-12", "${r.story}"),
             ("kb/ADR-0004", "${r.superseded_by}"),
-            ("in review", "${COLUMN_LABEL[r.delivery]}"),
         ];
         for (r, want, _) in every_reason() {
             let mut src = want.to_string();

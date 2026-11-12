@@ -86,6 +86,15 @@ export const SHORT = {
 	interactive_only: () => 'interactive only'
 } satisfies Labels;
 
+/** What the blocker is doing and who can unblock it (kb/ADR-0027). */
+function blockerClause(delivery: Column, owner?: string | null): string {
+	if (delivery === 'todo') return owner ? `todo, owned by ${owner}` : 'todo, not yet started by anyone';
+	const state = COLUMN_LABEL[delivery];
+	return owner
+		? `${state}, owned by ${owner}; it unblocks when merged, or ask its owner`
+		: `${state}, no owner; it unblocks when merged`;
+}
+
 /** The full sentence: the badge's title attribute, the override prompt and refusal notices. */
 export const FULL = {
 	untriaged: () => 'untriaged: no epic yet; triage places it',
@@ -100,14 +109,7 @@ export const FULL = {
 		r.superseded_by
 			? `decision "${r.title}": superseded by ${r.superseded_by}, re-point`
 			: `decision "${r.title}" is ${r.status}`,
-	blocked_by: (r) =>
-		r.delivery === 'todo'
-			? r.owner
-				? `blocked by ${r.story}: todo, owned by ${r.owner}`
-				: `blocked by ${r.story}: todo, not yet started by anyone`
-			: r.owner
-				? `blocked by ${r.story}: ${COLUMN_LABEL[r.delivery]}, owned by ${r.owner}; it unblocks when merged, or ask its owner`
-				: `blocked by ${r.story}: ${COLUMN_LABEL[r.delivery]}, no owner; it unblocks when merged`,
+	blocked_by: (r) => `blocked by ${r.story}: ${blockerClause(r.delivery, r.owner)}`,
 	resolution_required: () => 'a resolution is required to move to done',
 	completed_needs_active_origin: () => 'completed needs the story to have been in active work',
 	override_needs_reason: () => 'an override needs a reason',

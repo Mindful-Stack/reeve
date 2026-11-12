@@ -314,9 +314,20 @@ fn pr_status_word(s: PrStatus) -> &'static str {
     }
 }
 
+/// The delivery state as prose ("in review"), where `state_word` is the hyphenated CLI token.
+pub fn state_phrase(s: DeliveryState) -> &'static str {
+    match s {
+        DeliveryState::Todo => "todo",
+        DeliveryState::InProgress => "in progress",
+        DeliveryState::InReview => "in review",
+        DeliveryState::Testing => "testing",
+        DeliveryState::Done => "done",
+    }
+}
+
 /// kb/ADR-0027's BlockedBy in full: what the blocker is doing and who can unblock it.
 fn blocked_by_sentence(story: &str, delivery: DeliveryState, owner: Option<&str>) -> String {
-    let state = crate::tui::words::state(delivery);
+    let state = state_phrase(delivery);
     match (delivery, owner) {
         (DeliveryState::Todo, None) => {
             format!("blocked by {story}: todo, not yet started by anyone")
@@ -335,7 +346,16 @@ pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
     } else {
         r.reasons
             .first()
-            .map(crate::tui::words::short)
+            .map(|r| match r {
+                Reason::BlockedBy {
+                    story, delivery, ..
+                } => format!(
+                    "blocked by {} ({})",
+                    mark(Level::Story, story),
+                    state_phrase(*delivery)
+                ),
+                other => reason(other),
+            })
             .unwrap_or_else(|| "not ready".into())
     };
     format!(
@@ -1337,7 +1357,7 @@ mod tests {
     }
 
     #[test]
-    fn a_list_row_shows_the_short_blocked_by() {
+    fn a_list_row_shortens_only_blocked_by() {
         let r = Readiness {
             ready: false,
             reasons: vec![Reason::BlockedBy {
@@ -1347,8 +1367,17 @@ mod tests {
             }],
         };
         let row = story_row(&dto(vec![]), &r);
-        assert!(row.contains("blocked by ABC-4 (in review)"), "{row}");
+        assert!(row.contains("blocked by ● ABC-4 (in review)"), "{row}");
         assert!(!row.contains("it unblocks"), "{row}");
+        let d = Readiness {
+            ready: false,
+            reasons: vec![Reason::DecisionProposedPrOpen {
+                decision_id: 7,
+                title: "Use Postgres".into(),
+            }],
+        };
+        let row = story_row(&dto(vec![]), &d);
+        assert!(row.contains("decision #7 \"Use Postgres\""), "{row}");
     }
 
     #[test]
