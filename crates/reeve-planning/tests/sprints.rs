@@ -2730,14 +2730,14 @@ mod promises {
     }
 
     fn keys(ps: &[SprintPromise]) -> Vec<Key> {
-        ps.iter().map(|p| p.key.clone()).collect()
+        ps.iter().map(|p| p.key().clone()).collect()
     }
     fn row<'a>(ps: &'a [SprintPromise], k: &Key) -> &'a SprintPromise {
-        ps.iter().find(|p| &p.key == k).unwrap()
+        ps.iter().find(|p| p.key() == k).unwrap()
     }
     /// The row's derived state, as the wire spells it.
     fn st(p: &SprintPromise) -> PromiseState {
-        p.state.into()
+        p.state().into()
     }
 
     /// S1 is planned to end 10 Nov and closes 12 Nov; S2 opens 12 Nov and is planned to end 24 Nov; S3, closed early,
@@ -2832,17 +2832,17 @@ mod promises {
         );
         let r2 = row(&list.promises, &p2);
         assert_eq!(
-            (r2.on, st(r2), r2.done_on, r2.days),
+            (r2.on(), st(r2), r2.done_on(), r2.days()),
             (nov(11), PromiseState::Late, Some(nov(12)), Some(1))
         );
         let r5 = row(&list.promises, &p5);
-        assert_eq!(r5.title, "P5");
+        assert_eq!(r5.title(), "P5");
         assert_eq!(
-            (r5.on, &r5.held_by, st(r5)),
+            (r5.on(), r5.held_by(), st(r5)),
             (nov(20), &HeldBy::Epic(e.key().clone()), PromiseState::Open)
         );
         let r3 = row(&list.promises, &p3);
-        assert_eq!((&r3.held_by, st(r3)), (&HeldBy::Own, PromiseState::Open));
+        assert_eq!((r3.held_by(), st(r3)), (&HeldBy::Own, PromiseState::Open));
 
         let v1 = h.sprint_view(s1, now).await.unwrap();
         assert_eq!(v1.sprint.state, SprintState::Closed);
@@ -2851,14 +2851,14 @@ mod promises {
             vec![p7.clone(), p1.clone(), p8.clone(), p11.clone()]
         );
         let r7 = row(&v1.promises, &p7);
-        assert_eq!((st(r7), r7.days), (PromiseState::Overdue, Some(4)));
+        assert_eq!((st(r7), r7.days()), (PromiseState::Overdue, Some(4)));
         let r1 = row(&v1.promises, &p1);
-        assert_eq!((st(r1), r1.done_on), (PromiseState::Kept, Some(nov(9))));
+        assert_eq!((st(r1), r1.done_on()), (PromiseState::Kept, Some(nov(9))));
         let r8 = row(&v1.promises, &p8);
-        assert_eq!((&r8.held_by, st(r8)), (&HeldBy::Own, PromiseState::Kept));
+        assert_eq!((r8.held_by(), st(r8)), (&HeldBy::Own, PromiseState::Kept));
         let r11 = row(&v1.promises, &p11);
         assert_eq!(
-            (r11.on, &r11.held_by, st(r11)),
+            (r11.on(), r11.held_by(), st(r11)),
             (
                 nov(10),
                 &HeldBy::Epic(e2.key().clone()),
@@ -2877,7 +2877,7 @@ mod promises {
                     .iter()
                     .chain(&v2.promises)
                     .chain(&v3.promises)
-                    .any(|p| &p.key == k),
+                    .any(|p| p.key() == k),
                 "{k}"
             );
         }

@@ -712,7 +712,7 @@ impl Handlers {
                 SprintPromise::listed(r.key, r.title, sp, prev, s.ends_on)
             })
             .collect();
-        out.sort_by_key(|p| p.on);
+        out.sort_by_key(|p| p.on());
         Ok(out)
     }
 

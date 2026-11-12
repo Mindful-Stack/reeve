@@ -173,3 +173,63 @@ impl Handlers {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::sprint::Sprint;
+    use chrono::{NaiveDate, TimeZone};
+    use reeve_protocol::SprintState;
+
+    fn d(m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, m, day).unwrap()
+    }
+    fn sprint(id: i64, state: SprintState, ends_on: NaiveDate) -> Sprint {
+        Sprint {
+            id,
+            state,
+            starts_on: d(10, 1),
+            ends_on,
+            opened_at: None,
+            closed_at: None,
+            version: 1,
+        }
+    }
+
+    /// `promise_clock_of` follows `planned_ends_in`'s rule: the active and the draft sprint's planned ends, closed
+    /// sprints ignored whatever their ends, None for a missing one; today is the UTC date of `now`.
+    #[test]
+    fn promise_clock_of_takes_the_active_and_draft_ends_only() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 12, 23, 30, 0).unwrap();
+        let all = vec![
+            sprint(1, SprintState::Closed, d(11, 30)),
+            sprint(2, SprintState::Active, d(11, 24)),
+            sprint(3, SprintState::Closed, d(12, 20)),
+            sprint(4, SprintState::Draft, d(12, 8)),
+        ];
+        assert_eq!(
+            promise_clock_of(&all, now),
+            Clock {
+                today: d(11, 12),
+                active_ends: Some(d(11, 24)),
+                draft_ends: Some(d(12, 8)),
+            }
+        );
+        let closed_only = vec![
+            sprint(1, SprintState::Closed, d(11, 30)),
+            sprint(3, SprintState::Closed, d(12, 20)),
+        ];
+        assert_eq!(
+            promise_clock_of(&closed_only, now),
+            Clock {
+                today: d(11, 12),
+                active_ends: None,
+                draft_ends: None,
+            }
+        );
+        assert_eq!(
+            promise_clock_of(&[sprint(4, SprintState::Draft, d(12, 8))], now).draft_ends,
+            Some(d(12, 8))
+        );
+    }
+}

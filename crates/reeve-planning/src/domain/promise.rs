@@ -375,20 +375,18 @@ pub enum HeldBy {
     Epic(Key),
 }
 
-/// One row of a sprint's promise list (R8). Only `SprintPromise::listed` builds one, so a row always has a state and
-/// always falls in its sprint.
+/// One row of a sprint's promise list (R8). The fields are private: `SprintPromise::listed` is the only constructor, so
+/// a row always has a state and always falls in its sprint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SprintPromise {
-    pub key: Key,
-    pub title: String,
-    /// The effective date (R3).
-    pub on: NaiveDate,
-    pub held_by: HeldBy,
-    /// The recipient of the promise that sets `on`.
-    pub to: Option<String>,
-    pub state: State,
-    pub done_on: Option<NaiveDate>,
-    pub days: Option<u32>,
+    key: Key,
+    title: String,
+    on: NaiveDate,
+    held_by: HeldBy,
+    to: Option<String>,
+    state: State,
+    done_on: Option<NaiveDate>,
+    days: Option<u32>,
 }
 
 impl SprintPromise {
@@ -410,6 +408,7 @@ impl SprintPromise {
         let (held_by, to) = match (sp.holder, sp.own, sp.epic) {
             (Holder::Own, Some(own), _) => (HeldBy::Own, own.to),
             (Holder::Epic, _, Some((k, e))) => (HeldBy::Epic(k), e.to),
+            // Cannot happen: `story_promise` never gives a holder without that holder's promise.
             (Holder::Own, None, _) | (Holder::Epic, _, None) => return None,
         };
         Some(SprintPromise {
@@ -422,6 +421,34 @@ impl SprintPromise {
             done_on: sp.done_on,
             days: sp.days,
         })
+    }
+    pub fn key(&self) -> &Key {
+        &self.key
+    }
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+    /// The effective date (R3).
+    pub fn on(&self) -> NaiveDate {
+        self.on
+    }
+    pub fn held_by(&self) -> &HeldBy {
+        &self.held_by
+    }
+    /// The recipient of the promise that sets `on`.
+    pub fn to(&self) -> Option<&str> {
+        self.to.as_deref()
+    }
+    pub fn state(&self) -> State {
+        self.state
+    }
+    /// The UTC day the story was done, when it was.
+    pub fn done_on(&self) -> Option<NaiveDate> {
+        self.done_on
+    }
+    /// Days overdue or late.
+    pub fn days(&self) -> Option<u32> {
+        self.days
     }
 }
 
@@ -1633,6 +1660,7 @@ mod tests {
         let own = promise(d(2026, 11, 22), "2026-11-01T09:00:00Z", Some("Acme"));
         let epic = promise(d(2026, 11, 18), "2026-11-01T09:00:00Z", Some("Beta"));
         let later_epic = promise(d(2026, 11, 25), "2026-11-01T09:00:00Z", Some("Beta"));
+        let own_at_end = promise(d(2026, 11, 24), "2026-11-01T09:00:00Z", Some("Acme"));
         let today = clock(d(2026, 11, 26), None, None);
         let facts = |delivery, done_at: Option<&str>, own, epic| StoryFacts {
             delivery,
@@ -1664,10 +1692,15 @@ mod tests {
                 Some((d(2026, 11, 22), HeldBy::Own, Some("Acme"), State::Overdue)),
             ),
             (
-                "own end inclusive",
-                sp(facts(Done, Some("2026-11-21T10:00:00Z"), Some(&own), None)),
-                Some(d(2026, 11, 21)),
-                Some((d(2026, 11, 22), HeldBy::Own, Some("Acme"), State::Kept)),
+                "on this end: inclusive",
+                sp(facts(
+                    Done,
+                    Some("2026-11-21T10:00:00Z"),
+                    Some(&own_at_end),
+                    None,
+                )),
+                prev,
+                Some((d(2026, 11, 24), HeldBy::Own, Some("Acme"), State::Kept)),
             ),
             (
                 "on the previous end: not this sprint's",

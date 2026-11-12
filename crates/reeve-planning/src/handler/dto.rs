@@ -286,20 +286,20 @@ pub fn sprint_view_dto(
 /// One row of a sprint's promise list on the wire. `holder` and `epic` both come from `held_by`, so an epic holder
 /// always names its epic.
 pub fn sprint_promise_dto(p: &SprintPromise) -> SprintPromiseDto {
-    let (holder, epic) = match &p.held_by {
+    let (holder, epic) = match p.held_by() {
         HeldBy::Own => (PromiseHolder::Own, None),
         HeldBy::Epic(k) => (PromiseHolder::Epic, Some(k.clone())),
     };
     SprintPromiseDto {
-        key: p.key.clone(),
-        title: p.title.clone(),
-        on: p.on,
-        to: p.to.clone(),
+        key: p.key().clone(),
+        title: p.title().to_string(),
+        on: p.on(),
+        to: p.to().map(str::to_string),
         holder,
         epic,
-        state: p.state.into(),
-        done_on: p.done_on,
-        days: p.days,
+        state: p.state().into(),
+        done_on: p.done_on(),
+        days: p.days(),
     }
 }
 
