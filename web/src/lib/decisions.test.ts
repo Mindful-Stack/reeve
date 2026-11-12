@@ -8,10 +8,10 @@ import {
 	closeActions,
 	dateLine,
 	pruneExpanded,
+	reasonHref,
 	decisionStatus,
 	filterDecisions,
 	itemHref,
-	discoveryHref,
 	neededInText,
 	neededLabel,
 	nextStepText,
@@ -197,9 +197,25 @@ describe('next step and needed-in wording', () => {
 	it('says why a decision is needed and in which sprint', () => {
 		expect(neededInText({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBe('for goal: Ship X');
 		expect(neededInText({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('GRA-12 is in discovery');
-		expect(discoveryHref({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('/initiatives/GRA-12');
-		expect(discoveryHref({ kind: 'discovery', key: 'GRA-13', level: 'epic' })).toBe('/epics/GRA-13');
-		expect(discoveryHref({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBeNull();
+		const board = new URL('https://reeve.test/board');
+		expect(reasonHref({ kind: 'discovery', key: 'GRA-12', level: 'initiative' }, board)).toBe('/initiatives/GRA-12');
+		expect(reasonHref({ kind: 'discovery', key: 'GRA-13', level: 'epic' }, board)).toBe('/epics/GRA-13');
+		expect(reasonHref({ kind: 'goal', goal_id: 1, outcome: 'Ship X' }, board)).toBeNull();
+		expect(neededInText({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false })).toBe(
+			'promised by 20 Nov: ABC-12'
+		);
+		expect(neededInText({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-10', overdue: true })).toBe(
+			'promised by 10 Nov, overdue: ABC-12'
+		);
+		expect(neededInText({ kind: 'unknown' })).toBe('needed (reason not shown)');
+		expect(reasonHref({ kind: 'unknown' }, board)).toBeNull();
+		// A story's promise opens its drawer over the current page; an epic's opens the epic page.
+		expect(reasonHref({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false }, board)).toBe(
+			'/board?story=ABC-12'
+		);
+		expect(reasonHref({ kind: 'promise', key: 'ABC-5', level: 'epic', on: '2026-11-20', overdue: false }, board)).toBe(
+			'/epics/ABC-5'
+		);
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
 		expect(neededLabel('beyond')).toBe('Needed after next sprint');

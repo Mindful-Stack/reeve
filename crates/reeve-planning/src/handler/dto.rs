@@ -4,15 +4,15 @@ use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, Promise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
+use crate::domain::queue::{PromiseWindow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
     DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
-    GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
-    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    GoalProgressDto, InitiativeDto, ItemType, Key, PromiseDue, PromiseFactDto, PromiseHolder,
+    PromiseState, PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto,
+    SprintCountsDto, SprintDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -409,6 +409,47 @@ impl From<promise::Holder> for PromiseHolder {
             promise::Holder::Epic => PromiseHolder::Epic,
         }
     }
+}
+
+impl From<PromiseState> for promise::State {
+    fn from(s: PromiseState) -> Self {
+        match s {
+            PromiseState::Open => promise::State::Open,
+            PromiseState::Overdue => promise::State::Overdue,
+            PromiseState::Kept => promise::State::Kept,
+            PromiseState::Late => promise::State::Late,
+            PromiseState::Dropped => promise::State::Dropped,
+        }
+    }
+}
+
+impl From<PromiseDue> for promise::Due {
+    fn from(d: PromiseDue) -> Self {
+        match d {
+            PromiseDue::ThisSprint => promise::Due::ThisSprint,
+            PromiseDue::NextSprint => promise::Due::NextSprint,
+            PromiseDue::Later => promise::Due::Later,
+        }
+    }
+}
+
+/// The queue's view of a story's promise (kb/ADR-0025 R7), read back off the DTO the story list already derived on
+/// the queue's snapshot: the holder (the story, or the epic it inherits from), the effective date, the window
+/// `promise::window` gives for its state and due period, and whether it is overdue. None without a promise.
+pub fn promise_window(s: &StoryDto) -> Option<PromiseWindow> {
+    let p = s.promise.as_ref()?;
+    let (key, level) = match p.holder {
+        PromiseHolder::Own => (s.key.clone(), ItemType::Story),
+        PromiseHolder::Epic => (p.epic.as_ref()?.key.clone(), ItemType::Epic),
+    };
+    let state = p.state.map(promise::State::from);
+    Some(PromiseWindow {
+        key,
+        level,
+        on: p.on,
+        window: promise::window(state, p.due.map(Into::into)),
+        overdue: state == Some(promise::State::Overdue),
+    })
 }
 
 /// The story list's `promised` parameter as the domain's filter; `Filter::matches` is the only rule that classifies.

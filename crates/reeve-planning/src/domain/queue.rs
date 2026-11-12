@@ -25,7 +25,20 @@ pub struct AffectedStory {
     pub active_goals: Vec<(i64, String)>,
     /// The draft sprint's goals the story serves.
     pub draft_goals: Vec<(i64, String)>,
+    /// The story's effective promise and the decision window it asks for (kb/ADR-0025 R7); None when unpromised.
+    pub promise: Option<PromiseWindow>,
     pub reasons: Vec<Reason>,
+}
+
+/// An affected story's promise as the queue reads it: the item holding it (`key`, `level`: the story, or the epic it
+/// inherits from), the effective date, the window `promise::window` derived, and whether it is overdue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromiseWindow {
+    pub key: Key,
+    pub level: ItemType,
+    pub on: NaiveDate,
+    pub window: NeededIn,
+    pub overdue: bool,
 }
 
 /// One item on a decision item's lineage, nearest first: the item itself, then its epic or initiative.
@@ -100,18 +113,31 @@ pub fn discovery_item<'a>(
         .find(|l| !l.discovery_marked && l.initiative_horizon.as_deref() == Some(b))
 }
 
+/// The earlier of two windows: `this_sprint` < `next_sprint` < `beyond` < `none` (the declaration order `Ord` follows).
+fn earlier(a: NeededIn, b: NeededIn) -> NeededIn {
+    a.min(b)
+}
+
+/// A story's own window: the earlier of its goals' (`beyond` without any) and its promise's (kb/ADR-0025 R7). A
+/// promise window of `none` (later, or no longer open) never moves it.
 fn story_window(s: &AffectedStory) -> NeededIn {
-    if !s.active_goals.is_empty() {
+    let goals = if !s.active_goals.is_empty() {
         NeededIn::ThisSprint
     } else if !s.draft_goals.is_empty() {
         NeededIn::NextSprint
     } else {
         NeededIn::Beyond
-    }
+    };
+    s.promise
+        .as_ref()
+        .map_or(goals, |p| earlier(goals, p.window))
 }
 
-/// First rule that holds: an affected story serving an active goal; one serving a draft goal, or the item (or an
-/// ancestor) in discovery under the first bucket; any affected story; else none. Closed or satisfied: none.
+/// One candidate per rule, in tie order: an active goal (`this_sprint`), a draft goal (`next_sprint`), the item (or an
+/// ancestor) in discovery under the first bucket (`next_sprint`), the best promise among the affected stories (its
+/// window, only `this_sprint` or `next_sprint`; best by window, then date, then story key number), any affected story
+/// (`beyond`, no reason). The earliest window wins, and within it the first candidate. With no promise the windows
+/// are already in rule order, so this is the first rule that holds. Closed or satisfied: none.
 pub fn needed_in(
     d: &RequiredDecision,
     affected: &[&AffectedStory],
@@ -130,25 +156,43 @@ pub fn needed_in(
                 outcome: o.clone(),
             })
     };
-    if let Some(r) = goal(|s| &s.active_goals) {
-        return (NeededIn::ThisSprint, Some(r));
-    }
-    if let Some(r) = goal(|s| &s.draft_goals) {
-        return (NeededIn::NextSprint, Some(r));
-    }
-    if let Some(l) = discovery {
-        return (
-            NeededIn::NextSprint,
-            Some(NeededInReason::Discovery {
-                key: l.key.clone(),
-                level: l.level,
-            }),
-        );
-    }
-    if !affected.is_empty() {
-        return (NeededIn::Beyond, None);
-    }
-    (NeededIn::None, None)
+    let promise = affected
+        .iter()
+        .filter_map(|s| s.promise.as_ref().map(|p| (s, p)))
+        .filter(|(_, p)| matches!(p.window, NeededIn::ThisSprint | NeededIn::NextSprint))
+        .min_by_key(|(s, p)| (p.window, p.on, s.key.number(), s.key.to_string()))
+        .map(|(_, p)| {
+            (
+                p.window,
+                NeededInReason::Promise {
+                    key: p.key.clone(),
+                    level: p.level,
+                    on: p.on,
+                    overdue: p.overdue,
+                },
+            )
+        });
+    let candidates = [
+        goal(|s| &s.active_goals).map(|r| (NeededIn::ThisSprint, Some(r))),
+        goal(|s| &s.draft_goals).map(|r| (NeededIn::NextSprint, Some(r))),
+        discovery.map(|l| {
+            (
+                NeededIn::NextSprint,
+                Some(NeededInReason::Discovery {
+                    key: l.key.clone(),
+                    level: l.level,
+                }),
+            )
+        }),
+        promise.map(|(w, r)| (w, Some(r))),
+        (!affected.is_empty()).then_some((NeededIn::Beyond, None)),
+    ];
+    // `min_by_key` keeps the first of equal windows, so the candidate order breaks ties.
+    candidates
+        .into_iter()
+        .flatten()
+        .min_by_key(|(w, _)| *w)
+        .unwrap_or((NeededIn::None, None))
 }
 
 /// First row that holds; None for closed or satisfied decisions.
@@ -451,6 +495,7 @@ mod tests {
             urgent: false,
             active_goals: vec![],
             draft_goals: vec![],
+            promise: None,
             reasons,
         }
     }
@@ -1057,6 +1102,198 @@ mod tests {
             vec![
                 (QueueGroup::Open, QueueLane::ThisSprint),
                 (QueueGroup::Blocking, QueueLane::NextSprint)
+            ]
+        );
+    }
+    /// A promise held by story `n` itself, on `on`, asking for `window`.
+    fn own_promise(
+        n: u64,
+        on: NaiveDate,
+        window: NeededIn,
+        overdue: bool,
+    ) -> Option<PromiseWindow> {
+        Some(PromiseWindow {
+            key: key(n),
+            level: ItemType::Story,
+            on,
+            window,
+            overdue,
+        })
+    }
+    fn promise_reason(n: u64, level: ItemType, on: NaiveDate, overdue: bool) -> NeededInReason {
+        NeededInReason::Promise {
+            key: key(n),
+            level,
+            on,
+            overdue,
+        }
+    }
+    fn needed(stories: &[AffectedStory], discovery_on: bool) -> (NeededIn, Option<NeededInReason>) {
+        let l = if discovery_on {
+            lineage_of(1, vec![li(1, ItemType::Epic, false, Some("Now"))])
+        } else {
+            HashMap::new()
+        };
+        needed_of(dec(1, None, oct(1)), stories, &l, Some("Now"))
+    }
+
+    /// An overdue promise on one story outranks a draft goal on another: the earliest lane wins across rules. Catches
+    /// the old first-rule order (goals before anything else) surviving.
+    #[test]
+    fn an_overdue_promise_beats_a_draft_goal() {
+        let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
+        a.draft_goals = vec![(8, "B".into())];
+        let mut b = story(2, DeliveryState::Todo, vec![unchecked(1)]);
+        b.promise = own_promise(2, nov(1).unwrap(), NeededIn::ThisSprint, true);
+        assert_eq!(
+            needed(&[a, b], true),
+            (
+                NeededIn::ThisSprint,
+                Some(promise_reason(2, ItemType::Story, nov(1).unwrap(), true))
+            )
+        );
+    }
+
+    /// A promise due next sprint does not pull a decision an active goal already needs this sprint. Catches the
+    /// promise replacing an earlier reason.
+    #[test]
+    fn a_promise_due_next_sprint_keeps_an_active_goal() {
+        let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
+        a.active_goals = vec![(7, "A".into())];
+        let mut b = story(2, DeliveryState::Todo, vec![unchecked(1)]);
+        b.promise = own_promise(2, nov(20).unwrap(), NeededIn::NextSprint, false);
+        assert_eq!(
+            needed(&[a, b], false),
+            (
+                NeededIn::ThisSprint,
+                Some(NeededInReason::Goal {
+                    goal_id: 7,
+                    outcome: "A".into()
+                })
+            )
+        );
+    }
+
+    /// Inside one lane the reason is the goal, then discovery, then the promise. Catches the promise winning a tie.
+    #[test]
+    fn same_lane_prefers_goal_then_discovery_then_promise() {
+        let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
+        a.draft_goals = vec![(8, "B".into())];
+        let mut b = story(2, DeliveryState::Todo, vec![unchecked(1)]);
+        b.promise = own_promise(2, nov(20).unwrap(), NeededIn::NextSprint, false);
+        let goal = NeededInReason::Goal {
+            goal_id: 8,
+            outcome: "B".into(),
+        };
+        assert_eq!(
+            needed(&[a, b.clone()], true),
+            (NeededIn::NextSprint, Some(goal))
+        );
+        // Discovery and a next-sprint promise: discovery.
+        assert_eq!(
+            needed(&[b], true),
+            (
+                NeededIn::NextSprint,
+                Some(NeededInReason::Discovery {
+                    key: key(1),
+                    level: ItemType::Epic
+                })
+            )
+        );
+    }
+
+    /// A promise due later (window `none`) gives no reason: the decision is beyond, as for any affected story. Catches
+    /// a later promise named as the reason or lifting the decision out of beyond.
+    #[test]
+    fn a_later_promise_gives_beyond_without_a_reason() {
+        let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
+        a.promise = own_promise(1, nov(30).unwrap(), NeededIn::None, false);
+        assert_eq!(needed(&[a], false), (NeededIn::Beyond, None));
+    }
+
+    /// A story inheriting its epic's promise gives a reason naming the epic, not the story. Catches the story's key
+    /// substituted for the holder's.
+    #[test]
+    fn the_reason_names_the_epic_when_inherited() {
+        let mut a = story(7, DeliveryState::Todo, vec![unchecked(1)]);
+        a.promise = Some(PromiseWindow {
+            key: key(5),
+            level: ItemType::Epic,
+            on: nov(10).unwrap(),
+            window: NeededIn::ThisSprint,
+            overdue: false,
+        });
+        assert_eq!(
+            needed(&[a], false),
+            (
+                NeededIn::ThisSprint,
+                Some(promise_reason(5, ItemType::Epic, nov(10).unwrap(), false))
+            )
+        );
+    }
+
+    /// Among promised stories the earliest lane wins, then the earliest date, then the lowest key number. The input
+    /// is ordered against each rule. Catches a first-found or date-only pick.
+    #[test]
+    fn earliest_lane_then_date_then_key_number_picks_the_story() {
+        let mk = |n: u64, d: u32, w: NeededIn| {
+            let mut s = story(n, DeliveryState::Todo, vec![unchecked(1)]);
+            s.promise = own_promise(n, nov(d).unwrap(), w, false);
+            s
+        };
+        // Next sprint with the earliest date loses to this sprint.
+        let stories = [
+            mk(1, 2, NeededIn::NextSprint),
+            mk(2, 9, NeededIn::ThisSprint),
+        ];
+        assert_eq!(
+            needed(&stories, false).1,
+            Some(promise_reason(2, ItemType::Story, nov(9).unwrap(), false))
+        );
+        // Same lane: the earlier date.
+        let stories = [
+            mk(3, 9, NeededIn::ThisSprint),
+            mk(4, 8, NeededIn::ThisSprint),
+        ];
+        assert_eq!(
+            needed(&stories, false).1,
+            Some(promise_reason(4, ItemType::Story, nov(8).unwrap(), false))
+        );
+        // Same lane and date: the lower key number.
+        let stories = [
+            mk(12, 9, NeededIn::ThisSprint),
+            mk(11, 9, NeededIn::ThisSprint),
+        ];
+        assert_eq!(
+            needed(&stories, false).1,
+            Some(promise_reason(11, ItemType::Story, nov(9).unwrap(), false))
+        );
+    }
+
+    /// A held story's own window is the earlier of its goals' and its promise's; a promise of `none` does not count.
+    /// Catches the story's window read from goals only.
+    #[test]
+    fn story_window_counts_the_story_s_own_promise() {
+        let mut a = story(1, DeliveryState::Todo, vec![unchecked(1)]);
+        a.draft_goals = vec![(8, "B".into())];
+        a.promise = own_promise(1, nov(1).unwrap(), NeededIn::ThisSprint, true);
+        let mut b = story(2, DeliveryState::Todo, vec![unchecked(1)]);
+        b.promise = own_promise(2, nov(30).unwrap(), NeededIn::None, false);
+        let mut c = story(3, DeliveryState::Todo, vec![unchecked(1)]);
+        c.active_goals = vec![(7, "A".into())];
+        c.promise = own_promise(3, nov(20).unwrap(), NeededIn::NextSprint, false);
+        let (es, _) = run(vec![dec(1, None, oct(1))], &[a, b, c]);
+        let windows: Vec<(Key, NeededIn)> = es[0]
+            .held
+            .iter()
+            .map(|s| (s.key.clone(), s.needed_in))
+            .collect();
+        assert_eq!(
+            windows,
+            vec![
+                (key(1), NeededIn::ThisSprint),
+                (key(2), NeededIn::Beyond),
+                (key(3), NeededIn::ThisSprint)
             ]
         );
     }

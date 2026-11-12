@@ -246,6 +246,23 @@ describe('DecisionDrawer', () => {
 		expect(words(drawer.querySelector('[data-testid="who"]'))).toBe('dan decides · No date · open 0 days');
 	});
 
+	it('names the promised item: a story opens its drawer over this view, an epic its page', async () => {
+		for (const [level, key, href] of [
+			['story', 'ABC-12', '/board?sort=rank&story=ABC-12'],
+			['epic', 'ABC-5', '/epics/ABC-5']
+		] as const) {
+			const drawer = await open(
+				entry({ needed_in: 'this_sprint', needed_in_reason: { kind: 'promise', key, level, on: '2026-11-10', overdue: true } })
+			);
+			const a = drawer.querySelector<HTMLAnchorElement>('.strip .needed a');
+			expect(a?.getAttribute('href')).toBe(href);
+			expect(words(drawer.querySelector('.strip .needed'))).toBe(`Needed this sprint · promised by 10 Nov, overdue: ${key}`);
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
+	});
+
 	it('links the item in discovery to its page, by its level', async () => {
 		for (const [level, href] of [
 			['initiative', '/initiatives/GRA-12'],

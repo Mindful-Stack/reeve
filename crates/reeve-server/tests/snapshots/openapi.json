@@ -166,7 +166,7 @@
           },
           "needed_in": {
             "$ref": "#/components/schemas/NeededIn",
-            "description": "The story's own window, by its goals. Servers always send it; JSON without it reads as `none`."
+            "description": "The story's own window: the earlier of its goals' and its promise's (kb/ADR-0025 R7). Servers always send it; JSON without it reads as `none`."
           },
           "owner": {
             "description": "Servers always send it; JSON without it reads as no owner.",
@@ -2318,7 +2318,7 @@
         "type": "string"
       },
       "NeededInReason": {
-        "description": "Why a decision is needed this sprint or next.",
+        "description": "Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason\nthis build does not know.",
         "oneOf": [
           {
             "description": "An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).",
@@ -2363,6 +2363,53 @@
             "required": [
               "key",
               "level",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An affected story is promised (kb/ADR-0025 R7); `key`/`level` name the item holding the promise (the story, or\nthe epic it inherits from), `on` the effective date, and `overdue` whether that date has passed unfinished.",
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/Key"
+              },
+              "kind": {
+                "enum": [
+                  "promise"
+                ],
+                "type": "string"
+              },
+              "level": {
+                "$ref": "#/components/schemas/ItemType"
+              },
+              "on": {
+                "format": "date",
+                "type": "string"
+              },
+              "overdue": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "level",
+              "on",
+              "overdue",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A reason added after this client was built.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "kind"
             ],
             "type": "object"

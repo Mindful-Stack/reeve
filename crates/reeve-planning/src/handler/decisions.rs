@@ -469,6 +469,7 @@ impl Handlers {
                     .map(|g| (g.id, g.outcome.clone()))
                     .collect(),
                 urgent: !s.story.urgent_sources.is_empty(),
+                promise: dto::promise_window(&s.story),
                 key: s.story.key,
                 title: s.story.title,
                 kind: s.story.kind,

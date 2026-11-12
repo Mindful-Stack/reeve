@@ -1234,7 +1234,7 @@ export interface components {
             key: components["schemas"]["Key"];
             /** @description Servers always send it; JSON without it (an older server) reads as a story. */
             kind: components["schemas"]["Kind"];
-            /** @description The story's own window, by its goals. Servers always send it; JSON without it reads as `none`. */
+            /** @description The story's own window: the earlier of its goals' and its promise's (kb/ADR-0025 R7). Servers always send it; JSON without it reads as `none`. */
             needed_in: components["schemas"]["NeededIn"];
             /** @description Servers always send it; JSON without it reads as no owner. */
             owner: string | null;
@@ -1844,7 +1844,10 @@ export interface components {
          * @enum {string}
          */
         NeededIn: "this_sprint" | "next_sprint" | "beyond" | "none";
-        /** @description Why a decision is needed this sprint or next. */
+        /**
+         * @description Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason
+         *     this build does not know.
+         */
         NeededInReason: {
             /** Format: int64 */
             goal_id: number;
@@ -1856,6 +1859,17 @@ export interface components {
             /** @enum {string} */
             kind: "discovery";
             level: components["schemas"]["ItemType"];
+        } | {
+            key: components["schemas"]["Key"];
+            /** @enum {string} */
+            kind: "promise";
+            level: components["schemas"]["ItemType"];
+            /** Format: date */
+            on: string;
+            overdue: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
         };
         /** @description What an open, unsatisfied decision needs next. The first that holds wins, in declaration order. */
         NextStep: {

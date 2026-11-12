@@ -114,7 +114,8 @@ pub enum NeededIn {
     None,
 }
 
-/// Why a decision is needed this sprint or next.
+/// Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason
+/// this build does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NeededInReason {
@@ -129,6 +130,19 @@ pub enum NeededInReason {
         #[schema(required = true)]
         level: ItemType,
     },
+    /// An affected story is promised (kb/ADR-0025 R7); `key`/`level` name the item holding the promise (the story, or
+    /// the epic it inherits from), `on` the effective date, and `overdue` whether that date has passed unfinished.
+    Promise {
+        key: Key,
+        level: ItemType,
+        on: chrono::NaiveDate,
+        #[serde(default)]
+        #[schema(required = true)]
+        overdue: bool,
+    },
+    /// A reason added after this client was built.
+    #[serde(other)]
+    Unknown,
 }
 
 fn initiative_level() -> ItemType {

@@ -8539,3 +8539,94 @@ async fn promised_selects_exact_sets() {
         );
     }
 }
+
+/// One decision on an epic blocks four stories: a control promised 10 Nov and unfinished (overdue on 12 Nov), one
+/// promised the same day and done on 9 Nov (kept), one dropped, and one without a promise. Only the unfinished promise
+/// pulls the decision: it is needed this sprint with the control as the reason. Once the control is done the decision
+/// falls to beyond (the unpromised story keeps it affected); an overdue promise on the epic, which that story inherits,
+/// pulls it back with the epic as the reason. The decision's due date is never written (kb/ADR-0025 R7). Catches done
+/// promises pulling decisions, the reason naming the wrong item, and the queue writing a due date.
+#[tokio::test]
+async fn only_unfinished_promises_pull_decisions() {
+    use reeve_protocol::{NeededIn, NeededInReason, PromiseState, QueueLane};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let c = promise_ctx();
+    let (epic, ss) = marked_epic_with_stories(&h, &c, "pp", 4).await;
+    let (control, kept, dropped) = (ss[0].key(), ss[1].key(), ss[2].key());
+    let due = Some(nov(30));
+    let d = h
+        .require_decision(&c, "pp-d", &epic, "D", "dan@example.com", due, None)
+        .await
+        .unwrap();
+    for k in [control, kept, dropped] {
+        let p = Promise::from_persisted(nov(10), "pm@x".into(), c.now, None);
+        set_promise(&h, ItemType::Story, k, &p).await;
+    }
+    mark_done_at(
+        &h,
+        kept,
+        Utc.with_ymd_and_hms(2026, 11, 9, 9, 0, 0).unwrap(),
+    )
+    .await;
+    mark_done_at(
+        &h,
+        dropped,
+        Utc.with_ymd_and_hms(2026, 11, 11, 9, 0, 0).unwrap(),
+    )
+    .await;
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = $1")
+        .bind(dropped.to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    for (k, want) in [(kept, PromiseState::Kept), (dropped, PromiseState::Dropped)] {
+        let p = h.story_dto(k, c.now).await.unwrap().promise.unwrap();
+        assert_eq!(p.state, Some(want), "{k}");
+    }
+
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.lane, e.needed_in_reason.clone()),
+        (
+            NeededIn::ThisSprint,
+            QueueLane::ThisSprint,
+            Some(NeededInReason::Promise {
+                key: control.clone(),
+                level: ItemType::Story,
+                on: nov(10),
+                overdue: true
+            })
+        )
+    );
+    assert_eq!(e.decision.due(), due);
+
+    mark_done_at(&h, control, c.now).await;
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.lane, e.needed_in_reason.clone()),
+        (NeededIn::Beyond, QueueLane::Beyond, None)
+    );
+    assert_eq!(e.decision.due(), due);
+
+    // The epic's promise, inherited by the unpromised story, pulls it back and the reason names the epic.
+    let p = Promise::from_persisted(nov(11), "lead@x".into(), c.now, None);
+    set_promise(&h, ItemType::Epic, &epic, &p).await;
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.needed_in_reason.clone()),
+        (
+            NeededIn::ThisSprint,
+            Some(NeededInReason::Promise {
+                key: epic.clone(),
+                level: ItemType::Epic,
+                on: nov(11),
+                overdue: true
+            })
+        )
+    );
+    assert_eq!(e.decision.due(), due);
+}

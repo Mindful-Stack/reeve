@@ -24,6 +24,15 @@ export function month(ym: string): string {
 	return m && i >= 0 && i < 12 ? `${MONTHS[i]} ${m[1]}` : ym;
 }
 
+/** "2026-11-20" → "20 Nov". Built from the string's parts, never a `Date`, so no time zone can shift the day.
+ *  Anything else is returned unchanged. */
+export function dayLabel(iso: string): string {
+	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+	const i = m ? Number(m[2]) - 1 : -1;
+	const d = m ? Number(m[3]) : 0;
+	return m && i >= 0 && i < 12 && d >= 1 && d <= 31 ? `${d} ${MONTHS[i]}` : iso;
+}
+
 /** The local part of an email address. */
 export function short(email: string): string {
 	const at = email.indexOf('@');

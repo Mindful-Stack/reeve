@@ -781,3 +781,39 @@ fn set_promise_body_parses() {
         "an unknown field is refused"
     );
 }
+
+/// The promise reason carries the holder's key and level, the effective date and `overdue`, and round-trips; JSON
+/// without `overdue` reads as false.
+#[test]
+fn needed_in_reason_promise_carries_every_field() {
+    let r = NeededInReason::Promise {
+        key: k("ABC-5"),
+        level: ItemType::Epic,
+        on: ymd(2026, 11, 10),
+        overdue: true,
+    };
+    let want = json!({"kind": "promise", "key": "ABC-5", "level": "epic", "on": "2026-11-10", "overdue": true});
+    assert_eq!(v!(&r), want);
+    assert_eq!(serde_json::from_value::<NeededInReason>(want).unwrap(), r);
+    assert_eq!(
+        serde_json::from_value::<NeededInReason>(
+            json!({"kind": "promise", "key": "ABC-5", "level": "story", "on": "2026-11-10"})
+        )
+        .unwrap(),
+        NeededInReason::Promise {
+            key: k("ABC-5"),
+            level: ItemType::Story,
+            on: ymd(2026, 11, 10),
+            overdue: false,
+        }
+    );
+}
+
+/// A reason kind this build does not know decodes to `Unknown` rather than failing the whole queue.
+#[test]
+fn an_unknown_needed_in_reason_decodes_to_unknown() {
+    assert_eq!(
+        serde_json::from_value::<NeededInReason>(json!({"kind": "future_thing", "x": 1})).unwrap(),
+        NeededInReason::Unknown
+    );
+}

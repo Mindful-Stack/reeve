@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { age, errorMessage, month, short } from './format.ts';
+import { age, dayLabel, errorMessage, month, short } from './format.ts';
 
 const now = Date.parse('2026-10-26T12:00:00Z');
 const ago = (days: number) => new Date(now - days * 86_400_000).toISOString();
@@ -36,6 +36,17 @@ describe('month', () => {
 	it('returns anything else unchanged', () => {
 		expect(month('2026-13')).toBe('2026-13');
 		expect(month('soon')).toBe('soon');
+	});
+});
+
+describe('dayLabel', () => {
+	// Built from the string's parts, so no time zone can shift the day.
+	it('formats a date as day and month', () => expect(dayLabel('2026-11-20')).toBe('20 Nov'));
+	it('drops the leading zero', () => expect(dayLabel('2026-01-01')).toBe('1 Jan'));
+	it('returns anything else unchanged', () => {
+		expect(dayLabel('2026-13-01')).toBe('2026-13-01');
+		expect(dayLabel('2026-11')).toBe('2026-11');
+		expect(dayLabel('soon')).toBe('soon');
 	});
 });
 

@@ -177,7 +177,7 @@ pub struct AffectedStoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub urgent: bool,
-    /// The story's own window, by its goals. Servers always send it; JSON without it reads as `none`.
+    /// The story's own window: the earlier of its goals' and its promise's (kb/ADR-0025 R7). Servers always send it; JSON without it reads as `none`.
     #[serde(default)]
     #[schema(required = true)]
     pub needed_in: NeededIn,
