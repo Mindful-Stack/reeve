@@ -100,7 +100,10 @@ async fn seed(h: &Harness) -> Seeded {
     .await;
     let story = |idem: &str, title: &str| json!({"idempotency_key":idem,"title":title,"kind":"story","epic":ek,"criteria":["works"],"labels":["backup"]});
     let todo = key(&post(app, t, "/api/v1/stories", story("s-todo", "Todo")).await);
-    let active = key(&post(app, t, "/api/v1/stories", story("s-active", "Active")).await);
+    // Owned by someone else, so it still blocks `todo` for the automation token's user (kb/ADR-0027 R5).
+    let mut active_body = story("s-active", "Active");
+    active_body["owner"] = json!("mia@example.com");
+    let active = key(&post(app, t, "/api/v1/stories", active_body).await);
     let done = key(&post(app, t, "/api/v1/stories", story("s-done", "Done")).await);
     // Through the gate: both ancestors discovered, one criterion, no decision, no blocker.
     post(
