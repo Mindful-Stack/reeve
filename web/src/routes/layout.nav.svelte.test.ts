@@ -391,6 +391,23 @@ describe('Report', () => {
 		expect(net.gets).not.toContain('GET /api/v1/epics/ABC-30');
 	});
 
+	it('started with a drawer open, keeps the page and the story in the origin, and prefills the epic only on an epic page', async () => {
+		session.me = me();
+		await open('/board?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.origin.path).toBe('/board?story=ABC-1');
+		expect(report.draft!.epic).toBeNull(); // the story never prefills the chip
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		discardDraft();
+		await open('/epics/ABC-30?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.epic).toEqual({ key: 'ABC-30', title: 'Payments' }); // the page's epic, not the story's
+	});
+
 	it('keeps a notice after a create until another page is opened, and links the key', async () => {
 		session.me = me();
 		await open('/board');

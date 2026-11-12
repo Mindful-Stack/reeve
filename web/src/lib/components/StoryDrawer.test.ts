@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { activity, decision, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
-import { discardDraft, report } from '#lib/report.svelte.ts';
+import { discardDraft } from '#lib/report.svelte.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
