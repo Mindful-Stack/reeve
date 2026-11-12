@@ -1,5 +1,6 @@
 //! The `reeve` CLI. `main.rs` is the binary; the library target exists so the TUI's integration tests can drive
 //! `tui::Driver`. Every module except `tui` stays private to the crate.
+mod atomic_file;
 mod client;
 mod commands;
 mod config;
