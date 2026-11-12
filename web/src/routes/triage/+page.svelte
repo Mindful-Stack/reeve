@@ -246,7 +246,6 @@
 	/** Undo brought `s` back: it rejoins the queue here, as `finished()` took it out, and becomes current. */
 	function returned(s: Story): void {
 		loads++; // a reload in flight read the queue without it; the write's own live refetch follows
-
 		queue = byKey([...queue.filter((x) => x.key !== s.key), s]);
 		select(s.key);
 	}
