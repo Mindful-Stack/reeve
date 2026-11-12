@@ -1522,6 +1522,7 @@ mod tests {
                 key: "ABC-7".parse().unwrap(),
                 title: "Demo me".into(),
             }],
+            promises: vec![],
         }
     }
 

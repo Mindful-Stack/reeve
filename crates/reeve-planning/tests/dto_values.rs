@@ -364,6 +364,7 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
         &[goal(42, 5)],
         &[link(42, "ABC-9")],
         Some(&summary()),
+        &[],
         20
     ));
     assert_eq!(
@@ -384,7 +385,8 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
                 {"key": "ABC-103", "title": "title ABC-103"},
                 {"key": "ABC-104", "title": "title ABC-104"},
                 {"key": "ABC-102", "title": "title ABC-102"},
-            ]
+            ],
+            "promises": []
         })
     );
 }
@@ -396,6 +398,7 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
         &[],
         &[],
         None,
+        &[],
         17
     ));
     assert_eq!(
@@ -404,6 +407,7 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
     );
     assert_eq!(got["demo"], json!([]));
     assert_eq!(got["upkeep_line"], json!(17));
+    assert_eq!(got["promises"], json!([]));
     assert_eq!(got["sprint"]["warnings"], json!(["no_goals"]));
 }
 
@@ -683,6 +687,70 @@ fn epic_promise_dto_carries_every_field() {
         epic_promise_field(None, &promise_clock(ymd(2026, 11, 21))),
         None
     );
+}
+
+/// A sprint's promise row: the epic's earlier date holds, so `to` is the epic's recipient (not the story's own), the
+/// epic's key is named, and the story, done two days after it, is late with its done day. Every field distinct.
+#[test]
+fn sprint_promise_dto_carries_every_field() {
+    let own = kept_promise(ymd(2026, 11, 22), "pm@x", t(5), Some("Acme"));
+    let epic = kept_promise(ymd(2026, 11, 18), "lead@x", t(4), Some("Beta"));
+    let epic_key = k("ABC-7");
+    let facts = StoryFacts {
+        delivery: DeliveryState::Done,
+        resolution: Some(Resolution::Completed),
+        done_at: Some(Utc.with_ymd_and_hms(2026, 11, 20, 23, 30, 0).unwrap()),
+        own: Some(&own),
+        epic: Some((&epic_key, &epic)),
+    };
+    let promise = story_promise(&facts, &promise_clock(ymd(2026, 11, 25))).unwrap();
+    let row = SprintPromise {
+        key: k("ABC-9"),
+        title: "Ship it".into(),
+        promise,
+    };
+    assert_eq!(
+        v!(sprint_promise_dto(&row)),
+        json!({
+            "key": "ABC-9", "title": "Ship it", "on": "2026-11-18", "to": "Beta", "holder": "epic",
+            "epic": "ABC-7", "state": "late", "done_on": "2026-11-20", "days": 2
+        })
+    );
+    let own_row = SprintPromise {
+        key: k("ABC-9"),
+        title: "Ship it".into(),
+        promise: story_promise(
+            &StoryFacts {
+                epic: None,
+                ..facts
+            },
+            &promise_clock(ymd(2026, 11, 25)),
+        )
+        .unwrap(),
+    };
+    assert_eq!(
+        v!(sprint_promise_dto(&own_row)),
+        json!({
+            "key": "ABC-9", "title": "Ship it", "on": "2026-11-22", "to": "Acme", "holder": "own",
+            "epic": null, "state": "kept", "done_on": "2026-11-20", "days": null
+        })
+    );
+}
+
+/// An older server's sprint view (no `promises`) still reads, as none.
+#[test]
+fn old_sprint_view_json_without_promises_parses() {
+    let view = json!({
+        "sprint": {
+            "id": 5, "state": "active", "starts_on": "2026-11-02", "ends_on": "2026-11-16",
+            "opened_at": "2026-11-09T03:00:00Z", "closed_at": null, "version": 3, "warnings": [], "goals": []
+        },
+        "counts": {"goals": [], "completed": 0, "upkeep_completed": 0},
+        "upkeep_line": 20,
+        "demo": []
+    });
+    let v: SprintViewDto = serde_json::from_value(view).unwrap();
+    assert_eq!(v.promises, vec![]);
 }
 
 /// An older server's story and epic (no `promise`) still read, as no promise.

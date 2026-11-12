@@ -1,5 +1,6 @@
 //! Sprint and goal wire types (kb/ADR-0014): enums, counts, views and requests.
 use crate::ids::{Key, KeyRef};
+use crate::promise::SprintPromiseDto;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -140,6 +141,11 @@ pub struct SprintViewDto {
     /// `[sprints] upkeep_line`: the team's reference percentage for the upkeep share (not a budget).
     pub upkeep_line: u8,
     pub demo: Vec<DemoStoryDto>,
+    /// The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
+    /// sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub promises: Vec<SprintPromiseDto>,
 }
 
 /// `GET /sprints`: the active sprint with its numbers, the draft, and the closed sprints newest first.

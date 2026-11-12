@@ -40,10 +40,16 @@ async fn list(
     let line = s.handlers.settings.upkeep_line;
     Ok(ok(SprintsDto {
         today: Some(now.date_naive()),
-        active: x
-            .active
-            .as_ref()
-            .map(|a| sprint_view_dto(a, &x.goals, &x.links, x.active_summary.as_ref(), line)),
+        active: x.active.as_ref().map(|a| {
+            sprint_view_dto(
+                a,
+                &x.goals,
+                &x.links,
+                x.active_summary.as_ref(),
+                &x.promises,
+                line,
+            )
+        }),
         draft: x.draft.as_ref().map(|d| sprint_dto(d, &x.goals, &x.links)),
         closed: x
             .closed
@@ -61,12 +67,13 @@ async fn get(
     c: Caller,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<Response<SprintViewDto>>, AppError> {
-    let (sp, goals, links, summary) = s.handlers.sprint_view(id, c.ctx().now).await?;
+    let (sp, goals, links, summary, promises) = s.handlers.sprint_view(id, c.ctx().now).await?;
     Ok(ok(sprint_view_dto(
         &sp,
         &goals,
         &links,
         summary.as_ref(),
+        &promises,
         s.handlers.settings.upkeep_line,
     )))
 }

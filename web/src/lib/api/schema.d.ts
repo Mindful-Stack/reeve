@@ -2868,6 +2868,11 @@ export interface components {
             value: {
                 counts: components["schemas"]["SprintCountsDto"];
                 demo: components["schemas"]["DemoStoryDto"][];
+                /**
+                 * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
+                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+                 */
+                promises: components["schemas"]["SprintPromiseDto"][];
                 sprint: components["schemas"]["SprintDto"];
                 /**
                  * Format: int32
@@ -3573,6 +3578,33 @@ export interface components {
             /** @description Advice from the goal count, for a draft or the active sprint only; a closed sprint has none. */
             warnings: components["schemas"]["SprintWarning"][];
         };
+        /**
+         * @description One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned
+         *     end and up to this sprint's, derived on read. `to` is the recipient of the promise that sets the date.
+         */
+        SprintPromiseDto: {
+            /**
+             * Format: int32
+             * @description Days overdue or late, computed by the server.
+             */
+            days?: number | null;
+            /**
+             * Format: date
+             * @description The UTC day the story was done, when it was.
+             */
+            done_on?: string | null;
+            epic?: null | components["schemas"]["Key"];
+            holder: components["schemas"]["PromiseHolder"];
+            key: components["schemas"]["Key"];
+            /**
+             * Format: date
+             * @description The effective date (R3).
+             */
+            on: string;
+            state: components["schemas"]["PromiseState"];
+            title: string;
+            to?: string | null;
+        };
         /** @enum {string} */
         SprintState: "draft" | "active" | "closed";
         /**
@@ -3584,6 +3616,11 @@ export interface components {
         SprintViewDto: {
             counts: components["schemas"]["SprintCountsDto"];
             demo: components["schemas"]["DemoStoryDto"][];
+            /**
+             * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
+             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+             */
+            promises: components["schemas"]["SprintPromiseDto"][];
             sprint: components["schemas"]["SprintDto"];
             /**
              * Format: int32

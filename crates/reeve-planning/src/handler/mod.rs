@@ -22,7 +22,8 @@ pub use attachments::{MAX_CLAIM, MAX_UNCLAIMED_BYTES};
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
 pub use dto::{
-    attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_view_dto, story_promise_field,
+    attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_promise_dto, sprint_view_dto,
+    story_promise_field,
 };
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;

@@ -2,7 +2,7 @@
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
-use crate::domain::promise::{self, Clock, Promise, StoryPromise, epic_due};
+use crate::domain::promise::{self, Clock, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{PromiseWindow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
@@ -12,7 +12,8 @@ use reeve_protocol::{
     DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
     GoalProgressDto, InitiativeDto, ItemType, Key, PromiseDue, PromiseFactDto, PromiseHolder,
     PromiseState, PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto,
-    SprintCountsDto, SprintDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto, StoryDto,
+    StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -258,6 +259,7 @@ pub fn sprint_view_dto(
     goals: &[Goal],
     links: &[GoalLink],
     summary: Option<&Summary>,
+    promises: &[SprintPromise],
     upkeep_line: u8,
 ) -> SprintViewDto {
     SprintViewDto {
@@ -277,7 +279,33 @@ pub fn sprint_view_dto(
                     .collect()
             })
             .unwrap_or_default(),
+        promises: promises.iter().filter_map(sprint_promise_dto).collect(),
     }
+}
+
+/// One row of a sprint's promise list on the wire: the effective date, the recipient of the promise that sets it, the
+/// epic's key when the epic's promise holds, and the derived state. None for a row without a state, which the handler
+/// never lists.
+pub fn sprint_promise_dto(p: &SprintPromise) -> Option<SprintPromiseDto> {
+    let sp = &p.promise;
+    let (to, epic) = match sp.holder {
+        promise::Holder::Own => (sp.own.as_ref().and_then(|o| o.to()), None),
+        promise::Holder::Epic => match &sp.epic {
+            Some((k, e)) => (e.to(), Some(k.clone())),
+            None => (None, None),
+        },
+    };
+    Some(SprintPromiseDto {
+        key: p.key.clone(),
+        title: p.title.clone(),
+        on: sp.on,
+        to: to.map(str::to_string),
+        holder: sp.holder.into(),
+        epic,
+        state: sp.state?.into(),
+        done_on: sp.done_on,
+        days: sp.days,
+    })
 }
 
 /// The two urgency fields every item DTO carries: the mark stored on `key` (active or expired) and the active marks that

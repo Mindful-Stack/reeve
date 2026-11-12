@@ -106,3 +106,22 @@ pub enum PromisedFilter {
     Overdue,
     Any,
 }
+
+/// One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned
+/// end and up to this sprint's, derived on read. `to` is the recipient of the promise that sets the date.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SprintPromiseDto {
+    pub key: Key,
+    pub title: String,
+    /// The effective date (R3).
+    pub on: NaiveDate,
+    pub to: Option<String>,
+    pub holder: PromiseHolder,
+    /// The epic whose promise this is, when `holder` is `epic`.
+    pub epic: Option<Key>,
+    pub state: PromiseState,
+    /// The UTC day the story was done, when it was.
+    pub done_on: Option<NaiveDate>,
+    /// Days overdue or late, computed by the server.
+    pub days: Option<u32>,
+}

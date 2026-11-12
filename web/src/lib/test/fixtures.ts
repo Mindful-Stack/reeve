@@ -207,6 +207,7 @@ export function sprintView(s: Sprint = sprint(), over: Partial<SprintView> = {})
 		},
 		demo: [],
 		upkeep_line: 20,
+		promises: [],
 		...over
 	};
 }

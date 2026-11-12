@@ -5833,6 +5833,13 @@
                     },
                     "type": "array"
                   },
+                  "promises": {
+                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.",
+                    "items": {
+                      "$ref": "#/components/schemas/SprintPromiseDto"
+                    },
+                    "type": "array"
+                  },
                   "sprint": {
                     "$ref": "#/components/schemas/SprintDto"
                   },
@@ -5847,7 +5854,8 @@
                   "sprint",
                   "counts",
                   "upkeep_line",
-                  "demo"
+                  "demo",
+                  "promises"
                 ],
                 "type": "object"
               }
@@ -8340,6 +8348,70 @@
         ],
         "type": "object"
       },
+      "SprintPromiseDto": {
+        "description": "One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned\nend and up to this sprint's, derived on read. `to` is the recipient of the promise that sets the date.",
+        "properties": {
+          "days": {
+            "description": "Days overdue or late, computed by the server.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "done_on": {
+            "description": "The UTC day the story was done, when it was.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "epic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Key",
+                "description": "The epic whose promise this is, when `holder` is `epic`."
+              }
+            ]
+          },
+          "holder": {
+            "$ref": "#/components/schemas/PromiseHolder"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "on": {
+            "description": "The effective date (R3).",
+            "format": "date",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PromiseState"
+          },
+          "title": {
+            "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "on",
+          "holder",
+          "state"
+        ],
+        "type": "object"
+      },
       "SprintState": {
         "enum": [
           "draft",
@@ -8360,6 +8432,13 @@
             },
             "type": "array"
           },
+          "promises": {
+            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.",
+            "items": {
+              "$ref": "#/components/schemas/SprintPromiseDto"
+            },
+            "type": "array"
+          },
           "sprint": {
             "$ref": "#/components/schemas/SprintDto"
           },
@@ -8374,7 +8453,8 @@
           "sprint",
           "counts",
           "upkeep_line",
-          "demo"
+          "demo",
+          "promises"
         ],
         "type": "object"
       },

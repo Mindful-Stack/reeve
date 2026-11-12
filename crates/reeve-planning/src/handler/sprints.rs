@@ -3,6 +3,7 @@
 //! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
 //! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
 use super::*;
+use crate::domain::promise::{SprintPromise, StoryFacts, in_sprint, previous_end, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -18,6 +19,8 @@ pub struct Sprints {
     pub goals: Vec<Goal>,
     pub links: Vec<GoalLink>,
     pub active_summary: Option<sprint::Summary>,
+    /// The active sprint's promises (kb/ADR-0025 R8), by date then key; empty without an active sprint.
+    pub promises: Vec<SprintPromise>,
 }
 
 fn allowed(s: &Sprint, op: Op) -> Result<(), HandlerError> {
@@ -602,6 +605,7 @@ impl Handlers {
             goals,
             links,
             active_summary: None,
+            promises: vec![],
         };
         for s in all {
             match s.state {
@@ -612,18 +616,29 @@ impl Handlers {
         }
         if let Some(a) = &out.active {
             out.active_summary = self.summary_in(tx, a, &out.goals, &out.links, now).await?;
+            out.promises = self.sprint_promises_in(tx, a, now).await?;
         }
         Ok(out)
     }
 
-    /// One sprint with its goals and links, and its numbers: over `[opened_at, closed_at)` for a closed sprint (`now` is
-    /// ignored), over `[opened_at, now)` for the active one, and None for a draft, which has no window. Any sprint,
-    /// closed ones included, is derived on read (kb/ADR-0014 R6).
+    /// One sprint with its goals and links, its numbers and its promises. The numbers are over `[opened_at, closed_at)`
+    /// for a closed sprint, over `[opened_at, now)` for the active one, and None for a draft, which has no window. The
+    /// promises (kb/ADR-0025 R8) follow the planned ends, classified against `now`. Any sprint, closed ones included, is
+    /// derived on read (kb/ADR-0014 R6).
     pub async fn sprint_view(
         &self,
         id: i64,
         now: DateTime<Utc>,
-    ) -> Result<(Sprint, Vec<Goal>, Vec<GoalLink>, Option<sprint::Summary>), HandlerError> {
+    ) -> Result<
+        (
+            Sprint,
+            Vec<Goal>,
+            Vec<GoalLink>,
+            Option<sprint::Summary>,
+            Vec<SprintPromise>,
+        ),
+        HandlerError,
+    > {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -631,10 +646,63 @@ impl Handlers {
         let out = async {
             let (s, goals, links) = self.sprint_with_goals_in(&mut tx, id).await?;
             let summary = self.summary_in(&mut tx, &s, &goals, &links, now).await?;
-            Ok((s, goals, links, summary))
+            let promises = self.sprint_promises_in(&mut tx, &s, now).await?;
+            Ok((s, goals, links, summary, promises))
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// kb/ADR-0025 R8: the sprint's promises, derived on read and never stored. The effective dates after the previous
+    /// sprint's planned end (`previous_end` over the other non-draft sprints) and up to this sprint's own planned end
+    /// (`in_sprint`), whatever the sprint's start or close: a sprint that closes late does not keep the promises due after
+    /// its planned end. The reads give candidates by the story's or its epic's date; `story_promise` decides inheritance
+    /// and the effective date, so a story that does not inherit its epic's date is judged on its own. A row without a
+    /// state (done without `done_at`) is left out. By date, then key.
+    async fn sprint_promises_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        s: &Sprint,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<SprintPromise>, HandlerError> {
+        let others: Vec<(i64, chrono::NaiveDate)> = self
+            .ports
+            .sprints
+            .sprints_in(tx)
+            .await?
+            .iter()
+            .filter(|o| o.id != s.id && o.state != SprintState::Draft)
+            .map(|o| (o.id, o.ends_on))
+            .collect();
+        let prev = previous_end((s.id, s.ends_on), &others);
+        let clock = self.promise_clock_in(tx, now).await?;
+        let rows = self
+            .ports
+            .reads
+            .promised_between_in(tx, prev, s.ends_on)
+            .await?;
+        // The reads order by key; the stable sort by date keeps that order within a date.
+        let mut out: Vec<SprintPromise> = rows
+            .into_iter()
+            .filter_map(|r| {
+                let facts = StoryFacts {
+                    delivery: r.delivery,
+                    resolution: r.resolution,
+                    done_at: r.row.done_at,
+                    own: r.row.own.as_ref(),
+                    epic: r.row.epic.as_ref().map(|(k, p)| (k, p)),
+                };
+                let promise = story_promise(&facts, &clock)
+                    .filter(|sp| sp.state.is_some() && in_sprint(sp.on, prev, s.ends_on))?;
+                Some(SprintPromise {
+                    key: r.key,
+                    title: r.title,
+                    promise,
+                })
+            })
+            .collect();
+        out.sort_by_key(|p| p.promise.on);
+        Ok(out)
     }
 
     /// One sprint with its goals and links, from one read-only snapshot.
