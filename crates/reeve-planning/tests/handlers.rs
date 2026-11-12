@@ -8686,6 +8686,268 @@ async fn open_promises_pull_decisions_by_due_period() {
     assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
 }
 
+/// Waits until exactly `n` sessions of this database wait on a lock.
+async fn wait_until_waiting(pool: &sqlx::PgPool, n: i64) {
+    tokio::time::timeout(PAUSE, async {
+        loop {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting == n {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{n} calls never queued on the row lock the test took"));
+}
+
+/// Two real promise writes queued on one row (a set then a set, a set then a clear, on a story and an epic): both
+/// commit, each logs the promise the other left as its `previous`, and the stored promise is what the last entry left.
+/// Row locks queue in order, so the first queued write goes first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_promise_writes_chain_their_entries() {
+    use serde_json::{Value, json};
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    let mut cases = Vec::new();
+    for (n, second_sets) in [(0, true), (1, false)] {
+        cases.push((
+            ItemType::Story,
+            plain_story(&h, &c, &format!("s{n}"), "S", None).await,
+            second_sets,
+        ));
+        cases.push((
+            ItemType::Epic,
+            h.create_epic(&c, &format!("e{n}"), "E", None, "", None)
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+            second_sets,
+        ));
+    }
+    for (item, k, second_sets) in cases {
+        let name = format!(
+            "{item:?} then {}",
+            if second_sets { "set" } else { "clear" }
+        );
+        h.set_promise(
+            &c,
+            item,
+            &k,
+            promise_body(Some(nov(20)), None, Some("Acme")),
+        )
+        .await
+        .unwrap();
+        let mut w = pool.begin().await.unwrap();
+        sqlx::query(&format!(
+            "SELECT 1 FROM {} WHERE key = $1 FOR UPDATE",
+            promise_table(item)
+        ))
+        .bind(k.to_string())
+        .execute(&mut *w)
+        .await
+        .unwrap();
+        let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
+        let first = tokio::spawn(async move {
+            hh.set_promise(
+                &cc,
+                item,
+                &kk,
+                promise_body(Some(nov(27)), None, Some("Bolt")),
+            )
+            .await
+        });
+        wait_until_waiting(&pool, 1).await;
+        let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
+        let second = tokio::spawn(async move {
+            if second_sets {
+                hh.set_promise(&cc, item, &kk, promise_body(Some(nov(30)), None, None))
+                    .await
+            } else {
+                hh.clear_promise(&cc, item, &kk).await
+            }
+        });
+        wait_until_waiting(&pool, 2).await;
+        w.commit().await.unwrap();
+        for call in [first, second] {
+            tokio::time::timeout(PAUSE, call)
+                .await
+                .expect("a write never finished")
+                .unwrap()
+                .unwrap();
+        }
+        let entries = promise_entries(&pool, &k).await;
+        assert_eq!(entries.len(), 3, "{name}: {entries:?}");
+        // Each entry's `previous` is what the entry before it left; the stored promise is what the last one left.
+        let mut left = Value::Null;
+        for (_, action, payload) in &entries {
+            assert_eq!(payload["previous"], left, "{name}: {entries:?}");
+            left = match action.as_str() {
+                "promised" => json!({"on": payload["on"], "to": payload["to"]}),
+                "promise_cleared" => Value::Null,
+                other => panic!("{name}: unexpected action {other}"),
+            };
+        }
+        let now = stored(&pool, item, &k)
+            .await
+            .map_or(Value::Null, |(on, _, _, to)| json!({"on": on, "to": to}));
+        assert_eq!(now, left, "{name}");
+        // The first queued write went first: its entry names the first promise, the second's names it.
+        let it = if item == ItemType::Story {
+            "story"
+        } else {
+            "epic"
+        };
+        let bolt = json!({"on": "2026-11-27", "to": "Bolt"});
+        assert_eq!(
+            entries[1].2,
+            json!({"item_type": it, "on": "2026-11-27", "to": "Bolt",
+                   "previous": {"on": "2026-11-20", "to": "Acme"}}),
+            "{name}"
+        );
+        let second_entry = if second_sets {
+            json!({"item_type": it, "on": "2026-11-30", "to": "Bolt", "previous": bolt})
+        } else {
+            json!({"item_type": it, "previous": bolt})
+        };
+        assert_eq!(entries[2].2, second_entry, "{name}");
+    }
+}
+
+/// Completion first (kb/ADR-0025 R2): a move to done and a promise queued behind it on the story's row; the move
+/// commits, and the promise, judged on the row it then locks, is refused as done. Nothing is stored or logged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_promise_queued_behind_a_move_to_done_is_refused() {
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    let s = plain_story(&h, &c, "s", "S", None).await;
+    let version = h.story_dto(&s, c.now).await.unwrap().version;
+    let mut w = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM stories WHERE key = $1 FOR UPDATE")
+        .bind(s.to_string())
+        .execute(&mut *w)
+        .await
+        .unwrap();
+    let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
+    let mv = tokio::spawn(async move {
+        hh.move_story(
+            &cc,
+            &kk,
+            version,
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+            Some("dropped while promised".into()),
+        )
+        .await
+    });
+    wait_until_waiting(&pool, 1).await;
+    let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
+    let promise = tokio::spawn(async move {
+        hh.set_promise(
+            &cc,
+            ItemType::Story,
+            &kk,
+            promise_body(Some(nov(20)), None, None),
+        )
+        .await
+    });
+    wait_until_waiting(&pool, 2).await;
+    w.commit().await.unwrap();
+    tokio::time::timeout(PAUSE, mv)
+        .await
+        .expect("the move never finished")
+        .unwrap()
+        .unwrap();
+    let refused = tokio::time::timeout(PAUSE, promise)
+        .await
+        .expect("the promise never finished")
+        .unwrap();
+    assert_eq!(
+        validation_text(refused),
+        format!("{s} is done: a done story cannot be promised")
+    );
+    assert_eq!(stored(&pool, ItemType::Story, &s).await, None);
+    assert!(promise_entries(&pool, &s).await.is_empty());
+}
+
+/// kb/ADR-0021 R4 for `promised`: the filter's membership comes from the snapshot the rows come from. Promises moved
+/// while the list waits do not change the set it returns; the next request sees the new set.
+#[tokio::test]
+async fn the_promised_filter_reads_one_snapshot() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let a = plain_story(&h, &c, "A", "A", None).await;
+    let b = plain_story(&h, &c, "B", "B", None).await;
+    let _x = plain_story(&h, &c, "X", "X", None).await;
+    for (k, on) in [
+        (&a, nov(20)),
+        (&b, chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap()),
+    ] {
+        set_promise(
+            &h,
+            ItemType::Story,
+            k,
+            &Promise::from_persisted(on, "pm@x".into(), now, None),
+        )
+        .await;
+    }
+    let list = |h: Handlers| async move {
+        let f = StoryFilter {
+            promised: Some(reeve_protocol::PromisedFilter::ThisSprint),
+            ..Default::default()
+        };
+        h.list_stories(&f, None, None, false, DoneFilter::All, now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.story.key)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(list(h.clone()).await, vec![a.clone()]);
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE sprints IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let call = tokio::spawn(list(h.clone()));
+    wait_until_blocked(&pool).await;
+    for (k, on) in [(&a, "2026-12-01"), (&b, "2026-11-22")] {
+        sqlx::query("UPDATE stories SET promised_on = $2::date WHERE key = $1")
+            .bind(k.to_string())
+            .bind(on)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+    }
+    lock.commit().await.unwrap();
+    let before = tokio::time::timeout(PAUSE, call)
+        .await
+        .expect("the list never finished")
+        .unwrap();
+    assert_eq!(
+        before,
+        vec![a.clone()],
+        "the set of the snapshot the rows came from"
+    );
+    assert_eq!(
+        list(h.clone()).await,
+        vec![b],
+        "the next request sees the new set"
+    );
+}
+
 /// kb/ADR-0025 R5: `promised` keeps only unfinished stories, so done ones are never read. A done promised story is not
 /// listed, and adding done promised stories changes neither the statements nor the rows the list reads, with the
 /// default `done=all`.
@@ -8745,4 +9007,144 @@ async fn the_promised_filter_reads_no_done_story() {
         "rows of done stories were read"
     );
     assert_eq!(common::statements(&pool, run).await, statements);
+}
+
+/// Seeds `n` stories with blockers, pull requests and decisions (`seed_board`), promises the first story itself
+/// (overdue on `today`) and the epic (in a week, inherited by every story). Returns the stories and the epic.
+async fn promised_board(
+    h: &Handlers,
+    tag: &str,
+    n: usize,
+    first_pr: i64,
+    today: chrono::NaiveDate,
+) -> (Vec<Key>, Key) {
+    let keys = seed_board(h, tag, n, first_pr).await;
+    let epic = h
+        .story_dto(&keys[0], Utc::now())
+        .await
+        .unwrap()
+        .epic
+        .unwrap();
+    let at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let own = Promise::from_persisted(today - chrono::Days::new(2), "pm@x".into(), at, None);
+    set_promise(h, ItemType::Story, &keys[0], &own).await;
+    let theirs = Promise::from_persisted(today + chrono::Days::new(7), "lead@x".into(), at, None);
+    set_promise(h, ItemType::Epic, &epic, &theirs).await;
+    (keys, epic)
+}
+
+/// Own and inherited promises cost no statements: the story list and the decision queue read the same number with a
+/// few promised stories as with many, and both answers carry the promises.
+#[tokio::test]
+async fn promises_add_no_statements_to_the_list_or_the_queue() {
+    use reeve_protocol::{NeededInReason, PromiseHolder, PromiseState};
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let (a, epic_a) = promised_board(&h, "a", 3, 1, now.date_naive()).await;
+    let list = || {
+        let h = h.clone();
+        async move {
+            h.list_stories(
+                &StoryFilter::default(),
+                None,
+                None,
+                false,
+                DoneFilter::All,
+                now,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let queue = || {
+        let (h, c) = (h.clone(), Ctx { now, ..dan.clone() });
+        async move { queue_all(&h, &c).await }
+    };
+    // Populated: the first story is overdue on its own date, the others inherit the epic's; the overdue promise
+    // gives the decision on the first story its reason.
+    let rows = list().await;
+    for s in &rows {
+        let p = s.story.promise.as_ref().expect("every story is promised");
+        let want = if s.story.key == a[0] {
+            (PromiseHolder::Own, Some(PromiseState::Overdue))
+        } else {
+            (PromiseHolder::Epic, Some(PromiseState::Open))
+        };
+        assert_eq!((p.holder, p.state), want, "{}", s.story.key);
+    }
+    assert_eq!(rows.len(), 3);
+    let (es, _) = queue().await;
+    assert!(
+        es.iter().any(|e| e.needed_in_reason
+            == Some(NeededInReason::Promise {
+                key: a[0].clone(),
+                level: ItemType::Story,
+                on: now.date_naive() - chrono::Days::new(2),
+                overdue: true
+            })),
+        "{es:?}"
+    );
+    let _ = epic_a;
+    let run_list = || async {
+        list().await;
+    };
+    let run_queue = || async {
+        queue().await;
+    };
+    let few = (
+        common::statements(&pool, run_list).await,
+        common::statements(&pool, run_queue).await,
+    );
+    promised_board(&h, "b", 9, 100, now.date_naive()).await;
+    promised_board(&h, "c", 4, 200, now.date_naive()).await;
+    assert_eq!(list().await.len(), 16);
+    assert!(list().await.iter().all(|s| s.story.promise.is_some()));
+    let many = (
+        common::statements(&pool, run_list).await,
+        common::statements(&pool, run_queue).await,
+    );
+    assert_eq!(few, many);
+}
+
+/// For a fixed set of stories (one epic's), promised stories and epics elsewhere add no rows to what the list reads:
+/// the promise facts are read for the listed keys only.
+#[tokio::test]
+async fn unrelated_promises_add_no_rows_to_a_fixed_list() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let now = Utc::now();
+    let (a, epic_a) = promised_board(&h, "a", 3, 1, now.date_naive()).await;
+    let list = || {
+        let (h, epic_a) = (h.clone(), epic_a.clone());
+        async move {
+            let f = StoryFilter {
+                epics: Some(vec![epic_a]),
+                ..Default::default()
+            };
+            h.list_stories(&f, None, None, false, DoneFilter::All, now)
+                .await
+                .unwrap()
+        }
+    };
+    let keys = |rows: Vec<reeve_protocol::StoryWithReadiness>| -> Vec<(Key, bool)> {
+        rows.into_iter()
+            .map(|s| (s.story.key, s.story.promise.is_some()))
+            .collect()
+    };
+    let want: Vec<(Key, bool)> = a.iter().map(|k| (k.clone(), true)).collect();
+    assert_eq!(keys(list().await), want);
+    let run = || async {
+        list().await;
+    };
+    let before = common::rows(&pool, run).await;
+    assert!(before > 0, "the counter measured {before} rows");
+    let (b, _) = promised_board(&h, "b", 9, 100, now.date_naive()).await;
+    // Promised history elsewhere: some of it done.
+    for k in &b[..4] {
+        mark_done_at(&h, k, now).await;
+    }
+    assert_eq!(keys(list().await), want);
+    assert_eq!(common::rows(&pool, run).await, before);
 }
