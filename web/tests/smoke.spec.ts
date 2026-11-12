@@ -728,11 +728,34 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
 	await expect(resume).toBeVisible();
 	await expect(close).toBeVisible();
+	await close.click({ trial: true }); // not covered by the sticky bar
 	const r = (await resume.boundingBox())!;
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
 	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
 });
+
+for (const width of [1280, 360]) {
+	test(`drawers open under the top bar at ${width}px`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		const s = await chore(page, `Smoke drawer under bar ${crypto.randomUUID().slice(0, 6)}`);
+		const d = await post<{ id: number }>(page, '/api/v1/decisions', {
+			idempotency_key: crypto.randomUUID(), on: s.key, title: 'Smoke decision under the bar', decider: 'smoke@example.com'
+		});
+		const banner = page.getByRole('banner');
+		const under = async (drawer: Locator) => {
+			await expect(drawer).toBeVisible();
+			const bar = (await banner.boundingBox())!;
+			const box = (await drawer.boundingBox())!;
+			expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+			await banner.getByRole('link', { name: 'Backlog' }).click({ trial: true }); // not covered
+		};
+		await page.goto(`/board?story=${s.key}`);
+		await under(page.getByRole('complementary'));
+		await page.goto(`/decisions?decision=${d.id}`);
+		await under(page.getByTestId('decision-drawer'));
+	});
+}
 
 for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
 	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {

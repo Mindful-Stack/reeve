@@ -1060,7 +1060,7 @@
 	}
 	.drawer {
 		position: fixed;
-		top: 0;
+		top: var(--top-bar-height, 0px);
 		right: 0;
 		bottom: 0;
 		z-index: 10;
