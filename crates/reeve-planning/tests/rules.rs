@@ -351,7 +351,7 @@ async fn move_entries_carry_the_state_before_the_move() {
     );
 }
 
-/// Owner on start: set to the normalised actor when unowned, kept when owned, untouched outside in_progress. Catches
+/// Owner on entering active work (kb/ADR-0027 R6): set to the normalised actor when unowned, kept when owned. Catches
 /// the rule moving onto `Story` and losing a case.
 #[tokio::test]
 async fn starting_a_story_assigns_an_owner_only_when_it_has_none() {
@@ -389,8 +389,12 @@ async fn starting_a_story_assigns_an_owner_only_when_it_has_none() {
         .unwrap();
     assert_eq!(a.owner(), Some("dan@example.com"));
     assert_eq!(b.owner(), Some("mia@example.com"));
-    assert_eq!(c.owner(), None);
-    // Entering in_progress assigns the actor whenever the story has no owner, from any earlier state.
+    assert_eq!(
+        c.owner(),
+        Some("dan@example.com"),
+        "todo to testing assigns too (kb/ADR-0027 R6)"
+    );
+    // The story is owned now, so entering in_progress from testing keeps that owner.
     let c2 = h
         .move_story(
             &mixed,

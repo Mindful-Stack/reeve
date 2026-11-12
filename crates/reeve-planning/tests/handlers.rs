@@ -9224,3 +9224,163 @@ async fn unrelated_promises_add_no_rows_to_a_fixed_list() {
     assert_eq!(keys(list().await), want);
     assert_eq!(common::rows(&pool, run).await, before);
 }
+
+/// kb/ADR-0027 R5 and R6 through the handlers: the owner of an in-review blocker starts its unowned dependent without
+/// an override, under automation, and becomes its owner; another person is refused with a reason naming the
+/// blocker's state and owner; the batched list and the single read agree; changing the blocker's owner changes the
+/// answer. Catches the mover not being passed to the gate, the list and the gate reading different facts, and an
+/// owner change that the loader does not see.
+#[tokio::test]
+async fn own_unmerged_work_blocks_others_but_not_its_owner() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let dan_bot = ctx("dan@example.com", true);
+    let mia = ctx("mia@example.com", false);
+    let epic = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    h.mark_discovery(&dan, ItemType::Epic, epic.key(), 1, true)
+        .await
+        .unwrap();
+    let mk_story = |idem: &'static str, owner: Option<&'static str>| {
+        let h = h.clone();
+        let c = dan.clone();
+        let e = epic.key().clone();
+        async move {
+            h.create_story(
+                &c,
+                idem,
+                idem,
+                Kind::Story,
+                Some(e),
+                "",
+                vec!["ok".into()],
+                vec![],
+                None,
+                owner.map(Into::into),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let b = mk_story("b", None).await;
+    let d1 = mk_story("d1", None).await;
+    let d2 = mk_story("d2", None).await;
+    let d3 = mk_story("d3", Some("dan@example.com")).await;
+    for d in [&d1, &d2, &d3] {
+        h.add_block(&dan, d.key(), b.key()).await.unwrap();
+    }
+    // Dan starts B (becoming its owner) and puts it in review.
+    let b1 = h
+        .move_story(
+            &dan,
+            b.key(),
+            b.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(b1.owner(), Some("dan@example.com"));
+    let b2 = h
+        .move_story(
+            &dan,
+            b.key(),
+            b1.version(),
+            DeliveryState::InReview,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let expected = vec![Reason::BlockedBy {
+        story: b.key().clone(),
+        delivery: DeliveryState::InReview,
+        owner: Some("dan@example.com".into()),
+    }];
+    // Unowned, D1 is judged without a mover: blocked, in the list and in the single read alike.
+    assert_eq!(h.readiness(d1.key()).await.unwrap().reasons, expected);
+    let list = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+    let row = |k: &Key| {
+        list.iter()
+            .find(|x| &x.story.key == k)
+            .unwrap()
+            .readiness
+            .clone()
+    };
+    assert_eq!(
+        row(d1.key()).reasons,
+        expected,
+        "the batched read agrees with the single one"
+    );
+    // D3 is Dan's: ready in both reads, because its owner and B's are the same.
+    assert!(row(d3.key()).ready, "{:?}", row(d3.key()));
+    assert!(h.readiness(d3.key()).await.unwrap().ready);
+
+    // Mia may not start D2: refused with the reason naming B's state and owner.
+    match h
+        .move_story(
+            &mia,
+            d2.key(),
+            d2.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+    {
+        Err(HandlerError::Refused(reasons)) => assert_eq!(reasons, expected),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    // Dan's agent starts D1 without an override and becomes its owner.
+    let started = h
+        .move_story(
+            &dan_bot,
+            d1.key(),
+            d1.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(started.delivery(), DeliveryState::InProgress);
+    assert_eq!(started.owner(), Some("dan@example.com"));
+
+    // Handing B to Mia blocks Dan's owned dependent D3 (the facts are read live, never stored).
+    h.edit_story(
+        &dan,
+        b.key(),
+        b2.version(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Some("mia@example.com".into())),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        h.readiness(d3.key()).await.unwrap().reasons,
+        vec![Reason::BlockedBy {
+            story: b.key().clone(),
+            delivery: DeliveryState::InReview,
+            owner: Some("mia@example.com".into()),
+        }]
+    );
+}

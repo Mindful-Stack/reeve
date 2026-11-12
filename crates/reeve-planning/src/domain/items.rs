@@ -391,8 +391,8 @@ impl Story {
     }
     /// The delivery policy: two rules, everything else free (kb/ADR-0002 R4). Readiness is computed by the caller
     /// (kb/ADR-0018 R1); nothing about sprints or goals is an input (kb/ADR-0014 R4). On `Moved` the story carries
-    /// the new delivery, the resolution (the given one when entering done, none otherwise) and, when started without
-    /// an owner, `actor_email` (normalised by the caller) as its owner. Untouched on `Unchanged` and on refusal.
+    /// the new delivery, the resolution (the given one when entering done, none otherwise) and, when it enters an
+    /// active state without an owner, `actor_email` (normalised by the caller) as its owner (kb/ADR-0027 R6). Untouched on `Unchanged` and on refusal.
     pub fn move_to(
         &mut self,
         m: Move,
@@ -436,7 +436,7 @@ impl Story {
         };
         self.delivery = m.to;
         self.resolution = resolution;
-        if m.to == InProgress && self.owner.is_none() {
+        if m.to.is_active() && self.owner.is_none() {
             self.owner = Some(actor_email.to_string());
         }
         Ok(Moved::Moved {
@@ -784,7 +784,7 @@ mod tests {
 
         /// Owner on start, four cases. Catches the rule applied on other states or over an existing owner.
         #[test]
-        fn starting_assigns_an_owner_only_when_unowned() {
+        fn entering_active_work_from_todo_or_done_assigns_an_unowned_story_to_the_mover() {
             let mut a = story(Todo, None, None);
             a.move_to(mv(InProgress, None, None), true, I, "dan@example.com")
                 .unwrap();
@@ -796,7 +796,28 @@ mod tests {
             let mut c = story(Todo, None, None);
             c.move_to(mv(Testing, None, None), true, I, "dan@example.com")
                 .unwrap();
-            assert_eq!(c.owner(), None);
+            assert_eq!(
+                c.owner(),
+                Some("dan@example.com"),
+                "todo to testing assigns too (R6)"
+            );
+            let mut c2 = story(Done, Some(Resolution::Dropped), None);
+            c2.move_to(mv(InReview, None, None), true, I, "dan@example.com")
+                .unwrap();
+            assert_eq!(
+                c2.owner(),
+                Some("dan@example.com"),
+                "done to in review assigns too (R6)"
+            );
+            let mut c4 = story(Todo, None, None);
+            c4.move_to(
+                mv(Done, Some(Resolution::Dropped), None),
+                true,
+                I,
+                "dan@example.com",
+            )
+            .unwrap();
+            assert_eq!(c4.owner(), None, "dropping is not starting");
             let mut d = story(InProgress, None, None);
             let before = d.clone();
             assert_eq!(
