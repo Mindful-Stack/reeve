@@ -123,11 +123,7 @@ export function whereNow(s: Story): string {
 	return s.epic ? `Placed elsewhere: ${s.key} is under ${s.epic}.` : `${s.key} changed.`;
 }
 
-export type Arm = { key: string; version: number; at: number };
+/** The drop armed by a first `d`: the item and the version it was reviewed at. The page ends the arm after ARM_MS, and
+ *  marking a duplicate disarms, so the arm need not name one. */
+export type Arm = { key: string; version: number };
 export const ARM_MS = 3000;
-
-/** A second `d` drops only the item and version the first armed, within ARM_MS. Marking a duplicate disarms, so the arm
- *  need not name one. */
-export function armedFor(a: Arm | null, key: string, version: number, now: number): boolean {
-	return !!a && a.key === key && a.version === version && now - a.at < ARM_MS;
-}

@@ -667,3 +667,176 @@ describe('drop', () => {
 		expect(t.options()).toContain('GRA-9');
 	});
 });
+
+const dropButton = () => [...document.querySelectorAll<HTMLButtonElement>('section.item button')].find((b) => b.textContent!.startsWith('Drop'))!;
+const baseline = () => (vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }), vi.getTimerCount());
+
+describe('drop and focus, review fixes', () => {
+	it('a held Enter on the Drop button is cancelled, so it does not click again and confirm', async () => {
+		await open();
+		const button = dropButton();
+		button.focus();
+		expect(press(button, 'Enter', { repeat: true }).defaultPrevented).toBe(true);
+		expect(press(button, 'Enter').defaultPrevented).toBe(false);
+	});
+	it('dropping the last item with focus on the item heading leaves focus where u works', async () => {
+		net.s.stories = [net.s.stories[1]];
+		const t = await open();
+		const heading = document.querySelector<HTMLElement>('#triage-item-title')!;
+		heading.focus();
+		press(heading, 'd');
+		press(heading, 'd');
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Nothing to triage'));
+		await vi.waitFor(() => expect(document.activeElement?.id).toBe('triage-empty'));
+		press(document.activeElement!, 'u');
+		await vi.waitFor(() => expect(t.status()).toBe('Undone: GRA-9 is back in todo.'));
+	});
+	it('a late answer does not take focus from an enabled button of the item (Skip)', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		const skip = [...document.querySelectorAll<HTMLButtonElement>('section.item button')].find((b) => b.textContent!.startsWith('Skip'))!;
+		skip.focus();
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		await settle();
+		expect(document.activeElement).toBe(skip);
+	});
+	it('the drop sends the version the draft was reviewed at, not the live story\'s', async () => {
+		const t = await open();
+		const title = document.querySelector<HTMLInputElement>('section.item input[name="title"]')!;
+		type(title, 'Search ignores accents (é)');
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Search drops accents', version: 2 }; // both changed the title: the draft is kept at version 1
+		await live.fns[0]();
+		await vi.waitFor(() => expect(t.pane().textContent).toContain('Search drops accents'));
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toContain('GRA-9 changed meanwhile'));
+		expect(net.s.writes).toEqual([{ method: 'POST', path: '/api/v1/stories/GRA-9/move', body: { version: 1, to: 'done', resolution: 'dropped' } }]);
+	});
+	it('arming again ends the earlier arm\'s timer: the second d within 3 seconds of the new arm drops', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const t = await open();
+		press(t.list(), 'd'); // armed at 0
+		await settle();
+		vi.advanceTimersByTime(2000);
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Search ignores accents!', version: 2 };
+		await live.fns[0]();
+		await vi.waitFor(() => expect(t.pane().textContent).toContain('Search ignores accents!'));
+		press(t.list(), 'd'); // the version moved: arms again at 2s
+		await settle();
+		vi.advanceTimersByTime(1500); // 3.5s: the first timer's time has passed, the second's has not
+		await settle();
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(net.s.writes).toHaveLength(1));
+	});
+	it('the timer says "Drop cancelled." only while the prompt is still the notice', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const t = await open();
+		press(t.list(), 'd');
+		await settle();
+		press(t.list(), 't'); // another message replaces the prompt; the arm stays
+		await settle();
+		expect(t.status()).toBe('Kind: chore.');
+		vi.advanceTimersByTime(3000);
+		await settle();
+		flushSync();
+		expect(t.status()).toBe('Kind: chore.');
+	});
+	it('a confirmed drop ends the arm\'s timer, and unmounting ends a pending one', async () => {
+		const none = baseline();
+		const t = await open();
+		const idle = vi.getTimerCount();
+		press(t.list(), 'd');
+		await settle();
+		expect(vi.getTimerCount()).toBe(idle + 1);
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(vi.getTimerCount()).toBe(idle);
+		press(t.list(), 'd');
+		await settle();
+		expect(vi.getTimerCount()).toBe(idle + 1);
+		unmount(app!);
+		app = null;
+		expect(vi.getTimerCount()).toBe(none);
+	});
+	it('a held drop blocks further d presses', async () => {
+		const t = await open();
+		net.s.hold.add('/api/v1/stories/GRA-9/move');
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await settle();
+		expect(net.s.held).toHaveLength(1);
+		expect(dropButton().textContent).not.toContain('Press d or click again');
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes).toHaveLength(1);
+	});
+	it('Undo is one use: the button goes, and another u writes nothing; and it waits for a write in flight', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-9'));
+		await settle();
+		expect(document.querySelector('.notice button')).toBeNull();
+		const before = net.s.writes.length;
+		press(t.list(), 'u');
+		await settle();
+		expect(net.s.writes).toHaveLength(before);
+	});
+	it('u does nothing while another write is in flight', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-12');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		const before = net.s.writes.length;
+		press(t.list(), 'u'); // GRA-9's Undo is ready, but GRA-12's write is in flight
+		await settle();
+		expect(net.s.writes).toHaveLength(before);
+		expect(document.querySelector('.notice button')!.textContent).toContain('Undo place GRA-9');
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.options()).toEqual(['GRA-30']));
+	});
+	it('the undone place comes back with its fields but no epic: placing again asks for one', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-9'));
+		await vi.waitFor(() => expect(t.status()).toBe('Undone: GRA-9 is back in the queue.'));
+		const before = net.s.writes.length;
+		press(t.list(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('Pick an epic first.'));
+		expect(net.s.writes).toHaveLength(before);
+	});
+	it('a refused undo is an error: a later "new untriaged" announcement does not cover it', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		net.s.stories[1] = { ...net.s.stories[1], version: 9 };
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 changed since; undo it in the drawer.'));
+		net.s.stories.push(story({ key: 'GRA-50', title: 'Fresh report' }));
+		await live.fns[0]();
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-50');
+		expect(t.status()).toBe('GRA-9 changed since; undo it in the drawer.');
+	});
+});

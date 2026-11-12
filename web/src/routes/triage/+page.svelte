@@ -11,11 +11,10 @@
 	import TriageItem from '#lib/components/TriageItem.svelte';
 	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
-		import { errorMessage, plural } from '#lib/format.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
 	import { postMove } from '#lib/moves.ts';
 	import {
 		ARM_MS,
-		armedFor,
 		byKey,
 		draftOf,
 		FIELD_LABEL,
@@ -157,15 +156,11 @@
 		if (document.activeElement !== list) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
 	}
 
-	/** Back to the queue after a write or a live change disabled the form, unless the user took focus elsewhere: to a
-	 *  control outside the item form (the Keys toggle, a link in the top bar) or into a field (another item's, during a
-	 *  slow write: its letters must not become commands). Free is the page itself, a disabled control that gave focus up,
-	 *  the queue itself, or the item form being written. */
+	/** Back to the queue after a write or a live change disabled the form, unless the user is on an enabled control or
+	 *  field (another item's Skip, the Keys toggle, a link in the top bar, a field whose letters must not become
+	 *  commands). Free is the page itself, the item heading or body, the queue (a `ul[tabindex]`) and a disabled control. */
 	function focusBack(): void {
-		const a = document.activeElement;
-		const form = area?.querySelector('form.place');
-		const free = !a || a === document.body || a === list || a.matches(':disabled') || !!form?.contains(a);
-		if (free && !typingIn(a)) void focusQueue();
+		if (!document.activeElement?.matches('a[href], button:enabled, input:enabled, select:enabled, textarea:enabled')) void focusQueue();
 	}
 
 	/** Typing in an enabled field. A field disabled under the focus (the item left, a write is in flight) is not typing,
@@ -301,10 +296,10 @@
 		const d = drafts[s.key];
 		const version = d.base.version;
 		const dup = d.duplicate;
-		if (!armedFor(arm, s.key, version, Date.now())) {
+		if (!armed) {
 			disarm();
 			const prompt = armText(s, dup);
-			arm = { key: s.key, version, at: Date.now() };
+			arm = { key: s.key, version };
 			armTimer = setTimeout(() => {
 				arm = null;
 				if (notice?.text === prompt) void say({ text: 'Drop cancelled.' });

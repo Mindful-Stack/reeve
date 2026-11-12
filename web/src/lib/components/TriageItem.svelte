@@ -69,7 +69,7 @@
 		</label>
 		<div class="actions">
 			<button type="submit" class="primary" {disabled}>Place <kbd>Ctrl+Enter</kbd></button>
-			<button type="button" class="danger" {disabled} onclick={ondrop}>{armed ?? 'Drop'} <kbd>d d</kbd></button>
+			<button type="button" class="danger" {disabled} onclick={ondrop} onkeydown={(e) => { if (e.repeat) e.preventDefault(); }}>{armed ?? 'Drop'} <kbd>d d</kbd></button>
 			<button type="button" onclick={onskip}>Skip <kbd>s</kbd></button>
 		</div>
 	</form>

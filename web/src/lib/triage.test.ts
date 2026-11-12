@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { story } from '#lib/test/fixtures.ts';
 import {
-	armedFor, byKey, criteriaFromText, draftOf, duplicateCommentKey, duplicateText, followDraft, nextKey, placeEdit,
+	byKey, criteriaFromText, draftOf, duplicateCommentKey, duplicateText, followDraft, nextKey, placeEdit,
 	rebaseAfterConflict, similarQuery, undoEdit, whereNow, withoutSelf
 } from './triage.ts';
 
@@ -179,13 +179,5 @@ describe('small helpers', () => {
 	it('whereNow: done without a resolution is completed; no epic and not done is changed', () => {
 		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: null }))).toBe('GRA-5 is done (completed).');
 		expect(whereNow(story({ key: 'GRA-5', epic: null, delivery: 'todo' }))).toBe('GRA-5 changed.');
-	});
-	it('armedFor: the same item and version within 3 seconds', () => {
-		const arm = { key: 'GRA-5', version: 2, at: 1000 };
-		expect(armedFor(arm, 'GRA-5', 2, 3999)).toBe(true);
-		expect(armedFor(arm, 'GRA-5', 2, 4000)).toBe(false);
-		expect(armedFor(arm, 'GRA-5', 3, 2000)).toBe(false);
-		expect(armedFor(arm, 'GRA-6', 2, 2000)).toBe(false);
-		expect(armedFor(null, 'GRA-5', 2, 2000)).toBe(false);
 	});
 });
