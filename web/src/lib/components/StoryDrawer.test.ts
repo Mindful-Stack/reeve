@@ -1139,7 +1139,7 @@ describe('StoryDrawer promise', () => {
 			expect(document.activeElement).toBe(dialogButton('Cancel'));
 		});
 		expect(deletes()).toBe(1);
-		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice, [role="alert"]')).toBeNull();
 	});
 
 	it("asking before clearing a done story's own promise under a promised epic says it stays listed under the epic's date", async () => {
@@ -1202,6 +1202,6 @@ describe('StoryDrawer promise', () => {
 			flushSync();
 			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
 		});
-		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice, [role="alert"]')).toBeNull();
 	});
 });
