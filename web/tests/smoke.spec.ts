@@ -253,7 +253,7 @@ test('the drawer epic picker: typing replaces the label, the active option stays
 	await page.keyboard.press('Enter'); // picks; the list closes
 	await expect(list).toBeHidden();
 	await page.keyboard.press('Enter'); // closed, Enter is the form's: it saves
-	await expect(drawer.getByRole('link', { name: new RegExp(`picker ${suffix} 11`) })).toBeVisible();
+	await expect(drawer.getByRole('link', { name: new RegExp(`^\\S+ Smoke picker ${suffix} 11$`) })).toBeVisible();
 	// Cancel sits beside the open list: the press blurs the input and closes the list, which moves nothing, so the click lands.
 	await drawer.getByRole('button', { name: 'Edit epic' }).click();
 	await page.keyboard.press('ArrowDown');
