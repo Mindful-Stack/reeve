@@ -72,7 +72,7 @@
 			e.preventDefault();
 			if (!open) return show();
 			const step = e.key === 'ArrowDown' ? 1 : -1;
-			active = Math.min(last, Math.max(0, (active < 0 ? -1 : Math.min(active, last)) + step));
+			active = Math.min(last, Math.max(0, Math.min(active, last) + step));
 		} else if (e.key === 'Enter' && open) {
 			e.preventDefault();
 			const o = shown[Math.min(active, last)];
@@ -124,7 +124,7 @@
 					aria-selected={i === active}
 					class:current={o.value === value}
 					onclick={(e) => {
-						e.preventDefault();
+						e.preventDefault(); // inside a wrapping <label> the click would otherwise reach the input and reopen the list
 						pick(o);
 					}}
 				>

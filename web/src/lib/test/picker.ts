@@ -14,9 +14,16 @@ function options(input: HTMLInputElement): HTMLElement[] {
 	return list ? [...list.querySelectorAll<HTMLElement>('[role="option"]')] : [];
 }
 
+/** The picker a person can act on: a disabled one throws, as a page test must not act where a person cannot. */
+function enabled(root: ParentNode, label: string): HTMLInputElement {
+	const input = picker(root, label);
+	if (input.disabled) throw new Error(`picker ${label} is disabled`);
+	return input;
+}
+
 /** The labels the open picker offers. */
 export function offered(root: ParentNode, label: string): string[] {
-	const input = picker(root, label);
+	const input = enabled(root, label);
 	input.focus();
 	input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
 	flushSync();
@@ -26,19 +33,17 @@ export function offered(root: ParentNode, label: string): string[] {
 	return out;
 }
 
-/** Opens the picker, types `query` and clicks the first option that is `optionText` or starts with it and a space (so
+/** Opens the picker, types `query` and clicks the first option that is `optionText` (else one that starts with it and a space, so
  *  `E-2` never picks `E-20 …`). The whole value is
  *  replaced at once, as typing over the label the picker selects on focus does (Picker.svelte.test.ts proves that). */
 export function choose(root: ParentNode, label: string, query: string, optionText = query): void {
-	const input = picker(root, label);
+	const input = enabled(root, label);
 	input.focus();
 	input.value = query;
 	input.dispatchEvent(new Event('input', { bubbles: true }));
 	flushSync();
-	const opt = options(input).find((o) => {
-		const t = o.textContent!.trim();
-		return t === optionText || t.startsWith(optionText + ' ');
-	});
+	const texts = options(input).map((o) => [o, o.textContent!.trim()] as const);
+	const opt = (texts.find(([, t]) => t === optionText) ?? texts.find(([, t]) => t.startsWith(optionText + ' ')))?.[0];
 	if (!opt) throw new Error(`no option ${optionText} in ${label}`);
 	opt.click();
 	flushSync();

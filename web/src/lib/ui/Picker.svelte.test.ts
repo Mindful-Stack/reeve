@@ -69,6 +69,8 @@ it('narrows as you type and picks with the keyboard without submitting the form'
 	expect(shown()).toEqual(['GRA-8 Go-live']);
 	key('ArrowDown');
 	expect(input.getAttribute('aria-activedescendant')).toBeTruthy();
+	key('ArrowUp');
+	expect(input.getAttribute('aria-activedescendant')).toBeTruthy();
 	const enter = key('Enter');
 	expect(enter.defaultPrevented).toBe(true);
 	expect(onsubmit).not.toHaveBeenCalled();
@@ -84,8 +86,10 @@ it('offers the empty choice first while the query is blank', () => {
 });
 
 it('Escape while open closes it and does not reach the form; while closed it does', () => {
-	const { type, key, onkeydown, input } = setup('GRA-7');
+	const { type, key, onkeydown, input, shown } = setup('GRA-7');
 	type('xyz');
+	expect(shown()).toEqual([]);
+	expect(document.body.querySelector('[role="status"]')!.textContent).toBe('No match');
 	onkeydown.mockClear(); // the typed letters reached the form, as they would from any field
 	const esc = key('Escape');
 	expect(esc.defaultPrevented).toBe(true);
@@ -111,6 +115,7 @@ it('a mouse pick keeps focus and sets the value; blur drops free text', async ()
 	list.querySelector<HTMLElement>('[role="option"]')!.click();
 	flushSync();
 	expect(bound()).toBe('GRA-608');
+	expect(input.getAttribute('aria-expanded')).toBe('false');
 	await tick();
 	type('nonsense');
 	input.dispatchEvent(new FocusEvent('blur'));
