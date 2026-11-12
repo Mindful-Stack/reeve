@@ -5,6 +5,7 @@
 	import { tick } from 'svelte';
 	import type { PromiseFact, PromiseShortcut, SetPromise } from '#lib/api/types.ts';
 	import { dayLabel } from '#lib/format.ts';
+	import { epicNote } from '#lib/promise.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let {
@@ -13,7 +14,7 @@
 		draftEnds = null,
 		today = null,
 		current = null,
-		epicNote = null,
+		epic = null,
 		busy = false,
 		error = null,
 		onsave,
@@ -29,13 +30,15 @@
 		today?: string | null;
 		/** The item's own promise, when changing it. */
 		current?: PromiseFact | null;
-		/** "Epic ABC-7 is promised 18 Nov; the earlier date counts.", when the epic's date applies. */
-		epicNote?: string | null;
+		/** The epic promise the story inherits, whichever date is earlier: the note says which one counts. */
+		epic?: { key: string; on: string } | null;
 		busy?: boolean;
 		error?: string | null;
 		onsave: (body: SetPromise) => void;
 		onclose: () => void;
 	} = $props();
+
+	const PAST = 'the date is past: promise today or later';
 
 	// svelte-ignore state_referenced_locally
 	const startOn = current?.on ?? '';
@@ -70,6 +73,12 @@
 		return b;
 	});
 	const canSave = $derived(!busy && on !== '' && Object.keys(body).length > 0);
+	/** A changed date before today: `min` allows it only to keep an overdue promise's own date. */
+	const past = $derived(today != null && on !== startOn && on !== '' && on < today);
+	$effect(() => {
+		dateInput?.setCustomValidity(past ? PAST : '');
+	});
+	const note = $derived(epic ? epicNote(epic, on) : null);
 
 	// A failed write frees the form: the inputs were disabled while saving, so focus returns to the date.
 	$effect(() => {
@@ -83,19 +92,17 @@
 
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
+		if (past) {
+			dateInput?.reportValidity();
+			return;
+		}
 		if (canSave) onsave(body);
 	}
 </script>
 
-<Dialog title={current ? `Change the promise on ${key}` : `Promise ${key} by…`} {onclose} closable={!busy}>
+<!-- The title follows the frozen base: a reload while the dialog is open must not retitle it. -->
+<Dialog title={startOn !== '' ? `Change the promise on ${key}` : `Promise ${key} by…`} {onclose} closable={!busy}>
 	<form class="promise" aria-label="Promise" onsubmit={submit}>
-		{#if shortcuts.length}
-			<div class="shortcuts">
-				{#each shortcuts as sc (sc.s)}
-					<button type="button" aria-pressed={shortcut === sc.s} disabled={busy} onclick={() => pick(sc.s, sc.ends)}>{sc.label}</button>
-				{/each}
-			</div>
-		{/if}
 		<label class="field"
 			>Date <input
 				bind:this={dateInput}
@@ -107,8 +114,15 @@
 				oninput={() => (shortcut = null)}
 			/></label
 		>
+		<!-- Below the date, in a row that is always reserved: shortcuts that arrive with a late sprints read (the epic page
+		     fetches them on open) never move the field being used. -->
+		<div class="shortcuts">
+			{#each shortcuts as sc (sc.s)}
+				<button type="button" aria-pressed={shortcut === sc.s} disabled={busy} onclick={() => pick(sc.s, sc.ends)}>{sc.label}</button>
+			{/each}
+		</div>
 		<label class="field">To whom (optional) <input name="to" bind:value={to} maxlength="200" disabled={busy} /></label>
-		{#if epicNote}<p class="note">{epicNote}</p>{/if}
+		{#if note}<p class="note">{note}</p>{/if}
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		<div class="actions">
 			<button type="button" onclick={onclose} disabled={busy}>Cancel</button>
@@ -127,6 +141,7 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
+		min-height: 2rem;
 	}
 	.note {
 		margin: 0;

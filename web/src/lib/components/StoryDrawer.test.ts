@@ -1073,6 +1073,8 @@ describe('StoryDrawer promise', () => {
 			flushSync();
 			expect(document.body.querySelector('dialog')).toBeNull();
 			expect(d.querySelector('[data-testid="promise-line"]')?.textContent).toContain('Promised 24 Nov to Acme · set by dana');
+			// The dialog is gone: the keyboard lands on the drawer's actions menu.
+			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
 		});
 	});
 
@@ -1100,6 +1102,7 @@ describe('StoryDrawer promise', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			expect(d.querySelector('[data-testid="promise-line"]')).toBeNull();
+			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
 		});
 	});
 

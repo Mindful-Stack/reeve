@@ -15,8 +15,17 @@ function period(due: PromiseDue | null | undefined): string {
 /** "3 d", or "" when the server sent no count. */
 const daysText = (days: number | null | undefined) => (days == null ? '' : ` ${days} d`);
 
+export type ChipOptions = {
+	/** Name the epic (" · via ABC-7") when its promise sets the date. False on the epic's own page, where every row is
+	 *  under that epic. Default true. */
+	via?: boolean;
+};
+
 /** A story chip's text, from the server's effective date, state, period and days. */
-export function chipText(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' | 'holder' | 'epic'>): string {
+export function chipText(
+	p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' | 'holder' | 'epic'>,
+	{ via = true }: ChipOptions = {}
+): string {
 	const d = dayLabel(p.on);
 	const state = p.state ?? null;
 	const text =
@@ -29,7 +38,7 @@ export function chipText(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' |
 					: state === 'dropped'
 						? `Dropped · ${d}`
 						: `Promised ${d}${state === 'open' ? period(p.due) : ''}`;
-	return p.holder === 'epic' && p.epic != null ? `${text} · via ${p.epic.key}` : text;
+	return via && p.holder === 'epic' && p.epic != null ? `${text} · via ${p.epic.key}` : text;
 }
 
 /** An epic chip's text: an epic has no state of its own (R4), only a period while the date is not past. */
@@ -46,17 +55,34 @@ export function look(state: PromiseState | 'past' | null | undefined): { tone: P
 	return { tone: 'neutral', icon: 'calendar' };
 }
 
-const isEpic = (p: StoryPromise | EpicPromise): p is EpicPromise => 'fact' in p;
+/** Whether a promise is an epic's own (`EpicPromiseDto`) rather than a story's. */
+export const isEpic = (p: StoryPromise | EpicPromise): p is EpicPromise => 'fact' in p;
 
 /** Everything a chip shows, for a story's or an epic's promise. */
-export function chip(p: StoryPromise | EpicPromise): ChipLook {
+export function chip(p: StoryPromise | EpicPromise, opts: ChipOptions = {}): ChipLook {
 	return isEpic(p)
 		? { text: epicChipText(p), ...look(p.past ? 'past' : null) }
-		: { text: chipText(p), ...look(p.state) };
+		: { text: chipText(p, opts), ...look(p.state) };
 }
 
 const to = (f: PromiseFact) => (f.to ? ` to ${f.to}` : '');
 const setBy = (f: PromiseFact) => ` · set by ${short(f.by)}`;
+
+/** The state as its own sentence, after a line that names two promises: " Overdue 3 d.", " Kept.", … */
+function stateSentence(p: Pick<StoryPromise, 'state' | 'days'>): string {
+	switch (p.state ?? null) {
+		case 'overdue':
+			return ` Overdue${daysText(p.days)}.`;
+		case 'kept':
+			return ' Kept.';
+		case 'late':
+			return ` Done${daysText(p.days)} late.`;
+		case 'dropped':
+			return ' Dropped.';
+		default:
+			return '';
+	}
+}
 
 function stateSuffix(p: Pick<StoryPromise, 'state' | 'days'>): string {
 	switch (p.state ?? null) {
@@ -81,7 +107,9 @@ export function lineParts(p: StoryPromise): LinePart[] {
 	const own = p.own ?? null;
 	const epic = p.epic ?? null;
 	let parts: LinePart[];
+	let suffix = stateSuffix(p);
 	if (own && epic) {
+		suffix = stateSentence(p);
 		parts = [
 			{ text: `Promised ${dayLabel(own.on)}${to(own)}. Epic ` },
 			{ epic: epic.key },
@@ -98,7 +126,6 @@ export function lineParts(p: StoryPromise): LinePart[] {
 	} else {
 		parts = [{ text: `Promised ${dayLabel(p.on)}` }];
 	}
-	const suffix = stateSuffix(p);
 	return suffix ? [...parts, { text: suffix }] : parts;
 }
 
@@ -114,10 +141,19 @@ export function epicLineText(p: EpicPromise): string {
 	return `Promised ${dayLabel(p.fact.on)}${to(p.fact)}${setBy(p.fact)}${p.past ? ' · past' : ''}`;
 }
 
-/** The dialog's note when the epic's earlier date is the one that counts, or null. */
-export function epicNote(p: StoryPromise | null | undefined): string | null {
+/** The epic promise a story inherits, as the promise dialog takes it, or null. */
+export function inheritedEpic(p: StoryPromise | null | undefined): { key: string; on: string } | null {
 	const epic = p?.epic ?? null;
-	return p?.holder === 'epic' && epic ? `Epic ${epic.key} is promised ${dayLabel(epic.fact.on)}; the earlier date counts.` : null;
+	return epic ? { key: epic.key, on: epic.fact.on } : null;
+}
+
+/** The dialog's note about the inherited epic promise, against the date chosen so far. ISO dates compare as strings; the
+ *  story's own date wins a tie (R3). */
+export function epicNote(epic: { key: string; on: string }, chosen: string): string {
+	const d = dayLabel(epic.on);
+	return chosen !== '' && epic.on < chosen
+		? `Epic ${epic.key} is promised ${d}; the earlier date counts.`
+		: `Epic ${epic.key} is promised ${d}.`;
 }
 
 export const PROMISE_BY = 'Promise by…';

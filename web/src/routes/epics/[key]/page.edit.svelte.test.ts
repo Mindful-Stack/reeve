@@ -10,7 +10,7 @@
 // story dialog cannot be dismissed while its create is pending.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '#lib/me.svelte.ts';
 import { live as liveState } from '#lib/events.svelte.ts';
@@ -56,6 +56,9 @@ const net = vi.hoisted(() => {
 		/** While set, `GET /sprints` answers only when the gate resolves; `sprintsFail` makes it fail. */
 		sprintsGate: null as null | Promise<void>,
 		sprintsFail: false,
+		/** `GET /sprints` answers given so far: a test waits on it instead of sleeping. */
+		sprintsAnswered: 0,
+		promiseFail: false,
 		stories: [] as StoryWithReadiness[],
 		decisions: [] as RequiredDecision[],
 		initiativeDecisions: [] as RequiredDecision[],
@@ -90,6 +93,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		}
 		if ((method === 'POST' || method === 'DELETE') && path === '/api/v1/epics/ABC-5/promise') {
 			s.promiseWrites.push({ method, body });
+			if (s.promiseFail) return failure('boom');
 			const on = (body as { on?: string } | null)?.on ?? '2026-11-24';
 			const fact = { on, to: 'Acme', by: 'dan@example.com', at: '2026-11-12T08:00:00Z' };
 			s.epic = { ...s.epic, promise: method === 'POST' ? { fact, due: 'this_sprint', past: false } : null };
@@ -97,6 +101,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		}
 		if (method === 'GET' && path === '/api/v1/sprints') {
 			if (s.sprintsGate) await s.sprintsGate;
+			s.sprintsAnswered++;
 			if (s.sprintsFail) return failure('boom');
 			return {
 				active: { sprint: { id: 1, state: 'active', starts_on: '2026-11-10', ends_on: '2026-11-24', opened_at: '2026-11-10T08:00:00Z', closed_at: null, goals: [], warnings: [], version: 1 }, counts: { completed: 0, upkeep_completed: 0, goals: [] }, demo: [], upkeep_line: 20, promises: [] },
@@ -164,6 +169,8 @@ afterEach(() => {
 	net.promiseWrites.length = 0;
 	net.sprintsGate = null;
 	net.sprintsFail = false;
+	net.sprintsAnswered = 0;
+	net.promiseFail = false;
 	net.urgentFail = false;
 	net.stories = [];
 	net.decisions = [];
@@ -1074,6 +1081,7 @@ describe('epic page: promise', () => {
 			flushSync();
 			expect(document.body.querySelector('dialog')).toBeNull();
 			expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised 24 Nov to Acme · set by dan');
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
 		});
 		expect(net.promiseWrites).toEqual([{ method: 'POST', body: { shortcut: 'this_sprint' } }]);
 	});
@@ -1083,7 +1091,9 @@ describe('epic page: promise', () => {
 		await open();
 		item(await menu(), 'Promise by…')!.click();
 		flushSync();
-		await new Promise((r) => setTimeout(r, 10));
+		await vi.waitFor(() => expect(net.sprintsAnswered).toBe(1));
+		// Let the failed read's rejection run its handler before looking.
+		await tick();
 		flushSync();
 		expect(shortcut()).toBeUndefined();
 		expect(document.body.querySelector('dialog input[type="date"]')).not.toBeNull();
@@ -1099,11 +1109,31 @@ describe('epic page: promise', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			expect(document.body.querySelector('[data-testid="promise-line"]')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
 		});
 		expect(net.promiseWrites).toEqual([{ method: 'DELETE', body: null }]);
 	});
 
-	it('a story row carries its promise chip', async () => {
+	it('shows a failed save in the dialog, not the page notice', async () => {
+		net.promiseFail = true;
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shortcut()).toBeDefined();
+		});
+		(shortcut() as HTMLButtonElement).click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+		expect(document.body.querySelector('.notice')).toBeNull();
+		expect(document.body.querySelector('dialog')).not.toBeNull();
+	});
+
+	it('a story row carries its promise chip after the title, without " · via" the epic', async () => {
 		net.stories = [
 			withReadiness({
 				key: 'ABC-9',
@@ -1114,7 +1144,9 @@ describe('epic page: promise', () => {
 		await open();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised 20 Nov · via ABC-5');
+			// Every row is under this epic, so the chip does not name it again.
+			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised 20 Nov');
 		});
+		expect(document.body.querySelector('#stories a.title')?.nextElementSibling?.classList.contains('promise-chip')).toBe(true);
 	});
 });

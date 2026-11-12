@@ -4,12 +4,19 @@
 	import type { EpicPromise, StoryPromise } from '#lib/api/types.ts';
 	import { chip } from '#lib/promise.ts';
 
-	let { promise }: { promise: StoryPromise | EpicPromise } = $props();
+	let {
+		promise,
+		via = true
+	}: {
+		promise: StoryPromise | EpicPromise;
+		/** Name the epic when its promise sets a story's date; false on the epic's own page. */
+		via?: boolean;
+	} = $props();
 
-	const c = $derived(chip(promise));
+	const c = $derived(chip(promise, { via }));
 </script>
 
-<span class="promise-chip {c.tone}"
+<span class="promise-chip tone-{c.tone}"
 	>{#if c.icon === 'clock'}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"
 			><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg
 		>{:else if c.icon === 'check'}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"
@@ -25,28 +32,34 @@
 		align-items: center;
 		gap: 4px;
 		color: var(--foreground);
-		border-radius: 999px;
+		/* A card is narrower than the longest text: the chip wraps inside it rather than overflowing, and never cuts the
+		   state off with an ellipsis. */
+		max-width: 100%;
+		white-space: normal;
+		border-radius: 10px;
 		padding: 0 6px;
 		font-size: 12px;
-		white-space: nowrap;
+	}
+	.promise-chip svg {
+		flex-shrink: 0;
 	}
 	/* Each pair (--foreground on the background) is pinned at AA in tokens.contrast.test.ts. */
-	.warn {
+	.tone-warn {
 		background: var(--warn-soft);
 	}
-	.warn svg {
+	.tone-warn svg {
 		color: var(--warn);
 	}
-	.ready {
+	.tone-ready {
 		background: var(--ready-soft);
 	}
-	.ready svg {
+	.tone-ready svg {
 		color: var(--ready);
 	}
-	.muted {
+	.tone-muted {
 		background: var(--lighter-background);
 	}
-	.neutral {
+	.tone-neutral {
 		background: var(--selection);
 	}
 </style>

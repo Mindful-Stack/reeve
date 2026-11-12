@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, StoryPromise } from '#lib/api/types.ts';
-import { chip, chipText, epicChipText, epicLineText, epicNote, lineText, look, promiseActions, promisedMatches } from './promise.ts';
+import { chip, chipText, epicChipText, epicLineText, epicNote, inheritedEpic, isEpic, lineText, look, promiseActions, promisedMatches } from './promise.ts';
 
 const fact = (on: string, to: string | null = 'Acme', by = 'Dana'): PromiseFact => ({ on, to, by, at: '2026-11-01T09:00:00Z' });
 
@@ -14,8 +14,10 @@ describe('chipText', () => {
 		['open, next sprint', { due: 'next_sprint' }, 'Promised 20 Nov · next sprint'],
 		['open, later', { due: 'later' }, 'Promised 20 Nov'],
 		['overdue', { state: 'overdue', due: null, days: 3 }, 'Overdue 3 d · 20 Nov'],
+		['overdue, no days', { state: 'overdue', due: null, days: null }, 'Overdue · 20 Nov'],
 		['kept', { state: 'kept', due: null }, 'Kept · 20 Nov'],
 		['late', { state: 'late', due: null, days: 3 }, 'Done 3 d late · 20 Nov'],
+		['late, no days', { state: 'late', due: null, days: null }, 'Done late · 20 Nov'],
 		['dropped', { state: 'dropped', due: null }, 'Dropped · 20 Nov'],
 		['state null', { state: null, due: null }, 'Promised 20 Nov']
 	])('%s', (_, over, text) => expect(chipText(sp(over))).toBe(text));
@@ -23,6 +25,13 @@ describe('chipText', () => {
 	it('names the epic when the epic holds the date', () => {
 		const p = sp({ own: null, epic: { key: 'ABC-7', fact: fact('2026-11-20') }, holder: 'epic', due: 'this_sprint' });
 		expect(chipText(p)).toBe('Promised 20 Nov · this sprint · via ABC-7');
+		expect(chipText(p, { via: true })).toBe('Promised 20 Nov · this sprint · via ABC-7');
+	});
+
+	it('drops the epic on request (the epic\'s own page)', () => {
+		const p = sp({ own: null, epic: { key: 'ABC-7', fact: fact('2026-11-20') }, holder: 'epic', due: 'this_sprint' });
+		expect(chipText(p, { via: false })).toBe('Promised 20 Nov · this sprint');
+		expect(chip(p, { via: false }).text).toBe('Promised 20 Nov · this sprint');
 	});
 });
 
@@ -76,8 +85,23 @@ describe('lineText', () => {
 		['overdue', { state: 'overdue', due: null, days: 3 }, 'Promised 20 Nov to Acme · set by Dana · overdue 3 d'],
 		['kept', { state: 'kept', due: null }, 'Promised 20 Nov to Acme · set by Dana · kept'],
 		['late', { state: 'late', due: null, days: 3 }, 'Promised 20 Nov to Acme · set by Dana · done 3 d late'],
-		['dropped', { state: 'dropped', due: null }, 'Promised 20 Nov to Acme · set by Dana · dropped']
+		['dropped', { state: 'dropped', due: null }, 'Promised 20 Nov to Acme · set by Dana · dropped'],
+		['overdue, no days', { state: 'overdue', due: null, days: null }, 'Promised 20 Nov to Acme · set by Dana · overdue'],
+		['late, no days', { state: 'late', due: null, days: null }, 'Promised 20 Nov to Acme · set by Dana · done late']
 	])('%s', (_, over, text) => expect(lineText(sp(over))).toBe(text));
+
+	// With two promises the line already ends in a sentence, so the state is a sentence of its own.
+	const both = { own: fact('2026-11-30', 'Beta'), epic: { key: 'ABC-7', fact: fact('2026-11-18') }, on: '2026-11-18', holder: 'epic' as const };
+	const lead = 'Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts.';
+	it.each<[string, Partial<StoryPromise>, string]>([
+		['overdue', { state: 'overdue', due: null, days: 3 }, `${lead} Overdue 3 d.`],
+		['overdue, no days', { state: 'overdue', due: null, days: null }, `${lead} Overdue.`],
+		['kept', { state: 'kept', due: null }, `${lead} Kept.`],
+		['late', { state: 'late', due: null, days: 3 }, `${lead} Done 3 d late.`],
+		['late, no days', { state: 'late', due: null, days: null }, `${lead} Done late.`],
+		['dropped', { state: 'dropped', due: null }, `${lead} Dropped.`],
+		['open', { state: 'open', due: 'later' }, lead]
+	])('both promises, %s', (_, over, text) => expect(lineText(sp({ ...both, ...over }))).toBe(text));
 
 	it('shortens an email to its local part', () => {
 		expect(lineText(sp({ own: fact('2026-11-20', 'Acme', 'dana@example.com') }))).toBe('Promised 20 Nov to Acme · set by dana');
@@ -92,11 +116,27 @@ describe('epicLineText', () => {
 });
 
 describe('epicNote', () => {
-	it('is set only when the epic holds the date', () => {
-		const epic = { key: 'ABC-7', fact: fact('2026-11-18') };
-		expect(epicNote(sp({ epic, on: '2026-11-18', holder: 'epic' }))).toBe('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
-		expect(epicNote(sp({ epic: { key: 'ABC-7', fact: fact('2026-11-30') }, holder: 'own' }))).toBeNull();
-		expect(epicNote(null)).toBeNull();
+	const epic = { key: 'ABC-7', on: '2026-11-18' };
+	it.each<[string, string]>([
+		['2026-11-30', 'Epic ABC-7 is promised 18 Nov; the earlier date counts.'],
+		['2026-11-18', 'Epic ABC-7 is promised 18 Nov.'],
+		['2026-11-12', 'Epic ABC-7 is promised 18 Nov.'],
+		['', 'Epic ABC-7 is promised 18 Nov.']
+	])('against %s', (chosen, text) => expect(epicNote(epic, chosen)).toBe(text));
+
+	it('inheritedEpic is set whenever the story inherits an epic promise, whoever holds the date', () => {
+		const e = { key: 'ABC-7', fact: fact('2026-11-30') };
+		expect(inheritedEpic(sp({ epic: e, holder: 'own' }))).toEqual({ key: 'ABC-7', on: '2026-11-30' });
+		expect(inheritedEpic(sp({ epic: e, holder: 'epic' }))).toEqual({ key: 'ABC-7', on: '2026-11-30' });
+		expect(inheritedEpic(sp({}))).toBeNull();
+		expect(inheritedEpic(null)).toBeNull();
+	});
+});
+
+describe('isEpic', () => {
+	it('tells an epic promise from a story promise', () => {
+		expect(isEpic({ fact: fact('2026-11-20'), due: null, past: false })).toBe(true);
+		expect(isEpic(sp({}))).toBe(false);
 	});
 });
 

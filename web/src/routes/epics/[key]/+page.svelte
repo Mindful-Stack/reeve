@@ -715,7 +715,8 @@
 								<span class="key"><Glyph level={levelOfKind(s.kind)} />{s.key}</span>
 								{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
 								<a class="title" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.title}</a>
-								{#if s.promise}<PromiseChip promise={s.promise} />{/if}
+								<!-- Every row is under this epic: naming it again (" · via KEY") would say nothing. -->
+								{#if s.promise}<PromiseChip promise={s.promise} via={false} />{/if}
 								<span
 									class="readiness"
 									title={item.readiness.ready ? undefined : item.readiness.reasons.map((r) => fullLabel(r)).join('\n')}

@@ -45,7 +45,7 @@
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
 	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
 	import PromiseLine from '#lib/components/PromiseLine.svelte';
-	import { CLEAR_PROMISE, epicNote, promiseActions } from '#lib/promise.ts';
+	import { CLEAR_PROMISE, inheritedEpic, promiseActions } from '#lib/promise.ts';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
@@ -1036,7 +1036,7 @@
 		draftEnds={sprints?.draft?.ends_on ?? null}
 		today={sprints?.today ?? null}
 		current={story.promise?.own ?? null}
-		epicNote={epicNote(story.promise)}
+		epic={inheritedEpic(story.promise)}
 		{busy}
 		error={promiseError}
 		onsave={savePromise}

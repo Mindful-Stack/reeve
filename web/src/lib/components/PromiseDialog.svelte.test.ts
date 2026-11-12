@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The promise dialog: shortcuts only fill the date, the body names only what changed, and a recipient-only change on an
 // overdue promise sends no date. The parent owns the write.
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PromiseFact, SetPromise } from '#lib/api/types.ts';
 import PromiseDialog from './PromiseDialog.svelte';
@@ -18,7 +18,7 @@ type Props = {
 	draftEnds?: string | null;
 	today?: string | null;
 	current?: PromiseFact | null;
-	epicNote?: string | null;
+	epic?: { key: string; on: string } | null;
 	busy?: boolean;
 	error?: string | null;
 };
@@ -34,7 +34,7 @@ function open(over: Props = {}) {
 			draftEnds: '2026-12-08',
 			today: '2026-11-12',
 			current: null,
-			epicNote: null,
+			epic: null,
 			busy: false,
 			error: null,
 			onsave: (b: SetPromise) => saved.push(b),
@@ -79,8 +79,8 @@ describe('PromiseDialog', () => {
 		expect(button('End of this sprint (24 Nov)')).toBeDefined();
 		expect(button('End of next sprint (8 Dec)')).toBeDefined();
 		expect(dateInput().min).toBe('2026-11-12');
-		expect(q('label')?.textContent).toBeDefined();
-		expect(document.body.textContent).toContain('To whom (optional)');
+		expect(dateInput().closest('label')?.textContent?.trim()).toBe('Date');
+		expect(toInput().closest('label')?.textContent?.trim()).toBe('To whom (optional)');
 	});
 
 	it('hides a shortcut whose end is null or past, and both without today', () => {
@@ -150,9 +150,116 @@ describe('PromiseDialog', () => {
 		expect(saved).toEqual([{ to: 'Beta' }]);
 	});
 
-	it('shows the epic note', () => {
-		open({ epicNote: 'Epic ABC-7 is promised 18 Nov; the earlier date counts.' });
-		expect(document.body.textContent).toContain('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
+	it('the epic note follows the chosen date', () => {
+		open({ epic: { key: 'ABC-7', on: '2026-11-18' } });
+		const note = () => q('.note')?.textContent;
+		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+		type(dateInput(), '2026-11-30');
+		expect(note()).toBe('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
+		type(dateInput(), '2026-11-18');
+		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+		type(dateInput(), '2026-11-14');
+		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+	});
+
+	it('the epic note starts from the current date on a change', () => {
+		open({ current: fact('2026-11-30'), epic: { key: 'ABC-7', on: '2026-11-18' } });
+		expect(q('.note')?.textContent).toBe('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
+	});
+
+	it('shows no note without an inherited epic promise', () => {
+		open();
+		expect(q('.note')).toBeNull();
+	});
+
+	it('a shortcut with a typed recipient sends {shortcut, to}', () => {
+		const { saved } = open();
+		button('End of this sprint (24 Nov)')!.click();
+		flushSync();
+		type(toInput(), 'Acme');
+		submit();
+		expect(saved).toEqual([{ shortcut: 'this_sprint', to: 'Acme' }]);
+	});
+
+	it('an untouched change cannot be submitted; any edit enables it', () => {
+		open({ current: fact('2026-11-30') });
+		expect(button('Promise')!.disabled).toBe(true);
+		type(toInput(), 'Beta');
+		expect(button('Promise')!.disabled).toBe(false);
+		type(toInput(), 'Acme');
+		expect(button('Promise')!.disabled).toBe(true);
+		type(dateInput(), '2026-11-28');
+		expect(button('Promise')!.disabled).toBe(false);
+	});
+
+	it('keeps its title when the current promise changes under it', () => {
+		const props = $state({ current: null as PromiseFact | null });
+		app = mount(PromiseDialog, {
+			target: document.body,
+			props: {
+				key: 'ABC-12',
+				today: '2026-11-12',
+				get current() {
+					return props.current;
+				},
+				onsave: () => {},
+				onclose: () => {}
+			}
+		});
+		flushSync();
+		expect(q('dialog h2')?.textContent).toBe('Promise ABC-12 by…');
+		props.current = fact('2026-11-30');
+		flushSync();
+		expect(q('dialog h2')?.textContent).toBe('Promise ABC-12 by…');
+	});
+
+	it('on an overdue promise, a changed date before today is invalid and not sent', () => {
+		const { saved } = open({ current: fact('2026-11-05') });
+		expect(dateInput().validationMessage).toBe('');
+		type(dateInput(), '2026-11-08');
+		expect(dateInput().validationMessage).toBe('the date is past: promise today or later');
+		submit();
+		expect(saved).toEqual([]);
+		type(dateInput(), '2026-11-05');
+		expect(dateInput().validationMessage).toBe('');
+		type(dateInput(), '2026-11-12');
+		expect(dateInput().validationMessage).toBe('');
+		submit();
+		expect(saved).toEqual([{ on: '2026-11-12' }]);
+	});
+
+	it('focuses the date again when a save fails', async () => {
+		const props = $state({ busy: false, error: null as string | null });
+		app = mount(PromiseDialog, {
+			target: document.body,
+			props: {
+				key: 'ABC-12',
+				today: '2026-11-12',
+				get busy() {
+					return props.busy;
+				},
+				get error() {
+					return props.error;
+				},
+				onsave: () => {},
+				onclose: () => {}
+			}
+		});
+		flushSync();
+		props.busy = true;
+		flushSync();
+		// A browser drops focus from a control that becomes disabled; jsdom keeps it, so move it by hand.
+		const elsewhere = document.createElement('button');
+		document.body.append(elsewhere);
+		elsewhere.focus();
+		expect(document.activeElement).toBe(elsewhere);
+		props.busy = false;
+		props.error = 'boom';
+		flushSync();
+		await tick();
+		await tick();
+		expect(document.activeElement).toBe(dateInput());
+		expect(q('[role="alert"]')?.textContent).toBe('boom');
 	});
 
 	it('busy disables the controls and error renders as an alert', () => {
