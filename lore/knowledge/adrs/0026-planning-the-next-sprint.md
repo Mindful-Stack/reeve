@@ -3,7 +3,7 @@ id: kb/ADR-0026
 title: "ADR-0026: Opening a sprint chooses which of the draft's goals go in; the rest stay in the next draft"
 description: "We decided that the person opening the draft sprint chooses which of its goals stay out, and that those goals move with their links to the next draft, because leaving a goal out today means removing it and losing its links and wording, and moving it is not a carry-over."
 tags: [adr, reeve, planning, sprints, goals]
-status: proposed
+status: accepted
 date: 2026-11-12
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-12.
+Accepted 2026-11-12 by Daniel Thyselius.
 
 ## Context
 kb/ADR-0014 decides active and closed sprints. The planner also keeps a draft, the next sprint, which kb/ADR-0025
