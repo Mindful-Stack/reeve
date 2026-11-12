@@ -73,7 +73,7 @@ export const SHORT = {
 	decision_repo_not_configured: () => 'decision: record in an unchecked repository',
 	decision_not_accepted: (r) =>
 		r.superseded_by ? `decision: superseded by ${r.superseded_by}, re-point` : `decision: ${r.status}`,
-	blocked_by: (r) => `blocked by ${r.story}`,
+	blocked_by: (r) => `blocked by ${r.story} (${COLUMN_LABEL[r.delivery]})`,
 	resolution_required: () => 'resolution required',
 	completed_needs_active_origin: () => 'completed needs active work',
 	override_needs_reason: () => 'override needs a reason',
@@ -100,7 +100,14 @@ export const FULL = {
 		r.superseded_by
 			? `decision "${r.title}": superseded by ${r.superseded_by}, re-point`
 			: `decision "${r.title}" is ${r.status}`,
-	blocked_by: (r) => `blocked by ${r.story}`,
+	blocked_by: (r) =>
+		r.delivery === 'todo'
+			? r.owner
+				? `blocked by ${r.story}: todo, owned by ${r.owner}`
+				: `blocked by ${r.story}: todo, not yet started by anyone`
+			: r.owner
+				? `blocked by ${r.story}: ${COLUMN_LABEL[r.delivery]}, owned by ${r.owner}; it unblocks when merged, or ask its owner`
+				: `blocked by ${r.story}: ${COLUMN_LABEL[r.delivery]}, no owner; it unblocks when merged`,
 	resolution_required: () => 'a resolution is required to move to done',
 	completed_needs_active_origin: () => 'completed needs the story to have been in active work',
 	override_needs_reason: () => 'an override needs a reason',

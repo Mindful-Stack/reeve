@@ -27,7 +27,7 @@ describe('refusal', () => {
 	it('gives automation a notice instead', () => {
 		expect(refusal('ABC-1', 'in_progress', [blocked], true, false)).toEqual({
 			kind: 'notice',
-			notice: 'ABC-1 was not moved to in progress: blocked by ABC-2.'
+			notice: 'ABC-1 was not moved to in progress: blocked by ABC-2: todo, not yet started by anyone.'
 		});
 	});
 	it('never offers an override for a delivery rule', () => {

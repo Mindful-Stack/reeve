@@ -37,7 +37,9 @@ pub fn short(r: &Reason) -> String {
             Some(s) => format!("decision: superseded by {s}, re-point"),
             None => format!("decision: {status}"),
         },
-        Reason::BlockedBy { story, .. } => format!("blocked by {story}"),
+        Reason::BlockedBy {
+            story, delivery, ..
+        } => format!("blocked by {story} ({})", state(*delivery)),
         Reason::ResolutionRequired => "resolution required".into(),
         Reason::CompletedNeedsActiveOrigin => "completed needs active work".into(),
         Reason::OverrideNeedsReason => "override needs a reason".into(),
@@ -172,10 +174,10 @@ mod tests {
             (
                 Reason::BlockedBy {
                     story: key("ABC-12"),
-                    delivery: DeliveryState::Todo,
-                    owner: None,
+                    delivery: DeliveryState::InReview,
+                    owner: Some("dan@example.com".into()),
                 },
-                "blocked by ABC-12",
+                "blocked by ABC-12 (in review)",
                 true,
             ),
             (Reason::ResolutionRequired, "resolution required", false),
@@ -226,6 +228,7 @@ mod tests {
             ("ABC-7", "${r.item}"),
             ("ABC-12", "${r.story}"),
             ("kb/ADR-0004", "${r.superseded_by}"),
+            ("in review", "${COLUMN_LABEL[r.delivery]}"),
         ];
         for (r, want, _) in every_reason() {
             let mut src = want.to_string();

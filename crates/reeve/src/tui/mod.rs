@@ -22,7 +22,7 @@ mod sse;
 mod term;
 mod urgent;
 mod view;
-mod words;
+pub(crate) mod words;
 
 pub use runtime::Io;
 
