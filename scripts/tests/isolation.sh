@@ -43,6 +43,7 @@ fail_at reeve-planning/src/handler/moves.rs 'self.ports.promises.lock_for_promis
 fail_at reeve-planning/src/handler/moves.rs $'self\n    .ports\n    .promises\n    .lock_for_promise(tx, item, k)'
 fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.promise_facts_in(tx, ks, es)'
 fail_at reeve-planning/src/handler/moves.rs 'self.promise_clock_in(&mut tx, c.now)'
+fail_at reeve-planning/src/handler/moves.rs 'let f = Self::promise_clock_in;'
 fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.planned_ends_in(tx)'
 fail_at reeve-planning/src/handler/moves.rs 'self.ports.reads.promised_between_in(tx, after, upto)'
 fail_at reeve-planning/src/handler/moves.rs 'self.set_promise_in(tx, c, item, k, req)'

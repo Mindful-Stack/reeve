@@ -8458,7 +8458,7 @@ async fn promised_selects_exact_sets() {
         .execute(&h.pool)
         .await
         .unwrap();
-    let _p = plain_story(&h, &c, "P", "P", None).await;
+    let p = plain_story(&h, &c, "P", "P", None).await;
 
     let set = |v: Vec<Key>| v.into_iter().collect::<HashSet<_>>();
     let of = |ks: &[&Key]| ks.iter().map(|k| (*k).clone()).collect::<HashSet<_>>();
@@ -8502,7 +8502,7 @@ async fn promised_selects_exact_sets() {
         .unwrap();
     assert_eq!(
         set(all.iter().map(|s| s.story.key.clone()).collect()),
-        of(&[&o, &t, &n, &l, &e, &f, &k, &d, &_p]),
+        of(&[&o, &t, &n, &l, &e, &f, &k, &d, &p]),
         "the baseline lists all nine"
     );
     let ready_of = |rows: &[reeve_protocol::StoryWithReadiness]| -> Vec<(Key, bool)> {
@@ -8517,9 +8517,16 @@ async fn promised_selects_exact_sets() {
     );
     assert_ne!(all[0].story.key, n, "a dropped row comes before N");
     for (label, ready_only) in [("next_sprint", false), ("any, ready only", true)] {
-        let p = if ready_only { P::Any } else { P::NextSprint };
+        let which = if ready_only { P::Any } else { P::NextSprint };
         let rows = h
-            .list_stories(&promised(p), None, None, ready_only, DoneFilter::All, now)
+            .list_stories(
+                &promised(which),
+                None,
+                None,
+                ready_only,
+                DoneFilter::All,
+                now,
+            )
             .await
             .unwrap();
         assert_eq!(ready_of(&rows), vec![(n.clone(), true)], "{label}");
