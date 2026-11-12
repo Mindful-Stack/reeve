@@ -1,5 +1,5 @@
 <!-- web/src/lib/ui/Dialog.svelte: a modal dialog over <dialog>. Escape reports onclose, and so does a click on the backdrop; the parent unmounts it.
-	`closable={false}` (e.g. while a create is pending) disables × and swallows Escape without reporting onclose; a
+	`closable={false}` (e.g. while a create is pending) disables × and swallows Escape and a backdrop click without reporting onclose; a
 	browser that closes the dialog anyway (one that ignores a prevented cancel) gets it shown again. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';

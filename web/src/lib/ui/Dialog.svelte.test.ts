@@ -142,6 +142,12 @@ describe('backdrop click', () => {
 		d.dispatchEvent(at('click', 10, 10));
 		expect(onclose).not.toHaveBeenCalled();
 	});
+	it('stays open for a click on a child at (0, 0) after a backdrop press (target guard)', () => {
+		const { d, onclose } = open();
+		d.dispatchEvent(at('pointerdown', 10, 10));
+		d.querySelector('input')!.dispatchEvent(at('click', 0, 0));
+		expect(onclose).not.toHaveBeenCalled();
+	});
 	it('stays open while not closable', () => {
 		const { d, onclose } = open(false);
 		d.dispatchEvent(at('pointerdown', 10, 10));
