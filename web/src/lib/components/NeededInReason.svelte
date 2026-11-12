@@ -7,8 +7,9 @@
 	let { reason }: { reason: NeededInReason } = $props();
 	const parts = $derived(reasonParts(reason));
 	const href = $derived(reasonHref(reason, page.url));
-	// A story opens its drawer over this view, which must not move (drawer.ts: storyHref).
-	const drawer = $derived(reason.kind === 'promise' && reason.level === 'story');
+	// A story opens its drawer over this view, which must not move (drawer.ts: storyHref); `reasonHref` routes by the
+	// same level, so the link and the attribute share one condition.
+	const drawer = $derived((reason.kind === 'discovery' || reason.kind === 'promise') && reason.level === 'story');
 </script>
 
 {#if parts && href}{parts.before}<a class="key" data-field="{reason.kind}-item" data-sveltekit-reset={drawer ? 'false' : undefined} {href}>{parts.key}</a>{parts.after}{:else}{neededInText(reason)}{/if}
