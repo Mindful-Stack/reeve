@@ -490,9 +490,23 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	await add.getByLabel("We'll know when").fill('the smoke closes it');
 	await add.getByRole('button', { name: 'Add goal' }).click();
 	await expect(next.getByRole('heading', { name: outcome })).toBeVisible();
-	await next.getByRole('button', { name: 'Open sprint' }).click();
+	// A second goal, left out at the opening: it stays in Next sprint (kb/ADR-0026).
+	const later = 'The smoke leaves this goal for later';
+	await add.getByLabel('Outcome').fill(later);
+	await add.getByLabel("We'll know when").fill('it stays in the draft');
+	await add.getByRole('button', { name: 'Add goal' }).click();
+	await expect(next.getByRole('heading', { name: later })).toBeVisible();
+	await next.getByRole('checkbox', { name: `Goes in at open: ${later}` }).uncheck();
+	await expect(next).toContainText('1 goal stays in Next sprint when it opens.');
+	await next.getByRole('button', { name: 'Open sprint with 1 goal' }).click();
 	const active = page.getByTestId('active-sprint');
 	await expect(active.getByRole('heading', { name: outcome })).toBeVisible();
+	await expect(active.getByRole('heading', { name: later })).toBeHidden();
+	await expect(next.getByRole('heading', { name: later })).toBeVisible();
+	await expect(next.getByRole('checkbox', { name: `Goes in at open: ${later}` })).toBeChecked();
+	// Leave the draft as later tests expect it: without this goal.
+	await next.getByTestId(/^goal-/).filter({ hasText: later }).getByRole('button', { name: 'Remove' }).click();
+	await expect(next.getByRole('heading', { name: later })).toBeHidden();
 
 	// On the board, the card's own move control starts the chore; the nudge links it to the goal.
 	await page.goto('/board');
@@ -524,7 +538,7 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	const dialog = page.getByRole('dialog');
 	await dialog.getByRole('radio', { name: 'met', exact: true }).check();
 	await dialog.getByRole('button', { name: 'Close sprint' }).click();
-	await expect(dialog.getByRole('status')).toHaveText('The sprint is closed.');
+	await expect(dialog.getByRole('status').filter({ hasText: 'The sprint is closed.' })).toHaveText('The sprint is closed.');
 	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(active).toBeHidden();
