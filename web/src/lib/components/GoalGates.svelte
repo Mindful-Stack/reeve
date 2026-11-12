@@ -44,7 +44,7 @@
 						<span class="muted">{d.item} in discovery</span>
 					</li>
 				{/each}
-				{#each gates.decisions as g (('decision_id' in g.reason ? g.reason.decision_id : 0) + g.on)}
+				{#each gates.decisions as g}
 					{@const r = g.reason}
 					<!-- Every decision gate carries a `decision_*` reason; the server always names the decision. -->
 					{#if 'decision_id' in r}

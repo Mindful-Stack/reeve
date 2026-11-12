@@ -368,7 +368,7 @@
 				{@render groupHead(grp.key, grp.title)}
 				{#each grp.items as g (g.id)}
 					{@const gg = gates.get(g.id)}
-					<article class="goal draft" data-testid="goal-{g.id}" data-goal={g.id} tabindex="-1">
+					<article class="goal draft" data-testid="goal-{g.id}" tabindex="-1">
 						<h4>{g.outcome}</h4>
 						<p class="muted">Waiting since {waitingSince(g.created_at)}</p>
 						<label class="goes-in"
@@ -417,8 +417,8 @@
 							oncreated={async ({ goal }) => {
 								goalFor = null;
 								await reload();
-								await tick(); // the row has unmounted: focus the new goal's card, as GoalPicker does after an add
-								document.querySelector<HTMLElement>(`[data-goal="${goal.id}"]`)?.focus();
+								await tick(); // the row has unmounted: focus the new goal's card
+								document.querySelector<HTMLElement>(`[data-testid="goal-${goal.id}"]`)?.focus();
 							}}
 							oncancel={() => closeGoal(i.key)}
 						/>

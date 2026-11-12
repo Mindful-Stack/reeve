@@ -215,12 +215,13 @@ pub struct DecisionGate {
 
 /// Each goal's gates, in `goals` order. A goal's items are a linked initiative and its epics, a linked epic and its
 /// initiative, and a linked story's epic and that epic's initiative; a linked story itself is one of the goal's
-/// stories, not an item. Its stories are the ones `serving` (as `serves`) gives it, done ones included but not those resolved as
-/// dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate
+/// stories, not an item. Its stories are the ones `serves` gives it (through `serving`), done ones included but not
+/// those resolved as dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate
 /// is an initiative or epic among the items without its mark, whatever its horizon, as readiness treats every
 /// ancestor. The goal's decisions are those on its items and stories, withdrawn ones excluded; a gate is one for which
 /// `decision_reason` gives a reason. A link to an item that no longer exists adds nothing. Nothing here reads urgency
-/// (kb/ADR-0024 R7).
+/// (kb/ADR-0024 R7). `links` must be in key-number order per goal, as `SprintRepo::links_of_in` returns them: the fold
+/// trusts it, and a goal's `initiatives` follow it.
 pub fn goal_gates(
     goals: &[i64],
     links: &[GoalLink],
@@ -233,6 +234,7 @@ pub fn goal_gates(
     let initiative: HashMap<&Key, &Initiative> = initiatives.iter().map(|i| (i.key(), i)).collect();
     let epic: HashMap<&Key, &Epic> = epics.iter().map(|e| (e.key(), e)).collect();
     let story: HashMap<&Key, &Story> = stories.iter().map(|s| (s.key(), s)).collect();
+    let facts: Vec<DecisionFact> = decisions.iter().map(&fact).collect();
     // The stories each goal serves, from `serving`, dropped ones left out.
     let mut served: HashMap<i64, Vec<&Key>> = HashMap::new();
     for s in stories {
@@ -252,14 +254,8 @@ pub fn goal_gates(
         .map(|&goal_id| {
             let mut goal_items: HashSet<&Key> = HashSet::new();
             let mut goal_initiatives: Vec<Key> = Vec::new();
-            // In key-number order whatever the prefixes: the page's group order follows it.
-            let mut own: Vec<&Key> = links
-                .iter()
-                .filter(|l| l.goal_id == goal_id)
-                .map(|l| &l.item_key)
-                .collect();
-            own.sort_by_key(|k| (k.number(), k.to_string()));
-            for k in own {
+            for l in links.iter().filter(|l| l.goal_id == goal_id) {
+                let k = &l.item_key;
                 let parent: Option<&Key> = if initiative.contains_key(k) {
                     goal_items.extend(
                         epics
@@ -320,7 +316,7 @@ pub fn goal_gates(
             under.extend(served.get(&goal_id).into_iter().flatten().copied());
             let mut gates = Vec::new();
             let mut decisions_total = 0u32;
-            for d in decisions {
+            for (d, f) in decisions.iter().zip(&facts) {
                 let withdrawn = d
                     .closed()
                     .is_some_and(|c| matches!(c.kind, Some(ClosureKind::Withdrawn)));
@@ -328,7 +324,7 @@ pub fn goal_gates(
                     continue;
                 }
                 decisions_total += 1;
-                if let Some(reason) = decision_reason(&fact(d)) {
+                if let Some(reason) = decision_reason(f) {
                     gates.push(DecisionGate {
                         on: d.on().clone(),
                         reason,
@@ -1229,7 +1225,7 @@ mod tests {
         );
     }
 
-    /// Each link resolves to its initiative in link order (links come by key number, whatever the prefixes), once; a
+    /// Each link resolves to its initiative in the order the links are given (the repo gives them by key number), once; a
     /// decision on the story reached through two links counts once.
     #[test]
     fn gates_initiatives_in_link_order_once() {
@@ -1250,7 +1246,7 @@ mod tests {
         assert_eq!(got[0].initiatives, vec![k("ABC-11"), k("ABC-10")]);
         assert_eq!(got[0].decisions_total, 1);
 
-        // Mixed prefixes: ABC-12 sorts before OLD-3 as text but after it by number.
+        // Mixed prefixes, links given by key number as the repo gives them: OLD-3 before ABC-12.
         let i = [ini("ABC-1", true), ini("OLD-1", true)];
         let e = [
             epic("ABC-12", Some("ABC-1"), true),
@@ -1258,7 +1254,7 @@ mod tests {
         ];
         let got = goal_gates(
             &[1],
-            &[lk(1, "ABC-12"), lk(1, "OLD-3")],
+            &[lk(1, "OLD-3"), lk(1, "ABC-12")],
             (&i[..], &e[..], &[]),
             &[],
             decision_fact,
@@ -1284,7 +1280,8 @@ mod tests {
             pending(1, "ABC-4", ItemType::Story),
             pending(2, "ABC-5", ItemType::Story),
         ];
-        for link in ["ABC-2", "ABC-5"] {
+        // Through the epic: only the done story's decision; linked directly: the dropped story is nothing.
+        for (link, want) in [("ABC-2", vec![no_record(1, "ABC-4")]), ("ABC-5", vec![])] {
             let g = &goal_gates(
                 &[1],
                 &[lk(1, link)],
@@ -1292,12 +1289,8 @@ mod tests {
                 &decisions,
                 decision_fact,
             )[0];
-            let want = usize::from(link == "ABC-2");
-            assert_eq!(
-                (g.decisions.len(), g.decisions_total as usize),
-                (want, want),
-                "{link}"
-            );
+            assert_eq!(g.decisions, want, "{link}");
+            assert_eq!(g.decisions_total as usize, want.len(), "{link}");
             assert_eq!(g.initiatives, vec![k("ABC-1")]);
         }
     }

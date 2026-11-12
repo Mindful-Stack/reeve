@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Epic, Initiative } from '#lib/api/types.ts';
 import { decision, epic as epicDto, initiative } from '#lib/test/fixtures.ts';
 import { bucketise, groupByInitiative, horizonLayout, openDecisionsByItem, OTHER } from './planning.ts';
 
@@ -77,7 +78,9 @@ describe('groupByInitiative over epics', () => {
 		epic('R-12', 'R-2'), epic('R-11', null), epic('R-9', 'R-2'), epic('R-13', 'R-99'), epic('R-10', 'R-2'),
 		epic('R-15', 'R-100'), epic('R-14', 'R-1')
 	];
-	const groups = groupByInitiative(['Now', 'Next', 'Later'], inis, epics, (e) => e.initiative ?? null, 'No initiative');
+	const group = (buckets: string[], i: Initiative[], e: Epic[]) =>
+		groupByInitiative(buckets, i, e, (x) => x.initiative ?? null, 'No initiative');
+	const groups = group(['Now', 'Next', 'Later'], inis, epics);
 	it('lists initiatives in the planning order, then unlisted parents as first seen, then No initiative', () => {
 		expect(groups.map((g) => g.key)).toEqual(['R-3', 'R-2', 'R-4', 'R-1', 'R-99', 'R-100', null]);
 		expect(groups.at(-3)).toMatchObject({ initiative: null, title: 'R-99' });
@@ -88,7 +91,7 @@ describe('groupByInitiative over epics', () => {
 		expect(groups[2].items).toEqual([]);
 	});
 	it('leaves out No initiative when every epic has one', () => {
-		expect(groupByInitiative(['Now'], [ini('R-1', 'Now')], [epic('R-2', 'R-1')], (e) => e.initiative ?? null, 'No initiative').map((g) => g.key)).toEqual(['R-1']);
+		expect(group(['Now'], [ini('R-1', 'Now')], [epic('R-2', 'R-1')]).map((g) => g.key)).toEqual(['R-1']);
 	});
 });
 

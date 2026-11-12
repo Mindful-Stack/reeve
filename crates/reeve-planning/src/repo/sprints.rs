@@ -495,7 +495,7 @@ async fn delete_goal_link(tx: Tx<'_, '_>, goal_id: i64, item: &Key) -> Result<bo
 async fn links_of_in(tx: Tx<'_, '_>, goal_ids: &[i64]) -> Result<Vec<GoalLink>, RepoError> {
     let rows = sqlx::query(
         "SELECT goal_id, item_key FROM goal_links WHERE goal_id = ANY($1) \
-         ORDER BY goal_id, length(item_key), item_key",
+         ORDER BY goal_id, substring(item_key from '[0-9]+$')::bigint, item_key",
     )
     .bind(goal_ids)
     .fetch_all(&mut **tx)
