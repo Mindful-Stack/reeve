@@ -250,6 +250,7 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
     fn press(code: KeyCode) -> KeyEvent {

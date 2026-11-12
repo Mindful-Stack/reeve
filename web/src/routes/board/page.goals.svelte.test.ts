@@ -102,7 +102,7 @@ beforeEach(() => {
 		withReadiness({ key: 'ABC-5', title: 'Started upkeep', delivery: 'in_progress' }),
 		withReadiness({ key: 'ABC-6', title: 'Started for goal 2', delivery: 'testing', goals: [ref(2)] })
 	];
-	sprints = { active: view(), closed: [], draft: null };
+	sprints = { active: view(), closed: [], draft: null, today: '2026-11-12' };
 	replyGoals = [];
 	needsOverride = false;
 	net.handler = serve;
@@ -198,7 +198,7 @@ describe('board goals strip', () => {
 	});
 
 	it('ignores ?goal= without an active sprint, so a stale filter hides nothing', async () => {
-		sprints = { active: null, closed: [], draft: null };
+		sprints = { active: null, closed: [], draft: null, today: '2026-11-12' };
 		(page.url as URL).href = 'http://localhost/board?goal=1';
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
@@ -226,7 +226,7 @@ describe('board goals strip', () => {
 	});
 
 	it('is absent with no active sprint, and the board still loads', async () => {
-		sprints = { active: null, closed: [], draft: null };
+		sprints = { active: null, closed: [], draft: null, today: '2026-11-12' };
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
 			flushSync();
@@ -354,7 +354,7 @@ describe('board start nudge', () => {
 	});
 
 	it('shows no bar with no active sprint', async () => {
-		sprints = { active: null, closed: [], draft: null };
+		sprints = { active: null, closed: [], draft: null, today: '2026-11-12' };
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
 			flushSync();

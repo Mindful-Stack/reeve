@@ -166,6 +166,13 @@ impl State {
                 self.override_for = None;
                 format!("{k} urgent mark cleared · {who}")
             }
+            // A promise's words are the web's activity note's (`actionLabel`), the actor first, as `freshNote` reads.
+            "promised" | "promise_cleared" => {
+                self.override_for = None;
+                let words = crate::promise::activity_words(&e.action, &e.payload, Some(k))
+                    .unwrap_or_else(|| e.action.replace('_', " "));
+                format!("{who} {words}")
+            }
             other => {
                 self.override_for = None;
                 format!("{k} {} · {who}", other.replace('_', " "))
@@ -883,6 +890,52 @@ mod tests {
         });
         let _ = l.update(Msg::Stream { epoch, ev }, &cx());
         assert!(l.last_changed.is_none());
+    }
+
+    /// A promise entry reads as the web's activity note does: the actor, then the payload's words naming the item, never
+    /// the raw action ("ABC-1 promise cleared", "promised" for a change of date).
+    #[test]
+    fn the_ticker_words_promises_from_the_payload() {
+        let prev = serde_json::json!({"on": "2026-11-20", "to": "Acme"});
+        for (action, entity, key, payload, want) in [
+            (
+                "promised",
+                "story",
+                "ABC-12",
+                serde_json::json!({"item_type": "story", "on": "2026-11-20", "to": "Acme", "previous": null}),
+                "anna promised ABC-12 by 20 Nov 2026 to Acme",
+            ),
+            (
+                "promised",
+                "story",
+                "ABC-12",
+                serde_json::json!({"item_type": "story", "on": "2026-11-27", "to": "Acme", "previous": prev}),
+                "anna changed the promise on ABC-12 to 27 Nov 2026",
+            ),
+            (
+                "promised",
+                "epic",
+                "ABC-7",
+                serde_json::json!({"item_type": "epic", "on": "2026-11-20", "to": "Beta", "previous": prev}),
+                "anna changed the recipient of the promise on epic ABC-7 to Beta",
+            ),
+            (
+                "promise_cleared",
+                "story",
+                "ABC-12",
+                serde_json::json!({"item_type": "story", "previous": prev}),
+                "anna cleared the promise on ABC-12",
+            ),
+            (
+                "promise_cleared",
+                "epic",
+                "ABC-7",
+                serde_json::json!({"item_type": "epic", "previous": prev}),
+                "anna cleared the promise on epic ABC-7",
+            ),
+        ] {
+            assert_eq!(ticker_after(action, entity, key, payload), want);
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import UrgentChip from './UrgentChip.svelte';
+	import PromiseChip from './PromiseChip.svelte';
 	import { urgentLine } from '#lib/urgency.ts';
 
 	let {
@@ -146,6 +147,7 @@
 			<a class="title" data-sveltekit-reset="false" href={href(s.key)}
 				>{#each highlight(s.title, query ?? '') as p, i (i)}{#if p.match}<mark>{p.text}</mark>{:else}{p.text}{/if}{/each}</a
 			>
+			{#if s.promise}<PromiseChip promise={s.promise} />{/if}
 			{#if matched}<span class="matched">{matched}</span>{/if}
 			{#if showEpic}<span class="epic">{s.epic ? (epicTitle.get(s.epic) ?? s.epic) : 'No epic'}</span>{/if}
 			<span class="end">

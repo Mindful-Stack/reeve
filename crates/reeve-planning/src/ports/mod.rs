@@ -8,7 +8,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use reeve_protocol::{DeliveryState, ItemType, Key, Kind, StorySort};
+use reeve_protocol::{DeliveryState, ItemType, Key, Kind, PromisedFilter, Resolution, StorySort};
 use sqlx::{Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
 
@@ -34,8 +34,9 @@ pub struct SearchRow {
     pub external_ref: Option<String>,
 }
 
-/// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`
-/// and `urgent`, which the handler applies after the read (on values computed in the same snapshot, kb/ADR-0021 R4).
+/// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`,
+/// `urgent` and `promised`, which the handler applies after the read (on values computed in the same snapshot,
+/// kb/ADR-0021 R4).
 #[derive(Debug, Clone, Default)]
 pub struct StoryFilter {
     pub epic: Option<Key>,
@@ -54,6 +55,8 @@ pub struct StoryFilter {
     pub epics: Option<Vec<Key>>,
     /// Only stories shown as urgent (non-empty `urgent_sources`), applied by the handler after the read.
     pub urgent: bool,
+    /// Only stories whose derived promise passes this filter (kb/ADR-0025 R5), applied by the handler after the read.
+    pub promised: Option<PromisedFilter>,
     /// `Relevance` needs `text`; the handler refuses it without.
     pub sort: StorySort,
 }
@@ -99,6 +102,7 @@ mod decisions;
 mod epics;
 mod initiatives;
 mod keys;
+mod promise;
 mod pull_requests;
 mod reads;
 mod sprints;
@@ -112,6 +116,7 @@ pub use self::{
     epics::EpicRepo,
     initiatives::InitiativeRepo,
     keys::KeyRepo,
+    promise::{PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, StoryPromiseRow},
     pull_requests::PullRequestRepo,
     reads::PlanningReads,
     sprints::SprintRepo,
@@ -133,6 +138,7 @@ pub struct PlanningPorts {
     pub pull_requests: Arc<dyn PullRequestRepo>,
     pub sprints: Arc<dyn SprintRepo>,
     pub urgency: Arc<dyn UrgencyRepo>,
+    pub promises: Arc<dyn PromiseRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

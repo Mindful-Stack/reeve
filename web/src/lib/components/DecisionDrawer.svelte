@@ -85,13 +85,13 @@
 		{ key: 'beyond', label: 'Beyond' }
 	];
 	/** The held stories by the window they are needed in, empty groups left out. The server never sends `none` for a held
-	 *  story (it is held by a decision some goal or discovery waits on), so `none` is folded into Beyond rather than given a group. */
+	 *  story (it is held by a decision some goal, discovery or promise waits on), so `none` is folded into Beyond rather than given a group. */
 	function grouped(stories: AffectedStory[]): { key: NeededIn; label: string; stories: AffectedStory[] }[] {
 		const window = (s: AffectedStory) => (s.needed_in === 'none' ? 'beyond' : s.needed_in);
 		return GROUPS.map((g) => ({ ...g, stories: stories.filter((s) => window(s) === g.key) })).filter((g) => g.stories.length);
 	}
 
-	/** An open, unsatisfied decision no goal or discovery waits on yet: the strip says so instead of staying empty. */
+	/** An open, unsatisfied decision no goal, discovery or promise waits on yet: the strip says so instead of staying empty. */
 	function notNeeded(e: DecisionQueueEntry): boolean {
 		return e.needed_in === 'none' && !e.decision.closed && e.decision.check.kind !== 'accepted';
 	}

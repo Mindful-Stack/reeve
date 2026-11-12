@@ -1,10 +1,12 @@
 //! The export readers. Each builds its DTOs from reads on the caller's transaction only, so a
 //! `REPEATABLE READ` transaction shared by every reader makes the export one snapshot. The stories go through
 //! `story_dtos_in`, the one place a `StoryDto` is built, because it reads on the caller's transaction too. The item
-//! readers take the urgency the caller computed once on that transaction (`urgency_in` at the export time).
+//! readers take the urgency and the promise clock the caller computed once on that transaction (`urgency_in` and
+//! `promise_clock_in` at the export time).
 use super::epics::epic_dto_of;
 use super::initiatives::initiative_dto_of;
 use super::*;
+use crate::domain::promise::Clock;
 use crate::domain::urgency::Urgency;
 use reeve_protocol::{
     CommentDto, EpicDto, InitiativeDto, RequiredDecisionDto, Resolution, SprintDto, StoryDto,
@@ -49,14 +51,14 @@ impl Handlers {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         urg: &Urgency,
+        clock: &Clock,
     ) -> Result<Vec<EpicDto>, HandlerError> {
-        Ok(self
-            .ports
-            .reads
-            .epics_in(tx)
-            .await?
+        let epics = self.ports.reads.epics_in(tx).await?;
+        let keys: Vec<Key> = epics.iter().map(|e| e.key().clone()).collect();
+        let promises = self.ports.reads.promise_facts_in(tx, &[], &keys).await?;
+        Ok(epics
             .iter()
-            .map(|e| epic_dto_of(e, urg))
+            .map(|e| epic_dto_of(e, urg, promises.epics.get(e.key()), clock))
             .collect())
     }
 
@@ -65,9 +67,10 @@ impl Handlers {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         urg: &Urgency,
+        clock: &Clock,
     ) -> Result<Vec<StoryDto>, HandlerError> {
         let stories = self.ports.reads.stories_in(tx).await?;
-        self.story_dtos_in(tx, &stories, urg).await
+        self.story_dtos_in(tx, &stories, urg, clock).await
     }
 
     /// Every sprint, oldest first, with its goals and their links nested, all read on this transaction through the

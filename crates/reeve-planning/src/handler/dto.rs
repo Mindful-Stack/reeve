@@ -2,15 +2,18 @@
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
+use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
+use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
-    DemoStoryDto, DiscoveryMarkDto, EpicDto, GoalDto, GoalProgressDto, InitiativeDto, Key,
-    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintState,
-    SprintViewDto, StoryDto,
+    DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
+    GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
+    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -50,6 +53,7 @@ impl From<&Epic> for EpicDto {
             version: e.version(),
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 }
@@ -82,6 +86,7 @@ impl From<&Story> for StoryDto {
             goals: vec![],
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 }
@@ -254,6 +259,8 @@ pub fn sprint_view_dto(
     goals: &[Goal],
     links: &[GoalLink],
     summary: Option<&Summary>,
+    promises: &[SprintPromise],
+    promises_after: Option<NaiveDate>,
     upkeep_line: u8,
 ) -> SprintViewDto {
     SprintViewDto {
@@ -273,6 +280,33 @@ pub fn sprint_view_dto(
                     .collect()
             })
             .unwrap_or_default(),
+        promises: promises.iter().map(sprint_promise_dto).collect(),
+        promises_after,
+    }
+}
+
+/// `held_by` on the wire: the holder, and the epic's key when the epic holds.
+fn holder_of(h: &HeldBy) -> (PromiseHolder, Option<Key>) {
+    match h {
+        HeldBy::Own => (PromiseHolder::Own, None),
+        HeldBy::Epic(k) => (PromiseHolder::Epic, Some(k.clone())),
+    }
+}
+
+/// One row of a sprint's promise list on the wire. `holder` and `epic_key` both come from `held_by`, so an epic holder
+/// always names its epic.
+pub fn sprint_promise_dto(p: &SprintPromise) -> SprintPromiseDto {
+    let (holder, epic_key) = holder_of(p.held_by());
+    SprintPromiseDto {
+        key: p.key().clone(),
+        title: p.title().to_string(),
+        on: p.on(),
+        to: p.to().map(str::to_string),
+        holder,
+        epic_key,
+        state: p.state().into(),
+        done_on: p.done_on(),
+        days: p.days(),
     }
 }
 
@@ -362,5 +396,98 @@ pub fn attachment_dto(a: &crate::domain::attachment::Attachment) -> reeve_protoc
             }),
             AttachmentOwner::Unclaimed => None,
         },
+    }
+}
+
+impl From<&Promise> for PromiseFactDto {
+    fn from(p: &Promise) -> Self {
+        Self {
+            on: p.on(),
+            by: p.by().to_owned(),
+            at: p.at(),
+            to: p.to().map(str::to_owned),
+        }
+    }
+}
+
+impl From<promise::State> for PromiseState {
+    fn from(s: promise::State) -> Self {
+        match s {
+            promise::State::Open => PromiseState::Open,
+            promise::State::Overdue => PromiseState::Overdue,
+            promise::State::Kept => PromiseState::Kept,
+            promise::State::Late => PromiseState::Late,
+            promise::State::Dropped => PromiseState::Dropped,
+        }
+    }
+}
+
+impl From<promise::Due> for PromiseDue {
+    fn from(d: promise::Due) -> Self {
+        match d {
+            promise::Due::ThisSprint => PromiseDue::ThisSprint,
+            promise::Due::NextSprint => PromiseDue::NextSprint,
+            promise::Due::Later => PromiseDue::Later,
+        }
+    }
+}
+
+/// The story list's `promised` parameter as the domain's filter; `Filter::matches` is the only rule that classifies.
+impl From<PromisedFilter> for promise::Filter {
+    fn from(f: PromisedFilter) -> Self {
+        match f {
+            PromisedFilter::ThisSprint => promise::Filter::ThisSprint,
+            PromisedFilter::NextSprint => promise::Filter::NextSprint,
+            PromisedFilter::Overdue => promise::Filter::Overdue,
+            PromisedFilter::Any => promise::Filter::Any,
+        }
+    }
+}
+
+/// A story DTO's `promise`: the domain's derived view (`story_promise`) on the wire, or None without one.
+pub fn story_promise_field(sp: Option<&StoryPromise>) -> Option<StoryPromiseDto> {
+    sp.map(|sp| StoryPromiseDto {
+        own: sp.own().map(Into::into),
+        epic: sp.epic().map(|(k, p)| EpicPromiseRefDto {
+            key: k.clone(),
+            fact: p.into(),
+        }),
+        on: sp.on(),
+        holder: holder_of(&sp.held_by()).0,
+        state: sp.state().map(Into::into),
+        due: sp.due().map(Into::into),
+        days: sp.days(),
+    })
+}
+
+/// An epic DTO's `promise`: its own promise with its due period while not past (`epic_due`), never a state (R4).
+pub fn epic_promise_field(p: Option<&Promise>, clock: &Clock) -> Option<EpicPromiseDto> {
+    p.map(|p| {
+        let due = epic_due(p, clock);
+        EpicPromiseDto {
+            fact: p.into(),
+            due: due.map(Into::into),
+            past: due.is_none(),
+        }
+    })
+}
+
+impl From<reeve_protocol::PromiseShortcut> for promise::Shortcut {
+    fn from(s: reeve_protocol::PromiseShortcut) -> Self {
+        match s {
+            reeve_protocol::PromiseShortcut::ThisSprint => promise::Shortcut::ThisSprint,
+            reeve_protocol::PromiseShortcut::NextSprint => promise::Shortcut::NextSprint,
+        }
+    }
+}
+
+/// The request body as the domain's request: `to` passes through untouched (None keeps, `""` clears).
+impl From<reeve_protocol::SetPromise> for promise::Request {
+    fn from(b: reeve_protocol::SetPromise) -> Self {
+        promise::Request {
+            on: b.on,
+            shortcut: b.shortcut.map(Into::into),
+            to: b.to,
+        }
     }
 }

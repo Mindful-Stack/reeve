@@ -1,5 +1,6 @@
 // Pure helpers for the delivery board: columns, reason labels, filters and rank placement.
-import type { Readiness, Reason, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import type { PromisedFilter, Readiness, Reason, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import { promisedMatches } from '#lib/promise.ts';
 
 export type Column = Story['delivery'];
 export type Kind = Story['kind'];
@@ -161,7 +162,15 @@ function byKey(a: string, b: string): number {
 
 /** `goal`: a goal's id keeps the stories that serve it, `'none'` the ones that serve no goal (upkeep); null or absent
  *  filters nothing. */
-export type Filters = { mine?: string; epic?: string; kind?: Kind; untriaged?: boolean; goal?: number | 'none' | null };
+export type Filters = {
+	mine?: string;
+	epic?: string;
+	kind?: Kind;
+	untriaged?: boolean;
+	goal?: number | 'none' | null;
+	/** The server's promise state and period, read through `promisedMatches`; only unfinished stories match. */
+	promised?: PromisedFilter | null;
+};
 
 /** Untriaged (kb/ADR-0018 R4: an item of any kind without an epic that is not done): the server's readiness reason,
  *  never re-derived from kind and epic on the client (kb/ADR-0018 R1), and not a finished item. */
@@ -180,6 +189,7 @@ export function applyFilters(stories: StoryWithReadiness[], f: Filters): StoryWi
 		if (f.untriaged && !isUntriaged(row)) return false;
 		if (f.goal === 'none' && s.goals.length > 0) return false;
 		if (typeof f.goal === 'number' && !s.goals.some((g) => g.id === f.goal)) return false;
+		if (f.promised != null && !(s.promise != null && promisedMatches(f.promised, s.promise))) return false;
 		return true;
 	});
 }

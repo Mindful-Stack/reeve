@@ -6,7 +6,8 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
-import type { Epic, Initiative, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import type { Epic, Initiative, PromisedFilter, Story, StoryPromise, StoryWithReadiness } from '#lib/api/types.ts';
+import { promisedMatches } from '#lib/promise.ts';
 import { epic, initiative, withReadiness } from '#lib/test/fixtures.ts';
 
 /** `untriaged` puts the server's untriaged reason on the row (the page never derives it from kind and epic). */
@@ -17,7 +18,7 @@ const row = (key: string, rank: number, epic: string | null, ready = true, kind:
 	);
 
 const data = vi.hoisted(() => {
-	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] };
+	const loose: Epic = { key: 'E-1', title: 'Loose epic', initiative: null, brief: '', version: 1, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [], promise: null };
 	const fresh = () => ({
 		/** Every story the fake server holds, in any delivery state; a move changes the state, as the server does. */
 		stories: [] as StoryWithReadiness[],
@@ -47,7 +48,7 @@ const data = vi.hoisted(() => {
  *  filtered here by the params the tests use, in the server's order (delivery state, then rank; under `sort=relevance`
  *  title matches first). A param it does not implement throws, so no test passes on a filter that was never applied. */
 const ORDER = ['todo', 'in_progress', 'in_review', 'testing', 'done'];
-const IMPLEMENTED = new Set(['delivery', 'done', 'epic', 'initiative', 'kind', 'label', 'ready', 'q', 'sort']);
+const IMPLEMENTED = new Set(['delivery', 'done', 'epic', 'initiative', 'kind', 'label', 'promised', 'q', 'ready', 'sort']);
 function answer(query: Record<string, unknown>): StoryWithReadiness[] {
 	for (const name of Object.keys(query)) if (!IMPLEMENTED.has(name)) throw new Error(`the fake server does not implement ${name}`);
 	const q = (query.q as string | undefined)?.toLowerCase();
@@ -61,6 +62,7 @@ function answer(query: Record<string, unknown>): StoryWithReadiness[] {
 			if (query.initiative && data.epics.find((e) => e.key === s.epic)?.initiative !== query.initiative) return false;
 			if (query.label && !s.labels.includes(query.label as string)) return false;
 			if (query.ready && !readiness.ready) return false;
+			if (query.promised && !(s.promise && promisedMatches(query.promised as PromisedFilter, s.promise))) return false;
 			if (query.q && !`${s.title} ${s.description}`.toLowerCase().includes((query.q as string).toLowerCase())) return false;
 			return true;
 		})
@@ -615,6 +617,62 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.body.querySelector('li[data-key="S-1"] .rank')!.textContent).toBe('rank 1');
 		expect(document.body.querySelector('li[data-key="S-2"] .rank')!.textContent).toBe('in progress');
 		expect(count()).toBe('2 stories');
+	});
+
+	it('Promise: asks for the open stories, offers no rank controls and counts the rows as stories, not against the todo list', async () => {
+		const pr = (state: StoryPromise['state'], due: StoryPromise['due']): StoryPromise => ({
+			own: { on: '2026-11-20', to: null, by: 'dana@example.com', at: '2026-11-01T09:00:00Z' },
+			epic: null,
+			on: '2026-11-20',
+			holder: 'own',
+			state,
+			due,
+			days: state === 'overdue' ? 3 : null
+		});
+		go('?promised=this_sprint');
+		data.stories = [
+			row('S-1', 1, 'E-1', true, 'story', false, { promise: pr('open', 'this_sprint') }),
+			row('S-2', 2, 'E-1', true, 'story', false, { delivery: 'in_progress', promise: pr('overdue', null) }),
+			row('S-3', 3, 'E-1'),
+			row('S-4', 4, 'E-1', true, 'story', false, { delivery: 'done', promise: pr('kept', null) })
+		];
+		await open('Title S-2');
+		expect(keys(document.body)).toEqual(['S-1', 'S-2']);
+		expect(data.queries).toContainEqual({ done: 'none', promised: 'this_sprint' });
+		expect(document.body.querySelector('button.handle')).toBeNull();
+		expect(menuLabels('S-1')).not.toContain('Move down');
+		expect(count()).toBe('2 stories');
+		// The State control shows Open, and its Todo names the state explicitly (else the filter would answer open again).
+		const todo = [...document.body.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="State"] button')].find((b) => b.textContent === 'Todo')!;
+		expect(document.body.querySelector('[role="group"][aria-label="State"] button[aria-pressed="true"]')!.textContent).toBe('Open');
+		todo.click();
+		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog?promised=this_sprint&state=todo'));
+	});
+
+	it('the Promise select sets the filter and names its options', async () => {
+		data.stories = [row('S-1', 1, 'E-1')];
+		await open('Title S-1');
+		const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Promise'))!.querySelector('select')!;
+		expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
+			['', 'all stories'],
+			['any', 'Promised (open or overdue)'],
+			['this_sprint', 'Due this sprint, incl. overdue'],
+			['next_sprint', 'Due next sprint'],
+			['overdue', 'Overdue']
+		]);
+		select.value = 'overdue';
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog?promised=overdue'));
+	});
+
+	it('the Promise select\'s empty option clears the filter and the state=todo it needed', async () => {
+		go('?promised=overdue&state=todo');
+		data.stories = [row('S-1', 1, 'E-1')];
+		await open('Filters (1)');
+		const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Promise'))!.querySelector('select')!;
+		select.value = '';
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog'));
 	});
 
 	it('an answer for an earlier query that lands after the current one leaves the current rows', async () => {

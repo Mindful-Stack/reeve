@@ -59,7 +59,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		}
 		if (path === '/api/v1/initiatives') return [];
 		if (path === '/api/v1/epics') {
-			const epics: Epic[] = [{ key: 'RV-2', title: 'E', version: 1, brief: '', urgent_mark: null, urgent_sources: [] }];
+			const epics: Epic[] = [{ key: 'RV-2', title: 'E', version: 1, brief: '', urgent_mark: null, urgent_sources: [], promise: null }];
 			return epics;
 		}
 		throw new Error(`unexpected ${method} ${path}`);

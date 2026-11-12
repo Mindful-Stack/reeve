@@ -1,5 +1,6 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
+use crate::promise;
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -93,12 +94,103 @@ pub fn with_urgency(text: String, lines: Vec<String>) -> String {
     }
 }
 
-/// `story` for `story show` and `story context`: with the urgent lines after the first line.
+/// " · <chip>" for a story's promise, or nothing.
+fn story_chip(s: &StoryDto) -> String {
+    s.promise
+        .as_ref()
+        .map(|p| format!(" · {}", promise::chip_text(p, true)))
+        .unwrap_or_default()
+}
+
+/// " · <chip>" for an epic's own promise, or nothing.
+fn epic_chip(e: &EpicDto) -> String {
+    e.promise
+        .as_ref()
+        .map(|p| format!(" · {}", promise::epic_chip_text(p)))
+        .unwrap_or_default()
+}
+
+/// `story` for `story show` and `story context`: with the urgent lines, then the promise line, after the first line.
 pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
-    with_urgency(
-        story(s),
-        urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now),
-    )
+    let mut lines = urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now);
+    lines.extend(s.promise.as_ref().map(promise::line_text));
+    with_urgency(story(s), lines)
+}
+
+/// A recipient as the answer names it: ` · to <recipient>`, or nothing.
+fn to_text(to: Option<&str>) -> String {
+    to.filter(|t| !t.is_empty())
+        .map(|t| format!(" · to {t}"))
+        .unwrap_or_default()
+}
+
+/// The answer to promising a story, confirming what was written. One promise: `<key> · <chip>[ · to <recipient>]`,
+/// the recipient being the story's own. When its epic's earlier date counts, the chip names the epic and the drawer
+/// line follows, indented, giving both promises with the story's own recipient (no `to` on the first line, which
+/// would read as the epic's).
+pub fn story_promise_answer(s: &StoryDto) -> String {
+    let key = mark(Level::of_kind(s.kind), &s.key);
+    match &s.promise {
+        Some(p) if p.holder == PromiseHolder::Epic => with_urgency(
+            format!("{key} · {}", promise::chip_text(p, true)),
+            vec![promise::line_text(p)],
+        ),
+        Some(p) => format!(
+            "{key} · {}{}",
+            promise::chip_text(p, true),
+            to_text(p.own.as_ref().and_then(|f| f.to.as_deref()))
+        ),
+        None => format!("{key} · no promise"),
+    }
+}
+
+/// The answer to `story promise --clear`, from the DELETE's answer alone: `<key> · promise cleared`, or `<key> · no
+/// promise to clear` when the story had no promise of its own; when its epic's promise still applies, `<key> · own
+/// promise cleared; still promised by <day> via <epic>` or `<key> · no own promise to clear; promised by <day> via
+/// <epic>` (the epic's promise is not the story's to clear).
+pub fn story_promise_cleared(c: &StoryPromiseCleared) -> String {
+    let key = mark(Level::of_kind(c.story.kind), &c.story.key);
+    let epic = c.story.promise.as_ref().and_then(|p| p.epic.as_ref());
+    match (c.cleared, epic) {
+        (true, None) => format!("{key} · promise cleared"),
+        (false, None) => format!("{key} · no promise to clear"),
+        (true, Some(e)) => format!(
+            "{key} · own promise cleared; still promised by {} via {}",
+            promise::day_label(e.fact.on),
+            e.key
+        ),
+        (false, Some(e)) => format!(
+            "{key} · no own promise to clear; promised by {} via {}",
+            promise::day_label(e.fact.on),
+            e.key
+        ),
+    }
+}
+
+/// The answer to `epic promise --clear`, from the DELETE's answer: `<key> · promise cleared`, or `<key> · no promise to
+/// clear` when it had none.
+pub fn epic_promise_cleared(c: &EpicPromiseCleared) -> String {
+    let key = mark(Level::Epic, &c.epic.key);
+    if c.cleared {
+        format!("{key} · promise cleared")
+    } else {
+        format!("{key} · no promise to clear")
+    }
+}
+
+/// The answer to promising an epic: `<key> · <chip>[ · to <recipient>]`.
+pub fn epic_promise_answer(e: &EpicDto) -> String {
+    let key = mark(Level::Epic, &e.key);
+    match &e.promise {
+        Some(p) => {
+            format!(
+                "{key} · {}{}",
+                promise::epic_chip_text(p),
+                to_text(p.fact.to.as_deref())
+            )
+        }
+        None => format!("{key} · no promise"),
+    }
 }
 
 /// `initiative` for `initiative show`: with the urgent lines after the first line.
@@ -109,12 +201,11 @@ pub fn initiative_show(i: &InitiativeDto, now: DateTime<Utc>) -> String {
     )
 }
 
-/// `epic` for `epic show`: with the urgent lines after the first line.
+/// `epic` for `epic show`: with the urgent lines, then the promise line, after the first line.
 pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
-    with_urgency(
-        epic(e),
-        urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now),
-    )
+    let mut lines = urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now);
+    lines.extend(e.promise.as_ref().map(promise::epic_line_text));
+    with_urgency(epic(e), lines)
 }
 
 /// The answer to marking an item urgent: its mark line (`!` after the key once the server counts it urgent), then
@@ -166,11 +257,12 @@ pub fn war_room_rows<'a>(
 
 pub fn story(s: &StoryDto) -> String {
     let mut out = format!(
-        "{}{} [{}] {}\n  kind: {:?}  version: {}",
+        "{}{} [{}] {}{}\n  kind: {:?}  version: {}",
         mark(Level::of_kind(s.kind), &s.key),
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         s.title,
+        story_chip(s),
         s.kind,
         s.version
     );
@@ -228,12 +320,13 @@ pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
             .unwrap_or_else(|| "not ready".into())
     };
     format!(
-        "{}{}\t{}\t{}\t{}",
+        "{}{}\t{}\t{}\t{}{}",
         mark(Level::of_kind(s.kind), &s.key),
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         ready_word,
-        s.title
+        s.title,
+        story_chip(s)
     )
 }
 
@@ -371,10 +464,11 @@ pub fn initiative(i: &InitiativeDto) -> String {
 
 pub fn epic(e: &EpicDto) -> String {
     let mut out = format!(
-        "{}{} {} (version: {})",
+        "{}{} {}{} (version: {})",
         mark(Level::Epic, &e.key),
         urgent_marker(&e.urgent_sources),
         e.title,
+        epic_chip(e),
         e.version
     );
     if let Some(i) = &e.initiative {
@@ -620,6 +714,10 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
 pub const MEMBERSHIP_RULE: &str =
     "Counts the work completed in this sprint; work started but not finished shows as in flight.";
 
+/// The promise rule (kb/ADR-0025 R8), stated under a sprint's promise list, as the web's sprint history states it.
+pub const PROMISE_RULE: &str =
+    "A promise is to a date: work done after it counts as late, even inside the sprint.";
+
 /// Whether the counts at close differ from the derived ones, number by number: totals, and each goal's numbers keyed by
 /// `goal_id` (the vector order and the serialised text never matter). A goal on one side only is a difference.
 /// `blocked_decisions` is a live measure, not part of the window's history, so it never counts as a difference.
@@ -769,8 +867,9 @@ fn indent(s: &str) -> String {
         .join("\n")
 }
 
-/// `reeve sprint show`: the sprint, the membership rule above its counts, each goal with its numbers, the upkeep share
-/// and the demo list. `closed_entry` is a closed sprint's `closed` entry counts: where they differ from the derived ones
+/// `reeve sprint show`: the sprint, the membership rule above its counts, each goal with its numbers, the upkeep share,
+/// the demo list, and the promises due in the sprint (kb/ADR-0025 R8) with their range and rule, all as the server sent
+/// them. `closed_entry` is a closed sprint's `closed` entry counts: where they differ from the derived ones
 /// (`counts_differ`), each differing number shows as `<now> (at close: <then>)`. "Blocked by N decisions" is live for
 /// the active sprint; a closed sprint shows only its value at close, from the entry, never the recomputed one. A draft
 /// has no window, so it shows no counts.
@@ -877,6 +976,25 @@ pub fn sprint_view(v: &SprintViewDto, closed_entry: Option<&SprintCountsDto>) ->
                 let _ = write!(out, "\n  {} {}", mark(Level::Story, &d.key), d.title);
             }
         }
+        if v.promises.is_empty() {
+            out.push_str("\nNo promises due in this sprint.");
+        } else {
+            let _ = write!(
+                out,
+                "\n{}:",
+                promise::promises_heading(v.promises_after, s.ends_on)
+            );
+            for p in &v.promises {
+                let _ = write!(
+                    out,
+                    "\n  {} {} · {}",
+                    mark(Level::Story, &p.key),
+                    p.title,
+                    promise::sprint_row_text(p)
+                );
+            }
+            let _ = write!(out, "\n{PROMISE_RULE}");
+        }
     }
     if !s.warnings.is_empty() {
         let _ = write!(out, "\n{}", warnings(&s.warnings));
@@ -949,6 +1067,7 @@ mod tests {
             goals: vec![],
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 
@@ -992,6 +1111,7 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         };
         let out = epic(&e);
         assert!(
@@ -1048,6 +1168,7 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         };
         assert!(epic(&e).contains(" from: SCRUM-480"), "{}", epic(&e));
         let i = InitiativeDto {
@@ -1115,6 +1236,7 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         }
     }
 
@@ -1518,7 +1640,56 @@ mod tests {
                 key: "ABC-7".parse().unwrap(),
                 title: "Demo me".into(),
             }],
+            promises: vec![],
+            promises_after: None,
         }
+    }
+
+    /// A sprint lists its promises under the range heading, each row the key, title, recipient and state words, then the
+    /// rule that a promise is to a date; a counted sprint without any says so, and a draft shows neither.
+    #[test]
+    fn sprint_view_lists_the_promises_due_in_the_sprint() {
+        let mut v = view(SprintState::Closed, vec![progress(12, 1, 1)]);
+        v.promises_after = Some("2026-11-02".parse().unwrap());
+        v.promises = vec![
+            reeve_protocol::SprintPromiseDto {
+                key: "ABC-12".parse().unwrap(),
+                title: "Export".into(),
+                on: "2026-11-10".parse().unwrap(),
+                to: Some("Acme".into()),
+                holder: PromiseHolder::Own,
+                epic_key: None,
+                state: reeve_protocol::PromiseState::Kept,
+                done_on: Some("2026-11-09".parse().unwrap()),
+                days: None,
+            },
+            reeve_protocol::SprintPromiseDto {
+                key: "ABC-13".parse().unwrap(),
+                title: "Import".into(),
+                on: "2026-11-14".parse().unwrap(),
+                to: None,
+                holder: PromiseHolder::Epic,
+                epic_key: Some("ABC-7".parse().unwrap()),
+                state: reeve_protocol::PromiseState::Late,
+                done_on: Some("2026-11-16".parse().unwrap()),
+                days: Some(2),
+            },
+        ];
+        let out = sprint_view(&v, None);
+        let want = format!(
+            "Promises due 3–17 Nov:\n  {} Export · to Acme · Kept · 10 Nov\n  {} Import · Done 2 d late · 14 Nov · via ABC-7\n{PROMISE_RULE}",
+            mark(Level::Story, "ABC-12".parse::<Key>().unwrap()),
+            mark(Level::Story, "ABC-13".parse::<Key>().unwrap()),
+        );
+        assert!(out.contains(&want), "{out}");
+        assert!(!out.contains("No promises due"), "{out}");
+
+        let none = sprint_view(&view(SprintState::Active, vec![progress(12, 1, 1)]), None);
+        assert!(none.contains("No promises due in this sprint."), "{none}");
+        assert!(!none.contains(PROMISE_RULE), "{none}");
+
+        let draft = sprint_view(&view(SprintState::Draft, vec![]), None);
+        assert!(!draft.contains("romises"), "{draft}");
     }
 
     /// The rule line sits above the counts; a number that changed since the close shows both, an unchanged one once.

@@ -20,6 +20,11 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
+	import PromiseChip from '#lib/components/PromiseChip.svelte';
+	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
+	import PromiseLine from '#lib/components/PromiseLine.svelte';
+	import ClearPromiseDialog from '#lib/components/ClearPromiseDialog.svelte';
+	import { PromiseControl } from '#lib/promiseControl.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import StatusStrip from '#lib/ui/StatusStrip.svelte';
@@ -131,11 +136,28 @@
 			criteriaAnchor: '#stories'
 		})
 	);
+	/** The promise dialog, with the sprints it offers shortcuts from (fetched each time it opens; until they answer the
+	 *  dialog has no shortcuts and no `min`, and says so if they fail). The writes go through `write`. */
+	const promise = new PromiseControl({
+		path: 'epics',
+		key: () => epic?.key,
+		write: (action) => write(action),
+		takeNotice: () => {
+			const n = notice;
+			notice = null;
+			return n;
+		},
+		refocus: () => refocusActions(),
+		fetchSprints: true
+	});
+
 	const menuItems = $derived<MenuItem[]>([
 		{ label: 'Edit brief', onselect: startEdit, disabled: editing },
 		...(epic?.discovery_complete ? [{ label: 'Clear discovery', onselect: () => void discovery(false), disabled: busy }] : []),
 		{ label: 'Mark urgent…', onselect: openMark, disabled: busy },
-		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
+		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : []),
+		// An epic has no done state: the promise items depend only on whether it has a promise; its clear asks first.
+		...promise.items(epic?.promise != null, false, busy)
 	]);
 
 	/** When the page last loaded: the urgent line's "N d ago" counts from it. */
@@ -251,6 +273,7 @@
 		creatingStory = null;
 		addingDecision = null;
 		decisionError = null;
+		promise.reset();
 		discussion = 'comments';
 		openStories.clear();
 		mountedStories.clear();
@@ -547,6 +570,7 @@
 				onremark={openMark}
 				onclear={() => void clearUrgent()}
 			/>
+			{#if ep.promise}<PromiseLine promise={ep.promise} />{/if}
 			{#if editingDetails}
 				<form bind:this={detailsForm} class="require" aria-label="Epic details" onsubmit={saveDetails}>
 					<label>Title <input bind:value={details.title} required disabled={busy} /></label>
@@ -657,6 +681,8 @@
 								<span class="key"><Glyph level={levelOfKind(s.kind)} />{s.key}</span>
 								{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
 								<a class="title" data-sveltekit-reset="false" href={storyHref(page.url, s.key)}>{s.title}</a>
+								<!-- Every row is under this epic: naming it again (" · via KEY") would say nothing. -->
+								{#if s.promise}<PromiseChip promise={s.promise} via={false} />{/if}
 								<span
 									class="readiness"
 									title={item.readiness.ready ? undefined : item.readiness.reasons.map((r) => fullLabel(r)).join('\n')}
@@ -782,6 +808,32 @@
 			oncancel={() => {
 				if (!busy) marking = false;
 			}}
+		/>
+	{/if}
+
+	{#if promise.open}
+		<PromiseDialog
+			key={ep.key}
+			activeEnds={promise.sprints?.active?.sprint.ends_on ?? null}
+			draftEnds={promise.sprints?.draft?.ends_on ?? null}
+			today={promise.sprints?.today ?? null}
+			sprintsFailed={promise.sprintsFailed}
+			current={ep.promise?.fact ?? null}
+			{busy}
+			error={promise.error}
+			onsave={(body) => void promise.save(body)}
+			onclose={() => promise.close(busy)}
+		/>
+	{/if}
+
+	{#if promise.confirming}
+		<ClearPromiseDialog
+			item={ep.key}
+			kind="epic"
+			{busy}
+			error={promise.confirmError}
+			onconfirm={() => void promise.clear()}
+			oncancel={() => promise.cancelClear(busy)}
 		/>
 	{/if}
 

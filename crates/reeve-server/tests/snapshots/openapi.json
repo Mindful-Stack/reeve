@@ -166,7 +166,7 @@
           },
           "needed_in": {
             "$ref": "#/components/schemas/NeededIn",
-            "description": "The story's own window, by its goals. Servers always send it; JSON without it reads as `none`."
+            "description": "The story's own window: the earlier of its goals' and its promise's (kb/ADR-0025 R7). Servers always send it; JSON without it reads as `none`."
           },
           "owner": {
             "description": "Servers always send it; JSON without it reads as no owner.",
@@ -1297,6 +1297,17 @@
           "key": {
             "$ref": "#/components/schemas/Key"
           },
+          "promise": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EpicPromiseDto",
+                "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -1329,7 +1340,66 @@
           "brief",
           "version",
           "urgent_mark",
-          "urgent_sources"
+          "urgent_sources",
+          "promise"
+        ],
+        "type": "object"
+      },
+      "EpicPromiseCleared": {
+        "description": "`DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now.",
+        "properties": {
+          "cleared": {
+            "type": "boolean"
+          },
+          "epic": {
+            "$ref": "#/components/schemas/EpicDto"
+          }
+        },
+        "required": [
+          "cleared",
+          "epic"
+        ],
+        "type": "object"
+      },
+      "EpicPromiseDto": {
+        "description": "An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is.",
+        "properties": {
+          "due": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseDue"
+              }
+            ]
+          },
+          "fact": {
+            "$ref": "#/components/schemas/PromiseFactDto"
+          },
+          "past": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "fact",
+          "past"
+        ],
+        "type": "object"
+      },
+      "EpicPromiseRefDto": {
+        "description": "The epic whose promise a story inherits, and that promise.",
+        "properties": {
+          "fact": {
+            "$ref": "#/components/schemas/PromiseFactDto"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          }
+        },
+        "required": [
+          "key",
+          "fact"
         ],
         "type": "object"
       },
@@ -2254,7 +2324,7 @@
         "type": "object"
       },
       "NeededIn": {
-        "description": "When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).",
+        "description": "When an open, unsatisfied decision is needed, derived on read from goals, discovery and the promises of the stories it\naffects (never stored, kb/ADR-0014 R6, kb/ADR-0025 R7). The variant order is the order of urgency, earliest first:\nthe queue takes the earliest of several windows with `min`, so the variants must not be reordered.",
         "enum": [
           "this_sprint",
           "next_sprint",
@@ -2264,7 +2334,7 @@
         "type": "string"
       },
       "NeededInReason": {
-        "description": "Why a decision is needed this sprint or next.",
+        "description": "Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason\nthis build does not know.",
         "oneOf": [
           {
             "description": "An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).",
@@ -2309,6 +2379,53 @@
             "required": [
               "key",
               "level",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An affected story is promised (kb/ADR-0025 R7); `key`/`level` name the item holding the promise (the story, or\nthe epic it inherits from), `on` the effective date, and `overdue` whether that date has passed unfinished.",
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/Key"
+              },
+              "kind": {
+                "enum": [
+                  "promise"
+                ],
+                "type": "string"
+              },
+              "level": {
+                "$ref": "#/components/schemas/ItemType"
+              },
+              "on": {
+                "format": "date",
+                "type": "string"
+              },
+              "overdue": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "level",
+              "on",
+              "overdue",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A reason added after this client was built.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "kind"
             ],
             "type": "object"
@@ -2735,6 +2852,83 @@
           "open",
           "merged",
           "closed"
+        ],
+        "type": "string"
+      },
+      "PromiseDue": {
+        "description": "An open promise's due period against the sprints' planned ends, derived on read (R5).",
+        "enum": [
+          "this_sprint",
+          "next_sprint",
+          "later",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "PromiseFactDto": {
+        "description": "A stored promise (kb/ADR-0025 R1): the date, who set it, when, and an optional recipient.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "by": {
+            "type": "string"
+          },
+          "on": {
+            "format": "date",
+            "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "on",
+          "by",
+          "at"
+        ],
+        "type": "object"
+      },
+      "PromiseHolder": {
+        "description": "Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).",
+        "enum": [
+          "own",
+          "epic",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "PromiseShortcut": {
+        "description": "A sprint whose planned end a promise takes (R6): the active sprint or the draft (next) one.",
+        "enum": [
+          "this_sprint",
+          "next_sprint"
+        ],
+        "type": "string"
+      },
+      "PromiseState": {
+        "description": "A story's promise state, derived on read (R4).",
+        "enum": [
+          "open",
+          "overdue",
+          "kept",
+          "late",
+          "dropped",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "PromisedFilter": {
+        "description": "The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open\nones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or\noverdue promise. Kept, late and dropped promises never match.",
+        "enum": [
+          "this_sprint",
+          "next_sprint",
+          "overdue",
+          "any"
         ],
         "type": "string"
       },
@@ -4099,6 +4293,17 @@
                   "key": {
                     "$ref": "#/components/schemas/Key"
                   },
+                  "promise": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/EpicPromiseDto",
+                        "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+                      }
+                    ]
+                  },
                   "title": {
                     "type": "string"
                   },
@@ -4131,7 +4336,100 @@
                   "brief",
                   "version",
                   "urgent_mark",
-                  "urgent_sources"
+                  "urgent_sources",
+                  "promise"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_EpicPromiseCleared": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now.",
+                "properties": {
+                  "cleared": {
+                    "type": "boolean"
+                  },
+                  "epic": {
+                    "$ref": "#/components/schemas/EpicDto"
+                  }
+                },
+                "required": [
+                  "cleared",
+                  "epic"
                 ],
                 "type": "object"
               }
@@ -5646,6 +5944,21 @@
                     },
                     "type": "array"
                   },
+                  "promises": {
+                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`\nfills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list\nempty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.",
+                    "items": {
+                      "$ref": "#/components/schemas/SprintPromiseDto"
+                    },
+                    "type": "array"
+                  },
+                  "promises_after": {
+                    "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for\na draft, and for the active sprint in `GET /sprints`.",
+                    "format": "date",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "sprint": {
                     "$ref": "#/components/schemas/SprintDto"
                   },
@@ -5660,7 +5973,9 @@
                   "sprint",
                   "counts",
                   "upkeep_line",
-                  "demo"
+                  "demo",
+                  "promises",
+                  "promises_after"
                 ],
                 "type": "object"
               }
@@ -5768,10 +6083,19 @@
                         "$ref": "#/components/schemas/SprintDto"
                       }
                     ]
+                  },
+                  "today": {
+                    "description": "The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The\nserver always fills it; it is optional only so that older JSON still parses.",
+                    "format": "date",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
-                  "closed"
+                  "closed",
+                  "today"
                 ],
                 "type": "object"
               }
@@ -6053,6 +6377,17 @@
                       "null"
                     ]
                   },
+                  "promise": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/StoryPromiseDto",
+                        "description": "The story's promise, own and inherited, derived on read (kb/ADR-0025 R3–R5). Servers always send it; JSON\nwithout it (an older server) reads as none."
+                      }
+                    ]
+                  },
                   "prs": {
                     "description": "Pull requests linked to this story (possibly none); informational, they never move it.",
                     "items": {
@@ -6114,7 +6449,100 @@
                   "prs",
                   "goals",
                   "urgent_mark",
-                  "urgent_sources"
+                  "urgent_sources",
+                  "promise"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_StoryPromiseCleared": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.\n`cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).",
+                "properties": {
+                  "cleared": {
+                    "type": "boolean"
+                  },
+                  "story": {
+                    "$ref": "#/components/schemas/StoryDto"
+                  }
+                },
+                "required": [
+                  "cleared",
+                  "story"
                 ],
                 "type": "object"
               }
@@ -6627,6 +7055,17 @@
                     "key": {
                       "$ref": "#/components/schemas/Key"
                     },
+                    "promise": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/EpicPromiseDto",
+                          "description": "The epic's own promise, classified on read (kb/ADR-0025 R4–R5). Servers always send it; JSON without it (an\nolder server) reads as none."
+                        }
+                      ]
+                    },
                     "title": {
                       "type": "string"
                     },
@@ -6659,7 +7098,8 @@
                     "brief",
                     "version",
                     "urgent_mark",
-                    "urgent_sources"
+                    "urgent_sources",
+                    "promise"
                   ],
                   "type": "object"
                 },
@@ -7957,6 +8397,37 @@
         ],
         "type": "object"
       },
+      "SetPromise": {
+        "additionalProperties": false,
+        "description": "`POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only\nthe recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.\nAny other field is refused rather than ignored.",
+        "properties": {
+          "on": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "shortcut": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseShortcut"
+              }
+            ]
+          },
+          "to": {
+            "description": "The recipient. Left out or `null`: keep the current one. `\"\"` (or only spaces): clear it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "SimilarStory": {
         "description": "One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only.",
         "properties": {
@@ -8089,6 +8560,70 @@
         ],
         "type": "object"
       },
+      "SprintPromiseDto": {
+        "description": "One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned\nend and up to this sprint's, derived on read. `to` is the recipient of the promise that sets the date.",
+        "properties": {
+          "days": {
+            "description": "Days overdue or late, computed by the server.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "done_on": {
+            "description": "The UTC day the story was done, when it was.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "epic_key": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Key",
+                "description": "The key of the epic whose promise this is, when `holder` is `epic`."
+              }
+            ]
+          },
+          "holder": {
+            "$ref": "#/components/schemas/PromiseHolder"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "on": {
+            "description": "The effective date (R3).",
+            "format": "date",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PromiseState"
+          },
+          "title": {
+            "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "on",
+          "holder",
+          "state"
+        ],
+        "type": "object"
+      },
       "SprintState": {
         "enum": [
           "draft",
@@ -8109,6 +8644,21 @@
             },
             "type": "array"
           },
+          "promises": {
+            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`\nfills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list\nempty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.",
+            "items": {
+              "$ref": "#/components/schemas/SprintPromiseDto"
+            },
+            "type": "array"
+          },
+          "promises_after": {
+            "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for\na draft, and for the active sprint in `GET /sprints`.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "sprint": {
             "$ref": "#/components/schemas/SprintDto"
           },
@@ -8123,7 +8673,9 @@
           "sprint",
           "counts",
           "upkeep_line",
-          "demo"
+          "demo",
+          "promises",
+          "promises_after"
         ],
         "type": "object"
       },
@@ -8163,10 +8715,19 @@
                 "$ref": "#/components/schemas/SprintDto"
               }
             ]
+          },
+          "today": {
+            "description": "The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The\nserver always fills it; it is optional only so that older JSON still parses.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "closed"
+          "closed",
+          "today"
         ],
         "type": "object"
       },
@@ -8296,6 +8857,17 @@
               "null"
             ]
           },
+          "promise": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StoryPromiseDto",
+                "description": "The story's promise, own and inherited, derived on read (kb/ADR-0025 R3–R5). Servers always send it; JSON\nwithout it (an older server) reads as none."
+              }
+            ]
+          },
           "prs": {
             "description": "Pull requests linked to this story (possibly none); informational, they never move it.",
             "items": {
@@ -8357,7 +8929,93 @@
           "prs",
           "goals",
           "urgent_mark",
-          "urgent_sources"
+          "urgent_sources",
+          "promise"
+        ],
+        "type": "object"
+      },
+      "StoryPromiseCleared": {
+        "description": "`DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.\n`cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).",
+        "properties": {
+          "cleared": {
+            "type": "boolean"
+          },
+          "story": {
+            "$ref": "#/components/schemas/StoryDto"
+          }
+        },
+        "required": [
+          "cleared",
+          "story"
+        ],
+        "type": "object"
+      },
+      "StoryPromiseDto": {
+        "description": "A story's promise as derived on read (R3–R5): both promises shown, `on` the effective date, `holder` whose it is.",
+        "properties": {
+          "days": {
+            "description": "Days overdue or late, computed by the server.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "due": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseDue",
+                "description": "Only for `open`."
+              }
+            ]
+          },
+          "epic": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EpicPromiseRefDto",
+                "description": "Only when the story inherits its epic's promise (R3)."
+              }
+            ]
+          },
+          "holder": {
+            "$ref": "#/components/schemas/PromiseHolder"
+          },
+          "on": {
+            "format": "date",
+            "type": "string"
+          },
+          "own": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseFactDto"
+              }
+            ]
+          },
+          "state": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PromiseState",
+                "description": "None only for a done story without a completion time."
+              }
+            ]
+          }
+        },
+        "required": [
+          "on",
+          "holder"
         ],
         "type": "object"
       },
@@ -11052,6 +11710,180 @@
           }
         ],
         "summary": "Advisory findings: computed on read, never stored, never consulted by a move."
+      }
+    },
+    "/api/v1/epics/{key}/promise": {
+      "delete": {
+        "operationId": "epics_key_promise_clear_promise",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_EpicPromiseCleared"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request\ncleared the epic's promise; the epic is read after the write."
+      },
+      "post": {
+        "operationId": "epics_key_promise_set_promise",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPromise"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_EpicDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only\nthe recipient. Interactive only; takes no version."
       }
     },
     "/api/v1/epics/{key}/urgent": {
@@ -13983,6 +14815,15 @@
             }
           },
           {
+            "description": "Only stories whose promise (kb/ADR-0025 R5) is:\n- `this_sprint`: overdue, or open and due this sprint;\n- `next_sprint`: open and due next sprint;\n- `overdue`: overdue;\n- `any`: open or overdue.\n\nKept, late and dropped promises never match. Combines with every other filter.",
+            "in": "query",
+            "name": "promised",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PromisedFilter"
+            }
+          },
+          {
             "description": "`rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external\nreference equals `q` first, then title matches, then the rest, each in `rank` order.",
             "in": "query",
             "name": "sort",
@@ -14934,6 +15775,180 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/api/v1/stories/{key}/promise": {
+      "delete": {
+        "operationId": "stories_key_promise_clear_promise",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_StoryPromiseCleared"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request\ncleared the story's own promise; the story is read after the write."
+      },
+      "post": {
+        "operationId": "stories_key_promise_set_promise",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPromise"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_StoryDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only\nthe recipient. Interactive only; takes no version."
       }
     },
     "/api/v1/stories/{key}/rank": {

@@ -112,6 +112,38 @@ async fn findings(
     Ok(ok(s.handlers.findings(ItemType::Epic, &key).await?))
 }
 
+/// Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only
+/// the recipient. Interactive only; takes no version.
+#[utoipa::path(post, path = "/epics/{key}/promise", params(("key" = String, Path)), request_body = SetPromise, responses((status = 200, body = Response<EpicDto>)))]
+async fn set_promise(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(b): ApiJson<SetPromise>,
+) -> Result<Json<Response<EpicDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
+    let ctx = c.ctx();
+    s.handlers
+        .set_promise(&ctx, ItemType::Epic, &key, b)
+        .await?;
+    Ok(ok(s.handlers.epic_dto(&key, ctx.now).await?))
+}
+/// Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+/// cleared the epic's promise; the epic is read after the write.
+#[utoipa::path(delete, path = "/epics/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<EpicPromiseCleared>)))]
+async fn clear_promise(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+) -> Result<Json<Response<EpicPromiseCleared>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
+    let ctx = c.ctx();
+    let cleared = s.handlers.clear_promise(&ctx, ItemType::Epic, &key).await?;
+    Ok(ok(EpicPromiseCleared {
+        cleared,
+        epic: s.handlers.epic_dto(&key, ctx.now).await?,
+    }))
+}
 #[utoipa::path(post, path = "/epics/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<EpicDto>)))]
 async fn mark_urgent(
     State(s): State<AppState>,
@@ -140,6 +172,7 @@ async fn clear_urgent(
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(mark_urgent, clear_urgent))
+        .routes(routes!(set_promise, clear_promise))
         .routes(routes!(list, create))
         .routes(routes!(get, edit))
         .routes(routes!(discovery))

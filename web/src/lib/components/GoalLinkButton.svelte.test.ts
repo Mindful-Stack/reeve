@@ -27,7 +27,8 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 const withLinks = (links: string[]): Sprints => ({
 	draft: null,
 	active: sprintView(sprint({ goals: [goal({ id: 1, outcome: 'Cut Y', links })] })),
-	closed: []
+	closed: [],
+	today: '2026-11-12'
 });
 
 let app: ReturnType<typeof mount> | null = null;

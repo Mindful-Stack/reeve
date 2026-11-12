@@ -19,7 +19,7 @@ sha2.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 reeve-testdb.workspace = true
 image.workspace = true
 img-parts.workspace = true

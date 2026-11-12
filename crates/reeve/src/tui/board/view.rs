@@ -99,6 +99,44 @@ fn meta(e: &Entry) -> String {
     m
 }
 
+/// The promise chip, from the server's values (`crate::promise`), without the epic it is via: the card names the
+/// story's epic, the only one it can be via.
+fn chip(e: &Entry) -> Option<String> {
+    e.item
+        .story
+        .promise
+        .as_ref()
+        .map(|p| crate::promise::chip_text(p, false))
+}
+
+/// `parts` on one line of `w` columns, each in its own style, cut from the end like `fit`: a cut ends in `…`, also when
+/// the parts before fill the line exactly and a non-empty one is left.
+fn fit_spans(parts: Vec<(String, Style)>, w: usize) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for (text, style) in parts {
+        let room = w.saturating_sub(used);
+        if room == 0 {
+            if !text.is_empty()
+                && let Some(last) = spans.last_mut()
+            {
+                // `fit` to one column less than the last part's width cuts it with its own `…`.
+                let shown = last.content.to_string();
+                last.content = fit(&format!("{shown} "), shown.width()).into();
+            }
+            break;
+        }
+        let t = fit(&text, room);
+        let cut = t != text;
+        used += t.width();
+        spans.push(Span::styled(t, style));
+        if cut {
+            break;
+        }
+    }
+    Line::from(spans)
+}
+
 fn owner_tag(s: &State, e: &Entry) -> String {
     match (&e.item.story.owner, s.board.filter.all) {
         (Some(o), true) => format!(" {}", words::local_part(o)),
@@ -244,7 +282,11 @@ fn columns(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now:
                 fit(&third, w),
                 st.patch(readiness_style(s, e)),
             )));
-            lines.push(Line::raw(""));
+            // The fourth row, a spacer otherwise, is the promise chip's own: no readiness colour, and room for the state.
+            lines.push(match chip(e) {
+                Some(c) => Line::styled(fit(&format!("  {c}"), w), st),
+                None => Line::raw(""),
+            });
         }
         f.render_widget(Paragraph::new(lines), inner);
     }
@@ -284,11 +326,14 @@ fn list(f: &mut Frame, area: Rect, s: &State, by_col: &[Vec<&Entry>; 5], now: In
                 "",
                 &story.title,
             ));
-            let second = format!("    {}{}", status_of(s, e), meta(e));
-            lines.push(Line::from(Span::styled(
-                fit(&second, w),
-                st.patch(readiness_style(s, e)),
-            )));
+            // The chip follows the status in the card's own style, so the tags after it are cut first.
+            let ready = st.patch(readiness_style(s, e));
+            let mut parts = vec![(format!("    {}", status_of(s, e)), ready)];
+            if let Some(c) = chip(e) {
+                parts.push((format!(" · {c}"), st));
+            }
+            parts.push((meta(e), ready));
+            lines.push(fit_spans(parts, w));
         }
     }
     let top = sel_line.map_or(0, |l| (l + 2).saturating_sub(area.height as usize));
@@ -319,4 +364,32 @@ pub fn filter_menu(f: &mut Frame, area: Rect, b: &super::State, row: usize) {
         Paragraph::new(lines).block(Block::bordered().title(" filter ")),
         r,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_spans;
+    use ratatui::style::Style;
+
+    fn text(parts: &[&str], w: usize) -> String {
+        let line = fit_spans(
+            parts
+                .iter()
+                .map(|p| (p.to_string(), Style::new()))
+                .collect(),
+            w,
+        );
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Parts that fill the line exactly with more to come end in `…`, as a cut inside a part does; an empty part left
+    /// over is nothing cut.
+    #[test]
+    fn a_line_filled_exactly_with_more_to_come_ends_in_an_ellipsis() {
+        assert_eq!(text(&["abc", "de", "f"], 5), "abcd…");
+        assert_eq!(text(&["abc", "de", ""], 5), "abcde");
+        assert_eq!(text(&["abc", "de"], 5), "abcde");
+        assert_eq!(text(&["abc", "def"], 5), "abcd…");
+        assert_eq!(text(&["abc", "de"], 9), "abcde");
+    }
 }

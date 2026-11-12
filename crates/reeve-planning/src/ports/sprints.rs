@@ -26,6 +26,12 @@ pub trait SprintRepo: Send + Sync {
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<Sprint>, RepoError>;
+    /// The active and the draft sprint (at most one each), in one statement: the planned ends the promise clock reads
+    /// (`Clock::at`, kb/ADR-0025 R5).
+    async fn active_and_draft_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<Sprint>, RepoError>;
     /// Inserts a draft; `Ok(None)` when a draft already exists (the partial unique index; `ON CONFLICT DO NOTHING`).
     async fn insert_draft(
         &self,
