@@ -35,7 +35,8 @@ pub struct SearchRow {
 }
 
 /// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`,
-/// `urgent` and `promised`, which the handler applies after the read (on values computed in the same snapshot, kb/ADR-0021 R4).
+/// `urgent` and `promised`, which the handler applies after the read (on values computed in the same snapshot,
+/// kb/ADR-0021 R4).
 #[derive(Debug, Clone, Default)]
 pub struct StoryFilter {
     pub epic: Option<Key>,

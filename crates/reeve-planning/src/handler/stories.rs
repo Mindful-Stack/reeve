@@ -343,7 +343,8 @@ impl Handlers {
     /// (`key_named_by`) is derived here, so `f.text` is ignored and replaced. `StorySort::Relevance` needs text. Both
     /// are validated before anything is read, so a filter that would list nothing is still refused when invalid.
     /// `initiative` narrows `f.epics` to that initiative's epics; `f.urgent` keeps the rows whose computed urgency has
-    /// a source (kb/ADR-0021 R4).
+    /// a source (kb/ADR-0021 R4); `f.promised` keeps the rows whose derived promise passes `promise::Filter::matches`
+    /// against the snapshot's promise clock (kb/ADR-0025 R5).
     pub async fn list_stories(
         &self,
         f: &StoryFilter,
@@ -402,9 +403,9 @@ impl Handlers {
     }
 
     /// The story list for `f` on the caller's transaction, with `urg` as every row's urgency and `clock` classifying
-    /// every row's promise. `f.goal`, `f.urgent` and `f.promised` filter after the read; `f.urgent` keeps the rows `urg` shows urgent,
-    /// so a default `Urgency` (a caller that computed none) yields nothing under `f.urgent` rather than an unfiltered
-    /// list.
+    /// every row's promise. `f.goal`, `f.urgent` and `f.promised` filter after the read; `f.urgent` keeps the rows
+    /// `urg` shows urgent, so a default `Urgency` (a caller that computed none) yields nothing under `f.urgent` rather
+    /// than an unfiltered list.
     pub(super) async fn list_stories_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -439,7 +440,7 @@ impl Handlers {
             .into_iter()
             .zip(readiness)
             .filter(|((_, sp), _)| {
-                filter.is_none_or(|f| sp.as_ref().is_some_and(|sp| f.matches(sp)))
+                filter.is_none_or(|p| sp.as_ref().is_some_and(|sp| p.matches(sp)))
             })
             .map(|((story, _), readiness)| StoryWithReadiness { story, readiness })
             .collect();

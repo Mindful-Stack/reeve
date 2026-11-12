@@ -121,8 +121,8 @@ impl utoipa::Modify for Security {
     }
 }
 
-// `Empty` is only ever a generic argument and `DoneFilter`, `StorySort` and `PromisedFilter` only query parameters; utoipa registers none
-// of them on its own, so listing them here keeps every `$ref` resolvable.
+// `Empty` is only ever a generic argument and `DoneFilter`, `StorySort` and `PromisedFilter` only query parameters;
+// utoipa registers none of them on its own, so listing them here keeps every `$ref` resolvable.
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Reeve planner API", version = "0.1.0"),

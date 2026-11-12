@@ -14451,7 +14451,7 @@
             }
           },
           {
-            "description": "Only stories with a promise that is `overdue` or due `this_sprint` (overdue included), due `next_sprint`, or\n`any` open or overdue one (kb/ADR-0025 R5). Combines with every other filter.",
+            "description": "Only stories whose promise (kb/ADR-0025 R5) is:\n- `this_sprint`: overdue, or open and due this sprint;\n- `next_sprint`: open and due next sprint;\n- `overdue`: overdue;\n- `any`: open or overdue.\n\nKept, late and dropped promises never match. Combines with every other filter.",
             "in": "query",
             "name": "promised",
             "required": false,

@@ -8385,8 +8385,10 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
 /// `promised` keeps exactly the stories whose derived promise passes `promise::Filter::matches`, ANDed with the other
 /// filters. The clock is 12 Nov; the active sprint ends 24 Nov and the draft 8 Dec. O is overdue (10 Nov, promised on
 /// 9 Nov) and in progress; T, N and L are open on 20 Nov, 1 Dec and 20 Dec; E inherits its epic's 22 Nov; K kept, D
-/// dropped; F was done before its epic promised; P has no promise. Distinguishes `this_sprint` without the overdue,
-/// done stories leaking in, and a missing AND with the other filters.
+/// dropped; P has no promise. F, done before its epic promised, is a control: it never matches. N alone is ready, so a
+/// kept row whose readiness came from a dropped row (the filter applied before rows meet their readiness) shows.
+/// Distinguishes `this_sprint` without the overdue, done stories leaking in, a missing AND with the other filters,
+/// and rows misaligned with their readiness.
 #[tokio::test]
 async fn promised_selects_exact_sets() {
     use std::collections::HashSet;
@@ -8418,7 +8420,24 @@ async fn promised_selects_exact_sets() {
     .unwrap();
     let t = plain_story(&h, &c, "T", "T", None).await;
     set_promise(&h, ItemType::Story, &t, &own(nov(20), early)).await;
-    let n = plain_story(&h, &c, "N", "N", None).await;
+    let ready = ready_epic(&h, &c).await;
+    let n = h
+        .create_story(
+            &c,
+            "N",
+            "N",
+            Kind::Chore,
+            Some(ready),
+            "",
+            vec!["ok".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
     let dec = |d| chrono::NaiveDate::from_ymd_opt(2026, 12, d).unwrap();
     set_promise(&h, ItemType::Story, &n, &own(dec(1), early)).await;
     let l = plain_story(&h, &c, "L", "L", None).await;
@@ -8470,8 +8489,42 @@ async fn promised_selects_exact_sets() {
             of(&[&t, &e]),
         ),
     ];
+    let all = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        set(all.iter().map(|s| s.story.key.clone()).collect()),
+        of(&[&o, &t, &n, &l, &e, &f, &k, &d, &_p]),
+        "the baseline lists all nine"
+    );
+    let ready_of = |rows: &[reeve_protocol::StoryWithReadiness]| -> Vec<(Key, bool)> {
+        rows.iter()
+            .map(|s| (s.story.key.clone(), s.readiness.ready))
+            .collect()
+    };
+    assert_eq!(
+        ready_of(&all).iter().filter(|(_, r)| *r).count(),
+        1,
+        "only N is ready"
+    );
+    assert_ne!(all[0].story.key, n, "a dropped row comes before N");
+    for (label, ready_only) in [("next_sprint", false), ("any, ready only", true)] {
+        let p = if ready_only { P::Any } else { P::NextSprint };
+        let rows = h
+            .list_stories(&promised(p), None, None, ready_only, DoneFilter::All, now)
+            .await
+            .unwrap();
+        assert_eq!(ready_of(&rows), vec![(n.clone(), true)], "{label}");
+    }
     for (label, filter, want) in cases {
-        assert!(!want.is_empty(), "{label}: the expected set is not empty");
         assert_eq!(
             set(list_keys(&h, &filter, None, None, now).await),
             want,

@@ -57,8 +57,13 @@ pub struct StoryQuery {
     /// Only stories shown as urgent (non-empty `urgent_sources`).
     #[serde(default)]
     pub urgent: bool,
-    /// Only stories with a promise that is `overdue` or due `this_sprint` (overdue included), due `next_sprint`, or
-    /// `any` open or overdue one (kb/ADR-0025 R5). Combines with every other filter.
+    /// Only stories whose promise (kb/ADR-0025 R5) is:
+    /// - `this_sprint`: overdue, or open and due this sprint;
+    /// - `next_sprint`: open and due next sprint;
+    /// - `overdue`: overdue;
+    /// - `any`: open or overdue.
+    ///
+    /// Kept, late and dropped promises never match. Combines with every other filter.
     pub promised: Option<PromisedFilter>,
     /// `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
     /// reference equals `q` first, then title matches, then the rest, each in `rank` order.
