@@ -748,12 +748,29 @@ for (const width of [1280, 360]) {
 			const bar = (await banner.boundingBox())!;
 			const box = (await drawer.boundingBox())!;
 			expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
-			await banner.getByRole('link', { name: 'Backlog' }).click({ trial: true }); // not covered
+			expect(box.y).toBeLessThanOrEqual(bar.y + bar.height + 1); // no gap
+			await close.click({ trial: true }); // fails if the bar covers the drawer
 		};
+		let close = page.getByRole('button', { name: `Close story ${s.key}` });
 		await page.goto(`/board?story=${s.key}`);
 		await under(page.getByRole('complementary'));
+		close = page.getByRole('button', { name: `Close decision #${d.id}` });
 		await page.goto(`/decisions?decision=${d.id}`);
 		await under(page.getByTestId('decision-drawer'));
+	});
+}
+
+for (const width of [1280, 360]) {
+	test(`the account menu opens from the top bar at ${width}px and stays open`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		await page.goto('/board');
+		const trigger = page.getByRole('banner').getByRole('button', { name: /^Account:/ });
+		await trigger.click();
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.waitForTimeout(300); // a menu that closes itself after opening would be gone by now
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0);
 	});
 }
 
