@@ -123,4 +123,25 @@ pub trait PlanningReads: Send + Sync {
         epics: &[Key],
         initiatives: &[Key],
     ) -> Result<Lineage, RepoError>;
+    /// Promise facts for the listed stories (own promise, epic and its promise, done_at) and epics (own promise), in one
+    /// statement; no statement when both lists are empty. Keys with no row are absent.
+    async fn promise_facts_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        stories: &[Key],
+        epics: &[Key],
+    ) -> Result<PromiseFacts, RepoError>;
+    /// Stories whose own date or whose epic's date is after `after` (exclusive; None: unbounded) and on or before
+    /// `upto`, with title, delivery, resolution and their promise row. Candidates for a sprint's list (kb/ADR-0025 R8).
+    async fn promised_between_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        after: Option<NaiveDate>,
+        upto: NaiveDate,
+    ) -> Result<Vec<PromisedStoryRow>, RepoError>;
+    /// The planned ends of the active and the draft sprint, in one statement.
+    async fn planned_ends_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError>;
 }

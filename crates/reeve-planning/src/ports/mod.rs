@@ -8,7 +8,7 @@ use crate::domain::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use reeve_protocol::{DeliveryState, ItemType, Key, Kind, StorySort};
+use reeve_protocol::{DeliveryState, ItemType, Key, Kind, Resolution, StorySort};
 use sqlx::{Postgres, Transaction};
 use std::{collections::HashMap, sync::Arc};
 
@@ -99,6 +99,7 @@ mod decisions;
 mod epics;
 mod initiatives;
 mod keys;
+mod promise;
 mod pull_requests;
 mod reads;
 mod sprints;
@@ -112,6 +113,7 @@ pub use self::{
     epics::EpicRepo,
     initiatives::InitiativeRepo,
     keys::KeyRepo,
+    promise::{PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, StoryPromiseRow},
     pull_requests::PullRequestRepo,
     reads::PlanningReads,
     sprints::SprintRepo,
@@ -133,6 +135,7 @@ pub struct PlanningPorts {
     pub pull_requests: Arc<dyn PullRequestRepo>,
     pub sprints: Arc<dyn SprintRepo>,
     pub urgency: Arc<dyn UrgencyRepo>,
+    pub promises: Arc<dyn PromiseRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

@@ -30,8 +30,9 @@ pub use handler::*;
 pub use ports::{
     ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
     DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads,
-    PullRequestRepo, RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryRepo,
-    StoryText, UrgencyRepo,
+    PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, PullRequestRepo, RepoError,
+    SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryPromiseRow, StoryRepo, StoryText,
+    UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;

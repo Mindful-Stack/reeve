@@ -24,6 +24,7 @@ mod decisions;
 mod epics;
 mod initiatives;
 mod keys;
+mod promise;
 mod pull_requests;
 mod reads;
 mod sprints;
@@ -51,6 +52,7 @@ pub fn make_planning_ports(pool: PgPool) -> PlanningPorts {
         pull_requests: r.clone(),
         sprints: r.clone(),
         urgency: r.clone(),
+        promises: r.clone(),
         reads: r,
     }
 }

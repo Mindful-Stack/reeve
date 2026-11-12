@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::queue::LineageItem;
+use crate::domain::{promise::Promise, queue::LineageItem};
 
 #[async_trait]
 impl PlanningReads for PgPlanningRepo {
@@ -352,6 +352,28 @@ impl PlanningReads for PgPlanningRepo {
     ) -> Result<Lineage, RepoError> {
         urgency_lineage_in(tx, epics, initiatives).await
     }
+    async fn promise_facts_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        stories: &[Key],
+        epics: &[Key],
+    ) -> Result<PromiseFacts, RepoError> {
+        promise_facts_in(tx, stories, epics).await
+    }
+    async fn promised_between_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        after: Option<NaiveDate>,
+        upto: NaiveDate,
+    ) -> Result<Vec<PromisedStoryRow>, RepoError> {
+        promised_between_in(tx, after, upto).await
+    }
+    async fn planned_ends_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError> {
+        planned_ends_in(tx).await
+    }
 }
 
 fn via_of(s: &str) -> Result<GoalVia, sqlx::Error> {
@@ -515,4 +537,128 @@ async fn urgency_lineage_in(
             .map(|(s, e, d)| (key(&s), key(&e), d))
             .collect(),
     })
+}
+
+/// A promise from its four nullable columns (`<prefix>on`, `by`, `at`, `to`), None when there is none.
+fn promise_cols(
+    r: &sqlx::postgres::PgRow,
+    on: &str,
+    by: &str,
+    at: &str,
+    to: &str,
+) -> Result<Option<Promise>, sqlx::Error> {
+    let on: Option<NaiveDate> = r.try_get(on)?;
+    Ok(match on {
+        None => None,
+        Some(on) => Some(Promise::from_persisted(
+            on,
+            r.try_get::<Option<String>, _>(by)?
+                .ok_or_else(|| sqlx::Error::Decode("promised_by is null".into()))?,
+            r.try_get::<Option<DateTime<Utc>>, _>(at)?
+                .ok_or_else(|| sqlx::Error::Decode("promised_at is null".into()))?,
+            r.try_get(to)?,
+        )),
+    })
+}
+
+fn story_promise_row(r: &sqlx::postgres::PgRow) -> Result<StoryPromiseRow, sqlx::Error> {
+    let epic = match (
+        r.try_get::<Option<String>, _>("epic_key")?,
+        promise_cols(r, "e_on", "e_by", "e_at", "e_to")?,
+    ) {
+        (Some(k), Some(p)) => Some((key(&k), p)),
+        _ => None,
+    };
+    Ok(StoryPromiseRow {
+        own: promise_cols(r, "p_on", "p_by", "p_at", "p_to")?,
+        epic,
+        done_at: r.try_get("done_at")?,
+    })
+}
+
+/// Story and epic promise facts in one `UNION ALL` statement; `kind` tells the rows apart.
+async fn promise_facts_in(
+    tx: Tx<'_, '_>,
+    stories: &[Key],
+    epics: &[Key],
+) -> Result<PromiseFacts, RepoError> {
+    if stories.is_empty() && epics.is_empty() {
+        return Ok(PromiseFacts::default());
+    }
+    let s: Vec<String> = stories.iter().map(Key::to_string).collect();
+    let e: Vec<String> = epics.iter().map(Key::to_string).collect();
+    let rows = sqlx::query(
+        "SELECT 'story' AS kind, s.key, s.epic_key, s.done_at,
+                s.promised_on AS p_on, s.promised_by AS p_by, s.promised_at AS p_at, s.promised_to AS p_to,
+                e.promised_on AS e_on, e.promised_by AS e_by, e.promised_at AS e_at, e.promised_to AS e_to
+           FROM stories s LEFT JOIN epics e ON e.key = s.epic_key AND e.promised_on IS NOT NULL
+          WHERE s.key = ANY($1)
+         UNION ALL
+         SELECT 'epic', key, NULL::text, NULL::timestamptz,
+                promised_on, promised_by, promised_at, promised_to,
+                NULL::date, NULL::text, NULL::timestamptz, NULL::text
+           FROM epics WHERE key = ANY($2)",
+    )
+    .bind(&s)
+    .bind(&e)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut facts = PromiseFacts::default();
+    for r in &rows {
+        let k = key(r.get::<&str, _>("key"));
+        match r.get::<&str, _>("kind") {
+            "story" => {
+                facts.stories.insert(k, story_promise_row(r)?);
+            }
+            _ => {
+                if let Some(p) = promise_cols(r, "p_on", "p_by", "p_at", "p_to")? {
+                    facts.epics.insert(k, p);
+                }
+            }
+        }
+    }
+    Ok(facts)
+}
+
+async fn promised_between_in(
+    tx: Tx<'_, '_>,
+    after: Option<NaiveDate>,
+    upto: NaiveDate,
+) -> Result<Vec<PromisedStoryRow>, RepoError> {
+    let rows = sqlx::query(
+        "SELECT s.key, s.title, s.delivery, s.resolution, s.epic_key, s.done_at,
+                s.promised_on AS p_on, s.promised_by AS p_by, s.promised_at AS p_at, s.promised_to AS p_to,
+                e.promised_on AS e_on, e.promised_by AS e_by, e.promised_at AS e_at, e.promised_to AS e_to
+           FROM stories s LEFT JOIN epics e ON e.key = s.epic_key AND e.promised_on IS NOT NULL
+          WHERE (s.promised_on IS NOT NULL OR e.promised_on IS NOT NULL)
+            AND LEAST(s.promised_on, e.promised_on) <= $2
+            AND ($1::date IS NULL OR LEAST(s.promised_on, e.promised_on) > $1)
+          ORDER BY LEAST(s.promised_on, e.promised_on), s.key",
+    )
+    .bind(after)
+    .bind(upto)
+    .fetch_all(&mut **tx)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(PromisedStoryRow {
+                key: key(r.get::<&str, _>("key")),
+                title: r.get("title"),
+                delivery: delivery_of(r.get("delivery"))?,
+                resolution: resolution_of(r.get::<Option<String>, _>("resolution").as_deref())?,
+                row: story_promise_row(r)?,
+            })
+        })
+        .collect()
+}
+
+async fn planned_ends_in(
+    tx: Tx<'_, '_>,
+) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError> {
+    let rows: Vec<(String, NaiveDate)> =
+        sqlx::query_as("SELECT state, ends_on FROM sprints WHERE state IN ('active','draft')")
+            .fetch_all(&mut **tx)
+            .await?;
+    let end = |s: &str| rows.iter().find(|(st, _)| st == s).map(|(_, d)| *d);
+    Ok((end("active"), end("draft")))
 }
