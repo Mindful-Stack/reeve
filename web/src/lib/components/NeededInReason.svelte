@@ -2,14 +2,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import type { NeededInReason } from '#lib/api/types.ts';
-	import { neededInText, reasonHref } from '#lib/decisions.ts';
+	import { neededInText, reasonHref, reasonParts } from '#lib/decisions.ts';
 
 	let { reason }: { reason: NeededInReason } = $props();
-	const text = $derived(neededInText(reason));
+	const parts = $derived(reasonParts(reason));
 	const href = $derived(reasonHref(reason, page.url));
-	const key = $derived(reason.kind === 'discovery' || reason.kind === 'promise' ? reason.key : null);
-	// The phrase names the key once; it becomes the link and the words around it stay text.
-	const at = $derived(key == null ? -1 : text.indexOf(key));
+	// A story opens its drawer over this view, which must not move (drawer.ts: storyHref).
+	const drawer = $derived(reason.kind === 'promise' && reason.level === 'story');
 </script>
 
-{#if href && key != null && at >= 0}{text.slice(0, at)}<a class="key" data-field="{reason.kind}-item" {href}>{key}</a>{text.slice(at + key.length)}{:else}{text}{/if}
+{#if parts && href}{parts.before}<a class="key" data-field="{reason.kind}-item" data-sveltekit-reset={drawer ? 'false' : undefined} {href}>{parts.key}</a>{parts.after}{:else}{neededInText(reason)}{/if}

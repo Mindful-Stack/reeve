@@ -158,22 +158,51 @@ export function nextStepText(s: NextStep, reversibility: Reversibility | null | 
 	}
 }
 
+type KeyedReason = Extract<NeededInReason, { kind: 'discovery' | 'promise' }>;
+/** A reason phrase split around the item key it names, so a view can make the key a link. */
+export type ReasonParts = { before: string; key: string; after: string };
+
+function keyedParts(r: KeyedReason): ReasonParts {
+	return r.kind === 'discovery'
+		? { before: '', key: r.key, after: ' is in discovery' }
+		: { before: `promised by ${dayLabel(r.on)}${r.overdue ? ', overdue' : ''}: `, key: r.key, after: '' };
+}
+
+/** `neededInText` split around the key of the item it names (in discovery, or holding a promise); null for a reason
+ *  that names no item (a goal, or one this client does not know). */
+export function reasonParts(r: NeededInReason): ReasonParts | null {
+	switch (r.kind) {
+		case 'discovery':
+		case 'promise':
+			return keyedParts(r);
+		case 'goal':
+		case 'unknown':
+			return null;
+		default: {
+			// A kind newer than the generated types: compile-time exhaustive, harmless at run time.
+			r satisfies never;
+			return null;
+		}
+	}
+}
+
 /** Why the decision is needed when it is: the goal's outcome, the discovery that waits on it, or the promise of an
  *  affected story (the item holding it, the effective date, and whether it is overdue). A reason added after this
- *  client was built reads `unknown`. */
+ *  client was built reads `unknown`, and so does any kind the generated types do not list. */
 export function neededInText(r: NeededInReason): string {
 	switch (r.kind) {
 		case 'goal':
 			return `for goal: ${r.outcome}`;
 		case 'discovery':
-			return `${r.key} is in discovery`;
-		case 'promise':
-			return `promised by ${dayLabel(r.on)}${r.overdue ? ', overdue' : ''}: ${r.key}`;
+		case 'promise': {
+			const p = keyedParts(r);
+			return p.before + p.key + p.after;
+		}
 		case 'unknown':
 			return 'needed (reason not shown)';
 		default: {
-			const never: never = r;
-			return never;
+			r satisfies never;
+			return 'needed (reason not shown)';
 		}
 	}
 }
@@ -189,8 +218,8 @@ export function reasonHref(r: NeededInReason, url: { readonly href: string }): s
 		case 'unknown':
 			return null;
 		default: {
-			const never: never = r;
-			return never;
+			r satisfies never;
+			return null;
 		}
 	}
 }

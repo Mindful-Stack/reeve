@@ -256,6 +256,8 @@ describe('DecisionDrawer', () => {
 			);
 			const a = drawer.querySelector<HTMLAnchorElement>('.strip .needed a');
 			expect(a?.getAttribute('href')).toBe(href);
+			// The view behind the story drawer must not move (drawer.ts: storyHref); a page link navigates normally.
+			expect(a?.getAttribute('data-sveltekit-reset')).toBe(level === 'story' ? 'false' : null);
 			expect(words(drawer.querySelector('.strip .needed'))).toBe(`Needed this sprint · promised by 10 Nov, overdue: ${key}`);
 			unmount(app!);
 			app = null;

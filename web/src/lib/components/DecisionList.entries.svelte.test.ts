@@ -7,6 +7,11 @@ import { blockedStory, decision as decisionDto, queueEntry } from '#lib/test/fix
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import DecisionList from './DecisionList.svelte';
 
+// The decisions page, scrolled to a lane: a story link opens the drawer over it and keeps the lane's hash.
+vi.mock('$app/state', async () => ({
+	page: (await import('#lib/test/net.ts')).fakePage({ url: '/decisions#next-sprint' }).page
+}));
+
 const net = vi.hoisted(() => ({ calls: [] as { method: string; path: string }[] }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
@@ -71,6 +76,28 @@ describe('DecisionList entries', () => {
 			});
 			expect(row.querySelector('.needed a')?.getAttribute('href')).toBe(href);
 			expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 GRA-12 is in discovery');
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
+	});
+
+	it('links the promised item: a story opens its drawer over the lane it is in, an epic its page', () => {
+		for (const [level, key, href, reset] of [
+			['story', 'ABC-12', '/decisions?story=ABC-12#next-sprint', 'false'],
+			['epic', 'ABC-5', '/epics/ABC-5', null]
+		] as const) {
+			const d = decision(PR);
+			const { row } = mountWith(d, {
+				entries: entryFor(d, {
+					needed_in: 'next_sprint',
+					needed_in_reason: { kind: 'promise', key, level, on: '2026-12-01', overdue: false }
+				})
+			});
+			const a = row.querySelector('.needed a');
+			expect(a?.getAttribute('href')).toBe(href);
+			expect(a?.getAttribute('data-sveltekit-reset')).toBe(reset);
+			expect(row.querySelector('.needed')?.textContent).toBe(`Needed next sprint \u00b7 promised by 1 Dec: ${key}`);
 			unmount(app!);
 			app = null;
 			document.body.innerHTML = '';

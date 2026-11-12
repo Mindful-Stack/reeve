@@ -9,6 +9,7 @@ import {
 	dateLine,
 	pruneExpanded,
 	reasonHref,
+	reasonParts,
 	decisionStatus,
 	filterDecisions,
 	itemHref,
@@ -209,6 +210,20 @@ describe('next step and needed-in wording', () => {
 		);
 		expect(neededInText({ kind: 'unknown' })).toBe('needed (reason not shown)');
 		expect(reasonHref({ kind: 'unknown' }, board)).toBeNull();
+		// A kind newer than the generated types still reads safely at run time.
+		const future = { kind: 'future_thing' } as never;
+		expect(neededInText(future)).toBe('needed (reason not shown)');
+		expect(reasonHref(future, board)).toBeNull();
+		expect(reasonParts(future)).toBeNull();
+		// The phrase split around the key a view links.
+		expect(reasonParts({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-10', overdue: true })).toEqual({
+			before: 'promised by 10 Nov, overdue: ',
+			key: 'ABC-12',
+			after: ''
+		});
+		expect(reasonParts({ kind: 'discovery', key: 'GRA-12', level: 'epic' })).toEqual({ before: '', key: 'GRA-12', after: ' is in discovery' });
+		expect(reasonParts({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBeNull();
+		expect(reasonParts({ kind: 'unknown' })).toBeNull();
 		// A story's promise opens its drawer over the current page; an epic's opens the epic page.
 		expect(reasonHref({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false }, board)).toBe(
 			'/board?story=ABC-12'
