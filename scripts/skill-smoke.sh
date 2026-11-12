@@ -340,6 +340,20 @@ main() {
 	person="$("$server" token-issue --email "$email" --kind interactive --label skill-smoke-person)"
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_sprints "$reeve" || exit 1
 
+	log "seeding a story with one screenshot"
+	local shot_story attachment
+	attachment="$(
+		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/octet-stream' \
+			--data-binary "@$root/crates/reeve/tests/fixtures/one.png" "$url/api/v1/attachments?filename=one.png" |
+			node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.id))'
+	)" || { echo "uploading the screenshot failed" >&2; exit 1; }
+	shot_story="$(
+		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/json' \
+			-d "{\"idempotency_key\":\"skill-smoke-shot\",\"title\":\"Skill smoke story with a screenshot\",\"kind\":\"chore\",\"criteria\":[],\"labels\":[],\"attachments\":[\"$attachment\"]}" \
+			"$url/api/v1/stories" |
+			node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))'
+	)" || { echo "seeding the screenshot story failed" >&2; exit 1; }
+
 	log "building the household: $work/household/kb with an accepted record on main"
 	local household="$work/household"
 	mkdir -p "$household/kb/adrs"
@@ -358,9 +372,9 @@ main() {
 	g -C "$household/kb" remote set-head origin -a >/dev/null
 
 	node -e '
-		const [file, household, email] = process.argv.slice(1);
-		const seed = { household, email, repo: "kb", record: { id: "kb/ADR-0001", path: "adrs/0001-x.md" } };
-		require("node:fs").writeFileSync(file, JSON.stringify(seed, null, 2) + "\n");' "$work/seed.json" "$household" "$email"
+		const [file, household, email, story] = process.argv.slice(1);
+		const seed = { household, email, repo: "kb", record: { id: "kb/ADR-0001", path: "adrs/0001-x.md" }, shot: { story } };
+		require("node:fs").writeFileSync(file, JSON.stringify(seed, null, 2) + "\n");' "$work/seed.json" "$household" "$email" "$shot_story"
 
 	log "running the Lorekeeper skill smoke in $lorekeeper"
 	local tap="$work/lorekeeper.tap"
