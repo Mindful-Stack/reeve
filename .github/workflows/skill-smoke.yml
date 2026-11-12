@@ -33,7 +33,7 @@ concurrency:
 env:
   # The Lorekeeper ref the smoke runs against: `main` once the Lorekeeper pull request has merged, its branch until then
   # Do not merge while this is not `main`.
-  LOREKEEPER_REF: feat/reeve-attachments
+  LOREKEEPER_REF: main
 jobs:
   skill-smoke:
     timeout-minutes: 30
