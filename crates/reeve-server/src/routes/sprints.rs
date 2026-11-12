@@ -39,7 +39,7 @@ async fn list(
     let x = s.handlers.sprints(now).await?;
     let line = s.handlers.settings.upkeep_line;
     Ok(ok(SprintsDto {
-        today: Some(now.date_naive()),
+        today: Some(x.today),
         active: x.active.as_ref().map(|a| {
             sprint_view_dto(
                 a,

@@ -25,7 +25,7 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         now: DateTime<Utc>,
     ) -> Result<Clock, HandlerError> {
-        let open = self.ports.sprints.planned_ends_in(tx).await?;
+        let open = self.ports.sprints.active_and_draft_in(tx).await?;
         Ok(Clock::at(now, &open))
     }
 

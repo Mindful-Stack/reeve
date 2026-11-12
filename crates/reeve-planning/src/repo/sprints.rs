@@ -32,11 +32,11 @@ impl SprintRepo for PgPlanningRepo {
     ) -> Result<Vec<Sprint>, RepoError> {
         sprints_in(tx).await
     }
-    async fn planned_ends_in(
+    async fn active_and_draft_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<Sprint>, RepoError> {
-        planned_ends_in(tx).await
+        active_and_draft_in(tx).await
     }
     async fn insert_draft(
         &self,
@@ -264,7 +264,7 @@ async fn sprints_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError> {
     Ok(rows.iter().map(sprint_from).collect::<Result<_, _>>()?)
 }
 
-async fn planned_ends_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError> {
+async fn active_and_draft_in(tx: Tx<'_, '_>) -> Result<Vec<Sprint>, RepoError> {
     let rows = sqlx::query(&format!(
         "SELECT {SPRINT_COLS} FROM sprints WHERE state IN ('active', 'draft')"
     ))

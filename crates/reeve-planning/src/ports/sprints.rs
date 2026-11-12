@@ -28,7 +28,7 @@ pub trait SprintRepo: Send + Sync {
     ) -> Result<Vec<Sprint>, RepoError>;
     /// The active and the draft sprint (at most one each), in one statement: the planned ends the promise clock reads
     /// (`Clock::at`, kb/ADR-0025 R5).
-    async fn planned_ends_in(
+    async fn active_and_draft_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Vec<Sprint>, RepoError>;

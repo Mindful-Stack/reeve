@@ -2003,12 +2003,12 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
 }
 
 #[tokio::test]
-async fn planned_ends_in_reads_active_and_draft_in_one_statement() {
+async fn active_and_draft_in_reads_both_in_one_statement() {
     let (_c, pool) = common::pg_counted().await;
     let ports = make_planning_ports(pool.clone());
     let ends = || async {
         let mut tx = pool.begin().await.unwrap();
-        let r = ports.sprints.planned_ends_in(&mut tx).await.unwrap();
+        let r = ports.sprints.active_and_draft_in(&mut tx).await.unwrap();
         tx.rollback().await.unwrap();
         let end = |st: SprintState| r.iter().find(|s| s.state == st).map(|s| s.ends_on);
         assert!(r.iter().all(|s| s.state != SprintState::Closed));

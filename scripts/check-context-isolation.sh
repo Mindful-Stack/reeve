@@ -66,7 +66,7 @@ if [ -d "$planning/handler" ]; then
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7: moving a story never reads sprints, goals, urgency or the decision
   # queue's windows, and never reads or writes promises.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|planned_ends_in|${lb}(set|clear)_promise(_in)?\b")
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b")
     if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of

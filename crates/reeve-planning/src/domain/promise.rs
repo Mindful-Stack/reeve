@@ -437,7 +437,7 @@ impl StoryPromise {
         }
     }
     /// The promise that sets the effective date.
-    pub fn holder(&self) -> &Promise {
+    pub fn holding(&self) -> &Promise {
         match &self.held {
             Held::Own { own, .. } => own,
             Held::Epic { epic, .. } => &epic.1,
@@ -445,7 +445,7 @@ impl StoryPromise {
     }
     /// The effective date (R3).
     pub fn on(&self) -> NaiveDate {
-        self.holder().on
+        self.holding().on
     }
     /// None only for a done story without `done_at`.
     pub fn state(&self) -> Option<State> {
@@ -541,7 +541,7 @@ impl SprintPromise {
             title,
             on: sp.on(),
             held_by: sp.held_by(),
-            to: sp.holder().to.clone(),
+            to: sp.holding().to.clone(),
             state,
             done_on: sp.done_on,
             days: sp.days,

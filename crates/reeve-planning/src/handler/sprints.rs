@@ -20,6 +20,8 @@ pub struct Sprints {
     pub goals: Vec<Goal>,
     pub links: Vec<GoalLink>,
     pub active_summary: Option<sprint::Summary>,
+    /// The promise clock's today (`Clock::at`): the UTC date of the request, as `SprintsDto.today` sends it.
+    pub today: NaiveDate,
 }
 
 /// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
@@ -620,6 +622,7 @@ impl Handlers {
             goals,
             links,
             active_summary: None,
+            today: Clock::at(now, &all).today,
         };
         for s in all {
             match s.state {
