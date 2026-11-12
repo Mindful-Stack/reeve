@@ -5,7 +5,7 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, unwrap } from '#lib/api/client.ts';
+	import { api, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { Epic, Story } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, KINDS } from '#lib/board.ts';
 	import TriageItem from '#lib/components/TriageItem.svelte';
@@ -13,7 +13,7 @@
 	import { onLive } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { errorMessage, plural } from '#lib/format.ts';
-	import { byKey, draftOf, followDraft, whereNow, type Draft } from '#lib/triage.ts';
+	import { byKey, draftOf, FIELD_LABEL, followDraft, nextKey, placeEdit, rebaseAfterConflict, whereNow, type Draft } from '#lib/triage.ts';
 	import { command, type Command } from '#lib/triageKeys.ts';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
@@ -37,6 +37,8 @@
 
 	const current = $derived(left ?? queue.find((s) => s.key === currentKey) ?? null);
 	const position = $derived(queue.findIndex((s) => s.key === currentKey));
+	/** The one write in flight (its item's key), or null. Every write waits for it. */
+	let writing = $state<string | null>(null);
 
 	// The current option stays in sight in a scrolled queue (jsdom has no scrollIntoView, hence the optional call).
 	$effect(() => {
@@ -76,7 +78,7 @@
 		loaded = true;
 		if (currentKey === null) select(queue[0]?.key ?? null);
 		// Gone from the queue: read it to say where it went.
-		else if (!left && !queue.some((s) => s.key === currentKey)) await loadLeft(currentKey, n);
+		else if (!left && writing !== currentKey && !queue.some((s) => s.key === currentKey)) await loadLeft(currentKey, n);
 		// Focus on entry comes with the first answer that lands, whichever reload sent it.
 		if (first) void focusQueue();
 	}
@@ -150,6 +152,8 @@
 				return void focusQueue();
 			case 'skip':
 				return skip();
+			case 'place':
+				return void place();
 			case 'epic':
 				return void area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
 			case 'criteria':
@@ -178,6 +182,60 @@
 		if (!c) return;
 		e.preventDefault();
 		run(c);
+	}
+
+	/** An action finished for `key`: it leaves the queue, and the selection moves on only if the user is still on it. */
+	function finished(key: string, order: string[], n: Notice): void {
+		loads++; // a reload in flight read the queue before this write: drop it; the write's own live refetch follows
+		queue = queue.filter((s) => s.key !== key);
+		delete drafts[key];
+		if (currentKey === key) select(nextKey(order, key));
+		void say(n);
+	}
+
+	async function place(): Promise<void> {
+		const s = current;
+		if (!s || left || writing) return;
+		const d = drafts[s.key];
+		const edit = placeEdit(d);
+		if (edit.kind === 'invalid') {
+			if (!d.fields.epic) area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
+			void say({ text: edit.error, error: true });
+			return;
+		}
+		const order = queue.map((x) => x.key);
+		writing = s.key;
+		try {
+			const placed = await unwrap(api.PATCH('/api/v1/stories/{key}', { params: { path: { key: s.key } }, body: edit.body }));
+			finished(s.key, order, { text: `Placed ${s.key} under ${placed.epic}.`, open: s.key });
+		} catch (e) {
+			if (e instanceof Conflict) await conflicted(s.key, d, 'place');
+			else void say({ text: `${s.key} was not placed: ${errorMessage(e)}`, error: true });
+		} finally {
+			writing = null;
+			focusBack();
+		}
+	}
+
+	/** After a 409: read the item, keep the user's fields, take the server's others, and name the fields both changed.
+	 *  `head` says what landed before the conflict (a duplicate comment). */
+	async function conflicted(key: string, d: Draft, again: 'place' | 'drop', head = ''): Promise<void> {
+		try {
+			const server = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
+			if (server.epic || server.delivery === 'done') {
+				// No longer untriaged (kb/ADR-0018 R4): it leaves the queue and the page says where it went, as on a live change.
+				queue = queue.filter((x) => x.key !== key);
+				if (currentKey === key) left = server;
+				return void say({ text: `${head}${whereNow(server)}`, error: true });
+			}
+			const { draft, clashes } = rebaseAfterConflict(d, server);
+			drafts[key] = draft;
+			queue = queue.map((x) => (x.key === key ? server : x));
+			const named = clashes.map((c) => `${FIELD_LABEL[c.field]} is now "${c.value}"`).join('; ');
+			void say({ text: `${head}${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.`, error: true });
+		} catch (e) {
+			void say({ text: `${head}${key} changed meanwhile and could not be reloaded: ${errorMessage(e)}`, error: true });
+		}
 	}
 
 	onMount(() => {
@@ -243,10 +301,10 @@
 					item={current}
 					bind:draft={drafts[current.key]}
 					{epics}
-					disabled={!!left}
+					disabled={!!left || writing === current.key}
 					gone={left ? whereNow(left) : null}
 					open={storyHref(page.url, current.key)}
-					onplace={() => {}}
+					onplace={place}
 					ondrop={() => {}}
 					onskip={skip}
 				/>

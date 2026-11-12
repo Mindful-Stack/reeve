@@ -7,6 +7,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Comment, Epic, SimilarStory, Story } from '#lib/api/types.ts';
 import { epic, story, withReadiness } from '#lib/test/fixtures.ts';
+import { choose } from '#lib/test/picker.ts';
 import { settle, type FakePage } from '#lib/test/net.ts';
 import { goto } from '$app/navigation';
 import Triage from './+page.svelte';
@@ -247,3 +248,151 @@ describe('the current item leaves the queue', () => {
 		await vi.waitFor(() => expect(document.activeElement?.id).toBe('triage-item-title'));
 	});
 });
+
+/** Picks `epic` in the current item's Picker as a person would (types, then clicks the option). */
+function pickEpic(epicKey: string) {
+	choose(document.querySelector('section.item')!, 'Epic', epicKey);
+	flushSync();
+}
+const criteria = () => document.querySelector<HTMLTextAreaElement>('textarea.criteria')!;
+function type(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
+	el.value = text;
+	el.dispatchEvent(new Event('input', { bubbles: true }));
+	flushSync();
+}
+
+describe('place', () => {
+	it('Ctrl+Enter places with only the changed fields and the version, links the item, and the next item is current and focused', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		expect(document.activeElement).toBe(criteria()); // picking moves on to Criteria
+		type(criteria(), 'Finds café\nFinds naïve');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes).toEqual([
+			{
+				method: 'PATCH',
+				path: '/api/v1/stories/GRA-9',
+				body: { version: 1, epic: 'GRA-7', criteria: [{ text: 'Finds café', done: true }, { text: 'Finds naïve', done: false }] }
+			}
+		]);
+		expect(t.options()).toEqual(['GRA-12', 'GRA-30']);
+		await vi.waitFor(() => expect(t.status()).toBe('Placed GRA-9 under GRA-7.'));
+		expect(document.querySelector('.notice a')!.getAttribute('href')).toBe('/triage?story=GRA-9');
+		expect(document.activeElement).toBe(t.list());
+	});
+	it('without an epic, Place focuses the Picker and says so', async () => {
+		const t = await open();
+		press(t.list(), 'Enter', { ctrlKey: true });
+		await settle(); // a write would be recorded only after several awaits: let them all run before asserting none
+		expect(net.s.writes).toEqual([]);
+		expect(document.activeElement?.getAttribute('role')).toBe('combobox');
+		await vi.waitFor(() => expect(t.status()).toBe('Pick an epic first.'));
+	});
+	it('t cycles the kind and says so: the select shows it and Place sends it', async () => {
+		const t = await open();
+		press(t.list(), 't'); // GRA-9 is a bug: bug -> chore
+		expect(document.querySelector<HTMLSelectElement>('section.item select')!.value).toBe('chore');
+		await vi.waitFor(() => expect(t.status()).toBe('Kind: chore.'));
+		pickEpic('GRA-7');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.writes).toHaveLength(1));
+		expect(net.s.writes[0].body).toEqual({ version: 1, epic: 'GRA-7', kind: 'chore' });
+	});
+	it('a draft survives moving away and back', async () => {
+		const t = await open();
+		type(criteria(), 'Typed here');
+		press(t.list(), 'j');
+		press(t.list(), 'k');
+		expect(criteria().value).toBe('Typed here');
+	});
+	it('a 409 keeps the typed fields, takes the server\'s others, names the field both changed, and gives focus back', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		const title = document.querySelector<HTMLInputElement>('section.item input[name="title"]')!;
+		type(title, 'Search ignores accents (é)');
+		// A colleague changes the title and kind meanwhile, with no live refresh yet: the server is ahead of the page.
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Search drops accents', kind: 'story', version: 2 };
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toContain('GRA-9 changed meanwhile'));
+		expect(t.status()).toContain('Title is now "Search drops accents"');
+		expect(title.value).toBe('Search ignores accents (é)');
+		expect(document.querySelector<HTMLSelectElement>('section.item select')!.value).toBe('story');
+		await vi.waitFor(() => expect(document.activeElement).toBe(t.list())); // the keys work again
+		press(criteria(), 'Enter', { ctrlKey: true }); // placing again sends against the reloaded version
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes.at(-1)!.body.version).toBe(2);
+	});
+	it('the current item placed elsewhere (live) says where it went, disables the form and gives focus back; j moves on', async () => {
+		const t = await open();
+		criteria().focus();
+		net.s.stories[1] = { ...net.s.stories[1], epic: 'GRA-608', version: 2 };
+		await live.fns[0]();
+		await vi.waitFor(() => expect(t.status()).toBe('Placed elsewhere: GRA-9 is under GRA-608.'));
+		expect(t.pane().textContent).toContain('Placed elsewhere: GRA-9 is under GRA-608.');
+		expect(criteria().disabled).toBe(true);
+		// A browser drops focus from the disabled field to the page, where no key works: the page takes it back to the list.
+		await vi.waitFor(() => expect(document.activeElement).toBe(t.list()));
+		press(t.list(), 'j');
+		expect(t.current()).toBe('GRA-12');
+	});
+	it('a 409 because the item left the queue says where it went and disables the form, as a live change does', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		// A colleague dropped it meanwhile, with no live refresh yet.
+		net.s.stories[1] = { ...net.s.stories[1], delivery: 'done', resolution: 'dropped', version: 2 };
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 is done (dropped).'));
+		expect(criteria().disabled).toBe(true);
+		expect(t.options()).toEqual(['GRA-12', 'GRA-30']);
+		expect(net.s.writes.filter((w) => w.method === 'PATCH')).toHaveLength(1);
+	});
+	it('a late Place answer, with the user on another item, does not move the selection', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1)); // the PATCH has reached the server and waits
+		t.list().focus();
+		press(t.list(), 'j');
+		press(t.list(), 'j'); // now on GRA-30
+		await settle(); // j's own focus move has landed
+		criteria().focus(); // and the user types in its Criteria
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.options()).toEqual(['GRA-12', 'GRA-30']));
+		expect(t.current()).toBe('GRA-30');
+		await settle();
+		expect(document.activeElement).toBe(criteria()); // the late answer does not take the focus: the next d is a letter
+	});
+	it('a live reload that adds items announces them, but never over an error', async () => {
+		const t = await open();
+		net.s.stories.push(story({ key: 'GRA-50', title: 'Fresh report' }));
+		await live.fns[0]();
+		await vi.waitFor(() => expect(t.status()).toBe('1 new untriaged item.'));
+		expect(t.current()).toBe('GRA-9'); // the current item does not change
+		press(t.list(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('Pick an epic first.'));
+		net.s.stories.push(story({ key: 'GRA-51', title: 'Another report' }));
+		await live.fns[0]();
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-51');
+		expect(t.status()).toBe('Pick an epic first.');
+	});
+	it('a held write blocks a second Place', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await settle();
+		expect(net.s.held).toHaveLength(1); // the second Place sent nothing
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes.filter((w) => w.method === 'PATCH')).toHaveLength(1);
+	});
+});
+
