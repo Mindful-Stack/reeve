@@ -35,7 +35,7 @@ const chore = (page: Page, title: string, epic: string | null = EPIC) =>
 // Sign in through the real browser flow against the static provider: /auth/login → provider → /auth/callback sets the
 // cookie.
 test.beforeEach(async ({ page, context }) => {
-	// Lands on Planning, which loads no story list, so a test that counts story requests sees only its own page's.
+	// Lands on Planning, whose page loads no story list (the top bar's untriaged count does; counters filter it out).
 	await page.goto('/auth/login?next=/planning');
 	await expect(page).toHaveURL(/\/planning$/);
 	const session = (await context.cookies()).find((c) => c.name === 'reeve_session');
@@ -91,7 +91,9 @@ test('the top bar stays at the top while the board scrolls', async ({ page }) =>
 });
 
 test('board asks for recently done stories and labels the done column', async ({ page }) => {
-	const req = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET');
+	const req = page.waitForRequest(
+		(r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET' && new URL(r.url()).searchParams.has('done')
+	);
 	await page.goto('/board');
 	expect(new URL((await req).url()).searchParams.get('done')).toBe('recent');
 	await expect(page.getByRole('heading', { name: /^done · last 14 days/ })).toBeVisible();
@@ -163,7 +165,8 @@ test('a move made elsewhere reaches an open board over the event stream, without
 	// `activity` listener removed (or the event renamed on the server) this test fails, since no later refetch happens.
 	let loads = 0;
 	page.on('response', (r) => {
-		if (new URL(r.url()).pathname === '/api/v1/stories') loads++;
+		const u = new URL(r.url());
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('done') === 'recent') loads++;
 	});
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
@@ -202,7 +205,8 @@ test('an open tab whose session dies is sent to sign in by the event stream', as
 	// cannot come from that refetch answering 401: it has to come from the stream closing.
 	let loads = 0;
 	page.on('response', (r) => {
-		if (new URL(r.url()).pathname === '/api/v1/stories') loads++;
+		const u = new URL(r.url());
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('done') === 'recent') loads++;
 	});
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
@@ -951,8 +955,10 @@ for (const width of [1280, 360]) {
 for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
 	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {
 		await page.setViewportSize({ width, height });
+		await chore(page, `Header fit untriaged ${crypto.randomUUID().slice(0, 6)}`, null); // the bar carries an untriaged count
 		await page.goto('/board');
 		await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeVisible(); // the board has rendered
+		await expect(page.locator('header.top-bar a.untriaged')).toBeVisible();
 		const report = page.getByRole('button', { name: 'Report', exact: true });
 		await expect(report).toBeVisible();
 		const search = page.getByRole('search', { name: 'Site search' }).getByRole('searchbox');

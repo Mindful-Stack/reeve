@@ -8,7 +8,7 @@
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { connect, live } from '#lib/events.svelte.ts';
+	import { connect, live, onLive } from '#lib/events.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { followAccess, isAdmin, load, session } from '#lib/me.svelte.ts';
 	import { headerSearch } from '#lib/headerSearch.ts';
@@ -153,6 +153,27 @@
 	// `/me`: a dead session answers 401 and `unwrap` sends the tab to sign in; a live one means the server was down, so
 	// try again a little later.
 	const signedIn = $derived(!signedOutPage && session.me !== null);
+
+	// How many items wait for placement, for the bar's link to /triage: the length of the server's untriaged list
+	// (kb/ADR-0021 R1, kb/ADR-0018 R4). Loaded once signed in and on every live change or reconnect (onLive, unchanged:
+	// kb/ADR-0011 R10). Only the latest answer lands; a failure keeps the last count: the link is a hint, never an error.
+	let untriaged = $state<number | null>(null);
+	let untriagedSeq = 0;
+	async function loadUntriaged(): Promise<void> {
+		const seq = ++untriagedSeq;
+		try {
+			const rows = await unwrap(api.GET('/api/v1/stories', { params: { query: { untriaged: true } } }));
+			if (seq === untriagedSeq) untriaged = rows.length;
+		} catch {
+			// keep the last count
+		}
+	}
+	$effect(() => {
+		if (signedIn) void loadUntriaged();
+	});
+	onLive(() => {
+		if (signedIn) return loadUntriaged();
+	});
 	$effect(() => {
 		if (!signedIn) return;
 		return followAccess();
@@ -279,6 +300,9 @@
 				{/each}
 			</nav>
 			<div class="right">
+				{#if untriaged}
+					<a class="untriaged" href="/triage" aria-current={page.url.pathname === '/triage' ? 'page' : undefined}>{untriaged} untriaged</a>
+				{/if}
 				<GoalPicker />
 				<button type="button" class="primary report" bind:this={reportButton} aria-label={label} aria-busy={opening} onclick={openFromHere}>
 					<span class="plus" aria-hidden="true">+</span><span class="word" aria-hidden="true">{label}</span>
@@ -350,6 +374,13 @@
 	nav a[aria-current='page'] {
 		background: var(--lighter-background);
 		color: var(--foreground);
+	}
+	.untriaged {
+		white-space: nowrap;
+		font-size: 0.875rem;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--lighter-background);
 	}
 	.right {
 		display: flex;

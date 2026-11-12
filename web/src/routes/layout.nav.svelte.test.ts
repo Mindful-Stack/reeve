@@ -6,6 +6,7 @@ import type { Story } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
 import { me, story } from '#lib/test/fixtures.ts';
+import { settle } from '#lib/test/net.ts';
 import { goto } from '$app/navigation';
 import Layout from './+layout.svelte';
 
@@ -42,15 +43,34 @@ vi.mock('#lib/components/ReportDialog.svelte', () => ({
 		dialog.props = props;
 	}
 }));
-const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void>, searchHold: null as null | Promise<void> }));
+const net = vi.hoisted(() => ({
+	gets: [] as string[],
+	hold: null as null | Promise<void>,
+	searchHold: null as null | Promise<void>,
+	untriaged: 0 as number | null, // the list's length, or null for a failing read
+	untriagedHold: null as null | Promise<void>
+}));
+const live = vi.hoisted(() => ({ fns: [] as (() => unknown)[] }));
+vi.mock('#lib/events.svelte.ts', async (orig) => ({
+	...(await orig<typeof import('#lib/events.svelte.ts')>()),
+	onLive: (fn: () => unknown) => {
+		live.fns.push(fn);
+	}
+}));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
-	const { me, epic } = await import('#lib/test/fixtures.ts');
-	installFetch(({ method, path }) => {
+	const { me, epic, withReadiness } = await import('#lib/test/fixtures.ts');
+	installFetch(({ method, path, url }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
 		if (path === '/api/v1/search') return Promise.resolve(net.searchHold).then(() => [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }]);
 		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
+		if (path === '/api/v1/stories' && url.search === '?untriaged=true') {
+			const n = net.untriaged; // what the server held when asked
+			return Promise.resolve(net.untriagedHold).then(() =>
+				n === null ? failure('down') : Array.from({ length: n }, (_, i) => withReadiness({ key: `ABC-${i + 1}` }))
+			);
+		}
 		return failure('unexpected', 404);
 	});
 	return orig();
@@ -85,6 +105,9 @@ afterEach(() => {
 	net.gets.length = 0;
 	net.hold = null;
 	net.searchHold = null;
+	net.untriaged = 0;
+	net.untriagedHold = null;
+	live.fns.length = 0;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
 	document.documentElement.style.removeProperty('--top-bar-height');
@@ -600,5 +623,54 @@ describe('top bar', () => {
 		unmount(app!); // the effect's own cleanup removes the property
 		app = null;
 		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('');
+	});
+});
+
+describe('untriaged link', () => {
+	const link = () => document.querySelector<HTMLAnchorElement>('header.top-bar a.untriaged');
+	const asked = () => net.gets.filter((g) => g === 'GET /api/v1/stories').length;
+	const refresh = async () => {
+		for (const fn of live.fns) await fn(); // a live change or a reconnect
+	};
+	beforeEach(() => {
+		session.me = me();
+	});
+	it('shows "N untriaged" linking to /triage, and refreshes on a live change', async () => {
+		net.untriaged = 2;
+		await open('/board');
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('2 untriaged'));
+		expect(link()!.getAttribute('href')).toBe('/triage');
+		net.untriaged = 1;
+		await refresh();
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('1 untriaged'));
+	});
+	it('is absent at zero, after the count has loaded', async () => {
+		await open('/board');
+		await vi.waitFor(() => expect(asked()).toBeGreaterThan(0));
+		await settle();
+		flushSync();
+		expect(link()).toBeNull();
+	});
+	it('keeps the last count when a reload fails, and drops a late older answer', async () => {
+		net.untriaged = 4;
+		await open('/board');
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('4 untriaged'));
+		net.untriaged = null;
+		await refresh();
+		await settle();
+		flushSync();
+		expect(link()?.textContent?.trim()).toBe('4 untriaged');
+		let release = () => {};
+		net.untriagedHold = new Promise<void>((r) => (release = r));
+		net.untriaged = 7;
+		const older = refresh(); // waits
+		net.untriagedHold = null;
+		net.untriaged = 3;
+		await refresh(); // answers first
+		release();
+		await older;
+		await settle();
+		flushSync();
+		expect(link()?.textContent?.trim()).toBe('3 untriaged');
 	});
 });
