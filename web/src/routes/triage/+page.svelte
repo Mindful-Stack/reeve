@@ -11,8 +11,7 @@
 	import TriageItem from '#lib/components/TriageItem.svelte';
 	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { focusIsFree } from '#lib/focus.ts';
-	import { errorMessage, plural } from '#lib/format.ts';
+		import { errorMessage, plural } from '#lib/format.ts';
 	import { byKey, draftOf, FIELD_LABEL, followDraft, nextKey, placeEdit, rebaseAfterConflict, whereNow, type Draft } from '#lib/triage.ts';
 	import { command, type Command } from '#lib/triageKeys.ts';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -130,10 +129,15 @@
 		if (document.activeElement !== list) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
 	}
 
-	/** Back to the queue after a write or a live change disabled the form, unless the user moved focus out of the triage
-	 *  area or is typing in a field (another item's, during a slow write: its letters must not become commands). */
+	/** Back to the queue after a write or a live change disabled the form, unless the user took focus elsewhere: to a
+	 *  control outside the item form (the Keys toggle, a link in the top bar) or into a field (another item's, during a
+	 *  slow write: its letters must not become commands). Free is the page itself, a disabled control that gave focus up,
+	 *  the queue itself, or the item form being written. */
 	function focusBack(): void {
-		if (focusIsFree(area) && !typingIn(document.activeElement)) void focusQueue();
+		const a = document.activeElement;
+		const form = area?.querySelector('form.place');
+		const free = !a || a === document.body || a === list || a.matches(':disabled') || !!form?.contains(a);
+		if (free && !typingIn(a)) void focusQueue();
 	}
 
 	/** Typing in an enabled field. A field disabled under the focus (the item left, a write is in flight) is not typing,
@@ -160,7 +164,7 @@
 				return void area?.querySelector<HTMLElement>('textarea.criteria')?.focus();
 			case 'kind': {
 				const d = currentKey ? drafts[currentKey] : undefined;
-				if (!d || left) return;
+				if (!d || left || writing === currentKey) return;
 				d.fields.kind = KINDS[(KINDS.indexOf(d.fields.kind) + 1) % KINDS.length];
 				return void say({ text: `Kind: ${d.fields.kind}.` });
 			}

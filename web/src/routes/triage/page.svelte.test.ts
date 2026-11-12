@@ -47,6 +47,8 @@ type Net = {
 	hold: Set<string>;
 	held: (() => void)[];
 	failComment: boolean;
+	/** A PATCH answers 500 (after it is recorded). */
+	failPatch: boolean;
 };
 const net = vi.hoisted(() => ({ s: null as unknown as Net }));
 vi.mock('#lib/api/client.ts', async (orig) => {
@@ -87,6 +89,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			if (sent.idempotency_key == null || !list.some((c) => c.key === sent.idempotency_key)) list.push({ body: sent.body, key: sent.idempotency_key });
 			return [] as Comment[];
 		}
+		if (isPatch && n.failPatch) return failure('boom');
 		if (sent.version !== s.version) return conflict(s.version);
 		if (isMove) {
 			n.stories[at] = { ...s, delivery: sent.to!, resolution: sent.resolution ?? null, version: s.version + 1 };
@@ -113,7 +116,8 @@ const fresh = (): Net => ({
 	gets: [],
 	hold: new Set(),
 	held: [],
-	failComment: false
+	failComment: false,
+	failPatch: false
 });
 
 let app: ReturnType<typeof mount> | null = null;
@@ -170,12 +174,15 @@ describe('queue', () => {
 		press(t.list(), 'k');
 		expect(t.current()).toBe('GRA-12');
 	});
-	it('j and k leave focus on the listbox', async () => {
+	it('j and k, pressed with focus on the item heading, take focus back to the listbox', async () => {
 		const t = await open();
-		press(t.list(), 'j');
-		expect(document.activeElement).toBe(t.list());
-		press(t.list(), 'k');
-		expect(document.activeElement).toBe(t.list());
+		const heading = () => document.querySelector<HTMLElement>('#triage-item-title')!;
+		heading().focus();
+		press(heading(), 'j');
+		await vi.waitFor(() => expect(document.activeElement).toBe(t.list()));
+		heading().focus();
+		press(heading(), 'k');
+		await vi.waitFor(() => expect(document.activeElement).toBe(t.list()));
 	});
 	it('o opens the item in the drawer without resetting scroll or focus', async () => {
 		const t = await open();
@@ -231,11 +238,15 @@ describe('the current item leaves the queue', () => {
 		await settle();
 		return t;
 	}
-	it('hides the counter and keeps the item pane while a list remains', async () => {
-		await leave(['GRA-9', 'GRA-12']);
+	it('hides the counter and keeps the item pane, disabled and saying where it went, while a list remains', async () => {
+		const t = await leave(['GRA-9', 'GRA-12']);
 		net.s.hold.clear();
 		net.s.held.forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toBe('Placed elsewhere: GRA-9 is under GRA-7.'));
 		expect(document.querySelector('.counter')?.textContent ?? '').not.toMatch(/\d+ of \d+/);
+		expect(t.pane().textContent).toContain('Search ignores accents');
+		expect(t.pane().textContent).toContain('Placed elsewhere: GRA-9 is under GRA-7.');
+		expect(criteria().disabled).toBe(true);
 	});
 	it('the last item leaving shows no empty state and keeps focus on the item heading', async () => {
 		await leave(['GRA-9']);
@@ -379,6 +390,145 @@ describe('place', () => {
 		flushSync();
 		expect(t.options()).toContain('GRA-51');
 		expect(t.status()).toBe('Pick an epic first.');
+	});
+	it('t does nothing while a write for the current item is in flight', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		press(t.list(), 't');
+		expect(document.querySelector<HTMLSelectElement>('section.item select')!.value).toBe('bug');
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes).toEqual([{ method: 'PATCH', path: '/api/v1/stories/GRA-9', body: { version: 1, epic: 'GRA-7' } }]);
+	});
+	it('a held write disables the form of its own item only', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		expect(criteria().disabled).toBe(true);
+		t.list().focus();
+		press(t.list(), 'j');
+		expect(t.current()).toBe('GRA-12');
+		expect(criteria().disabled).toBe(false);
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.options()).toEqual(['GRA-12', 'GRA-30']));
+	});
+	it('a reload while the current item is being placed does not read where it went', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		net.s.stories[1] = { ...net.s.stories[1], epic: 'GRA-7' }; // the same write, seen by a reload before its answer
+		await live.fns[0]();
+		await settle();
+		expect(net.s.gets).not.toContain('/api/v1/stories/GRA-9');
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toBe('Placed GRA-9 under GRA-7.'));
+	});
+	it('a late 409 for an item the user left does not mark the item the user is on as gone, nor move the selection', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		t.list().focus();
+		press(t.list(), 'j');
+		press(t.list(), 'j'); // now on GRA-30
+		net.s.stories[1] = { ...net.s.stories[1], epic: 'GRA-608', version: 2 }; // a colleague placed GRA-9 meanwhile
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toBe('Placed elsewhere: GRA-9 is under GRA-608.'));
+		await settle();
+		expect(t.options()).toEqual(['GRA-12', 'GRA-30']);
+		expect(t.current()).toBe('GRA-30');
+		expect(t.pane().textContent).toContain('Tidy the sprint page');
+		expect(t.pane().textContent).not.toContain('Placed elsewhere');
+		expect(criteria().disabled).toBe(false);
+	});
+	it('a failed write says which item was not placed and why', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.failPatch = true;
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 was not placed: boom'));
+		expect(t.current()).toBe('GRA-9');
+	});
+	it('a failure or a conflict is not covered by a later "new untriaged" announcement', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.failPatch = true;
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 was not placed: boom'));
+		net.s.stories.push(story({ key: 'GRA-50', title: 'Fresh report' }));
+		await live.fns[0]();
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-50');
+		expect(t.status()).toBe('GRA-9 was not placed: boom');
+	});
+	it('a conflict notice (changed meanwhile) is not covered by a later "new untriaged" announcement', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Search drops accents', version: 2 };
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toContain('GRA-9 changed meanwhile'));
+		const text = t.status();
+		net.s.stories.push(story({ key: 'GRA-50', title: 'Fresh report' }));
+		await live.fns[0]();
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-50');
+		expect(t.status()).toBe(text);
+	});
+	it('a conflict notice (left the queue) is not covered by a later "new untriaged" announcement', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.stories[1] = { ...net.s.stories[1], delivery: 'done', resolution: 'dropped', version: 2 };
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 is done (dropped).'));
+		net.s.stories.push(story({ key: 'GRA-50', title: 'Fresh report' }));
+		await live.fns[0]();
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-50');
+		expect(t.status()).toBe('GRA-9 is done (dropped).');
+	});
+	it('a late answer does not take focus from a control the user moved to inside the triage area', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		const keys = [...document.querySelectorAll<HTMLButtonElement>('.counter button')].find((b) => b.textContent!.startsWith('Keys'))!;
+		keys.focus();
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		await settle();
+		expect(document.activeElement).toBe(keys);
+	});
+	it('a late answer does not take focus from a control the user moved to outside the triage area', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		const outside = document.createElement('button');
+		document.body.append(outside);
+		outside.focus();
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		await settle();
+		expect(document.activeElement).toBe(outside);
 	});
 	it('a held write blocks a second Place', async () => {
 		const t = await open();
