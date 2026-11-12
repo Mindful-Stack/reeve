@@ -72,7 +72,7 @@ pub enum PromiseError {
     /// A new date before today (R2).
     #[error("the date {0} is past: promise today or later")]
     Past(NaiveDate),
-    #[error("the recipient is longer than 200 characters")]
+    #[error("the recipient is longer than {max} characters", max = MAX_RECIPIENT)]
     RecipientTooLong,
     /// A shortcut whose sprint does not exist (R6).
     #[error("{}", match .0 {
@@ -144,7 +144,6 @@ pub fn change(
     at: DateTime<Utc>,
     clock: &Clock,
 ) -> Result<Promise, PromiseError> {
-    debug_assert_eq!(clock.today, at.date_naive());
     let on = match (req.on, req.shortcut) {
         (Some(_), Some(_)) => return Err(PromiseError::Both),
         (Some(d), None) => d,
@@ -215,7 +214,7 @@ pub fn state(
     on: NaiveDate,
     delivery: DeliveryState,
     resolution: Option<Resolution>,
-    done_on: Option<NaiveDate>,
+    done: Option<NaiveDate>,
     today: NaiveDate,
 ) -> Option<State> {
     if delivery != DeliveryState::Done {
@@ -225,15 +224,11 @@ pub fn state(
             State::Open
         });
     }
-    let done_on = done_on?;
+    let done = done?;
     if resolution == Some(Resolution::Dropped) {
         return Some(State::Dropped);
     }
-    Some(if done_on <= on {
-        State::Kept
-    } else {
-        State::Late
-    })
+    Some(if done <= on { State::Kept } else { State::Late })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1463,7 +1458,7 @@ mod tests {
         assert_eq!(
             (got.state, got.days),
             (Some(State::Kept), None),
-            "effective date drives kept at the UTC day boundary"
+            "done 23:59:59Z on the epic's date is kept"
         );
 
         // done without done_at, own promise: present but stateless
@@ -1516,6 +1511,7 @@ mod tests {
 
     #[test]
     fn errors_read_as_the_message_the_person_sees() {
+        let long = format!("the recipient is longer than {MAX_RECIPIENT} characters");
         let rows = [
             (
                 "done",
@@ -1527,11 +1523,7 @@ mod tests {
                 PromiseError::Past(d(2026, 11, 19)),
                 "the date 2026-11-19 is past: promise today or later",
             ),
-            (
-                "long",
-                PromiseError::RecipientTooLong,
-                "the recipient is longer than 200 characters",
-            ),
+            ("long", PromiseError::RecipientTooLong, &long),
             (
                 "no active",
                 PromiseError::NoSprint(Shortcut::ThisSprint),
