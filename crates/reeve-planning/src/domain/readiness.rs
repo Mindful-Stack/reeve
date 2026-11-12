@@ -1,4 +1,4 @@
-use reeve_protocol::{CheckResult, Key, Kind, Readiness, Reason};
+use reeve_protocol::{CheckResult, DeliveryState, Key, Kind, Readiness, Reason};
 
 #[derive(Debug, Clone)]
 pub struct DecisionFact {
@@ -19,6 +19,28 @@ pub struct AncestorFact {
     pub key: Key,
     pub discovery_complete: bool,
     pub decisions: Vec<DecisionFact>,
+}
+
+/// One story that blocks the story being judged, with the two facts kb/ADR-0027 R5 reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockerFact {
+    pub key: Key,
+    pub delivery: DeliveryState,
+    /// Normalised email, as stored.
+    pub owner: Option<String>,
+}
+
+/// Whether `blocker` keeps a dependent owned by `dependent_owner` from being ready (kb/ADR-0027 R5): todo blocks
+/// everyone; in progress or in review blocks unless both owners are set and equal; testing and done block nobody.
+/// Each edge is judged alone, so a cycle of started stories with one owner does not block itself.
+pub fn blocks(blocker: &BlockerFact, dependent_owner: Option<&str>) -> bool {
+    match blocker.delivery {
+        DeliveryState::Todo => true,
+        DeliveryState::InProgress | DeliveryState::InReview => {
+            !matches!((blocker.owner.as_deref(), dependent_owner), (Some(b), Some(d)) if b == d)
+        }
+        DeliveryState::Testing | DeliveryState::Done => false,
+    }
 }
 /// Everything readiness needs, loaded by the repo in one query batch.
 #[derive(Debug, Clone)]
@@ -320,6 +342,45 @@ mod tests {
                 satisfies(&check),
                 decision_reason(&open).is_none(),
                 "{check:?}"
+            );
+        }
+    }
+
+    use reeve_protocol::DeliveryState::{self, *};
+
+    /// kb/ADR-0027 R5 as literal rows: (blocker delivery, blocker owner, dependent owner, blocks). Written from the
+    /// record's sentence, not from the implementation.
+    #[test]
+    fn a_blocker_blocks_by_its_delivery_and_both_owners() {
+        const D: Option<&str> = Some("dan@example.com");
+        const M: Option<&str> = Some("mia@example.com");
+        let rows: &[(DeliveryState, Option<&str>, Option<&str>, bool)] = &[
+            (Todo, D, D, true),
+            (Todo, D, M, true),
+            (Todo, None, None, true),
+            (InProgress, D, D, false),
+            (InProgress, D, M, true),
+            (InProgress, D, None, true),
+            (InProgress, None, D, true),
+            (InProgress, None, None, true),
+            (InReview, D, D, false),
+            (InReview, D, M, true),
+            (InReview, None, None, true),
+            (Testing, D, M, false),
+            (Testing, None, None, false),
+            (Done, D, M, false),
+            (Done, None, None, false),
+        ];
+        for &(delivery, b_owner, d_owner, expected) in rows {
+            let fact = BlockerFact {
+                key: key("ABC-8"),
+                delivery,
+                owner: b_owner.map(str::to_string),
+            };
+            assert_eq!(
+                blocks(&fact, d_owner),
+                expected,
+                "{delivery:?}, blocker {b_owner:?}, dependent {d_owner:?}"
             );
         }
     }
