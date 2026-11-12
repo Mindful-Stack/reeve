@@ -540,7 +540,7 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	const dialog = page.getByRole('dialog');
 	await dialog.getByRole('radio', { name: 'met', exact: true }).check();
 	await dialog.getByRole('button', { name: 'Close sprint' }).click();
-	await expect(dialog.getByRole('status').filter({ hasText: 'The sprint is closed.' })).toHaveText('The sprint is closed.');
+	await expect(dialog.getByRole('status')).toHaveText('The sprint is closed.');
 	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(active).toBeHidden();
