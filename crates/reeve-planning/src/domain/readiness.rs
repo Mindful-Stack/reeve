@@ -420,4 +420,47 @@ mod tests {
             );
         }
     }
+
+    /// Every delivery state, through an exhaustive match so a new variant fails to compile here until it is listed.
+    fn every_state() -> Vec<DeliveryState> {
+        let all = vec![Todo, InProgress, InReview, Testing, Done];
+        for d in &all {
+            match d {
+                Todo | InProgress | InReview | Testing | Done => {}
+            }
+        }
+        all
+    }
+
+    /// kb/ADR-0027 R5 across every state and owner pair, the expectation written per state from the record's sentence:
+    /// todo blocks everyone; in progress or in review blocks unless both owners are the same non-empty email; testing
+    /// and done block nobody.
+    #[test]
+    fn every_state_crosses_every_owner_pair() {
+        let pairs: &[(Option<&str>, Option<&str>, bool)] = &[
+            (Some("dan@example.com"), Some("dan@example.com"), true),
+            (Some("dan@example.com"), Some("mia@example.com"), false),
+            (None, None, false),
+            (Some(""), Some(""), false),
+        ];
+        for delivery in every_state() {
+            for &(b_owner, d_owner, same_non_empty) in pairs {
+                let expected = match delivery {
+                    Todo => true,
+                    InProgress | InReview => !same_non_empty,
+                    Testing | Done => false,
+                };
+                let fact = BlockerFact {
+                    key: key("ABC-8"),
+                    delivery,
+                    owner: b_owner.map(str::to_string),
+                };
+                assert_eq!(
+                    blocks(&fact, d_owner),
+                    expected,
+                    "{delivery:?}, blocker {b_owner:?}, dependent {d_owner:?}"
+                );
+            }
+        }
+    }
 }

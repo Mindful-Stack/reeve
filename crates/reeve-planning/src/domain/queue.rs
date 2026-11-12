@@ -12,7 +12,7 @@ use reeve_protocol::{
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// An unfinished story with the facts the queue classifies by (kb/ADR-0027 R5: unfinished is delivery not done).
+/// An unfinished story with the facts the queue classifies by (unfinished: delivery not done).
 #[derive(Debug, Clone)]
 pub struct AffectedStory {
     pub key: Key,

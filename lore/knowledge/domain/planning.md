@@ -15,7 +15,7 @@ The words below are bound across API, database, CLI and UI (kb/ADR-0002 R6; spri
 - **Initiative, epic, story.** The three levels of the hierarchy; only stories are delivered. Keys come from one sequence (`ABC-12`, kb/ADR-0002 R5). An initiative has a **horizon** (a configured bucket) and an optional target month.
 - **Kind.** A story is a `story`, a `bug` or a `chore`. A story of kind `story` needs an epic; an **untriaged** story is one of kind `story` with no epic (`Story::is_untriaged`).
 - **Delivery state and resolution.** `todo`, `in_progress`, `in_review`, `testing`, `done`; a story that enters `done` carries a **resolution**, `completed` or `dropped`.
-- **Blocker.** A story that blocks another until it is finished.
+- **Blocker.** A story that blocks another until it is merged (testing or done); a started one never blocks its own owner's dependents (kb/ADR-0027 R5).
 - **Readiness.** A story is ready or it has reasons; computed on read, never stored (kb/ADR-0027 R1). A **discovery mark** on an initiative or epic says its discovery is done.
 - **Override.** An interactive caller's written reason for entering active work although the story is not ready (kb/ADR-0027 R2). **Grandfathered** stories are imported already in their state and are never overrides.
 - **Required decision.** A decision a work item waits on, with a **decider**, a due date and an optional **reversibility** (`one_way` or `two_way`, kb/ADR-0013). It points at a **record reference** (repository, path, record id) in a household repository. Its **check result** is `unchecked`, `accepted`, `not_accepted`, `proposed_pr_open` or `not_found`. It ends with a **closure kind**, `decided` or `withdrawn`.

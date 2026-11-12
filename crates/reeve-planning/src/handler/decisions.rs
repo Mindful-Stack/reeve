@@ -408,8 +408,8 @@ impl Handlers {
     }
 
     /// The reads run over every unfinished story whatever the scope: a decision's affected stories can sit anywhere
-    /// below its item, and the board read costs the same fixed statements either way. Unfinished (delivery not done,
-    /// kb/ADR-0027 R5) is what makes a todo story "held" and a started one "under way"; `list_stories_in` is the
+    /// below its item, and the board read costs the same fixed statements either way. Unfinished (delivery not done)
+    /// is what makes a todo story "held" and a started one "under way"; `list_stories_in` is the
     /// board's own path, so the queue's readiness is the gate's. Goals (active on the stories, draft on one more read),
     /// lineage and urgency are read on the same snapshot, with statement counts independent of how many there are.
     async fn decision_queue_in(

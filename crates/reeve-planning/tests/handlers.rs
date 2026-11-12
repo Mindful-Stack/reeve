@@ -2442,6 +2442,64 @@ async fn edit_story_changes_the_kind() {
     assert_eq!(h.get_story(s.key()).await.unwrap().kind(), Kind::Bug);
 }
 
+/// A blank imported owner is no owner, so kb/ADR-0027 R6's "no owner" holds for imported stories.
+#[tokio::test]
+async fn import_stores_a_blank_owner_as_none() {
+    use reeve_protocol::{ImportEpic, ImportInitiative, ImportStory};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = ctx("dan@example.com", false);
+    let ini = h
+        .import_initiative(
+            &c,
+            ImportInitiative {
+                external_ref: "JPD-5".into(),
+                title: "Booking".into(),
+                brief: None,
+                horizon: "Now".into(),
+                target_month: None,
+                owner: None,
+                discovery_complete: true,
+            },
+        )
+        .await
+        .unwrap();
+    let epic = h
+        .import_epic(
+            &c,
+            ImportEpic {
+                external_ref: "SCRUM-10".into(),
+                title: "v2".into(),
+                initiative: ini.key.clone(),
+                brief: None,
+                discovery_complete: true,
+            },
+        )
+        .await
+        .unwrap();
+    let story = h
+        .import_story(
+            &c,
+            ImportStory {
+                external_ref: "SCRUM-11".into(),
+                title: "Match".into(),
+                kind: Kind::Story,
+                epic: epic.key.clone(),
+                description: None,
+                criteria: vec![],
+                owner: Some("  ".into()),
+                labels: vec![],
+                delivery: DeliveryState::InProgress,
+                resolution: None,
+            },
+        )
+        .await
+        .unwrap();
+    let key = story.key.unwrap();
+    assert_eq!(h.get_story(&key).await.unwrap().owner(), None);
+    assert_eq!(h.story_dto(&key, Utc::now()).await.unwrap().owner, None);
+}
+
 /// Grandfathering is create-with-state, never an override; the import is create-only and re-runnable.
 #[tokio::test]
 async fn import_creates_with_state_once_and_never_logs_an_override() {
@@ -5811,7 +5869,7 @@ async fn decision_queue_costs_the_same_with_goals() {
     assert_eq!(few, many);
 }
 
-/// The queue reads only unfinished stories (kb/ADR-0027 R5): done stories under a decision's epic are neither held
+/// The queue reads only unfinished stories (delivery not done): done stories under a decision's epic are neither held
 /// nor under way, and adding them changes no row the queue reads. The domain drops done stories too, so the queue's
 /// answer is the same either way: only this rows-read comparison catches a regression to `DoneWindow::All` (every done
 /// story in the history fetched, then thrown away). A future queue read whose rows legitimately grow with done
