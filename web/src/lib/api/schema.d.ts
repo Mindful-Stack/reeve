@@ -3503,11 +3503,13 @@ export interface components {
         /**
          * @description `POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only
          *     the recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.
+         *     Any other field is refused rather than ignored.
          */
         SetPromise: {
             /** Format: date */
             on?: string | null;
             shortcut?: null | components["schemas"]["PromiseShortcut"];
+            /** @description The recipient. Left out or `null`: keep the current one. `""` (or only spaces): clear it. */
             to?: string | null;
         };
         /** @description One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only. */

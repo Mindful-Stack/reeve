@@ -8121,7 +8121,8 @@
         "type": "object"
       },
       "SetPromise": {
-        "description": "`POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only\nthe recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.",
+        "additionalProperties": false,
+        "description": "`POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only\nthe recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.\nAny other field is refused rather than ignored.",
         "properties": {
           "on": {
             "format": "date",
@@ -8141,6 +8142,7 @@
             ]
           },
           "to": {
+            "description": "The recipient. Left out or `null`: keep the current one. `\"\"` (or only spaces): clear it.",
             "type": [
               "string",
               "null"

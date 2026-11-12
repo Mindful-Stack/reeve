@@ -74,6 +74,9 @@ pub enum PromiseError {
     Past(NaiveDate),
     #[error("the recipient is longer than {max} characters", max = MAX_RECIPIENT)]
     RecipientTooLong,
+    /// PostgreSQL text cannot hold a NUL; refused here rather than failing the write.
+    #[error("the recipient cannot contain a NUL character")]
+    RecipientHasNul,
     /// A shortcut whose sprint does not exist (R6).
     #[error("{}", match .0 {
         Shortcut::ThisSprint => "there is no active sprint: give a date",
@@ -127,6 +130,9 @@ fn clean_to(to: String) -> Result<Option<String>, PromiseError> {
         .is_some_and(|s| s.chars().count() > MAX_RECIPIENT)
     {
         return Err(PromiseError::RecipientTooLong);
+    }
+    if to.as_ref().is_some_and(|s| s.contains('\0')) {
+        return Err(PromiseError::RecipientHasNul);
     }
     Ok(to)
 }
@@ -853,6 +859,13 @@ mod tests {
                 Ok((d(2026, 11, 25), "ed@x.y", now, Some(long_ok.clone()))),
             ),
             (
+                "a NUL in the recipient",
+                None,
+                req(Some(d(2026, 11, 25)), None, Some("Ac\0me")),
+                std,
+                Err(PromiseError::RecipientHasNul),
+            ),
+            (
                 "recipient is trimmed",
                 None,
                 req(Some(d(2026, 11, 25)), None, Some("  Acme ")),
@@ -1524,6 +1537,11 @@ mod tests {
                 "the date 2026-11-19 is past: promise today or later",
             ),
             ("long", PromiseError::RecipientTooLong, &long),
+            (
+                "nul",
+                PromiseError::RecipientHasNul,
+                "the recipient cannot contain a NUL character",
+            ),
             (
                 "no active",
                 PromiseError::NoSprint(Shortcut::ThisSprint),

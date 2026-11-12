@@ -7617,6 +7617,60 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
         assert!(promise_entries(&pool, k).await.is_empty());
     }
 
+    // A done story's promise can still be cleared (R2 refuses only setting).
+    set_promise(
+        &h,
+        ItemType::Story,
+        &done,
+        &Promise::from_persisted(nov(20), "pm@x".into(), c.now, None),
+    )
+    .await;
+    h.clear_promise(&c, ItemType::Story, &done).await.unwrap();
+    assert_eq!(stored(&pool, ItemType::Story, &done).await, None);
+    assert_eq!(
+        promise_entries(&pool, &done).await,
+        vec![(
+            "story".to_string(),
+            "unpromised".to_string(),
+            json!({"item_type": "story", "previous": {"on": "2026-11-20", "to": null}})
+        )]
+    );
+
+    // Initiatives cannot be promised (R1): automation is refused first, a person gets the rule; nothing is logged.
+    let ini = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    assert!(matches!(
+        h.set_promise(&bot, ItemType::Initiative, &ini, promise_body(Some(nov(20)), None, None))
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert!(matches!(
+        h.clear_promise(&bot, ItemType::Initiative, &ini).await.unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert_eq!(
+        validation_text(
+            h.set_promise(
+                &c,
+                ItemType::Initiative,
+                &ini,
+                promise_body(Some(nov(20)), None, None)
+            )
+            .await
+        ),
+        "an initiative cannot be promised"
+    );
+    assert_eq!(
+        validation_text(h.clear_promise(&c, ItemType::Initiative, &ini).await),
+        "an initiative cannot be promised"
+    );
+    assert!(promise_entries(&pool, &ini).await.is_empty());
+
     // No sprint exists yet: both shortcuts are refused.
     assert_eq!(
         validation_text(
@@ -7684,6 +7738,11 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
                 },
                 promise_body(None, Some(NextSprint), None),
                 "the next sprint is planned to end 2026-12-08, which is past: give a date",
+            ),
+            (
+                c.clone(),
+                promise_body(Some(nov(20)), None, Some("Ac\0me")),
+                "the recipient cannot contain a NUL character",
             ),
             (
                 c.clone(),
@@ -7773,6 +7832,27 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
             stored(&pool, item, &k).await,
             Some((nov(21), "lead@x".into(), later.now, Some("Beta".into())))
         );
+        // The same date and recipient again (a retry or a double submit), by someone else: no write, no entry.
+        for b in [
+            promise_body(Some(nov(21)), None, Some("Beta")),
+            promise_body(Some(nov(21)), None, None),
+            promise_body(None, None, Some(" Beta ")),
+        ] {
+            set(
+                Ctx {
+                    actor: "other@x".into(),
+                    ..past.clone()
+                },
+                b,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((nov(21), "lead@x".into(), later.now, Some("Beta".into()))),
+            "{name}: nothing changed, so nothing was written"
+        );
         // Neither date nor shortcut, `to: ""`: the recipient cleared, the date kept.
         set(past.clone(), promise_body(None, None, Some("")))
             .await
@@ -7843,7 +7923,8 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
     }
 }
 
-/// R6: a shortcut stores the sprint's planned end as it is when saved, never a length projection, and never follows a
+/// R6: a shortcut stores the sprint's planned end as it is when saved, never a length projection (from either sprint's
+/// start or from the active sprint's end), and never follows a
 /// later edit of the sprint; the due period is then classified against the sprints as they are now (R5).
 #[tokio::test]
 async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
@@ -7853,7 +7934,7 @@ async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
     let h = mk_db(pool.clone()).await;
     let c = promise_ctx();
     promise_sprints(&h, &c).await;
-    for (state, ends) in [("active", "2026-11-25"), ("draft", "2026-12-09")] {
+    for (state, ends) in [("active", "2026-11-25"), ("draft", "2026-12-11")] {
         sqlx::query("UPDATE sprints SET ends_on = $2::date WHERE state = $1")
             .bind(state)
             .bind(ends)
@@ -7862,7 +7943,8 @@ async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
             .unwrap();
     }
     let projected: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM sprints WHERE state IN ('active','draft') AND ends_on = starts_on + 14",
+        "SELECT count(*) FROM sprints WHERE state IN ('active','draft') AND (ends_on = starts_on + 14 \
+         OR ends_on = (SELECT ends_on FROM sprints WHERE state = 'active') + 14)",
     )
     .fetch_one(&pool)
     .await
@@ -7896,7 +7978,7 @@ async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
     assert_eq!(on(a.clone()).await, nov(25));
     assert_eq!(
         on(b.clone()).await,
-        chrono::NaiveDate::from_ymd_opt(2026, 12, 9).unwrap()
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 11).unwrap()
     );
 
     for (state, ends) in [("active", "2026-11-20"), ("draft", "2026-12-01")] {
@@ -7910,7 +7992,7 @@ async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
     assert_eq!(on(a.clone()).await, nov(25), "the stored date stays");
     assert_eq!(
         on(b.clone()).await,
-        chrono::NaiveDate::from_ymd_opt(2026, 12, 9).unwrap()
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 11).unwrap()
     );
     let due = |k: Key| {
         let h = h.clone();
@@ -8224,6 +8306,8 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
         Vec<(Key, Option<f32>)>,
         Vec<reeve_protocol::Readiness>,
     );
+    // The snapshots read on 20 Nov, after the promised dates: overdue promises are covered too.
+    let then = at_utc(11, 20, 10, 0);
     let snapshot = || async {
         let board = h
             .list_stories(
@@ -8232,7 +8316,7 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
                 None,
                 false,
                 DoneFilter::All,
-                c.now,
+                then,
             )
             .await
             .unwrap()
@@ -8248,7 +8332,7 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
             })
             .collect();
         let progress = h
-            .list_initiatives(c.now)
+            .list_initiatives(then)
             .await
             .unwrap()
             .into_iter()
@@ -8284,13 +8368,16 @@ async fn promises_change_no_readiness_delivery_progress_or_rank() {
     )
     .await
     .unwrap();
-    assert!(
-        h.story_dto(&keys[0], c.now)
-            .await
-            .unwrap()
-            .promise
-            .is_some(),
-        "the promises are in place"
-    );
+    for k in &keys[..4] {
+        assert_eq!(
+            h.story_dto(k, then)
+                .await
+                .unwrap()
+                .promise
+                .and_then(|p| p.state),
+            Some(reeve_protocol::PromiseState::Overdue),
+            "{k}: the promises are in place and overdue"
+        );
+    }
     assert_eq!(snapshot().await, before);
 }

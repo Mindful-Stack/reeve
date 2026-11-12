@@ -76,6 +76,14 @@ impl Handlers {
         let clock = self.promise_clock_in(tx, c.now).await?;
         let req = Request::from(body);
         let p = change(target.promise.as_ref(), req, &c.actor, c.now, &clock).map_err(refused)?;
+        // Nothing changes (a retry or a double submit): no write, no entry, and the promise keeps its `by`.
+        if target
+            .promise
+            .as_ref()
+            .is_some_and(|q| q.on() == p.on() && q.to() == p.to())
+        {
+            return Ok(());
+        }
         if !self.ports.promises.set_promise(tx, item, key, &p).await? {
             return Err(HandlerError::NotFound);
         }

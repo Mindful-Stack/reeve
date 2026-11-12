@@ -2953,6 +2953,7 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
     assert_eq!(v["value"]["promise"]["own"]["on"], ends.as_str());
     assert_eq!(v["value"]["promise"]["own"]["to"], "Acme");
     assert_eq!(v["value"]["promise"]["due"], "this_sprint");
+    let story_promise = v["value"]["promise"].clone();
     let (st, v) = call(
         &h.app,
         t,
@@ -2964,6 +2965,7 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["value"]["key"], epic.as_str());
     assert_eq!(v["value"]["promise"]["fact"]["on"], ends.as_str());
+    let epic_promise = v["value"]["promise"].clone();
 
     for (m, p, b) in [
         (
@@ -2985,6 +2987,25 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
         assert_eq!(body["reasons"], json!([{"reason": "interactive_only"}]));
         assert_eq!(body["overridable"], false, "{m} {p}");
     }
+    // The refused writes changed nothing.
+    let (_, sv) = admin_get(&h, &format!("/api/v1/stories/{story}")).await;
+    assert_eq!(sv["value"]["promise"], story_promise);
+    let (_, ev) = admin_get(&h, &format!("/api/v1/epics/{epic}")).await;
+    assert_eq!(ev["value"]["promise"], epic_promise);
+    // A NUL in the recipient is the person's error, not the server's.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"on": ends, "to": "Ac\u{0}me"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body["message"],
+        "the recipient cannot contain a NUL character"
+    );
 
     sqlx::query(
         "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = now() WHERE key = $1",

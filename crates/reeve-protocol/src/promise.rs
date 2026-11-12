@@ -82,12 +82,15 @@ pub enum PromiseShortcut {
 
 /// `POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only
 /// the recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.
+/// Any other field is refused rather than ignored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetPromise {
     #[serde(default)]
     pub on: Option<NaiveDate>,
     #[serde(default)]
     pub shortcut: Option<PromiseShortcut>,
+    /// The recipient. Left out or `null`: keep the current one. `""` (or only spaces): clear it.
     #[serde(default)]
     pub to: Option<String>,
 }
