@@ -1,423 +1,279 @@
+<!-- web/src/routes/+page.svelte: Home, the landing page. What waits on me (the decisions I decide), what I have started,
+     what to pick next (ready work nobody owns, with Start) and the active sprint. Everything comes from four reads the
+     server already answers; Home only partitions them (#lib/home.ts) and stores nothing. -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import { errorMessage } from '#lib/format.ts';
-	import type { Initiative, RequiredDecision } from '#lib/api/types.ts';
-	import InitiativeCard from '#lib/components/InitiativeCard.svelte';
-	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
-	import WarRoom from '#lib/components/WarRoom.svelte';
-	import { onLive } from '#lib/events.svelte.ts';
-	import { sameEmail } from '#lib/decisions.ts';
-	import { initiativeCreate, type InitiativeDraft } from '#lib/forms.ts';
-	import { CreateCycle } from '#lib/idempotency.ts';
+	import { api, Conflict, unwrap } from '#lib/api/client.ts';
+	import type { DecisionQueue, DecisionQueueEntry, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
+	import { COLUMN_LABEL } from '#lib/board.ts';
+	import DecisionList from '#lib/components/DecisionList.svelte';
+	import GoalsStrip from '#lib/components/GoalsStrip.svelte';
+	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
+	import StoryRow from '#lib/components/StoryRow.svelte';
+	import { today } from '#lib/decisions.ts';
+	import { decisionHref } from '#lib/drawer.ts';
+	import { minuteClock, onLive } from '#lib/events.svelte.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
+	import { myDecisions, pickNext, sprintLine, underWay } from '#lib/home.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { blockingByItem, bucketise, horizonLayout } from '#lib/planning.ts';
-	import Dialog from '#lib/ui/Dialog.svelte';
+	import { postMove } from '#lib/moves.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
-	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
-	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
-	let initiatives = $state<Initiative[] | null>(null);
-	let decisions = $state<RequiredDecision[]>([]);
-	let notice = $state<string | null>(null);
-	let busy = $state(false);
-	let over = $state<string | null>(null);
-
-	let creating = $state(false);
-	let draft = $state<InitiativeDraft>({ title: '', horizon: '', target_month: '', brief: '' });
-	let briefEl = $state<HTMLTextAreaElement | null>(null);
-	const uploads = new ImageUploads(
-		() => draft.brief,
-		(t) => (draft.brief = t)
-	);
-	/** The form's sends: its key survives cancel and reopen and is replaced only after a successful create. */
-	const cycle = new CreateCycle();
-	let createError = $state<string | null>(null);
-	let newButton: HTMLButtonElement | undefined;
-	let lastToggle: HTMLButtonElement | undefined = $state();
-
-	/** All initiatives, or only the signed-in user's (`?mine=1`, so it survives a reload). */
-	const scope = $derived<'all' | 'mine'>(page.url.searchParams.get('mine') === '1' ? 'mine' : 'all');
-	/** The last configured horizon is collapsed under the columns until this is set. */
-	let showLast = $state(false);
-
-	const configured = $derived(session.config?.horizon_buckets ?? []);
-	const shown = $derived(
-		scope === 'mine' ? (initiatives ?? []).filter((i) => !!i.owner && !!session.me && sameEmail(i.owner, session.me.email)) : (initiatives ?? [])
-	);
-	const buckets = $derived(bucketise(configured, shown));
-	/** `layout.columns` are the rendered columns (the last horizon among them when expanded): only these are drop targets. */
-	const layout = $derived(horizonLayout(configured, buckets, showLast));
-	const columns = $derived(layout.columns);
-	const lastId = 'planning-last-horizon';
-	const blocking = $derived(blockingByItem(decisions));
-
+	/** The four reads as the server last answered them, set together; null until the first answer. */
+	let data = $state<{ sprints: Sprints; queue: DecisionQueue; mine: StoryWithReadiness[]; ready: StoryWithReadiness[] } | null>(null);
 	let loadError = $state<string | null>(null);
-	let latest = 0;
+	let notice = $state<{ text: string; tone: 'info' | 'error' } | null>(null);
+	let busy = $state(false);
+	/** A Start refused for readiness reasons, waiting for the person's written reason (kb/ADR-0018 R2). */
+	let override = $state<{ row: StoryWithReadiness; reasons: Reason[] } | null>(null);
+	let showMore = $state(false);
 
-	/** Every write is followed by this, so a card's `version` is always the one the server last returned. A write's reload
-	 *  and a live refetch can overlap: only the latest request's answer (or failure) lands, a superseded one is dropped. */
+	/** The viewer's date, re-read every minute, so the sprint line rolls over at midnight without a refetch. */
+	const on = $derived(today(new Date(minuteClock.now)));
+	const active = $derived(data?.sprints.active ?? null);
+	// The layout renders a page only after `session.me` has loaded.
+	const decided = $derived(myDecisions(data?.queue.entries ?? [], session.me!.email));
+	const listed = $derived(decided.listed.map((e) => e.decision));
+	// DecisionList reads each row's held stories from its entry.
+	const entries = $derived(new Map<number, DecisionQueueEntry>(decided.listed.map((e) => [e.decision.id, e])));
+	/** Every listed decision after the first three folds behind "n more". */
+	const more = $derived(new Set(listed.slice(3).map((d) => d.id)));
+	const work = $derived(underWay(data?.mine ?? []));
+	const pick = $derived(pickNext(data?.ready ?? []));
+	/** Todo stories a decision holds, each counted once (the queue's own count). */
+	const held = $derived(data?.queue.summary.blocked_stories ?? 0);
+
+	// A write's own reload and a live refetch can overlap; only the latest request's answer (or failure) lands, and a
+	// failed reload keeps the last good page.
+	let latest = 0;
 	async function reload() {
 		const seq = ++latest;
-		let i: Initiative[], d: RequiredDecision[];
 		try {
-			[i, d] = await Promise.all([unwrap(api.GET('/api/v1/initiatives')), unwrap(api.GET('/api/v1/decisions'))]);
+			const [sprints, queue, mine, ready] = await Promise.all([
+				unwrap(api.GET('/api/v1/sprints')),
+				unwrap(api.GET('/api/v1/decisions/queue')),
+				unwrap(api.GET('/api/v1/stories', { params: { query: { owner: session.me!.email, done: 'none' } } })),
+				// Ready already implies todo; `delivery=todo` spares the server every done story.
+				unwrap(api.GET('/api/v1/stories', { params: { query: { ready: true, delivery: 'todo' } } }))
+			]);
+			if (seq !== latest) return;
+			data = { sprints, queue, mine, ready };
+			loadError = null;
 		} catch (e) {
 			if (seq !== latest) return;
-			throw e;
-		}
-		if (seq !== latest) return;
-		initiatives = i;
-		decisions = d;
-		loadError = null;
-	}
-
-	function show(e: unknown): string {
-		if (e instanceof Refused) return `Refused: ${e.reasons.map((r) => r.reason.replaceAll('_', ' ')).join(', ')}`;
-		if (e instanceof Conflict) return 'reloaded, try again';
-		if (e instanceof ApiError) return e.message;
-		return errorMessage(e);
-	}
-
-	// A failed first load shows the error until any later reload (a write or a live refetch) succeeds.
-	retry();
-	// Any activity entry, and every (re)connect, refetches: the dependency graph is the whole tree (#lib/events.svelte.ts).
-	// A failed refetch keeps the plan on screen and shows the load notice, with Retry and Dismiss.
-	onLive(retry);
-
-	function setScope(v: 'all' | 'mine'): Promise<void> {
-		const url = new URL(page.url.href);
-		if (v === 'mine') url.searchParams.set('mine', '1');
-		else url.searchParams.delete('mine');
-		return goto(url, { replace: true, reset: false });
-	}
-
-	/** The initiative whose "Mark urgent" dialog is open. */
-	let marking = $state<string | null>(null);
-	let strip: { reload: () => Promise<void> } | undefined = $state();
-	const markingReason = $derived(initiatives?.find((i) => i.key === marking)?.urgent_mark?.reason ?? null);
-	let markError = $state<string | null>(null);
-
-	async function markUrgent(reason: string | null) {
-		const key = marking;
-		if (!key || busy) return;
-		busy = true;
-		markError = null;
-		try {
-			await unwrap(api.POST('/api/v1/initiatives/{key}/urgent', { params: { path: { key } }, body: { reason } }));
-			marking = null;
-		} catch (e) {
-			markError = show(e);
-		}
-		try {
-			await Promise.all([reload(), strip?.reload()]);
-		} catch (e) {
-			loadError = show(e);
-		} finally {
-			busy = false;
+			loadError = errorMessage(e);
 		}
 	}
 
-	async function clearUrgent(key: string) {
-		if (busy) return;
+	onMount(reload);
+	// Any activity entry, and every (re)connect, refetches (kb/ADR-0011 R10, the web's refresh policy).
+	onLive(reload);
+
+	/** Start: the board's move to in progress. Pick next lists only stories nobody owns, and starting one makes the mover
+	 *  its owner. After the move, focus goes to the story's row under Under way, as the board refocuses a moved card. */
+	async function start(row: StoryWithReadiness, overrideReason?: string) {
+		const key = row.story.key;
 		busy = true;
 		notice = null;
 		try {
-			await unwrap(api.DELETE('/api/v1/initiatives/{key}/urgent', { params: { path: { key } } }));
-		} catch (e) {
-			notice = show(e);
-		}
-		try {
-			await Promise.all([reload(), strip?.reload()]);
-		} catch (e) {
-			loadError = show(e);
-		} finally {
-			busy = false;
-		}
-		await refocus(key);
-	}
-
-	async function move(key: string, horizon: string) {
-		// Read the version from the latest load at drop time, never from a value captured at an earlier render.
-		const current = initiatives?.find((i) => i.key === key);
-		if (!current || current.horizon === horizon || busy || !configured.includes(horizon)) return;
-		busy = true;
-		notice = null;
-		try {
-			await unwrap(
-				api.PATCH('/api/v1/initiatives/{key}', {
-					params: { path: { key } },
-					body: { version: current.version, horizon }
-				})
-			);
-		} catch (e) {
-			notice = show(e);
-		}
-		try {
+			const out = await postMove(row.story, 'in_progress', { overrideReason });
+			if (out.kind === 'override') {
+				override = { row, reasons: out.reasons };
+				return;
+			}
+			override = null;
+			if (out.kind === 'notice') {
+				notice = { text: out.notice, tone: 'error' };
+				return;
+			}
 			await reload();
+			notice = { text: `${key} is yours now.`, tone: 'info' };
+			await tick();
+			document.querySelector<HTMLElement>(`section[aria-labelledby="home-under-way"] [data-key="${key}"] a`)?.focus();
 		} catch (e) {
-			loadError = show(e);
+			override = null;
+			if (e instanceof Conflict) {
+				notice = { text: `Someone else changed ${key}; Home was reloaded.`, tone: 'error' };
+				await reload();
+			} else {
+				notice = { text: errorMessage(e), tone: 'error' };
+			}
 		} finally {
 			busy = false;
 		}
-		await refocus(key);
-	}
-
-	/** After a move and its reload, focus the moved card's actions menu trigger (its menu is gone), else the card; a card
-	 *  now in the collapsed last horizon is not rendered, so focus goes to that horizon's toggle. */
-	async function refocus(key: string) {
-		await tick();
-		const card = [...document.querySelectorAll<HTMLElement>('[data-testid^="card-"]')].find(
-			(el) => el.dataset.testid === `card-${key}`
-		);
-		(card?.querySelector<HTMLElement>('[data-control="menu"]') ?? card ?? lastToggle)?.focus();
-	}
-
-	async function toggleLast() {
-		showLast = !showLast;
-		if (!showLast) return;
-		await tick();
-		document.getElementById(lastId)?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
-	}
-
-	function startCreate() {
-		if (!draft.horizon) draft.horizon = configured[0] ?? '';
-		createError = null;
-		creating = true;
-	}
-
-	function retry() {
-		reload().catch((e: unknown) => (loadError = show(e)));
-	}
-
-	function cancelCreate() {
-		if (busy) return; // a pending create keeps its dialog: its completion navigates or shows the error here
-		creating = false;
-		createError = null;
-		uploads.reset();
-		void tick().then(() => newButton?.focus());
-	}
-
-	async function createInitiative(e: SubmitEvent) {
-		e.preventDefault();
-		if (busy || uploads.busy) return;
-		const p = initiativeCreate(draft, configured);
-		if (!p.ok) {
-			createError = p.error;
-			return;
-		}
-		busy = true;
-		createError = null;
-		const out = await cycle.send(p.text, (idempotency_key) =>
-			unwrap(api.POST('/api/v1/initiatives', { body: { ...p.body, ...uploads.body(), idempotency_key } }))
-		);
-		busy = false;
-		if (out.kind === 'sent') {
-			draft = { title: '', horizon: configured[0] ?? '', target_month: '', brief: '' };
-			uploads.reset();
-			creating = false;
-			await goto(`/initiatives/${encodeURIComponent(out.value.key)}`);
-		} else if (out.kind === 'failed') createError = show(out.error); // the draft and its key stay for a retry
-	}
-
-	function ondragover(e: DragEvent, bucket: string) {
-		if (busy || !configured.includes(bucket)) return; // the Other column is not a horizon: nothing can be moved there
-		e.preventDefault();
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-		over = bucket;
-	}
-
-	function ondrop(e: DragEvent, bucket: string) {
-		e.preventDefault();
-		over = null;
-		const key = e.dataTransfer?.getData('text/plain');
-		if (key) void move(key, bucket);
 	}
 </script>
 
-<svelte:head><title>Planning · Reeve</title></svelte:head>
+<svelte:head><title>Home · Reeve</title></svelte:head>
 
-<PageHeader title="Planning">
-	<Toggle
-		label="Show"
-		options={[
-			{ value: 'all', label: 'All' },
-			{ value: 'mine', label: 'Mine' }
-		]}
-		value={scope}
-		onchange={setScope}
-	/>
-	<button type="button" class="primary new" bind:this={newButton} onclick={startCreate}>New initiative</button>
-</PageHeader>
+<div class="home">
+	<PageHeader title="Home">
+		{#if data}
+			<span class="sprint-line">{active ? sprintLine(active.sprint, on) : 'No sprint is running'}</span>
+			<a href="/sprint">Sprint →</a>
+		{/if}
+	</PageHeader>
 
-{#if creating}
-	<Dialog title="New initiative" onclose={cancelCreate} closable={!busy}>
-		<form class="create" aria-label="New initiative" onsubmit={createInitiative}>
-			<label class="field">Title <input bind:value={draft.title} required disabled={busy} /></label>
-			<label class="field">
-				Horizon
-				<select bind:value={draft.horizon} disabled={busy}>
-					{#each configured as b (b)}<option value={b}>{b}</option>{/each}
-				</select>
-			</label>
-			<label class="field">Target month <input bind:value={draft.target_month} placeholder="YYYY-MM" disabled={busy} /></label>
-			<div class="field">
-				<label class="field"
-					>Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="4" disabled={busy} {@attach attachable(uploads)}></textarea></label
-				>
-				<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
-			</div>
-			{#if createError}<p class="error" role="alert">{createError}</p>{/if}
-			<div class="actions">
-				<button type="button" onclick={cancelCreate} disabled={busy}>Cancel</button>
-				<button type="submit" class="primary" disabled={busy || uploads.busy || !draft.title.trim()}
-					>{uploads.busy ? 'Uploading…' : 'Create initiative'}</button
-				>
-			</div>
-		</form>
-	</Dialog>
-{/if}
-
-{#if notice}<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>{/if}
-
-{#if loadError}
-	<!-- A failed refetch keeps the loaded plan: Retry or Dismiss. A failed first load has nothing to fall back to: Retry only. -->
-	<Notice tone="error" onretry={retry} ondismiss={initiatives ? () => (loadError = null) : undefined}
-		>Could not load the plan: {loadError}</Notice
-	>
-{/if}
-
-<!-- Outside the Mine filter: it loads its own data and lists every mark. -->
-<WarRoom
-	bind:this={strip}
-	onchange={retry}
-	onempty={() => newButton?.focus()}
-/>
-
-{#if marking}
-	<MarkUrgentDialog
-		item={marking}
-		initial={markingReason}
-		{busy}
-		error={markError}
-		onsubmit={markUrgent}
-		oncancel={() => {
-			if (!busy) marking = null;
-		}}
-	/>
-{/if}
-
-{#if !initiatives}
-	{#if !loadError}
-		<!-- The first load keeps the column frames, each saying it is loading. -->
-		<div class="columns" aria-busy="true">
-			{#each layout.columns as bucket (bucket)}
-				<section class="column" aria-label={bucket}>
-					<h2>{bucket}</h2>
-					<p class="muted">Loading…</p>
-				</section>
-			{/each}
-		</div>
+	{#if loadError}
+		<Notice tone="error" onretry={reload}>Could not load Home: {loadError}</Notice>
 	{/if}
-{:else}
-	<div class="columns" aria-busy={busy}>
-		{#each columns as bucket (bucket)}
-			{@const items = buckets.get(bucket) ?? []}
-			<section
-				class="column"
-				id={bucket === layout.collapsed ? lastId : undefined}
-				class:over={over === bucket}
-				aria-label={bucket}
-				ondragover={(e) => ondragover(e, bucket)}
-				ondragleave={() => (over = over === bucket ? null : over)}
-				ondrop={(e) => ondrop(e, bucket)}
-			>
-				<h2>{bucket} <span class="count">{items.length}</span></h2>
-				{#if !configured.includes(bucket)}
-					<p class="muted hint">Horizons no longer configured. Move an initiative to a horizon to replan it.</p>
+	{#if notice}
+		<Notice tone={notice.tone} ondismiss={() => (notice = null)}>{notice.text}</Notice>
+	{/if}
+
+	{#if data}
+		{#if decided.listed.length + decided.review + decided.later > 0}
+			<section aria-labelledby="home-decisions">
+				<div class="head">
+					<h2 id="home-decisions">Decisions you decide</h2>
+					<a href="/decisions?mine=1">Decisions →</a>
+				</div>
+				{#if listed.length > 0}
+					<DecisionList
+						decisions={listed}
+						{entries}
+						decisionHref={(id) => decisionHref(page.url, id)}
+						onchanged={reload}
+						poll={false}
+						rest={(d) => more.has(d.id)}
+						showRest={showMore}
+						restId="home-more-decisions"
+					>
+						{#snippet between()}
+							{#if more.size > 0}
+								<button
+									type="button"
+									class="ghost"
+									aria-expanded={showMore}
+									aria-controls={showMore ? 'home-more-decisions' : undefined}
+									onclick={() => (showMore = !showMore)}>{showMore ? 'Show fewer' : `${more.size} more`}</button
+								>
+							{/if}
+						{/snippet}
+					</DecisionList>
 				{/if}
-				{#each items as initiative (initiative.key)}
-					<InitiativeCard
-						{initiative}
-						decisions={blocking.get(initiative.key)}
-						buckets={configured}
-						{busy}
-						onmove={move}
-						onmark={(key) => ((markError = null), (marking = key))}
-						onclear={clearUrgent}
-					/>
-				{:else}
-					<p class="muted">No initiatives</p>
-				{/each}
+				{#if decided.review > 0}
+					<p class="line"><a href="/decisions?mine=1#review">{plural(decided.review, 'record', 'records')} to review →</a></p>
+				{/if}
+				{#if decided.later > 0}
+					<p class="line muted">{decided.later} more beyond the next sprint or not blocking yet.</p>
+				{/if}
 			</section>
-		{/each}
-	</div>
-	{#if layout.collapsed !== null}
-		<button
-			type="button"
-			class="ghost collapsed"
-			bind:this={lastToggle}
-			aria-expanded={showLast}
-			aria-controls={showLast ? lastId : undefined}
-			onclick={toggleLast}
-			>{layout.collapsed} · {buckets.get(layout.collapsed)?.length ?? 0}</button
-		>
+		{/if}
+
+		<section aria-labelledby="home-under-way">
+			<div class="head"><h2 id="home-under-way">Under way</h2></div>
+			{#if work.started.length > 0}
+				<ul class="stories">
+					{#each work.started as row (row.story.key)}<StoryRow {row} />{/each}
+				</ul>
+			{:else}
+				<p class="muted">Nothing under way.</p>
+			{/if}
+			{#if work.todo > 0}
+				<p class="line"><a href="/backlog?mine=1">{work.todo} of yours in todo, {work.ready} ready →</a></p>
+			{/if}
+		</section>
+
+		<section aria-labelledby="home-pick-next">
+			<div class="head"><h2 id="home-pick-next">Pick next</h2></div>
+			{#if pick.length > 0}
+				<ul class="stories">
+					{#each pick as row (row.story.key)}<StoryRow {row} {busy} onstart={start} />{/each}
+				</ul>
+			{:else}
+				<p class="muted">Nothing ready and unowned.</p>
+			{/if}
+			<p class="line"><a href="/backlog?ready=1">All ready work →</a></p>
+			{#if held > 0}
+				<p class="line flag">
+					<span class="glyph" aria-hidden="true">⚑</span>
+					{plural(held, 'story', 'stories')} held by a decision. <a href="/board?notready=1">See what is not ready →</a>
+				</p>
+			{/if}
+		</section>
+
+		{#if active}
+			<section aria-labelledby="home-sprint">
+				<div class="head">
+					<h2 id="home-sprint">The sprint</h2>
+					<a href="/sprint">Sprint →</a>
+				</div>
+				<!-- The strip's chips are its filter toggles; with nothing selected a chip passes its goal, and Home opens the
+				     board filtered to it. -->
+				<GoalsStrip view={active} selected={null} onselect={(g) => goto(`/board?goal=${g}`)} />
+			</section>
+		{/if}
+	{:else if !loadError}
+		<p class="muted">Loading…</p>
 	{/if}
+</div>
+
+{#if override}
+	{@const o = override}
+	<OverridePrompt
+		storyKey={o.row.story.key}
+		target={COLUMN_LABEL.in_progress}
+		reasons={o.reasons}
+		{busy}
+		onconfirm={(why) => start(o.row, why)}
+		oncancel={() => (override = null)}
+	/>
 {/if}
 
 <style>
-	.new {
-		margin-left: auto;
-	}
-	.columns {
+	.home {
 		display: grid;
-		grid-auto-flow: column;
-		grid-auto-columns: minmax(var(--column-min), 1fr);
-		gap: 12px;
-		overflow-x: auto;
-		scroll-snap-type: x proximity;
-		align-items: start;
+		gap: 20px;
+		max-width: 55rem;
+		margin: 0 auto;
 	}
-	.column {
+	.sprint-line {
+		color: var(--muted);
+	}
+	section {
 		display: grid;
 		gap: 8px;
-		align-content: start;
-		min-height: 8rem;
-		scroll-snap-align: start;
 	}
-	.column.over {
-		outline: 2px dashed var(--accent);
-		outline-offset: 4px;
+	.head {
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+		border-bottom: 1px solid var(--line);
+		padding-bottom: 4px;
 	}
-	.column p {
+	.head h2 {
+		font-size: 15px;
 		margin: 0;
-		font-size: 14px;
 	}
-	.hint {
+	.head a {
+		margin-left: auto;
 		font-size: 13px;
 	}
-	.collapsed {
-		margin-top: 16px;
-	}
-	.create {
+	.stories {
 		display: grid;
-		gap: 12px;
-		min-width: min(28rem, 80vw);
-	}
-	.create .actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-	}
-	.error {
+		gap: 6px;
 		margin: 0;
-		color: var(--danger);
+		padding: 0;
 	}
-	[aria-busy='true'] {
-		opacity: 0.7;
+	.line {
+		margin: 0;
+		font-size: 13px;
+	}
+	/* The flag's text stays in the foreground colour on the soft warning ground (an AA pair); only the glyph is amber. */
+	.flag {
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: var(--warn-soft);
+	}
+	.glyph {
+		color: var(--warn);
+	}
+	.muted {
+		margin: 0;
+		color: var(--muted);
 	}
 </style>

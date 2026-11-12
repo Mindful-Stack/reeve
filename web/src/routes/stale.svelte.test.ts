@@ -11,7 +11,8 @@ import StoryDrawer from '#lib/components/StoryDrawer.svelte';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import { activity, config, decision, epic, initiative, me, queueEntry, queueSummary, story, withReadiness } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
-import Planning from './+page.svelte';
+import Planning from './planning/+page.svelte';
+import Home from './+page.svelte';
 import Activity from './(account)/activity/+page.svelte';
 import Backlog from './backlog/+page.svelte';
 import Board from './board/+page.svelte';
@@ -170,6 +171,7 @@ async function keepsNewest(view: Component<never>, props: Record<string, unknown
 
 describe('a late answer to an older reload is dropped', () => {
 	it('on the planning page', () => keepsNewest(Planning));
+	it('on the home page', () => keepsNewest(Home));
 	it('on the backlog', () => keepsNewest(Backlog));
 	it('on an epic page', () => keepsNewest(Epic));
 	it('on an initiative page', () => keepsNewest(Initiative));

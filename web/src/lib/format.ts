@@ -45,3 +45,8 @@ export function actionLabel(action: string, payload: unknown): string {
 	}
 	return action.replaceAll('_', ' ');
 }
+
+/** `n` and the noun that agrees with it: `plural(1, 'day', 'days')` is "1 day". */
+export function plural(n: number, one: string, many: string): string {
+	return `${n} ${n === 1 ? one : many}`;
+}

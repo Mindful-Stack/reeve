@@ -482,7 +482,7 @@
 {:else if !initiative}
 	<!-- The first load keeps the page's frame and says it is loading. -->
 	<div class="page" aria-busy="true">
-		<nav aria-label="Breadcrumb" class="crumb"><a href="/">Planning</a></nav>
+		<nav aria-label="Breadcrumb" class="crumb"><a href="/planning">Planning</a></nav>
 		<p class="muted">Loading…</p>
 	</div>
 {:else}
@@ -493,7 +493,7 @@
 		{/if}
 
 		<header class="head">
-			<nav aria-label="Breadcrumb" class="crumb"><a href="/">Planning</a> / {i.horizon}</nav>
+			<nav aria-label="Breadcrumb" class="crumb"><a href="/planning">Planning</a> / {i.horizon}</nav>
 			<div class="title-row">
 				<h1>{i.title}</h1>
 				<GoalLinkButton key={i.key} />

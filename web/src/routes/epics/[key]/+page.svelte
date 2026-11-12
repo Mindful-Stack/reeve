@@ -506,7 +506,7 @@
 {:else if !epic}
 	<!-- The first load keeps the page's frame and says it is loading. -->
 	<div class="page" aria-busy="true">
-		<nav aria-label="Breadcrumb" class="crumb"><a href="/">Planning</a></nav>
+		<nav aria-label="Breadcrumb" class="crumb"><a href="/planning">Planning</a></nav>
 		<p class="muted">Loading…</p>
 	</div>
 {:else}
@@ -518,7 +518,7 @@
 
 		<header class="head">
 			<nav aria-label="Breadcrumb" class="crumb">
-				<a href="/">Planning</a>
+				<a href="/planning">Planning</a>
 				{#if ep.initiative}
 					/ <a href="/initiatives/{encodeURIComponent(ep.initiative)}">{ep.initiative}</a>
 				{/if}

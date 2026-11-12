@@ -1,6 +1,6 @@
 // Pure helpers for required decisions: the check label, the "mine" and "closed" filters, due dates and item links.
 import type { ClosureKind, NeededIn, NeededInReason, NextStep, QueueLane, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-import { age } from '#lib/format.ts';
+import { age, plural } from '#lib/format.ts';
 
 export type CheckResult = RequiredDecision['check'];
 
@@ -85,18 +85,16 @@ export function closeActions(r: Reversibility | null | undefined): ClosureKind[]
 export type DateLine = { text: string; tone: 'normal' | 'warning' | 'danger' };
 
 /** A `YYYY-MM-DD` value as a local midnight, so day differences ignore the time zone's offset. */
-function localDate(s: string): Date {
+export function localDate(s: string): Date {
 	const [y, m, d] = s.split('-').map(Number);
 	return new Date(y, m - 1, d);
 }
 
-function daysBetween(from: string, to: string): number {
+export function daysBetween(from: string, to: string): number {
 	return Math.round((localDate(to).getTime() - localDate(from).getTime()) / 86_400_000);
 }
 
-function plural(n: number): string {
-	return `${n} ${n === 1 ? 'day' : 'days'}`;
-}
+const days = (n: number): string => plural(n, 'day', 'days');
 
 /** The decision's date line from the viewer's date `on`: due in n days, due today or overdue (with the weekday), or, with
  *  no date, how long it has been open. */
@@ -104,7 +102,7 @@ export function dateLine(d: Pick<RequiredDecision, 'due' | 'created_at'>, on: st
 	if (!d.due) {
 		const created = new Date(d.created_at);
 		// The timestamp's local date, like `on`, so the age does not shift near midnight; "?" as age() shows it when unparseable.
-		const open = Number.isNaN(created.getTime()) ? '?' : plural(Math.max(0, daysBetween(today(created), on)));
+		const open = Number.isNaN(created.getTime()) ? '?' : days(Math.max(0, daysBetween(today(created), on)));
 		return { text: `No date · open ${open}`, tone: 'warning' };
 	}
 	const n = daysBetween(on, d.due);
@@ -113,8 +111,8 @@ export function dateLine(d: Pick<RequiredDecision, 'due' | 'created_at'>, on: st
 		.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 		.replace(',', '');
 	return n > 0
-		? { text: `Due in ${plural(n)} (${when})`, tone: 'normal' }
-		: { text: `Overdue ${plural(-n)} (${when})`, tone: 'danger' };
+		? { text: `Due in ${days(n)} (${when})`, tone: 'normal' }
+		: { text: `Overdue ${days(-n)} (${when})`, tone: 'danger' };
 }
 
 /** The record's own reversibility when it disagrees with the decision's, else null: a warning only, and only when both are

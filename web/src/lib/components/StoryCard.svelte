@@ -4,10 +4,10 @@
 	import { freshNote, live } from '#lib/events.svelte.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { prLine, prSummary, safePrUrl } from '#lib/prs.ts';
-	import { truncate } from '#lib/sprint.ts';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
+	import GoalChip from './GoalChip.svelte';
 	import UrgentChip from './UrgentChip.svelte';
 	import { urgentLine } from '#lib/urgency.ts';
 
@@ -96,8 +96,7 @@
 		{#if urgent}<UrgentChip line={urgentTip()} />{/if}
 		{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
 		{#if epicTitle}<span class="epic" title={s.epic ?? undefined}>{epicTitle}</span>{/if}
-		<!-- The first goal the server says the story serves (kb/ADR-0014 R3); the drawer lists them all. -->
-		{#if s.goals[0]}<span class="goal" title={s.goals.map((g) => g.outcome).join('\n')}>goal: {truncate(s.goals[0].outcome, 40)}</span>{/if}
+		<GoalChip goals={s.goals} />
 	</div>
 	<div class="foot">
 		<span title={item.readiness.ready ? undefined : item.readiness.reasons.map((r) => fullLabel(r)).join('\n')}
@@ -199,8 +198,7 @@
 		color: var(--foreground);
 		font-weight: 600;
 	}
-	.epic,
-	.goal {
+	.epic {
 		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;

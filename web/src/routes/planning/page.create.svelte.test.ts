@@ -12,7 +12,7 @@ import type { FakePage } from '#lib/test/net.ts';
 const route = vi.hoisted(() => ({ fake: null as null | FakePage }));
 vi.mock('$app/state', async () => {
 	const { fakePage } = await import('#lib/test/net.ts');
-	route.fake = fakePage({ url: '/' });
+	route.fake = fakePage({ url: '/planning' });
 	return { page: route.fake.page };
 });
 const goto = vi.hoisted(() => vi.fn(async (to: string | URL, opts?: unknown) => route.fake!.goto(to, opts)));
