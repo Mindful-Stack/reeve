@@ -10,7 +10,8 @@
 #   - macro-generated code, raw strings, char literals holding `"`, string literals spanning lines, and a `//`
 #     inside a `/* */` block comment (it hides the rest of that line).
 # The behaviour itself is pinned by tests: tests/handlers.rs
-# recording_a_pull_request_links_updates_and_never_moves_the_story, tests/rules.rs (move_story's rules) and
+# recording_a_pull_request_links_updates_and_never_moves_the_story, tests/handlers.rs
+# promises_change_no_readiness_delivery_progress_or_rank, tests/rules.rs (move_story's rules) and
 # tests/sprints.rs moves_never_depend_on_goals.
 # The domain DTO rule judges comments too, deliberately: planning's domain docs must not name a wire DTO either.
 set -euo pipefail
@@ -65,7 +66,7 @@ if [ -d "$planning/handler" ]; then
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7: moving a story never reads sprints, goals, urgency, promises or
   # the decision queue's windows.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|${lb}promise_clock_in\(|planned_ends_in")
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|planned_ends_in|${lb}(set|clear)_promise(_in)?\(")
     if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency, promises or the decision queue"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of
