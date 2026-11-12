@@ -1393,13 +1393,23 @@ async fn promise_columns_refuse_half_a_promise_and_a_long_recipient() {
     let whole = "promised_on = '2026-11-20', promised_by = 'a@b.c', promised_at = now()";
     let long_ok = "é".repeat(200);
     let long_bad = "é".repeat(201);
-    assert_eq!(long_bad.len(), 402);
+    assert_eq!(long_ok.len(), 400);
     let refused = [
         ("on alone", "promised_on = '2026-11-20'".to_string()),
         ("by alone", "promised_by = 'a@b.c'".to_string()),
         ("at alone", "promised_at = now()".to_string()),
         ("to alone", "promised_to = 'Acme'".to_string()),
         ("201 chars", format!("{whole}, promised_to = '{long_bad}'")),
+        ("blank recipient", format!("{whole}, promised_to = '   '")),
+        ("empty recipient", format!("{whole}, promised_to = ''")),
+        (
+            "empty by",
+            "promised_on = '2026-11-20', promised_by = '', promised_at = now()".to_string(),
+        ),
+        (
+            "blank by",
+            "promised_on = '2026-11-20', promised_by = '  ', promised_at = now()".to_string(),
+        ),
     ];
     let accepted = [
         ("whole, no recipient", whole.to_string()),
