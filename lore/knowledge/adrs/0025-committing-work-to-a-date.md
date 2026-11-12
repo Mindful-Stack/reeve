@@ -83,6 +83,7 @@ field, a carried-over bucket or a gate.
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-12: What was built beyond the rules: a request that changes nothing writes and logs nothing; `to: null` keeps the recipient; the row lock is `FOR NO KEY UPDATE`; a draft sprint lists no promises; `promises_after` is on the wire; and the CLI and the web share their word rows through `web/src/lib/promise.fixture.json`. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0014, kb/ADR-0024.
