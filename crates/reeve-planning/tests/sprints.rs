@@ -1465,6 +1465,87 @@ mod lifecycle {
         assert_eq!(goals, 1);
     }
 
+    /// An opening as another transaction runs it, held uncommitted: draft `d` is locked and active, the next draft is
+    /// inserted, and goal `g` has moved to it. Returns the open transaction and the new draft's id.
+    async fn opening_moved(
+        pool: &sqlx::PgPool,
+        d: i64,
+        g: i64,
+    ) -> (sqlx::Transaction<'static, sqlx::Postgres>, i64) {
+        let mut opener = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM sprints WHERE id = $1 FOR UPDATE")
+            .bind(d)
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE sprints SET state = 'active', opened_at = $2 WHERE id = $1")
+            .bind(d)
+            .bind(at(3, 18))
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        let d2: i64 = sqlx::query_scalar(
+            "INSERT INTO sprints (state, starts_on, ends_on, created_at) VALUES ('draft', '2026-12-01', '2026-12-15', $1) RETURNING id",
+        )
+        .bind(at(3, 18))
+        .fetch_one(&mut *opener)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE goals SET sprint_id = $2 WHERE id = $1")
+            .bind(g)
+            .bind(d2)
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        (opener, d2)
+    }
+
+    /// Deterministic: a confidence on a draft goal waits on the draft's row while an opening makes the draft active and
+    /// moves the goal to the next draft. Goes red if `goal_locked` trusts its unlocked read of the goal's sprint: it
+    /// would see the old sprint active, pass `allow(Active, Confidence)` and record a confidence on a goal that sits in
+    /// a draft (kb/ADR-0026 R2).
+    #[tokio::test]
+    async fn a_confidence_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, id) = (h.clone(), c.clone(), g.id);
+            async move {
+                h.record_confidence(&c, id, reeve_protocol::Confidence::OnTrack, None)
+                    .await
+            }
+        });
+        until_waiting_on_a_lock(&pool, "record_confidence").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(matches!(r, Err(HandlerError::Conflict { .. })), "{r:?}");
+        let now = goal_now(&h, g.id).await;
+        assert_eq!((now.sprint_id, now.confidence), (d2, None));
+    }
+
+    /// The same shape for removal: the goal is removable in its new draft, so a refusal would be wrong. Goes red if
+    /// `goal_locked` applies the old sprint's state before comparing sprints (`sprint_not_draft`).
+    #[tokio::test]
+    async fn a_removal_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, id, v) = (h.clone(), c.clone(), g.id, g.version);
+            async move { h.remove_goal(&c, id, v).await }
+        });
+        until_waiting_on_a_lock(&pool, "remove_goal").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(matches!(r, Err(HandlerError::Conflict { .. })), "{r:?}");
+        assert_eq!(goal_now(&h, g.id).await.sprint_id, d2);
+    }
+
     /// A write that holds the sprint and goal row locks takes no second connection (ports.rs): run on a pool of one,
     /// any pool read made inside the transaction would wait for the connection the transaction itself holds and time
     /// out. Goes red if `remove_goal` resolves its links' item types through the pool.

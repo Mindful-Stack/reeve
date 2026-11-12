@@ -1,7 +1,9 @@
-//! Sprints and goals (kb/ADR-0014). The handlers lock, load, call `domain::sprint` and record activity; every rule lives
-//! in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so a close and a goal
-//! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
-//! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
+//! Sprints and goals (kb/ADR-0014, kb/ADR-0026). The handlers lock, load, call `domain::sprint` and record activity;
+//! every rule lives in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so
+//! a close, an opening and a goal write or link queue on the sprint row rather than deadlock. A goal write compares the
+//! locked goal's sprint with the locked sprint first (an opening may have moved the goal), then rechecks the sprint's
+//! state under that lock. Activity is each transaction's final work: entries are collected and recorded in order
+//! immediately before commit.
 use super::*;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
@@ -91,18 +93,22 @@ impl Handlers {
         }
     }
 
-    /// Locks a goal's sprint, then the goal, after checking the sprint's state allows `op`.
+    /// Locks a goal's sprint, then the goal; answers Conflict when the goal is no longer that sprint's (an opening moved
+    /// it to the next draft meanwhile, kb/ADR-0026 R2), and only then checks that the sprint's state allows `op`.
     async fn goal_locked(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
         op: Op,
     ) -> Result<(Sprint, Goal), HandlerError> {
-        // A goal never changes sprint, so the unlocked read names the right row to lock.
+        // Unlocked, so only a hint: an opening may move the goal before this transaction gets the sprint's lock.
         let sprint_id = self.ports.sprints.get_goal_in(tx, id).await?.sprint_id;
         let s = self.ports.sprints.sprint_for_update(tx, sprint_id).await?;
-        allowed(&s, op)?;
         let g = self.ports.sprints.goal_for_update(tx, id).await?;
+        if g.sprint_id != s.id {
+            return Err(HandlerError::Conflict { current: g.version });
+        }
+        allowed(&s, op)?;
         Ok((s, g))
     }
 
@@ -561,13 +567,7 @@ impl Handlers {
     pub async fn unlink_goal(&self, c: &Ctx, goal_id: i64, item: &Key) -> Result<(), HandlerError> {
         let t = self.item_type_of(item).await?;
         let mut tx = self.pool.begin().await?;
-        let g = self.ports.sprints.get_goal_in(&mut tx, goal_id).await?;
-        let s = self
-            .ports
-            .sprints
-            .sprint_for_update(&mut tx, g.sprint_id)
-            .await?;
-        allowed(&s, Op::Unlink)?;
+        self.goal_locked(&mut tx, goal_id, Op::Unlink).await?;
         if !self
             .ports
             .sprints
