@@ -1381,14 +1381,30 @@ mod lifecycle {
     #[tokio::test]
     async fn opening_refuses_leaving_out_a_goal_it_does_not_hold() {
         let (_c, pool) = super::common::pg().await;
-        let (h, _) = mk(pool.clone());
+        let (h, sink) = mk(pool.clone());
         let c = ctx(Via::Interactive, 3);
         let a = goal(&h, &c, "ga").await;
         let d = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let bogus = a.id + 1000;
+        // The valid id first: a check that stops at the first id would let this opening through.
         let r = h
-            .open_sprint_leaving(&c, d.id, d.version, None, &[a.id + 1000])
+            .open_sprint_leaving(&c, d.id, d.version, None, &[a.id, bogus])
             .await;
         assert!(matches!(r, Err(HandlerError::Validation(_))), "{r:?}");
+        assert!(sink.0.lock().unwrap().iter().all(|e| e.action != "opened"));
+        // The version and the caller are decided before the ids.
+        let r = h
+            .open_sprint_leaving(&c, d.id, d.version + 1, None, &[bogus])
+            .await;
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current }) if current == d.version),
+            "{r:?}"
+        );
+        let auto = ctx(Via::Automation, 3);
+        let r = h
+            .open_sprint_leaving(&auto, d.id, d.version, None, &[bogus])
+            .await;
+        assert!(interactive_only(r));
         let v = h.sprints(at(1, 0)).await.unwrap();
         assert!(v.active.is_none());
         assert_eq!(v.draft.unwrap().id, d.id);
