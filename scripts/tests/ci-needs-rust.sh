@@ -36,6 +36,7 @@ check false web/package.json web/package-lock.json
 # The Rust tests read these two web files (crates/reeve/src/tui/words.rs, crates/reeve/tests/glyphs_snapshot.rs).
 check true web/src/lib/board.ts
 check true web/src/lib/glyphs.json
+check true web/src/lib/promise.fixture.json
 check true web/src/app.css web/src/lib/glyphs.json
 check true crates/reeve-server/src/main.rs
 check true Cargo.lock

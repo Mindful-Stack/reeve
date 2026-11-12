@@ -30,7 +30,8 @@ const pairs: [string, string, number][] = [
 	['ready', 'background', UI], ['ready', 'raised', UI], ['warn', 'background', UI], ['warn', 'raised', UI],
 	['pr-open', 'background', UI], ['pr-merged', 'background', UI],
 	['line-control', 'background', UI], ['line-control', 'raised', UI],
-	['warn', 'warn-soft', UI], ['ready', 'ready-soft', UI], ['foreground', 'warn-soft', AA], ['foreground', 'selection', AA],
+	// Promise chips (PromiseChip.svelte): text is --foreground on warn-soft, ready-soft, lighter-background (muted) and selection (neutral).
+	['warn', 'warn-soft', UI], ['ready', 'ready-soft', UI], ['foreground', 'warn-soft', AA], ['foreground', 'ready-soft', AA], ['foreground', 'selection', AA],
 	['pr-open', 'raised', UI], ['pr-merged', 'raised', UI],
 	['danger', 'raised', AA], ['foreground', 'danger-soft', AA], ['danger', 'danger-soft', AA], ['muted', 'danger-soft', AA], ['accent', 'danger-soft', AA], ['line-control', 'danger-soft', UI],
 	['danger', 'lighter-background', AA], ['accent', 'lighter-background', AA], ['line-control', 'lighter-background', UI]

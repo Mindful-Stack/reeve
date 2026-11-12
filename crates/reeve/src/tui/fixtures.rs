@@ -42,6 +42,7 @@ pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness 
             goals: vec![],
             urgent_mark: None,
             urgent_sources: vec![],
+            promise: None,
         },
         readiness: Readiness {
             ready: true,
@@ -103,6 +104,30 @@ pub fn done_marked(mut s: StoryWithReadiness) -> StoryWithReadiness {
     s
 }
 
+/// The story as the server sends one promised through its epic ABC-100 (the epic's date counts), overdue by 3 days: the
+/// state, the days and the effective date are the server's, never the TUI's.
+pub fn promised(mut s: StoryWithReadiness) -> StoryWithReadiness {
+    let fact = |on: &str, to: &str| reeve_protocol::PromiseFactDto {
+        on: on.parse().unwrap(),
+        by: "dana@example.com".into(),
+        at: "2026-11-01T09:00:00Z".parse().unwrap(),
+        to: Some(to.into()),
+    };
+    s.story.promise = Some(reeve_protocol::StoryPromiseDto {
+        own: Some(fact("2026-11-30", "Beta")),
+        epic: Some(reeve_protocol::EpicPromiseRefDto {
+            key: key("ABC-100"),
+            fact: fact("2026-11-07", "Acme"),
+        }),
+        on: "2026-11-07".parse().unwrap(),
+        holder: reeve_protocol::PromiseHolder::Epic,
+        state: Some(reeve_protocol::PromiseState::Overdue),
+        due: None,
+        days: Some(3),
+    });
+    s
+}
+
 pub fn not_ready(mut s: StoryWithReadiness, reasons: Vec<Reason>) -> StoryWithReadiness {
     s.readiness = Readiness {
         ready: false,
@@ -145,6 +170,7 @@ pub fn epic(k: &str, title: &str) -> reeve_protocol::EpicDto {
         version: 1,
         urgent_mark: None,
         urgent_sources: vec![],
+        promise: None,
     }
 }
 

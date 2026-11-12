@@ -88,6 +88,10 @@ pub enum Story {
         /// lists nothing).
         #[arg(long)]
         open: bool,
+        /// Only stories with a promise (their own, or their epic's) in this state; kept, late and dropped promises never
+        /// match.
+        #[arg(long, value_enum)]
+        promised: Option<PromisedArg>,
         /// The order: `rank` (the default) or `relevance` (needs --text: the exact key or external reference first,
         /// then title matches).
         #[arg(long, value_enum)]
@@ -203,6 +207,14 @@ pub enum Story {
         #[arg(long)]
         clear: bool,
     },
+    /// Promise the story by a date, change the promise or its recipient, or --clear it (interactive tokens only). A
+    /// promise shows on the story and gates nothing.
+    Promise {
+        /// Story key.
+        key: KeyRef,
+        #[command(flatten)]
+        args: super::PromiseArgs,
+    },
 }
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum KindArg {
@@ -229,6 +241,29 @@ impl From<SortArg> for StorySort {
         match s {
             SortArg::Rank => StorySort::Rank,
             SortArg::Relevance => StorySort::Relevance,
+        }
+    }
+}
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum PromisedArg {
+    /// Overdue, or open and due by the end of the active sprint.
+    #[value(name = "this-sprint")]
+    ThisSprint,
+    /// Open and due by the end of the draft (next) sprint.
+    #[value(name = "next-sprint")]
+    NextSprint,
+    /// Overdue: past the date and not done.
+    Overdue,
+    /// Every open or overdue promise.
+    Any,
+}
+impl From<PromisedArg> for PromisedFilter {
+    fn from(p: PromisedArg) -> Self {
+        match p {
+            PromisedArg::ThisSprint => PromisedFilter::ThisSprint,
+            PromisedArg::NextSprint => PromisedFilter::NextSprint,
+            PromisedArg::Overdue => PromisedFilter::Overdue,
+            PromisedArg::Any => PromisedFilter::Any,
         }
     }
 }
@@ -331,6 +366,17 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             })
             .await?
         }
+        Story::Promise { key, args } => {
+            super::promise::<StoryDto, StoryPromiseCleared>(
+                c,
+                format!("/stories/{key}"),
+                args,
+                json,
+                crate::render::story_promise_cleared,
+                crate::render::story_promise_answer,
+            )
+            .await?
+        }
         Story::Show { key } => {
             let out = c.get::<StoryDto>(&format!("/stories/{key}")).await?;
             let now = chrono::Utc::now();
@@ -350,6 +396,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             initiative,
             urgent,
             open,
+            promised,
             sort,
         } => {
             let owner = if mine {
@@ -397,6 +444,9 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             }
             if open {
                 q.push(("done", wire(DoneFilter::None)?));
+            }
+            if let Some(p) = promised {
+                q.push(("promised", wire(PromisedFilter::from(p))?));
             }
             if let Some(s) = sort {
                 q.push(("sort", wire(StorySort::from(s))?));

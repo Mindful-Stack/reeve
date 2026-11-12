@@ -3,7 +3,9 @@
 //! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
 //! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
 use super::*;
+use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
+use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
 /// What the sprint page and the board strip read in one call, from one snapshot. `active_summary` is the active
@@ -18,6 +20,22 @@ pub struct Sprints {
     pub goals: Vec<Goal>,
     pub links: Vec<GoalLink>,
     pub active_summary: Option<sprint::Summary>,
+    /// The promise clock's today (`Clock::at`): the UTC date of the request, as `SprintsDto.today` sends it.
+    pub today: NaiveDate,
+}
+
+/// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
+#[derive(Debug, Clone)]
+pub struct SprintView {
+    pub sprint: Sprint,
+    pub goals: Vec<Goal>,
+    pub links: Vec<GoalLink>,
+    /// Its numbers; None for a draft, which has no window.
+    pub summary: Option<sprint::Summary>,
+    /// Its promises (kb/ADR-0025 R8), by date then key; empty for a draft.
+    pub promises: Vec<SprintPromise>,
+    /// The planned end its promises start after (`sprint_range`); None for the first sprint and for a draft.
+    pub promises_after: Option<NaiveDate>,
 }
 
 fn allowed(s: &Sprint, op: Op) -> Result<(), HandlerError> {
@@ -188,7 +206,7 @@ impl Handlers {
         c: &Ctx,
         id: i64,
         version: i64,
-        ends_on: Option<chrono::NaiveDate>,
+        ends_on: Option<NaiveDate>,
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
@@ -576,6 +594,8 @@ impl Handlers {
     }
 
     /// Every sprint with its goals and links, and the active sprint's numbers up to `now`, from one read-only snapshot.
+    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (GRA-610), so
+    /// this read, made on every board load, does not pay for it.
     pub async fn sprints(&self, now: DateTime<Utc>) -> Result<Sprints, HandlerError> {
         let mut tx = self
             .pool
@@ -602,6 +622,7 @@ impl Handlers {
             goals,
             links,
             active_summary: None,
+            today: Clock::at(now, &all).today,
         };
         for s in all {
             match s.state {
@@ -616,14 +637,15 @@ impl Handlers {
         Ok(out)
     }
 
-    /// One sprint with its goals and links, and its numbers: over `[opened_at, closed_at)` for a closed sprint (`now` is
-    /// ignored), over `[opened_at, now)` for the active one, and None for a draft, which has no window. Any sprint,
-    /// closed ones included, is derived on read (kb/ADR-0014 R6).
+    /// One sprint with its goals and links, its numbers and its promises. The numbers are over `[opened_at, closed_at)`
+    /// for a closed sprint, over `[opened_at, now)` for the active one, and None for a draft, which has no window. The
+    /// promises (kb/ADR-0025 R8) follow the planned ends, classified against `now`. Any sprint, closed ones included, is
+    /// derived on read (kb/ADR-0014 R6).
     pub async fn sprint_view(
         &self,
         id: i64,
         now: DateTime<Utc>,
-    ) -> Result<(Sprint, Vec<Goal>, Vec<GoalLink>, Option<sprint::Summary>), HandlerError> {
+    ) -> Result<SprintView, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -631,10 +653,59 @@ impl Handlers {
         let out = async {
             let (s, goals, links) = self.sprint_with_goals_in(&mut tx, id).await?;
             let summary = self.summary_in(&mut tx, &s, &goals, &links, now).await?;
-            Ok((s, goals, links, summary))
+            let all = self.ports.sprints.sprints_in(&mut tx).await?;
+            let (promises_after, promises) =
+                self.sprint_promises_in(&mut tx, &s, &all, now).await?;
+            Ok(SprintView {
+                sprint: s,
+                goals,
+                links,
+                summary,
+                promises,
+                promises_after,
+            })
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// kb/ADR-0025 R8: the sprint's promises, derived on read and never stored. The effective dates in the sprint's
+    /// promise range (`sprint_range`: after the previous non-draft sprint's planned end, up to this sprint's own), whatever
+    /// the sprint's start or close: a sprint that closes late does not keep the promises due after
+    /// its planned end. The reads give candidates by the story's or its epic's date; `story_promise` decides inheritance
+    /// and the effective date, so a story that does not inherit its epic's date is judged on its own. A row without a
+    /// state (done without `done_at`) is left out. By date, then key. A draft lists none: the list is filled for active
+    /// and closed sprints. `all` is every sprint, read on the caller's snapshot; the clock is built from it rather than
+    /// read again. Returns the previous planned end beside the rows (None for the first sprint and for a draft).
+    async fn sprint_promises_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        s: &Sprint,
+        all: &[Sprint],
+        now: DateTime<Utc>,
+    ) -> Result<(Option<NaiveDate>, Vec<SprintPromise>), HandlerError> {
+        let Some((prev, upto)) = sprint_range(s, all) else {
+            return Ok((None, vec![]));
+        };
+        let clock = Clock::at(now, all);
+        let rows = self.ports.reads.promised_between_in(tx, prev, upto).await?;
+        // The reads order by key; the stable sort by date keeps that order within a date.
+        let mut out: Vec<SprintPromise> = rows
+            .into_iter()
+            .filter_map(|r| {
+                let facts = StoryFacts {
+                    delivery: r.delivery,
+                    resolution: r.resolution,
+                    done_at: r.row.done_at,
+                    own: r.row.own.as_ref(),
+                    epic: r.row.epic.as_ref().map(|(k, p)| (k, p)),
+                };
+                let sp = story_promise(&facts, &clock)?;
+                SprintPromise::listed(r.key, r.title, sp, prev, upto)
+            })
+            .collect();
+        out.sort_by_key(|p| p.on());
+        Ok((prev, out))
     }
 
     /// One sprint with its goals and links, from one read-only snapshot.

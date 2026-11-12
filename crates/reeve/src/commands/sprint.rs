@@ -143,10 +143,15 @@ async fn counts_at_close(c: &Client, id: i64) -> anyhow::Result<Outcome<SprintCo
 async fn show(c: &Client, id: Option<i64>) -> anyhow::Result<Outcome<Shown>> {
     let view = match id {
         Some(id) => c.get::<SprintViewDto>(&format!("/sprints/{id}")).await?,
+        // `GET /sprints` leaves the active sprint's promises out (kb/ADR-0025 R8), so the active sprint, like the draft,
+        // is read again by its id.
         None => match c.get::<SprintsDto>("/sprints").await? {
             Outcome::Ok(SprintsDto {
                 active: Some(a), ..
-            }) => Outcome::Ok(a),
+            }) => {
+                c.get::<SprintViewDto>(&format!("/sprints/{}", a.sprint.id))
+                    .await?
+            }
             Outcome::Ok(SprintsDto { draft: Some(d), .. }) => {
                 c.get::<SprintViewDto>(&format!("/sprints/{}", d.id))
                     .await?

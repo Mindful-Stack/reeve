@@ -28,6 +28,7 @@
 	import { session } from '#lib/me.svelte.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
+	import { isPromisedFilter, PROMISED_NONE, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import { rankStory } from '#lib/rank.ts';
 	import { goalFilter, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
 	import DecisionBanner from '#lib/components/DecisionBanner.svelte';
@@ -70,13 +71,15 @@
 	const query = $derived(page.url.searchParams);
 	const filters = $derived.by(() => {
 		const kind = query.get('kind');
+		const promised = query.get('promised');
 		return {
 			// Only a goal of the active sprint: without one the strip is gone, and a stale `?goal=` must not hide every card.
 			goal: goalFilter(query.get('goal'), active ? active.sprint.goals.map((g) => g.id) : null),
 			mine: query.get('mine') === '1' ? session.me?.email : undefined,
 			epic: query.get('epic') || undefined,
 			kind: isKind(kind) ? kind : undefined,
-			untriaged: query.get('untriaged') === '1'
+			untriaged: query.get('untriaged') === '1',
+			promised: isPromisedFilter(promised) ? promised : null
 		};
 	});
 	const visible = $derived.by(() => {
@@ -362,6 +365,15 @@
 			<option value="">any</option>
 			{#each KINDS as k (k)}
 				<option value={k}>{k}</option>
+			{/each}
+		</select>
+	</label>
+	<label class="field inline">
+		Promise
+		<select value={filters.promised ?? ''} onchange={(e) => setFilter('promised', e.currentTarget.value || null)}>
+			<option value="">{PROMISED_NONE}</option>
+			{#each PROMISED_OPTIONS as o (o.value)}
+				<option value={o.value}>{o.label}</option>
 			{/each}
 		</select>
 	</label>

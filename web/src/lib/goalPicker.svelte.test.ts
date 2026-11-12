@@ -33,7 +33,8 @@ const activeGoal = goal({ id: 1, sprint_id: 1, outcome: 'Cut Y', links: ['ABC-6'
 const all = (links: string[] = ['ABC-6']): Sprints => ({
 	draft: sprint({ id: 2, state: 'draft', opened_at: null, goals: [draftGoal] }),
 	active: sprintView(sprint({ goals: [{ ...activeGoal, links }] })),
-	closed: [sprint({ id: 7, state: 'closed', closed_at: '2026-11-01T00:00:00Z', goals: [goal({ id: 9, sprint_id: 7 })] })]
+	closed: [sprint({ id: 7, state: 'closed', closed_at: '2026-11-01T00:00:00Z', goals: [goal({ id: 9, sprint_id: 7 })] })],
+	today: '2026-11-12'
 });
 const writes = () => net.calls.filter((c) => c.method !== 'GET');
 
@@ -55,7 +56,7 @@ describe('pickable and findGoal', () => {
 		]);
 		expect(pickable({ ...all(), active: null }).map((g) => g.label)).toEqual(['Next sprint']);
 		expect(pickable({ ...all(), draft: null }).map((g) => g.label)).toEqual(['Active sprint']);
-		expect(pickable({ draft: null, active: null, closed: all().closed })).toEqual([]);
+		expect(pickable({ draft: null, active: null, closed: all().closed, today: '2026-11-12' })).toEqual([]);
 		expect(pickable(null)).toEqual([]);
 	});
 	it('finds draft and active goals, never a closed sprint’s', () => {

@@ -16,7 +16,7 @@
 # Lorekeeper (kb/ADR-0005 R5); only this script, its mise task and its CI job read it.
 #
 # Builds both binaries (static-oidc), starts the server on 127.0.0.1:7476, issues an automation token for the smoke admin,
-# seeds the sprints a person makes (seed_sprints, with an interactive token), builds a household with one accepted record, runs Lorekeeper's reeve-real-server and reeve-reference tests against them
+# seeds the sprints and the promises a person makes (seed_sprints and seed_promise, with an interactive token), builds a household with one accepted record, runs Lorekeeper's reeve-real-server and reeve-reference tests against them
 # (every test must run and pass: none skipped, todo or cancelled), then stops the server and drops its database.
 #
 # Sourcing the script defines its functions without running the smoke: scripts/tests/skill-smoke.sh drives them
@@ -28,9 +28,10 @@ url="http://127.0.0.1:7476"
 email="skill-smoke@example.com"
 work="$root/target/skill-smoke"
 config="$work/reeve.toml"
-# The fewest tests the Lorekeeper run may report: 9 top-level tests plus one subtest per Commands row (26). A lower
-# count means a test stopped running; raise it when Lorekeeper adds tests, never lower it to make a run pass.
-min_tests=35
+# The fewest tests the Lorekeeper run may report: 12 top-level tests plus one subtest per Commands row (36) and per
+# refusal case (7, a person's promise commands). A lower count means a test stopped running; raise it when Lorekeeper
+# adds tests, never lower it to make a run pass.
+min_tests=55
 
 # State the cleanup reads; main fills it in as the run creates things.
 use_url=""
@@ -167,21 +168,41 @@ tap_verdict() {
 
 # seed_sprints REEVE: what only a person can do (kb/ADR-0014 R5), so the automation token's smoke has sprints to read and
 # goals to link and suggest on: a sprint closed with a confidence and a verdict, then the active one with a goal and a recorded confidence
-# (opening it leaves the next draft). Run with an interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
+# (opening it leaves the next draft). The closed sprint's planned end is a week from today, before the active one's
+# (the default length), so the active sprint's promise range (kb/ADR-0025 R8) holds the date seed_promise gives
+# `this-sprint`. Run with an interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
 seed_sprints() {
-	local reeve=$1 out
+	local reeve=$1 out week
+	week="$(node -e 'const d = new Date(); d.setUTCDate(d.getUTCDate() + 7); process.stdout.write(d.toISOString().slice(0, 10))')"
 	sp() {
 		out="$("$reeve" --json "$@")" || { echo "seeding the sprints: reeve $* answered $out" >&2; return 1; }
 		node -e 'const e = JSON.parse(process.argv[1]); process.stdout.write(String(e.value.goal ? e.value.goal.id : e.value.id))' "$out"
 	}
 	local closed active
 	closed="$(sp goal add --outcome "Skill smoke closed goal" --check "the smoke reads its verdict" --idempotency-key skill-smoke:sprint:1)" || return 1
-	sp sprint open >/dev/null || return 1
+	sp sprint open --ends "$week" >/dev/null || return 1
 	sp goal confidence "$closed" on_track "seeded by the skill smoke" >/dev/null || return 1
 	sp sprint close --verdict "$closed=met:seeded by the skill smoke" >/dev/null || return 1
 	active="$(sp goal add --outcome "Skill smoke goal" --check "the smoke links work to it" --idempotency-key skill-smoke:sprint:2)" || return 1
 	sp sprint open >/dev/null || return 1
 	sp goal confidence "$active" on_track "seeded by the skill smoke" >/dev/null || return 1
+}
+
+# seed_promise REEVE: a story promised by the active sprint's end and an epic (migrated from PRM-1) promised by the next
+# sprint's end (kb/ADR-0025 R2: only a person promises), so Lorekeeper's `story ls --promised` and `epic show PRM-1`
+# entries read a promise. Run after seed_sprints (the shortcuts need the active sprint and the draft), with an
+# interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
+seed_promise() {
+	local reeve=$1 out key
+	pr() {
+		out="$("$reeve" --json "$@")" || { echo "seeding the promises: reeve $* answered $out" >&2; return 1; }
+		node -e 'process.stdout.write(JSON.parse(process.argv[1]).value.key)' "$out"
+	}
+	key="$(pr story create --title "Skill smoke promised story" --kind chore --criterion "It is promised" \
+		--idempotency-key skill-smoke:promise:1)" || return 1
+	pr story promise "$key" --on this-sprint --to "the skill smoke" >/dev/null || return 1
+	key="$(pr epic create --title "Skill smoke promised epic" --external-ref PRM-1 --idempotency-key skill-smoke:promise:2)" || return 1
+	pr epic promise "$key" --on next-sprint --to "the skill smoke" >/dev/null || return 1
 }
 
 # Installed before anything is created: it stops what this run started and drops only the database this run created.
@@ -339,6 +360,7 @@ main() {
 	local person
 	person="$("$server" token-issue --email "$email" --kind interactive --label skill-smoke-person)"
 	REEVE_URL="$url" REEVE_TOKEN="$person" seed_sprints "$reeve" || exit 1
+	REEVE_URL="$url" REEVE_TOKEN="$person" seed_promise "$reeve" || exit 1
 
 	log "seeding a story with one screenshot"
 	local shot_story attachment

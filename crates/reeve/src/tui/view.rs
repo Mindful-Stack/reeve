@@ -732,6 +732,75 @@ mod tests {
         assert!(head.trim_end().ends_with('…'), "{rows:#?}");
     }
 
+    /// The card shows the chip and the drawer the promise line, both from the server's fields (kb/ADR-0011 R9). The
+    /// chip leaves out the epic it is via: the card already names the story's epic, the only one it can be via.
+    #[test]
+    fn a_promised_card_shows_the_chip_and_the_drawer_the_line() {
+        let s = || promised(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s()]);
+        for w in [260, 100] {
+            let (rows, _) = sim.render(w, 30);
+            assert!(has(&rows, "Overdue 3 d · 7 Nov"), "{w}: {rows:#?}");
+            assert!(!has(&rows, "via ABC-100"), "{w}: {rows:#?}");
+        }
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s()]);
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(240, 30);
+        let (_, y) = at(&rows, "Title of ABC-1");
+        assert!(
+            rows[y as usize + 1].contains(
+                "Promised by 30 Nov 2026 to Beta. Epic ABC-100 is promised by 7 Nov 2026 to Acme; the earlier date counts. Overdue 3 d."
+            ),
+            "{rows:#?}"
+        );
+    }
+
+    /// In columns the chip has the card's fourth row to itself, so a 120-column board (22 columns a card) still shows
+    /// the state of a not-ready story's promise; it is drawn without the readiness colour.
+    #[test]
+    fn a_narrow_column_card_keeps_the_promise_state_on_its_own_row() {
+        let s = promised(not_ready(
+            owned(story("ABC-1", Todo, 1), "dan@example.com"),
+            vec![Reason::NoCriteria],
+        ));
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        sim.s.ui.color = true;
+        let (rows, buf) = sim.render(120, 30);
+        let (x, y) = at(&rows, "Overdue 3 d");
+        let (_, status) = at(&rows, "no criteria");
+        assert_eq!(y, status + 1, "{rows:#?}");
+        let (sx, _) = at(&rows, "no criteria");
+        assert_eq!(buf[(sx, status)].fg, Color::Yellow, "the status has it");
+        assert_ne!(buf[(x, y)].fg, Color::Yellow, "no readiness colour");
+    }
+
+    /// The list's status line cuts from the end: the goal first, then the PR and the epic, and the promise chip, just
+    /// after the status, last.
+    #[test]
+    fn the_list_cuts_the_goal_before_the_epic_and_the_promise_last() {
+        let mut s = promised(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        s.story.goals = vec![reeve_protocol::GoalRefDto {
+            id: 7,
+            outcome: "Ship it".into(),
+            via: reeve_protocol::GoalVia::Story,
+        }];
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s]);
+        let full = "    ready · Overdue 3 d · 7 Nov · epic ABC-100 · goal 7";
+        let (rows, _) = sim.render(100, 30);
+        assert!(has(&rows, full), "{rows:#?}");
+        // Without room for the goal: the epic stays.
+        let (rows, _) = sim.render(48, 30);
+        assert!(
+            has(&rows, "ready · Overdue 3 d · 7 Nov · epic ABC-100"),
+            "{rows:#?}"
+        );
+        assert!(!has(&rows, "goal 7"), "{rows:#?}");
+        // Without room for the epic: the chip stays.
+        let (rows, _) = sim.render(42, 30);
+        assert!(has(&rows, "ready · Overdue 3 d · 7 Nov"), "{rows:#?}");
+        assert!(!has(&rows, "epic ABC-100"), "{rows:#?}");
+    }
+
     #[test]
     fn the_drawer_says_why_a_story_is_urgent_right_under_its_title() {
         let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));

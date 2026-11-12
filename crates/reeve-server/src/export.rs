@@ -103,9 +103,13 @@ pub async fn export_document_in(
     // policy, so they match the users and the dump (kb/ADR-0015 consequences).
     let policy = src.access.load_in(&mut tx, &src.identity).await?;
     let urgency = src.handlers.urgency_in(&mut tx, exported_at).await?;
+    let clock = src.handlers.promise_clock_in(&mut tx, exported_at).await?;
     let initiatives = src.handlers.export_initiatives(&mut tx, &urgency).await?;
-    let epics = src.handlers.export_epics(&mut tx, &urgency).await?;
-    let stories = src.handlers.export_stories(&mut tx, &urgency).await?;
+    let epics = src.handlers.export_epics(&mut tx, &urgency, &clock).await?;
+    let stories = src
+        .handlers
+        .export_stories(&mut tx, &urgency, &clock)
+        .await?;
     let sprints = src.handlers.export_sprints(&mut tx).await?;
     let decisions = src.handlers.export_decisions(&mut tx).await?;
     let comments = src.handlers.export_comments(&mut tx).await?;

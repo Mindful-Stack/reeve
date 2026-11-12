@@ -1,11 +1,13 @@
 <!-- web/src/lib/components/SprintHistoryEntry.svelte: one closed sprint in the sprint page's history: its goals,
      confidence and verdicts, and on demand its numbers, derived on read (`GET /sprints/{id}`) beside its counts at close
-     (the `closed` activity entry) wherever a number differs (kb/ADR-0014 R6). -->
+     (the `closed` activity entry) wherever a number differs (kb/ADR-0014 R6), and its promises, derived on read too
+     (kb/ADR-0025 R8). -->
 <script lang="ts">
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { ActivityEntry, GoalProgress, Sprint, SprintCounts, SprintView } from '#lib/api/types.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { blockedText, confidenceLabel, countsDiffer, nowThen, RULE, upkeepTextAt, verdictLabel } from '#lib/sprint.ts';
+	import { sprintRowParts } from '#lib/promise.ts';
+	import { blockedText, confidenceLabel, countsDiffer, nowThen, promisesHeading, RULE, upkeepTextAt, verdictLabel } from '#lib/sprint.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 
 	let {
@@ -71,7 +73,7 @@
 	<div class="head">
 		<h3>Sprint {sprint.id} <span class="dates">{sprint.starts_on} – {sprint.ends_on}</span></h3>
 		<button type="button" class="ghost" aria-expanded={detail !== null} onclick={toggle}
-			>{detail === null ? 'Show numbers' : 'Hide numbers'}</button
+			>{detail === null ? 'Show numbers and promises' : 'Hide numbers and promises'}</button
 		>
 	</div>
 	<ul>
@@ -124,6 +126,22 @@
 					{/each}
 				</ul>
 			{/if}
+			{#if d.view.promises.length}
+				<section class="promises" data-testid="promises">
+					<h4>{promisesHeading(d.view.promises_after ?? null, d.view.sprint.ends_on)}</h4>
+					<ul>
+						{#each d.view.promises as x (x.key)}
+							<li>
+								<a href="?story={x.key}"><span class="key">{x.key}</span> {x.title}</a>
+								· {#each sprintRowParts(x) as part, i (i)}{'epic' in part ? part.epic : part.text}{/each}
+							</li>
+						{/each}
+					</ul>
+					<p class="rule">A promise is to a date: work done after it counts as late, even inside the sprint.</p>
+				</section>
+			{:else}
+				<p class="muted" data-testid="no-promises">No promises due in this sprint.</p>
+			{/if}
 		</div>
 	{/if}
 </article>
@@ -172,6 +190,10 @@
 	}
 	.warn {
 		color: var(--warn);
+	}
+	.promises {
+		display: grid;
+		gap: 4px;
 	}
 	.key {
 		font-family: var(--mono);

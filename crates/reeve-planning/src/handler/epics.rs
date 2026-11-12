@@ -1,6 +1,7 @@
-use super::dto::urgent_fields;
+use super::dto::{epic_promise_field, urgent_fields};
 use super::import::{Claim, with_ref};
 use super::*;
+use crate::domain::promise::{Clock, Promise};
 use crate::domain::{items::*, urgency::Urgency};
 use reeve_protocol::{EpicDto, ItemType, Key};
 
@@ -189,8 +190,19 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
+            let clock = self.promise_clock_in(&mut tx, now).await?;
             let e = self.ports.epics.get_epic_in(&mut tx, key).await?;
-            Ok(epic_dto_of(&e, &urg))
+            let mut promises = self
+                .ports
+                .reads
+                .promise_facts_in(&mut tx, &[], std::slice::from_ref(key))
+                .await?;
+            Ok(epic_dto_of(
+                &e,
+                &urg,
+                promises.epics.remove(key).as_ref(),
+                &clock,
+            ))
         }
         .await;
         end_read(tx, out).await
@@ -209,17 +221,34 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
+            let clock = self.promise_clock_in(&mut tx, now).await?;
             let epics = self.ports.epics.list_epics_in(&mut tx, initiative).await?;
-            Ok(epics.iter().map(|e| epic_dto_of(e, &urg)).collect())
+            let keys: Vec<Key> = epics.iter().map(|e| e.key().clone()).collect();
+            let promises = self
+                .ports
+                .reads
+                .promise_facts_in(&mut tx, &[], &keys)
+                .await?;
+            Ok(epics
+                .iter()
+                .map(|e| epic_dto_of(e, &urg, promises.epics.get(e.key()), &clock))
+                .collect())
         }
         .await;
         end_read(tx, out).await
     }
 }
 
-/// The one place an `EpicDto` is filled: the epic and its urgency.
-pub(super) fn epic_dto_of(e: &Epic, urg: &Urgency) -> EpicDto {
+/// The one place an `EpicDto` is filled: the epic, its urgency and its own promise (read by the caller on the same
+/// snapshot), classified against `clock`.
+pub(super) fn epic_dto_of(
+    e: &Epic,
+    urg: &Urgency,
+    promise: Option<&Promise>,
+    clock: &Clock,
+) -> EpicDto {
     let mut dto = EpicDto::from(e);
     (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, e.key());
+    dto.promise = epic_promise_field(promise, clock);
     dto
 }

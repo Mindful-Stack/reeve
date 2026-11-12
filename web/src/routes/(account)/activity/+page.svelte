@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { ActivityEntry } from '#lib/api/types.ts';
-	import { age, errorMessage, short } from '#lib/format.ts';
+	import { actionLabel, age, errorMessage, plainAction, short } from '#lib/format.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -66,8 +66,9 @@
 		return null;
 	}
 
-	function label(action: string): string {
-		return action.replaceAll('_', ' ');
+	/** The entry's action in words: `actionLabel`'s, without the key, which the row shows beside it. */
+	function label(e: ActivityEntry): string {
+		return actionLabel(e.action, e.payload) ?? plainAction(e.action);
 	}
 </script>
 
@@ -99,7 +100,7 @@
 				<span class="age" title={e.at}>{age(e.at)}</span>
 				<span class="actor" title={e.actor}>{short(e.actor)}</span>
 				<span class="via via-{e.via}" title="via {e.via}">{e.via}</span>
-				<span class="action">{label(e.action)}</span>
+				<span class="action">{label(e)}</span>
 				<span class="entity">
 					{e.entity_type}
 					{#if href}

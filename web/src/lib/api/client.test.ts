@@ -29,6 +29,7 @@ const story: StoryWithReadiness = {
 		goals: [],
 		urgent_mark: null,
 		urgent_sources: [],
+		promise: null,
 		rank: 1,
 		version: 2
 	},

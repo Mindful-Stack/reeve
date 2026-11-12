@@ -42,6 +42,11 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
+	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
+	import PromiseLine from '#lib/components/PromiseLine.svelte';
+	import ClearPromiseDialog from '#lib/components/ClearPromiseDialog.svelte';
+	import { inheritedEpic } from '#lib/promise.ts';
+	import { PromiseControl } from '#lib/promiseControl.svelte.ts';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
@@ -371,10 +376,25 @@
 				? initiatives.find((i) => i.key === r.key)?.title
 				: undefined;
 
+	/** The promise dialog and a done story's clear confirmation; the writes go through `write`. */
+	const promise = new PromiseControl({
+		path: 'stories',
+		key: () => story?.key,
+		write: (action) => write(action),
+		takeNotice: () => {
+			const n = notice;
+			notice = null;
+			return n;
+		},
+		refocus: () => refocusActions()
+	});
+
 	const menuItems = $derived<MenuItem[]>([
 		// A done story cannot be urgent: its mark can only be cleared.
 		...(story?.delivery === 'done' ? [] : [{ label: 'Mark urgent…', onselect: openMark, disabled: busy }]),
-		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
+		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : []),
+		// A done story cannot be promised (kb/ADR-0025 R2): its own promise can only be cleared, after a confirmation.
+		...promise.items(story?.promise?.own != null, story?.delivery === 'done', busy)
 	]);
 
 	function openMark() {
@@ -655,6 +675,7 @@
 				<button type="button" class="ghost" aria-label="Clear urgent mark on {s.key}" onclick={() => void clearUrgent()} disabled={busy}>Clear</button>
 			</p>
 		{/if}
+		{#if s.promise}<PromiseLine promise={s.promise} />{/if}
 
 		<section class="readiness {r.ready ? 'ready' : 'blocked'}" aria-labelledby="drawer-readiness">
 			<h3 id="drawer-readiness">{r.ready ? 'Ready to start' : 'Not ready'}</h3>
@@ -986,6 +1007,33 @@
 		oncancel={() => {
 			if (!busy) marking = false;
 		}}
+	/>
+{/if}
+
+{#if promise.open && story}
+	<PromiseDialog
+		key={story.key}
+		activeEnds={sprints?.active?.sprint.ends_on ?? null}
+		draftEnds={sprints?.draft?.ends_on ?? null}
+		today={sprints?.today ?? null}
+		sprintsFailed={sprints == null}
+		current={story.promise?.own ?? null}
+		epic={inheritedEpic(story.promise)}
+		{busy}
+		error={promise.error}
+		onsave={(body) => void promise.save(body)}
+		onclose={() => promise.close(busy)}
+	/>
+{/if}
+
+{#if promise.confirming && story}
+	<ClearPromiseDialog
+		item={story.key}
+		epic={story.promise?.epic?.key ?? null}
+		{busy}
+		error={promise.confirmError}
+		onconfirm={() => void promise.clear()}
+		oncancel={() => promise.cancelClear(busy)}
 	/>
 {/if}
 

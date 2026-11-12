@@ -2,9 +2,10 @@
 // The backlog's "by epic" view: epic-less stories (all untriaged, one rank run) first, then every epic under its initiative in planning
 // order, then epics with no initiative. Readiness is the server's (kb/ADR-0018 R1). Below it, the backlog URL's mapping to
 // the story list's query (kb/ADR-0021 R1: the server filters, the client never filters a full list).
-import type { Epic, Initiative, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
+import type { Epic, Initiative, PromisedFilter, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
 import { isKind, isUntriaged } from '#lib/board.ts';
 import { groupEpics } from '#lib/planning.ts';
+import { isPromisedFilter } from '#lib/promise.ts';
 
 export type Tone = 'ready' | 'warn' | 'muted';
 export type EpicRows = { epic: Epic; rows: StoryWithReadiness[]; summary: string; tone: Tone };
@@ -72,9 +73,17 @@ export function backlogText(url: BacklogUrl): string | null {
 	return url.searchParams.get('q')?.trim() || null;
 }
 
+/** The URL's state; with no state named, Todo, or Open while the Promise filter is set (an overdue story in progress
+ *  must still show, and a promise filter is about unfinished stories, not the rankable list). */
 export function backlogState(url: BacklogUrl): BacklogState {
 	const s = url.searchParams.get('state');
-	return s === 'open' || s === 'all' ? s : 'todo';
+	if (s === 'todo' || s === 'open' || s === 'all') return s;
+	return isPromisedFilter(url.searchParams.get('promised')) ? 'open' : 'todo';
+}
+
+/** The `state` param the State control writes for `v`: none for Todo, unless the Promise filter would then answer Open. */
+export function stateParam(v: BacklogState, url: BacklogUrl): BacklogState | null {
+	return v === 'todo' && !isPromisedFilter(url.searchParams.get('promised')) ? null : v;
 }
 
 /** `view`, else the legacy `group=rank`; Relevance without text shows as Ranked. */
@@ -92,6 +101,8 @@ export function backlogFilters(url: BacklogUrl, me: string | null | undefined): 
 	if (p.get('mine') === '1' && me) f.owner = me;
 	const kind = p.get('kind');
 	if (isKind(kind)) f.kind = kind;
+	const promised = p.get('promised');
+	if (isPromisedFilter(promised)) f.promised = promised;
 	for (const name of ['epic', 'initiative', 'label'] as const) {
 		const v = p.get(name);
 		if (v) f[name] = v;
@@ -101,18 +112,37 @@ export function backlogFilters(url: BacklogUrl, me: string | null | undefined): 
 }
 
 /** The URL params Filters (n) counts and Clear filters removes. */
-export const FILTER_PARAMS = ['mine', 'kind', 'epic', 'initiative', 'label', 'ready', 'untriaged', 'urgent'] as const;
+export const FILTER_PARAMS = ['mine', 'kind', 'epic', 'initiative', 'label', 'ready', 'untriaged', 'urgent', 'promised'] as const;
 
 /** Filters (n): the filters the URL sets, as the server is sent them (Mine counts only while signed in). */
 export function activeFilterCount(url: BacklogUrl, me: string | null | undefined): number {
 	return Object.keys(backlogFilters(url, me)).length;
 }
 
-/** Clear filters: the URL without its filters. Text, state and view are kept: the text chip is what drops the text (and
- *  relevance with it, `withoutText`). */
+/** Clear filters: the URL without its filters. Text, state and view are kept, except a `state=todo`, which is the
+ *  default once the Promise filter is gone (`dropTodo`); the text chip is what drops the text (and relevance with it,
+ *  `withoutText`). */
 export function withoutFilters(url: BacklogUrl): URL {
 	const next = new URL(url.href);
 	for (const name of FILTER_PARAMS) next.searchParams.delete(name);
+	dropTodo(next);
+	return next;
+}
+
+/** `state=todo` is only ever needed against the Promise filter (`stateParam`): without it, it is the default. */
+function dropTodo(url: URL): void {
+	if (url.searchParams.get('state') === 'todo') url.searchParams.delete('state');
+}
+
+/** The Promise select: the URL with `promised` set to `value`, or without it (and without the `state=todo` it needed)
+ *  when `value` is null. */
+export function withPromised(url: BacklogUrl, value: PromisedFilter | null): URL {
+	const next = new URL(url.href);
+	if (value != null) next.searchParams.set('promised', value);
+	else {
+		next.searchParams.delete('promised');
+		dropTodo(next);
+	}
 	return next;
 }
 

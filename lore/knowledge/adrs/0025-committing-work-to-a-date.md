@@ -83,6 +83,7 @@ field, a carried-over bucket or a gate.
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-12: What was built beyond the rules: a request that changes nothing writes and logs nothing; `to: null` keeps the recipient; keeping the date keeps `promised_at` and changes only `by`; the story's own date wins a tie with its epic's; the row lock is `FOR NO KEY UPDATE`; a draft sprint lists no promises; a sprint's list starts after `previous_end` (the greatest planned end among the other non-draft sprints below its own, ties to the lower id), carried as `promises_after`, and `holder` and `today` are on the wire; and the CLI and the web tests share their word rows through `web/src/lib/promise.fixture.json` (the runtime tables are separate). F4 describes the queue as it was before this record was built: `needed_in` now takes the earliest window across the candidates, with rule order only as the tie-break, and `NeededInReason` gained `Promise` and `Unknown`. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0014, kb/ADR-0024.

@@ -88,6 +88,7 @@ Lorekeeper's skills already depend on this list (F5).
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-12 (kb/ADR-0025): R2's story-list parameters grow by `promised` (`reeve story ls --promised`; additive, R3). R4 applies to it: `promised` is evaluated in the same snapshot as the rows, on the promise computed for each row, and `any` is frozen as "open or overdue". No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0001, kb/ADR-0005, kb/ADR-0017, kb/ADR-0018.

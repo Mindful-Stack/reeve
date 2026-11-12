@@ -35,13 +35,23 @@ async fn list(
     State(s): State<AppState>,
     c: Caller,
 ) -> Result<Json<Response<SprintsDto>>, AppError> {
-    let x = s.handlers.sprints(c.ctx().now).await?;
+    let now = c.ctx().now;
+    let x = s.handlers.sprints(now).await?;
     let line = s.handlers.settings.upkeep_line;
     Ok(ok(SprintsDto {
-        active: x
-            .active
-            .as_ref()
-            .map(|a| sprint_view_dto(a, &x.goals, &x.links, x.active_summary.as_ref(), line)),
+        today: Some(x.today),
+        active: x.active.as_ref().map(|a| {
+            sprint_view_dto(
+                a,
+                &x.goals,
+                &x.links,
+                x.active_summary.as_ref(),
+                // The active sprint's promises are read only by `GET /sprints/{id}` until GRA-610 renders them here.
+                &[],
+                None,
+                line,
+            )
+        }),
         draft: x.draft.as_ref().map(|d| sprint_dto(d, &x.goals, &x.links)),
         closed: x
             .closed
@@ -59,12 +69,14 @@ async fn get(
     c: Caller,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<Response<SprintViewDto>>, AppError> {
-    let (sp, goals, links, summary) = s.handlers.sprint_view(id, c.ctx().now).await?;
+    let v = s.handlers.sprint_view(id, c.ctx().now).await?;
     Ok(ok(sprint_view_dto(
-        &sp,
-        &goals,
-        &links,
-        summary.as_ref(),
+        &v.sprint,
+        &v.goals,
+        &v.links,
+        v.summary.as_ref(),
+        &v.promises,
+        v.promises_after,
         s.handlers.settings.upkeep_line,
     )))
 }

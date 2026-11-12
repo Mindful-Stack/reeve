@@ -1912,9 +1912,13 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .await
         .unwrap();
     let urg = h.urgency_in(&mut tx, Utc::now()).await.unwrap();
-    let batched = h.story_dtos_in(&mut tx, &fresh, &urg).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, Utc::now()).await.unwrap();
+    let batched = h
+        .story_dtos_in(&mut tx, &fresh, &urg, &clock)
+        .await
+        .unwrap();
     assert!(
-        h.story_dtos_in(&mut tx, &[], &urg)
+        h.story_dtos_in(&mut tx, &[], &urg, &clock)
             .await
             .unwrap()
             .is_empty()
@@ -6502,9 +6506,10 @@ async fn every_item_dto_carries_its_urgency() {
         .await
         .unwrap();
     let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, now).await.unwrap();
     let ex_i = h.export_initiatives(&mut tx, &urg).await.unwrap();
-    let ex_e = h.export_epics(&mut tx, &urg).await.unwrap();
-    let ex_s = h.export_stories(&mut tx, &urg).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg, &clock).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg, &clock).await.unwrap();
     tx.rollback().await.unwrap();
     assert_eq!(source_keys(&ex_i[0].urgent_sources), sk);
     assert_eq!(source_keys(&ex_e[0].urgent_sources), sk);
@@ -7221,4 +7226,1983 @@ async fn story_list_text_names_a_key() {
             "{t}"
         );
     }
+}
+
+/// 12 Nov 10:00Z: the fixed request time of the promise tests.
+fn promise_ctx() -> Ctx {
+    Ctx {
+        now: Utc.with_ymd_and_hms(2026, 11, 12, 10, 0, 0).unwrap(),
+        ..ctx("dan@example.com", false)
+    }
+}
+
+fn nov(d: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap()
+}
+
+/// An active sprint planned to end 24 Nov and a draft planned to end 8 Dec, made through the sprint handler.
+async fn promise_sprints(h: &Handlers, c: &Ctx) {
+    h.add_goal(c, "promise-g", "outcome", "check", None, "", false)
+        .await
+        .unwrap();
+    let d = h.sprints(c.now).await.unwrap().draft.unwrap();
+    h.open_sprint(c, d.id, d.version, Some(nov(24)))
+        .await
+        .unwrap();
+    let updated = sqlx::query("UPDATE sprints SET ends_on = '2026-12-08' WHERE state = 'draft'")
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(updated.rows_affected(), 1, "opening left exactly one draft");
+}
+
+async fn set_promise(h: &Handlers, item: ItemType, key: &Key, p: &Promise) {
+    let mut tx = h.pool.begin().await.unwrap();
+    assert!(
+        h.ports
+            .promises
+            .set_promise(
+                &mut tx,
+                reeve_planning::PromiseItem::of(item).unwrap(),
+                key,
+                p
+            )
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+}
+
+async fn mark_done_at(h: &Handlers, key: &Key, at: chrono::DateTime<Utc>) {
+    sqlx::query(
+        "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = $2 WHERE key = $1",
+    )
+    .bind(key.to_string())
+    .bind(at)
+    .execute(&h.pool)
+    .await
+    .unwrap();
+}
+
+/// Every story and epic reader fills `promise` through the one rule: A shows its epic's earlier date with its own still
+/// visible; B, done after the epic's promise was set, inherits it and kept it; C, done the same day but before the
+/// epic's promise was set, has none (inheritance is keyed by `promised_at`, not its date). The epic shows its own
+/// promise with its due period and no state. Every reader agrees.
+#[tokio::test]
+async fn every_item_dto_carries_its_promise() {
+    use reeve_protocol::{PromiseDue, PromiseHolder, PromiseState};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+    let a = plain_story(&h, &c, "A", "A", Some(e.key())).await;
+    let b = plain_story(&h, &c, "B", "B", Some(e.key())).await;
+    let cc = plain_story(&h, &c, "C", "C", Some(e.key())).await;
+    let epic_p = Promise::from_persisted(
+        nov(18),
+        "lead@x".into(),
+        Utc.with_ymd_and_hms(2026, 11, 12, 9, 0, 0).unwrap(),
+        None,
+    );
+    set_promise(&h, ItemType::Epic, e.key(), &epic_p).await;
+    let own_p = Promise::from_persisted(nov(30), "pm@x".into(), now, Some("Beta".into()));
+    set_promise(&h, ItemType::Story, &a, &own_p).await;
+    mark_done_at(
+        &h,
+        &b,
+        Utc.with_ymd_and_hms(2026, 11, 12, 9, 30, 0).unwrap(),
+    )
+    .await;
+    mark_done_at(
+        &h,
+        &cc,
+        Utc.with_ymd_and_hms(2026, 11, 12, 8, 0, 0).unwrap(),
+    )
+    .await;
+
+    let a_dto = h.story_dto(&a, now).await.unwrap();
+    let ap = a_dto.promise.clone().expect("A is promised");
+    assert_eq!(
+        (ap.on, ap.holder, ap.state, ap.due, ap.days),
+        (
+            nov(18),
+            PromiseHolder::Epic,
+            Some(PromiseState::Open),
+            Some(PromiseDue::ThisSprint),
+            None
+        )
+    );
+    let own = ap.own.as_ref().expect("A's own promise stays visible");
+    assert_eq!(
+        (own.on, own.by.as_str(), own.to.as_deref()),
+        (nov(30), "pm@x", Some("Beta"))
+    );
+    let inherited = ap.epic.as_ref().expect("A inherits its epic's promise");
+    assert_eq!((&inherited.key, inherited.fact.on), (e.key(), nov(18)));
+    let b_dto = h.story_dto(&b, now).await.unwrap();
+    let bp = b_dto.promise.clone().expect("B inherits");
+    assert_eq!(
+        (bp.holder, bp.state, bp.on),
+        (PromiseHolder::Epic, Some(PromiseState::Kept), nov(18))
+    );
+    let c_dto = h.story_dto(&cc, now).await.unwrap();
+    assert_eq!(
+        c_dto.promise, None,
+        "done before the epic's promise was set"
+    );
+
+    let ep = h
+        .epic_dto(e.key(), now)
+        .await
+        .unwrap()
+        .promise
+        .expect("the epic's promise");
+    assert_eq!(
+        (ep.fact.on, ep.fact.by.as_str(), ep.due, ep.past),
+        (nov(18), "lead@x", Some(PromiseDue::ThisSprint), false)
+    );
+
+    // Every reader agrees.
+    let list = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap();
+    let row = |k: &Key| {
+        list.iter()
+            .find(|r| &r.story.key == k)
+            .unwrap()
+            .story
+            .promise
+            .clone()
+    };
+    assert_eq!(row(&a), a_dto.promise);
+    assert_eq!(row(&b), b_dto.promise);
+    assert_eq!(row(&cc), None);
+    let ctxd = h.story_context(&a, now).await.unwrap();
+    assert_eq!(ctxd.story.promise, a_dto.promise);
+    assert_eq!(ctxd.epic.unwrap().promise, Some(ep.clone()));
+    assert_eq!(
+        h.epic_dtos(None, now).await.unwrap()[0].promise,
+        Some(ep.clone())
+    );
+    // The export readers, on one transaction, with the clock computed once on it.
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, now).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg, &clock).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg, &clock).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(ex_e[0].promise, Some(ep));
+    let ex_row = |k: &Key| ex_s.iter().find(|x| &x.key == k).unwrap().promise.clone();
+    assert_eq!(ex_row(&a), a_dto.promise);
+    assert_eq!(ex_row(&b), b_dto.promise);
+    assert_eq!(ex_row(&cc), None);
+}
+
+/// The promise fields read one snapshot: the clock (the sprints' planned ends) and the promise facts are read on the
+/// list's own transaction. The call takes its snapshot on its first statement, then waits on the `sprints` lock; the
+/// lock's holder moves the active sprint's end (A from this sprint to next) and A's own date, and commits as it
+/// releases the lock. A clock or promise read on another connection, or in a second snapshot, would see the new values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_promise_fields_read_one_snapshot() {
+    use reeve_protocol::PromiseDue;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let a = plain_story(&h, &c, "A", "A", None).await;
+    set_promise(
+        &h,
+        ItemType::Story,
+        &a,
+        &Promise::from_persisted(nov(20), "pm@x".into(), now, None),
+    )
+    .await;
+    let list = |h: Handlers| async move {
+        h.list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap()
+        .pop()
+        .unwrap()
+        .story
+        .promise
+        .unwrap()
+    };
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE sprints IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let call = tokio::spawn(list(h.clone()));
+    wait_until_blocked(&pool).await;
+    sqlx::query("UPDATE sprints SET ends_on = '2026-11-19' WHERE state = 'active'")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE stories SET promised_on = '2026-11-22' WHERE key = $1")
+        .bind(a.to_string())
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    lock.commit().await.unwrap();
+    let before = tokio::time::timeout(PAUSE, call)
+        .await
+        .expect("the list never finished")
+        .unwrap();
+    assert_eq!(
+        (before.on, before.due, before.own.unwrap().on),
+        (nov(20), Some(PromiseDue::ThisSprint), nov(20))
+    );
+
+    let after = list(h.clone()).await;
+    assert_eq!(
+        (after.on, after.due, after.own.unwrap().on),
+        (nov(22), Some(PromiseDue::NextSprint), nov(22))
+    );
+}
+
+/// Writes each entry into `test_activity` on the caller's transaction (model: `tests/attachment_handlers.rs`), so the
+/// assertions read what was persisted with the write, and a rolled-back write leaves no row.
+struct DbSink;
+#[async_trait]
+impl ActivitySink for DbSink {
+    async fn record(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        rec: ActivityRecord,
+    ) -> Result<(), RepoError> {
+        insert_test_activity(tx, &rec).await
+    }
+}
+
+async fn insert_test_activity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    rec: &ActivityRecord,
+) -> Result<(), RepoError> {
+    sqlx::query(
+        "INSERT INTO test_activity (entity_type, entity_key, action, actor, payload) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(rec.entity_type)
+    .bind(&rec.entity_key)
+    .bind(rec.action)
+    .bind(&rec.actor)
+    .bind(&rec.payload)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Handlers whose entries land in `test_activity` (created here).
+async fn mk_db(pool: sqlx::PgPool) -> Handlers {
+    sqlx::query("CREATE TABLE test_activity (id BIGSERIAL PRIMARY KEY, entity_type TEXT, entity_key TEXT, action TEXT, actor TEXT, payload JSONB)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: Arc::new(DbSink),
+        pool,
+        settings: settings(),
+    }
+}
+
+/// The persisted promise entries of one item, in order: (entity_type, action, payload).
+async fn promise_entries(
+    pool: &sqlx::PgPool,
+    key: &Key,
+) -> Vec<(String, String, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT entity_type, action, payload FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'promise_cleared') ORDER BY id",
+    )
+    .bind(key.to_string())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn promise_table(item: ItemType) -> &'static str {
+    match item {
+        ItemType::Story => "stories",
+        ItemType::Epic => "epics",
+        ItemType::Initiative => unreachable!("never promised"),
+    }
+}
+
+type Stored = (
+    chrono::NaiveDate,
+    String,
+    chrono::DateTime<Utc>,
+    Option<String>,
+);
+/// The stored promise columns, read fresh from the table.
+async fn stored(pool: &sqlx::PgPool, item: ItemType, key: &Key) -> Option<Stored> {
+    let (on, by, at, to): (
+        Option<chrono::NaiveDate>,
+        Option<String>,
+        Option<chrono::DateTime<Utc>>,
+        Option<String>,
+    ) = sqlx::query_as(&format!(
+        "SELECT promised_on, promised_by, promised_at, promised_to FROM {} WHERE key = $1",
+        promise_table(item)
+    ))
+    .bind(key.to_string())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    on.map(|on| (on, by.unwrap(), at.unwrap(), to))
+}
+
+fn promise_body(
+    on: Option<chrono::NaiveDate>,
+    shortcut: Option<reeve_protocol::PromiseShortcut>,
+    to: Option<&str>,
+) -> reeve_protocol::SetPromise {
+    reeve_protocol::SetPromise {
+        on,
+        shortcut,
+        to: to.map(str::to_string),
+    }
+}
+
+fn validation_text(r: Result<(), HandlerError>) -> String {
+    match r {
+        Err(HandlerError::Validation(m)) => m,
+        other => panic!("expected a validation error, got {other:?}"),
+    }
+}
+
+fn at_utc(m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, m, d, h, min, 0).unwrap()
+}
+
+/// kb/ADR-0025 R2: setting, changing and clearing are interactive-only, refused with the domain's texts, and logged
+/// under `promised` / `promise_cleared` with what was there before. A kept date keeps `promised_at` (and so may be past);
+/// `to` left out keeps the recipient and `""` clears it; clearing nothing logs nothing.
+#[tokio::test]
+async fn promises_are_set_changed_and_cleared_by_people_only() {
+    use reeve_protocol::PromiseShortcut::{NextSprint, ThisSprint};
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    let bot = Ctx {
+        via: Via::Automation,
+        ..c.clone()
+    };
+    let e = h
+        .create_epic(&c, "e", "E", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = plain_story(&h, &c, "s", "S", None).await;
+    let done = plain_story(&h, &c, "d", "D", None).await;
+    let dropped = plain_story(&h, &c, "x", "X", None).await;
+    mark_done_at(&h, &done, c.now).await;
+    sqlx::query(
+        "UPDATE stories SET delivery = 'done', resolution = 'dropped', done_at = $2 WHERE key = $1",
+    )
+    .bind(dropped.to_string())
+    .bind(c.now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // A done story, dropped included, cannot be promised; clearing one is allowed and, with nothing there, a no-op.
+    for k in [&done, &dropped] {
+        assert_eq!(
+            validation_text(
+                h.set_promise(
+                    &c,
+                    ItemType::Story,
+                    k,
+                    promise_body(Some(nov(20)), None, None)
+                )
+                .await
+            ),
+            format!("{k} is done: a done story cannot be promised")
+        );
+        assert!(!h.clear_promise(&c, ItemType::Story, k).await.unwrap());
+        assert_eq!(stored(&pool, ItemType::Story, k).await, None);
+        assert!(promise_entries(&pool, k).await.is_empty());
+    }
+
+    // A done story's promise can still be cleared (R2 refuses only setting).
+    set_promise(
+        &h,
+        ItemType::Story,
+        &done,
+        &Promise::from_persisted(nov(20), "pm@x".into(), c.now, None),
+    )
+    .await;
+    assert!(h.clear_promise(&c, ItemType::Story, &done).await.unwrap());
+    assert_eq!(stored(&pool, ItemType::Story, &done).await, None);
+    assert_eq!(
+        promise_entries(&pool, &done).await,
+        vec![(
+            "story".to_string(),
+            "promise_cleared".to_string(),
+            json!({"item_type": "story", "previous": {"on": "2026-11-20", "to": null}})
+        )]
+    );
+
+    // Initiatives cannot be promised (R1): automation is refused first, a person gets the rule; nothing is logged.
+    let ini = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    assert!(matches!(
+        h.set_promise(&bot, ItemType::Initiative, &ini, promise_body(Some(nov(20)), None, None))
+            .await
+            .unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert!(matches!(
+        h.clear_promise(&bot, ItemType::Initiative, &ini).await.unwrap_err(),
+        HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+    ));
+    assert_eq!(
+        validation_text(
+            h.set_promise(
+                &c,
+                ItemType::Initiative,
+                &ini,
+                promise_body(Some(nov(20)), None, None)
+            )
+            .await
+        ),
+        "an initiative cannot be promised"
+    );
+    assert_eq!(
+        validation_text(
+            h.clear_promise(&c, ItemType::Initiative, &ini)
+                .await
+                .map(|_| ())
+        ),
+        "an initiative cannot be promised"
+    );
+    assert!(promise_entries(&pool, &ini).await.is_empty());
+
+    // No sprint exists yet: both shortcuts are refused.
+    assert_eq!(
+        validation_text(
+            h.set_promise(
+                &c,
+                ItemType::Story,
+                &s,
+                promise_body(None, Some(ThisSprint), None)
+            )
+            .await
+        ),
+        "there is no active sprint: give a date"
+    );
+    assert_eq!(
+        validation_text(
+            h.set_promise(
+                &c,
+                ItemType::Epic,
+                &e,
+                promise_body(None, Some(NextSprint), None)
+            )
+            .await
+        ),
+        "there is no next sprint yet: give a date"
+    );
+    promise_sprints(&h, &c).await;
+
+    for (item, k, name) in [
+        (ItemType::Story, s.clone(), "story"),
+        (ItemType::Epic, e.clone(), "epic"),
+    ] {
+        let set = |cx: Ctx, b: reeve_protocol::SetPromise| {
+            let h = h.clone();
+            let k = k.clone();
+            async move { h.set_promise(&cx, item, &k, b).await }
+        };
+        let no_promise = format!("{k} has no promise to change: give a date");
+        // Refusals: nothing stored, nothing logged.
+        assert!(matches!(
+            set(bot.clone(), promise_body(Some(nov(20)), None, None)).await.unwrap_err(),
+            HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+        ));
+        let texts = [
+            (
+                c.clone(),
+                promise_body(Some(nov(11)), None, None),
+                "the date 2026-11-11 is past: promise today or later",
+            ),
+            (
+                c.clone(),
+                promise_body(Some(nov(20)), None, Some(&"é".repeat(201))),
+                "the recipient is longer than 200 characters",
+            ),
+            (
+                Ctx {
+                    now: at_utc(11, 25, 8, 0),
+                    ..c.clone()
+                },
+                promise_body(None, Some(ThisSprint), None),
+                "the active sprint is planned to end 2026-11-24, which is past: give a date",
+            ),
+            (
+                Ctx {
+                    now: at_utc(12, 9, 8, 0),
+                    ..c.clone()
+                },
+                promise_body(None, Some(NextSprint), None),
+                "the next sprint is planned to end 2026-12-08, which is past: give a date",
+            ),
+            (
+                c.clone(),
+                promise_body(Some(nov(20)), None, Some("Ac\0me")),
+                "the recipient cannot contain a NUL character",
+            ),
+            (
+                c.clone(),
+                promise_body(Some(nov(20)), Some(ThisSprint), None),
+                "give a date or a sprint shortcut, not both",
+            ),
+            (
+                c.clone(),
+                promise_body(None, None, None),
+                no_promise.as_str(),
+            ),
+            (
+                c.clone(),
+                promise_body(None, None, Some("Acme")),
+                no_promise.as_str(),
+            ),
+        ];
+        for (cx, b, want) in texts {
+            assert_eq!(validation_text(set(cx, b).await), want, "{name}");
+        }
+        let ghost: Key = "ABC-9999".parse().unwrap();
+        let wrong = if item == ItemType::Story { &e } else { &s };
+        for missing in [&ghost, wrong] {
+            assert!(matches!(
+                h.set_promise(&c, item, missing, promise_body(Some(nov(20)), None, None))
+                    .await
+                    .unwrap_err(),
+                HandlerError::NotFound
+            ));
+            assert!(matches!(
+                h.clear_promise(&c, item, missing).await.unwrap_err(),
+                HandlerError::NotFound
+            ));
+        }
+        assert_eq!(stored(&pool, item, &k).await, None, "{name}");
+        assert!(promise_entries(&pool, &k).await.is_empty(), "{name}");
+
+        // Set: no previous promise.
+        set(c.clone(), promise_body(Some(nov(20)), None, Some(" Acme ")))
+            .await
+            .unwrap();
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((
+                nov(20),
+                "dan@example.com".into(),
+                c.now,
+                Some("Acme".into())
+            ))
+        );
+        // A new date the next morning: a new commitment (new `at`, new `by`), the recipient kept. The request's UTC
+        // date is the clock's today: 12 Nov is past at 13 Nov 08:00.
+        let later = Ctx {
+            actor: "pm@x".into(),
+            now: at_utc(11, 13, 8, 0),
+            ..c.clone()
+        };
+        assert_eq!(
+            validation_text(set(later.clone(), promise_body(Some(nov(12)), None, None)).await),
+            "the date 2026-11-12 is past: promise today or later"
+        );
+        set(later.clone(), promise_body(Some(nov(21)), None, None))
+            .await
+            .unwrap();
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((nov(21), "pm@x".into(), later.now, Some("Acme".into())))
+        );
+        // Past the date: keeping it is allowed (only the recipient changes), `at` stays, `by` is the editor.
+        let past = Ctx {
+            actor: "lead@x".into(),
+            now: at_utc(11, 25, 8, 0),
+            ..c.clone()
+        };
+        assert_eq!(
+            validation_text(set(past.clone(), promise_body(Some(nov(22)), None, None)).await),
+            "the date 2026-11-22 is past: promise today or later",
+            "a new past date is still refused"
+        );
+        set(
+            past.clone(),
+            promise_body(Some(nov(21)), None, Some("Beta")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((nov(21), "lead@x".into(), later.now, Some("Beta".into())))
+        );
+        // The same date and recipient again (a retry or a double submit), by someone else: no write, no entry.
+        for b in [
+            promise_body(Some(nov(21)), None, Some("Beta")),
+            promise_body(Some(nov(21)), None, None),
+            promise_body(None, None, Some(" Beta ")),
+        ] {
+            set(
+                Ctx {
+                    actor: "other@x".into(),
+                    ..past.clone()
+                },
+                b,
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((nov(21), "lead@x".into(), later.now, Some("Beta".into()))),
+            "{name}: nothing changed, so nothing was written"
+        );
+        // Neither date nor shortcut, `to: ""`: the recipient cleared, the date kept.
+        set(past.clone(), promise_body(None, None, Some("")))
+            .await
+            .unwrap();
+        assert_eq!(
+            stored(&pool, item, &k).await,
+            Some((nov(21), "lead@x".into(), later.now, None))
+        );
+        // Clear: automation refused, then cleared once; clearing again logs nothing.
+        assert!(matches!(
+            h.clear_promise(&bot, item, &k).await.unwrap_err(),
+            HandlerError::Refused(r) if r == vec![Reason::InteractiveOnly]
+        ));
+        assert!(stored(&pool, item, &k).await.is_some(), "{name}");
+        assert!(
+            h.clear_promise(&c, item, &k).await.unwrap(),
+            "{name}: cleared"
+        );
+        assert_eq!(stored(&pool, item, &k).await, None);
+        assert!(
+            !h.clear_promise(&c, item, &k).await.unwrap(),
+            "{name}: nothing left to clear"
+        );
+
+        let want = |action: &str, payload: serde_json::Value| {
+            (name.to_string(), action.to_string(), payload)
+        };
+        assert_eq!(
+            promise_entries(&pool, &k).await,
+            vec![
+                want(
+                    "promised",
+                    json!({"item_type": name, "on": "2026-11-20", "to": "Acme", "previous": null})
+                ),
+                want(
+                    "promised",
+                    json!({"item_type": name, "on": "2026-11-21", "to": "Acme",
+                           "previous": {"on": "2026-11-20", "to": "Acme"}})
+                ),
+                want(
+                    "promised",
+                    json!({"item_type": name, "on": "2026-11-21", "to": "Beta",
+                           "previous": {"on": "2026-11-21", "to": "Acme"}})
+                ),
+                want(
+                    "promised",
+                    json!({"item_type": name, "on": "2026-11-21", "to": null,
+                           "previous": {"on": "2026-11-21", "to": "Beta"}})
+                ),
+                want(
+                    "promise_cleared",
+                    json!({"item_type": name, "previous": {"on": "2026-11-21", "to": null}})
+                ),
+            ],
+            "{name}"
+        );
+        let actors: Vec<String> = sqlx::query_scalar(
+            "SELECT actor FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'promise_cleared') ORDER BY id",
+        )
+        .bind(k.to_string())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            actors,
+            [
+                "dan@example.com",
+                "pm@x",
+                "lead@x",
+                "lead@x",
+                "dan@example.com"
+            ]
+        );
+    }
+}
+
+/// R6: a shortcut stores the sprint's planned end as it is when saved, never a length projection (from either sprint's
+/// start or from the active sprint's end), and never follows a later edit of the sprint; the due period is then
+/// classified against the sprints as they are now (R5).
+#[tokio::test]
+async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
+    use reeve_protocol::PromiseDue;
+    use reeve_protocol::PromiseShortcut::{NextSprint, ThisSprint};
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    promise_sprints(&h, &c).await;
+    for (state, ends) in [("active", "2026-11-25"), ("draft", "2026-12-11")] {
+        sqlx::query("UPDATE sprints SET ends_on = $2::date WHERE state = $1")
+            .bind(state)
+            .bind(ends)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let projected: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sprints WHERE state IN ('active','draft') AND (ends_on = starts_on + 14 \
+         OR ends_on = (SELECT ends_on FROM sprints WHERE state = 'active') + 14)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        projected, 0,
+        "the planned ends differ from a length projection"
+    );
+    let a = plain_story(&h, &c, "a", "A", None).await;
+    let b = plain_story(&h, &c, "b", "B", None).await;
+    h.set_promise(
+        &c,
+        ItemType::Story,
+        &a,
+        promise_body(None, Some(ThisSprint), None),
+    )
+    .await
+    .unwrap();
+    h.set_promise(
+        &c,
+        ItemType::Story,
+        &b,
+        promise_body(None, Some(NextSprint), None),
+    )
+    .await
+    .unwrap();
+    let on = |k: Key| {
+        let pool = pool.clone();
+        async move { stored(&pool, ItemType::Story, &k).await.unwrap().0 }
+    };
+    assert_eq!(on(a.clone()).await, nov(25));
+    assert_eq!(
+        on(b.clone()).await,
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 11).unwrap()
+    );
+
+    for (state, ends) in [("active", "2026-11-20"), ("draft", "2026-12-01")] {
+        sqlx::query("UPDATE sprints SET ends_on = $2::date WHERE state = $1")
+            .bind(state)
+            .bind(ends)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(on(a.clone()).await, nov(25), "the stored date stays");
+    assert_eq!(
+        on(b.clone()).await,
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 11).unwrap()
+    );
+    let due = |k: Key| {
+        let h = h.clone();
+        async move { h.story_dto(&k, c.now).await.unwrap().promise.unwrap().due }
+    };
+    assert_eq!(due(a).await, Some(PromiseDue::NextSprint));
+    assert_eq!(due(b).await, Some(PromiseDue::Later));
+}
+
+/// Records what the write's own transaction shows as the item's `promised_on`, writes the entry on that transaction,
+/// then fails: the entry must see the write already made, and the failure must roll both back.
+struct CheckSink(Mutex<Vec<Option<chrono::NaiveDate>>>);
+#[async_trait]
+impl ActivitySink for CheckSink {
+    async fn record(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        rec: ActivityRecord,
+    ) -> Result<(), RepoError> {
+        let table = if rec.entity_type == "epic" {
+            "epics"
+        } else {
+            "stories"
+        };
+        let on: Option<chrono::NaiveDate> =
+            sqlx::query_scalar(&format!("SELECT promised_on FROM {table} WHERE key = $1"))
+                .bind(&rec.entity_key)
+                .fetch_one(&mut **tx)
+                .await?;
+        self.0.lock().unwrap().push(on);
+        insert_test_activity(tx, &rec).await?;
+        Err(RepoError::NotFound)
+    }
+}
+
+/// kb/ADR-0010 R5: the entry is the write's last work, inside its transaction. The sink sees the new date on set and
+/// NULL on clear; its failure leaves the old promise and no entry.
+#[tokio::test]
+async fn promise_writes_record_their_entry_last_and_roll_back_with_it() {
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let sink = Arc::new(CheckSink(Mutex::new(vec![])));
+    let check = Handlers {
+        activity: sink.clone(),
+        ..h.clone()
+    };
+    let c = promise_ctx();
+    let e = h
+        .create_epic(&c, "e", "E", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = plain_story(&h, &c, "s", "S", None).await;
+    let old = Promise::from_persisted(nov(20), "pm@x".into(), c.now, Some("Acme".into()));
+    let old_cols = Some((nov(20), "pm@x".to_string(), c.now, Some("Acme".to_string())));
+    for (item, k) in [(ItemType::Story, s), (ItemType::Epic, e)] {
+        // From nothing: the sink saw the new date; the failure stored nothing.
+        sink.0.lock().unwrap().clear();
+        check
+            .set_promise(&c, item, &k, promise_body(Some(nov(27)), None, None))
+            .await
+            .unwrap_err();
+        assert_eq!(*sink.0.lock().unwrap(), vec![Some(nov(27))]);
+        assert_eq!(stored(&pool, item, &k).await, None);
+        // Over an existing promise.
+        set_promise(&h, item, &k, &old).await;
+        sink.0.lock().unwrap().clear();
+        check
+            .set_promise(&c, item, &k, promise_body(Some(nov(27)), None, None))
+            .await
+            .unwrap_err();
+        assert_eq!(*sink.0.lock().unwrap(), vec![Some(nov(27))]);
+        assert_eq!(stored(&pool, item, &k).await, old_cols);
+        sink.0.lock().unwrap().clear();
+        check.clear_promise(&c, item, &k).await.unwrap_err();
+        assert_eq!(*sink.0.lock().unwrap(), vec![None]);
+        assert_eq!(stored(&pool, item, &k).await, old_cols);
+        assert!(promise_entries(&pool, &k).await.is_empty());
+    }
+}
+
+/// `previous` is read under the row lock: a set or clear that starts while another writer holds the row waits for it,
+/// and logs that writer's promise as `previous`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_set_waits_for_a_concurrent_writer_and_logs_its_promise_as_previous() {
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    let mut cases = Vec::new();
+    for (n, set) in [(0, true), (1, false)] {
+        cases.push((
+            ItemType::Story,
+            plain_story(&h, &c, &format!("s{n}"), "S", None).await,
+            set,
+        ));
+        cases.push((
+            ItemType::Epic,
+            h.create_epic(&c, &format!("e{n}"), "E", None, "", None)
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+            set,
+        ));
+    }
+    for (item, k, set) in cases {
+        let table = promise_table(item);
+        let mut w = pool.begin().await.unwrap();
+        sqlx::query(&format!("SELECT 1 FROM {table} WHERE key = $1 FOR UPDATE"))
+            .bind(k.to_string())
+            .execute(&mut *w)
+            .await
+            .unwrap();
+        sqlx::query(&format!(
+            "UPDATE {table} SET promised_on = '2026-11-20', promised_by = 'x', promised_at = now() WHERE key = $1"
+        ))
+        .bind(k.to_string())
+        .execute(&mut *w)
+        .await
+        .unwrap();
+        let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
+        let call = tokio::spawn(async move {
+            if set {
+                hh.set_promise(&cc, item, &kk, promise_body(Some(nov(27)), None, None))
+                    .await
+            } else {
+                hh.clear_promise(&cc, item, &kk).await.map(|_| ())
+            }
+        });
+        wait_until_blocked(&pool).await;
+        w.commit().await.unwrap();
+        tokio::time::timeout(PAUSE, call)
+            .await
+            .expect("the write never finished")
+            .unwrap()
+            .unwrap();
+        let entries = promise_entries(&pool, &k).await;
+        assert_eq!(entries.len(), 1, "{item:?} set={set}: {entries:?}");
+        assert_eq!(
+            entries[0].2["previous"]["on"], "2026-11-20",
+            "{item:?} set={set}"
+        );
+    }
+}
+
+/// R2: a promise takes no version and changes none, so an edit with a version read before it succeeds, and edits,
+/// moves and the discovery mark leave it as it was.
+#[tokio::test]
+async fn a_promise_survives_edits_moves_and_the_discovery_mark() {
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    let epic = ready_epic(&h, &c).await;
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "S",
+            Kind::Chore,
+            Some(epic),
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let read = h.get_story(s.key()).await.unwrap().version();
+    h.set_promise(
+        &c,
+        ItemType::Story,
+        s.key(),
+        promise_body(Some(nov(20)), None, Some("Acme")),
+    )
+    .await
+    .unwrap();
+    let promised = stored(&pool, ItemType::Story, s.key()).await;
+    assert!(promised.is_some());
+    assert_eq!(h.get_story(s.key()).await.unwrap().version(), read);
+    let edited = h
+        .edit_story(
+            &c,
+            s.key(),
+            read,
+            Some("S2".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the promise did not bump the version");
+    assert_eq!(edited.version(), read + 1);
+    let moved = h
+        .move_story(
+            &c,
+            s.key(),
+            edited.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+        .expect("a promise never refuses a move");
+    assert_eq!(moved.version(), read + 2);
+    assert_eq!(stored(&pool, ItemType::Story, s.key()).await, promised);
+
+    let e = h.create_epic(&c, "e2", "E", None, "", None).await.unwrap();
+    h.set_promise(
+        &c,
+        ItemType::Epic,
+        e.key(),
+        promise_body(Some(nov(21)), None, None),
+    )
+    .await
+    .unwrap();
+    let promised = stored(&pool, ItemType::Epic, e.key()).await;
+    assert!(promised.is_some());
+    assert_eq!(
+        h.epic_dto(e.key(), c.now).await.unwrap().version,
+        e.version()
+    );
+    let e2 = h
+        .edit_epic(
+            &c,
+            e.key(),
+            e.version(),
+            Some("E2".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("the promise did not bump the epic's version");
+    assert_eq!(e2.version(), e.version() + 1);
+    h.mark_discovery(&c, ItemType::Epic, e.key(), e2.version(), true)
+        .await
+        .unwrap();
+    let dto = h.epic_dto(e.key(), c.now).await.unwrap();
+    assert!(dto.discovery_complete.is_some());
+    assert_eq!(stored(&pool, ItemType::Epic, e.key()).await, promised);
+}
+
+/// R7: readiness, delivery, progress and rank never depend on promises.
+#[tokio::test]
+async fn promises_change_no_readiness_delivery_progress_or_rank() {
+    let (_c, pool) = common::pg().await;
+    let h = mk_db(pool.clone()).await;
+    let c = promise_ctx();
+    promise_sprints(&h, &c).await;
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&c, "e", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&c, ItemType::Initiative, i.key(), 1, true)
+        .await
+        .unwrap();
+    h.mark_discovery(&c, ItemType::Epic, e.key(), 1, true)
+        .await
+        .unwrap();
+    let mut keys = Vec::new();
+    for (n, criteria) in [
+        ("ready", vec!["ok".to_string()]),
+        ("bare", vec![]),
+        ("blocked", vec!["ok".to_string()]),
+        ("decided", vec!["ok".to_string()]),
+        ("done", vec!["ok".to_string()]),
+    ] {
+        keys.push(
+            h.create_story(
+                &c,
+                n,
+                n,
+                Kind::Story,
+                Some(e.key().clone()),
+                "",
+                criteria,
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone(),
+        );
+    }
+    h.add_block(&c, &keys[2], &keys[0]).await.unwrap();
+    h.require_decision(&c, "d", &keys[3], "Pick", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    mark_done_at(&h, &keys[4], c.now).await;
+    type Snapshot = (
+        Vec<(
+            Key,
+            reeve_protocol::Readiness,
+            i32,
+            DeliveryState,
+            Option<Resolution>,
+        )>,
+        Vec<(Key, Option<f32>)>,
+        Vec<reeve_protocol::Readiness>,
+    );
+    // The snapshots read on 20 Nov, after the promised dates: overdue promises are covered too.
+    let then = at_utc(11, 20, 10, 0);
+    let snapshot = || async {
+        let board = h
+            .list_stories(
+                &StoryFilter::default(),
+                None,
+                None,
+                false,
+                DoneFilter::All,
+                then,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r.story.key,
+                    r.readiness,
+                    r.story.rank,
+                    r.story.delivery,
+                    r.story.resolution,
+                )
+            })
+            .collect();
+        let progress = h
+            .list_initiatives(then)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.key, i.progress))
+            .collect();
+        let mut one_at_a_time = Vec::new();
+        for k in &keys {
+            one_at_a_time.push(h.readiness(k).await.unwrap());
+        }
+        let s: Snapshot = (board, progress, one_at_a_time);
+        s
+    };
+    let before = snapshot().await;
+    assert_eq!(before.0.len(), 5, "every story is in the snapshot");
+    assert!(before.0.iter().any(|(_, r, ..)| r.ready), "one is ready");
+    assert!(before.0.iter().any(|(_, r, ..)| !r.ready), "one is not");
+    assert!(before.1[0].1.is_some(), "the initiative has progress");
+    for k in [&keys[2], &keys[3]] {
+        h.set_promise(
+            &c,
+            ItemType::Story,
+            k,
+            promise_body(Some(nov(14)), None, None),
+        )
+        .await
+        .unwrap();
+    }
+    h.set_promise(
+        &c,
+        ItemType::Epic,
+        e.key(),
+        promise_body(Some(nov(13)), None, None),
+    )
+    .await
+    .unwrap();
+    for k in &keys[..4] {
+        assert_eq!(
+            h.story_dto(k, then)
+                .await
+                .unwrap()
+                .promise
+                .and_then(|p| p.state),
+            Some(reeve_protocol::PromiseState::Overdue),
+            "{k}: the promises are in place and overdue"
+        );
+    }
+    assert_eq!(snapshot().await, before);
+}
+
+/// `promised` keeps exactly the stories whose derived promise passes `promise::Filter::matches`, ANDed with the other
+/// filters. The clock is 12 Nov; the active sprint ends 24 Nov and the draft 8 Dec. O is overdue (10 Nov, promised on
+/// 9 Nov) and in progress; T, N and L are open on 20 Nov, 1 Dec and 20 Dec; E inherits its epic's 22 Nov; K kept, D
+/// dropped; P has no promise. F, done before its epic promised, is a control: it never matches. N alone is ready, so a
+/// kept row whose readiness came from a dropped row (the filter applied before rows meet their readiness) shows.
+/// Distinguishes `this_sprint` without the overdue, done stories leaking in, a missing AND with the other filters,
+/// and rows misaligned with their readiness.
+#[tokio::test]
+async fn promised_selects_exact_sets() {
+    use std::collections::HashSet;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let own = |on, at| Promise::from_persisted(on, "pm@x".into(), at, None);
+    let early = Utc.with_ymd_and_hms(2026, 11, 12, 9, 0, 0).unwrap();
+
+    let o = plain_story(&h, &c, "O", "O", None).await;
+    set_promise(
+        &h,
+        ItemType::Story,
+        &o,
+        &own(
+            nov(10),
+            Utc.with_ymd_and_hms(2026, 11, 9, 10, 0, 0).unwrap(),
+        ),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE stories SET delivery = 'in_progress', owner = 'olive@example.com' WHERE key = $1",
+    )
+    .bind(o.to_string())
+    .execute(&h.pool)
+    .await
+    .unwrap();
+    let t = plain_story(&h, &c, "T", "T", None).await;
+    set_promise(&h, ItemType::Story, &t, &own(nov(20), early)).await;
+    let ready = ready_epic(&h, &c).await;
+    let n = h
+        .create_story(
+            &c,
+            "N",
+            "N",
+            Kind::Chore,
+            Some(ready),
+            "",
+            vec!["ok".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let dec = |d| chrono::NaiveDate::from_ymd_opt(2026, 12, d).unwrap();
+    set_promise(&h, ItemType::Story, &n, &own(dec(1), early)).await;
+    let l = plain_story(&h, &c, "L", "L", None).await;
+    set_promise(&h, ItemType::Story, &l, &own(dec(20), early)).await;
+    let ep = h.create_epic(&c, "pe", "PE", None, "", None).await.unwrap();
+    set_promise(&h, ItemType::Epic, ep.key(), &own(nov(22), early)).await;
+    let e = plain_story(&h, &c, "E", "E", Some(ep.key())).await;
+    let f = plain_story(&h, &c, "F", "F", Some(ep.key())).await;
+    mark_done_at(&h, &f, Utc.with_ymd_and_hms(2026, 11, 12, 8, 0, 0).unwrap()).await;
+    let k = plain_story(&h, &c, "K", "K", None).await;
+    set_promise(&h, ItemType::Story, &k, &own(nov(20), early)).await;
+    mark_done_at(&h, &k, early).await;
+    let d = plain_story(&h, &c, "D", "D", None).await;
+    set_promise(&h, ItemType::Story, &d, &own(nov(20), early)).await;
+    mark_done_at(&h, &d, early).await;
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = $1")
+        .bind(d.to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    let p = plain_story(&h, &c, "P", "P", None).await;
+
+    let set = |v: Vec<Key>| v.into_iter().collect::<HashSet<_>>();
+    let of = |ks: &[&Key]| ks.iter().map(|k| (*k).clone()).collect::<HashSet<_>>();
+    let promised = |p| StoryFilter {
+        promised: Some(p),
+        ..Default::default()
+    };
+    use reeve_protocol::PromisedFilter as P;
+    let cases = [
+        ("this_sprint", promised(P::ThisSprint), of(&[&o, &t, &e])),
+        ("next_sprint", promised(P::NextSprint), of(&[&n])),
+        ("overdue", promised(P::Overdue), of(&[&o])),
+        ("any", promised(P::Any), of(&[&o, &t, &n, &l, &e])),
+        (
+            "any with an owner",
+            StoryFilter {
+                owner: Some("olive@example.com".into()),
+                ..promised(P::Any)
+            },
+            of(&[&o]),
+        ),
+        (
+            "this_sprint with delivery=todo",
+            StoryFilter {
+                delivery: Some(DeliveryState::Todo),
+                ..promised(P::ThisSprint)
+            },
+            of(&[&t, &e]),
+        ),
+    ];
+    let all = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        set(all.iter().map(|s| s.story.key.clone()).collect()),
+        of(&[&o, &t, &n, &l, &e, &f, &k, &d, &p]),
+        "the baseline lists all nine"
+    );
+    let ready_of = |rows: &[reeve_protocol::StoryWithReadiness]| -> Vec<(Key, bool)> {
+        rows.iter()
+            .map(|s| (s.story.key.clone(), s.readiness.ready))
+            .collect()
+    };
+    assert_eq!(
+        ready_of(&all).iter().filter(|(_, r)| *r).count(),
+        1,
+        "only N is ready"
+    );
+    assert_ne!(all[0].story.key, n, "a dropped row comes before N");
+    for (label, ready_only) in [("next_sprint", false), ("any, ready only", true)] {
+        let which = if ready_only { P::Any } else { P::NextSprint };
+        let rows = h
+            .list_stories(
+                &promised(which),
+                None,
+                None,
+                ready_only,
+                DoneFilter::All,
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ready_of(&rows), vec![(n.clone(), true)], "{label}");
+    }
+    for (label, filter, want) in cases {
+        assert_eq!(
+            set(list_keys(&h, &filter, None, None, now).await),
+            want,
+            "{label}"
+        );
+    }
+}
+
+/// One decision on an epic blocks four stories: a control promised 10 Nov and unfinished (overdue on 12 Nov), one
+/// promised the same day and done on 9 Nov (kept), one dropped, and one without a promise. Only the unfinished promise
+/// pulls the decision: it is needed this sprint with the control as the reason. Once the control is done the decision
+/// falls to beyond (the unpromised story keeps it affected); an overdue promise on the epic, which that story inherits,
+/// pulls it back with the epic as the reason. The decision's due date is never written (kb/ADR-0025 R7). Catches done
+/// promises pulling decisions, the reason naming the wrong item, and the queue writing a due date.
+#[tokio::test]
+async fn only_unfinished_promises_pull_decisions() {
+    use reeve_protocol::{NeededIn, NeededInReason, PromiseState, QueueLane};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let c = promise_ctx();
+    let (epic, ss) = marked_epic_with_stories(&h, &c, "pp", 4).await;
+    let (control, kept, dropped) = (ss[0].key(), ss[1].key(), ss[2].key());
+    let due = Some(nov(30));
+    let d = h
+        .require_decision(&c, "pp-d", &epic, "D", "dan@example.com", due, None)
+        .await
+        .unwrap();
+    for k in [control, kept, dropped] {
+        let p = Promise::from_persisted(nov(10), "pm@x".into(), c.now, None);
+        set_promise(&h, ItemType::Story, k, &p).await;
+    }
+    mark_done_at(
+        &h,
+        kept,
+        Utc.with_ymd_and_hms(2026, 11, 9, 9, 0, 0).unwrap(),
+    )
+    .await;
+    mark_done_at(
+        &h,
+        dropped,
+        Utc.with_ymd_and_hms(2026, 11, 11, 9, 0, 0).unwrap(),
+    )
+    .await;
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = $1")
+        .bind(dropped.to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    for (k, want) in [(kept, PromiseState::Kept), (dropped, PromiseState::Dropped)] {
+        let p = h.story_dto(k, c.now).await.unwrap().promise.unwrap();
+        assert_eq!(p.state, Some(want), "{k}");
+    }
+
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.lane, e.needed_in_reason.clone()),
+        (
+            NeededIn::ThisSprint,
+            QueueLane::ThisSprint,
+            Some(NeededInReason::Promise {
+                key: control.clone(),
+                level: ItemType::Story,
+                on: nov(10),
+                overdue: true
+            })
+        )
+    );
+    assert_eq!(e.decision.due(), due);
+
+    mark_done_at(&h, control, c.now).await;
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.lane, e.needed_in_reason.clone()),
+        (NeededIn::Beyond, QueueLane::Beyond, None)
+    );
+    assert_eq!(e.decision.due(), due);
+
+    // The epic's promise, inherited by the unpromised story, pulls it back and the reason names the epic.
+    let p = Promise::from_persisted(nov(11), "lead@x".into(), c.now, None);
+    set_promise(&h, ItemType::Epic, &epic, &p).await;
+    let (es, _) = queue_all(&h, &c).await;
+    let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
+    assert_eq!(
+        (e.needed_in, e.needed_in_reason.clone()),
+        (
+            NeededIn::ThisSprint,
+            Some(NeededInReason::Promise {
+                key: epic.clone(),
+                level: ItemType::Epic,
+                on: nov(11),
+                overdue: true
+            })
+        )
+    );
+    assert_eq!(e.decision.due(), due);
+}
+
+/// Open promises through the real story list and `PromiseWindow::of`: with the active sprint planned to end 24 Nov and the
+/// draft 8 Dec, a decision on a story promised 20 Nov is needed this sprint, one promised 1 Dec next sprint, and one
+/// promised 20 Dec beyond, with no reason. Catches the due period lost or swapped between the DTO and the domain.
+#[tokio::test]
+async fn open_promises_pull_decisions_by_due_period() {
+    use reeve_protocol::{NeededIn, NeededInReason};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let c = promise_ctx();
+    promise_sprints(&h, &c).await;
+    let (_epic, ss) = marked_epic_with_stories(&h, &c, "op", 3).await;
+    let dec = chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap();
+    let late = chrono::NaiveDate::from_ymd_opt(2026, 12, 20).unwrap();
+    let mut ids = vec![];
+    for (i, (s, on)) in ss.iter().zip([nov(20), dec, late]).enumerate() {
+        let p = Promise::from_persisted(on, "pm@x".into(), c.now, None);
+        set_promise(&h, ItemType::Story, s.key(), &p).await;
+        let d = h
+            .require_decision(
+                &c,
+                &format!("op-d{i}"),
+                s.key(),
+                "D",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        ids.push(d.id());
+    }
+    let (es, _) = queue_all(&h, &c).await;
+    let of = |id: i64| {
+        let e = es.iter().find(|e| e.decision.id() == id).unwrap();
+        (e.needed_in, e.needed_in_reason.clone())
+    };
+    let reason = |i: usize, on| {
+        Some(NeededInReason::Promise {
+            key: ss[i].key().clone(),
+            level: ItemType::Story,
+            on,
+            overdue: false,
+        })
+    };
+    assert_eq!(of(ids[0]), (NeededIn::ThisSprint, reason(0, nov(20))));
+    assert_eq!(of(ids[1]), (NeededIn::NextSprint, reason(1, dec)));
+    assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
+}
+
+/// Pauses the first entry it records once armed, inside the write that records it and so while that write still holds
+/// its row lock, until the test releases it; every other entry goes straight through. Entries land in `test_activity`
+/// as `DbSink`'s do. The race tests order their writes with it instead of relying on PostgreSQL's lock queue.
+#[derive(Default)]
+struct GateSink {
+    armed: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+#[async_trait]
+impl ActivitySink for GateSink {
+    async fn record(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        rec: ActivityRecord,
+    ) -> Result<(), RepoError> {
+        insert_test_activity(tx, &rec).await?;
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        Ok(())
+    }
+}
+impl GateSink {
+    /// Arms the gate: the next entry recorded pauses.
+    fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// Waits until a write paused in the gate.
+    async fn paused(&self) {
+        tokio::time::timeout(PAUSE, self.entered.notified())
+            .await
+            .expect("the first write never reached its entry");
+    }
+    /// Lets the paused write go on to commit.
+    fn open(&self) {
+        self.release.notify_one();
+    }
+}
+
+/// Handlers whose entries go through a `GateSink` into `test_activity` (created by `mk_db`).
+async fn mk_gated(pool: sqlx::PgPool) -> (Handlers, Arc<GateSink>) {
+    let gate = Arc::new(GateSink::default());
+    let h = Handlers {
+        activity: gate.clone(),
+        ..mk_db(pool).await
+    };
+    (h, gate)
+}
+
+/// Two real promise writes on one row (a set then a set, a set then a clear, on a story and an epic): the first pauses
+/// in its entry while it holds the row, the second is started and seen blocked on that row, then the first is released.
+/// Both commit, each logs the promise the other left as its `previous`, and the stored promise is what the last entry
+/// left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queued_promise_writes_chain_their_entries() {
+    use serde_json::{Value, json};
+    let (_c, pool) = common::pg().await;
+    let (h, gate) = mk_gated(pool.clone()).await;
+    let c = promise_ctx();
+    let mut cases = Vec::new();
+    for (n, second_sets) in [(0, true), (1, false)] {
+        cases.push((
+            ItemType::Story,
+            plain_story(&h, &c, &format!("s{n}"), "S", None).await,
+            second_sets,
+        ));
+        cases.push((
+            ItemType::Epic,
+            h.create_epic(&c, &format!("e{n}"), "E", None, "", None)
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+            second_sets,
+        ));
+    }
+    for (item, k, second_sets) in cases {
+        let name = format!(
+            "{item:?} then {}",
+            if second_sets { "set" } else { "clear" }
+        );
+        h.set_promise(
+            &c,
+            item,
+            &k,
+            promise_body(Some(nov(20)), None, Some("Acme")),
+        )
+        .await
+        .unwrap();
+        gate.arm();
+        let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
+        let first = tokio::spawn(async move {
+            hh.set_promise(
+                &cc,
+                item,
+                &kk,
+                promise_body(Some(nov(27)), None, Some("Bolt")),
+            )
+            .await
+        });
+        gate.paused().await;
+        let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
+        let second = tokio::spawn(async move {
+            if second_sets {
+                hh.set_promise(&cc, item, &kk, promise_body(Some(nov(30)), None, None))
+                    .await
+            } else {
+                hh.clear_promise(&cc, item, &kk).await.map(|_| ())
+            }
+        });
+        wait_until_blocked(&pool).await;
+        assert!(!second.is_finished(), "{name}: the second write waits");
+        gate.open();
+        for call in [first, second] {
+            tokio::time::timeout(PAUSE, call)
+                .await
+                .expect("a write never finished")
+                .unwrap()
+                .unwrap();
+        }
+        let entries = promise_entries(&pool, &k).await;
+        assert_eq!(entries.len(), 3, "{name}: {entries:?}");
+        // Each entry's `previous` is what the entry before it left; the stored promise is what the last one left.
+        let mut left = Value::Null;
+        for (_, action, payload) in &entries {
+            assert_eq!(payload["previous"], left, "{name}: {entries:?}");
+            left = match action.as_str() {
+                "promised" => json!({"on": payload["on"], "to": payload["to"]}),
+                "promise_cleared" => Value::Null,
+                other => panic!("{name}: unexpected action {other}"),
+            };
+        }
+        let now = stored(&pool, item, &k)
+            .await
+            .map_or(Value::Null, |(on, _, _, to)| json!({"on": on, "to": to}));
+        assert_eq!(now, left, "{name}");
+        // The first write went first: its entry names the first promise, the second's names it.
+        let it = if item == ItemType::Story {
+            "story"
+        } else {
+            "epic"
+        };
+        let bolt = json!({"on": "2026-11-27", "to": "Bolt"});
+        assert_eq!(
+            entries[1].2,
+            json!({"item_type": it, "on": "2026-11-27", "to": "Bolt",
+                   "previous": {"on": "2026-11-20", "to": "Acme"}}),
+            "{name}"
+        );
+        let second_entry = if second_sets {
+            json!({"item_type": it, "on": "2026-11-30", "to": "Bolt", "previous": bolt})
+        } else {
+            json!({"item_type": it, "previous": bolt})
+        };
+        assert_eq!(entries[2].2, second_entry, "{name}");
+    }
+}
+
+/// Completion first (kb/ADR-0025 R2): a move to done pauses in its entry while it holds the story's row, a promise is
+/// started and seen blocked on that row, then the move is released and commits; the promise, judged on the row it then
+/// locks, is refused as done. Nothing is stored or logged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_promise_queued_behind_a_move_to_done_is_refused() {
+    let (_c, pool) = common::pg().await;
+    let (h, gate) = mk_gated(pool.clone()).await;
+    let c = promise_ctx();
+    let s = plain_story(&h, &c, "s", "S", None).await;
+    let version = h.story_dto(&s, c.now).await.unwrap().version;
+    gate.arm();
+    let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
+    let mv = tokio::spawn(async move {
+        hh.move_story(
+            &cc,
+            &kk,
+            version,
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+            Some("dropped while promised".into()),
+        )
+        .await
+    });
+    gate.paused().await;
+    let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
+    let promise = tokio::spawn(async move {
+        hh.set_promise(
+            &cc,
+            ItemType::Story,
+            &kk,
+            promise_body(Some(nov(20)), None, None),
+        )
+        .await
+    });
+    wait_until_blocked(&pool).await;
+    assert!(!promise.is_finished(), "the promise waits on the move");
+    gate.open();
+    tokio::time::timeout(PAUSE, mv)
+        .await
+        .expect("the move never finished")
+        .unwrap()
+        .unwrap();
+    let refused = tokio::time::timeout(PAUSE, promise)
+        .await
+        .expect("the promise never finished")
+        .unwrap();
+    assert_eq!(
+        validation_text(refused),
+        format!("{s} is done: a done story cannot be promised")
+    );
+    assert_eq!(stored(&pool, ItemType::Story, &s).await, None);
+    assert!(promise_entries(&pool, &s).await.is_empty());
+}
+
+/// kb/ADR-0021 R4 for `promised`: the filter's membership comes from the snapshot the rows come from. Promises moved
+/// while the list waits do not change the set it returns; the next request sees the new set.
+#[tokio::test]
+async fn the_promised_filter_reads_one_snapshot() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    promise_sprints(&h, &c).await;
+    let a = plain_story(&h, &c, "A", "A", None).await;
+    let b = plain_story(&h, &c, "B", "B", None).await;
+    let _x = plain_story(&h, &c, "X", "X", None).await;
+    for (k, on) in [
+        (&a, nov(20)),
+        (&b, chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap()),
+    ] {
+        set_promise(
+            &h,
+            ItemType::Story,
+            k,
+            &Promise::from_persisted(on, "pm@x".into(), now, None),
+        )
+        .await;
+    }
+    let list = |h: Handlers| async move {
+        let f = StoryFilter {
+            promised: Some(reeve_protocol::PromisedFilter::ThisSprint),
+            ..Default::default()
+        };
+        h.list_stories(&f, None, None, false, DoneFilter::All, now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.story.key)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(list(h.clone()).await, vec![a.clone()]);
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE sprints IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let call = tokio::spawn(list(h.clone()));
+    wait_until_blocked(&pool).await;
+    for (k, on) in [(&a, "2026-12-01"), (&b, "2026-11-22")] {
+        sqlx::query("UPDATE stories SET promised_on = $2::date WHERE key = $1")
+            .bind(k.to_string())
+            .bind(on)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+    }
+    lock.commit().await.unwrap();
+    let before = tokio::time::timeout(PAUSE, call)
+        .await
+        .expect("the list never finished")
+        .unwrap();
+    assert_eq!(
+        before,
+        vec![a.clone()],
+        "the set of the snapshot the rows came from"
+    );
+    assert_eq!(
+        list(h.clone()).await,
+        vec![b],
+        "the next request sees the new set"
+    );
+}
+
+/// kb/ADR-0025 R5: `promised` keeps only unfinished stories, so done ones are never read. A done promised story is not
+/// listed, and adding done promised stories changes neither the statements nor the rows the list reads, with the
+/// default `done=all`.
+#[tokio::test]
+async fn the_promised_filter_reads_no_done_story() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = promise_ctx();
+    let now = c.now;
+    let promise = Promise::from_persisted(nov(20), "pm@x".into(), now, None);
+    let open = plain_story(&h, &c, "o", "O", None).await;
+    set_promise(&h, ItemType::Story, &open, &promise).await;
+    let add_done = |n: usize| {
+        let (h, c, promise) = (h.clone(), c.clone(), promise.clone());
+        async move {
+            for i in 0..n {
+                let k = plain_story(&h, &c, &format!("d{n}-{i}"), "D", None).await;
+                set_promise(&h, ItemType::Story, &k, &promise).await;
+                mark_done_at(&h, &k, now).await;
+            }
+        }
+    };
+    add_done(1).await;
+    let list = || {
+        let h = h.clone();
+        async move {
+            let f = StoryFilter {
+                promised: Some(reeve_protocol::PromisedFilter::Any),
+                ..Default::default()
+            };
+            let got: Vec<Key> = h
+                .list_stories(&f, None, None, false, DoneFilter::All, now)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|s| s.story.key)
+                .collect();
+            got
+        }
+    };
+    assert_eq!(
+        list().await,
+        vec![open.clone()],
+        "the done promised story is not listed"
+    );
+    let run = || async {
+        list().await;
+    };
+    let rows = common::rows(&pool, run).await;
+    let statements = common::statements(&pool, run).await;
+    assert!(rows > 0, "the counter measured {rows} rows");
+    add_done(5).await;
+    assert_eq!(list().await, vec![open]);
+    assert_eq!(
+        common::rows(&pool, run).await,
+        rows,
+        "rows of done stories were read"
+    );
+    assert_eq!(common::statements(&pool, run).await, statements);
+}
+
+/// Seeds `n` stories with blockers, pull requests and decisions (`seed_board`), promises the first story itself
+/// (overdue on `today`) and the epic (in a week, inherited by every story). Returns the stories and the epic.
+async fn promised_board(
+    h: &Handlers,
+    tag: &str,
+    n: usize,
+    first_pr: i64,
+    today: chrono::NaiveDate,
+) -> (Vec<Key>, Key) {
+    let keys = seed_board(h, tag, n, first_pr).await;
+    let epic = h
+        .story_dto(&keys[0], Utc::now())
+        .await
+        .unwrap()
+        .epic
+        .unwrap();
+    let at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let own = Promise::from_persisted(today - chrono::Days::new(2), "pm@x".into(), at, None);
+    set_promise(h, ItemType::Story, &keys[0], &own).await;
+    let theirs = Promise::from_persisted(today + chrono::Days::new(7), "lead@x".into(), at, None);
+    set_promise(h, ItemType::Epic, &epic, &theirs).await;
+    (keys, epic)
+}
+
+/// Own and inherited promises cost no statements: the story list and the decision queue read the same number with a
+/// few promised stories as with many, and both answers carry the promises.
+#[tokio::test]
+async fn promises_add_no_statements_to_the_list_or_the_queue() {
+    use reeve_protocol::{NeededInReason, PromiseHolder, PromiseState};
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let (a, epic_a) = promised_board(&h, "a", 3, 1, now.date_naive()).await;
+    let list = || {
+        let h = h.clone();
+        async move {
+            h.list_stories(
+                &StoryFilter::default(),
+                None,
+                None,
+                false,
+                DoneFilter::All,
+                now,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let queue = || {
+        let (h, c) = (h.clone(), Ctx { now, ..dan.clone() });
+        async move { queue_all(&h, &c).await }
+    };
+    // Populated: the first story is overdue on its own date, the others inherit the epic's; the overdue promise
+    // gives the decision on the first story its reason.
+    let rows = list().await;
+    for s in &rows {
+        let p = s.story.promise.as_ref().expect("every story is promised");
+        let want = if s.story.key == a[0] {
+            (PromiseHolder::Own, Some(PromiseState::Overdue))
+        } else {
+            (PromiseHolder::Epic, Some(PromiseState::Open))
+        };
+        assert_eq!((p.holder, p.state), want, "{}", s.story.key);
+    }
+    assert_eq!(rows.len(), 3);
+    let (es, _) = queue().await;
+    assert!(
+        es.iter().any(|e| e.needed_in_reason
+            == Some(NeededInReason::Promise {
+                key: a[0].clone(),
+                level: ItemType::Story,
+                on: now.date_naive() - chrono::Days::new(2),
+                overdue: true
+            })),
+        "{es:?}"
+    );
+    let _ = epic_a;
+    let run_list = || async {
+        list().await;
+    };
+    let run_queue = || async {
+        queue().await;
+    };
+    let few = (
+        common::statements(&pool, run_list).await,
+        common::statements(&pool, run_queue).await,
+    );
+    promised_board(&h, "b", 9, 100, now.date_naive()).await;
+    promised_board(&h, "c", 4, 200, now.date_naive()).await;
+    assert_eq!(list().await.len(), 16);
+    assert!(list().await.iter().all(|s| s.story.promise.is_some()));
+    let many = (
+        common::statements(&pool, run_list).await,
+        common::statements(&pool, run_queue).await,
+    );
+    assert_eq!(few, many);
+}
+
+/// For a fixed set of stories (one epic's), promised stories and epics elsewhere add no rows to what the list reads:
+/// the promise facts are read for the listed keys only.
+#[tokio::test]
+async fn unrelated_promises_add_no_rows_to_a_fixed_list() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let now = Utc::now();
+    let (a, epic_a) = promised_board(&h, "a", 3, 1, now.date_naive()).await;
+    let list = || {
+        let (h, epic_a) = (h.clone(), epic_a.clone());
+        async move {
+            let f = StoryFilter {
+                epics: Some(vec![epic_a]),
+                ..Default::default()
+            };
+            h.list_stories(&f, None, None, false, DoneFilter::All, now)
+                .await
+                .unwrap()
+        }
+    };
+    let keys = |rows: Vec<reeve_protocol::StoryWithReadiness>| -> Vec<(Key, bool)> {
+        rows.into_iter()
+            .map(|s| (s.story.key, s.story.promise.is_some()))
+            .collect()
+    };
+    let want: Vec<(Key, bool)> = a.iter().map(|k| (k.clone(), true)).collect();
+    assert_eq!(keys(list().await), want);
+    let run = || async {
+        list().await;
+    };
+    let before = common::rows(&pool, run).await;
+    assert!(before > 0, "the counter measured {before} rows");
+    let (b, _) = promised_board(&h, "b", 9, 100, now.date_naive()).await;
+    // Promised history elsewhere: some of it done.
+    for k in &b[..4] {
+        mark_done_at(&h, k, now).await;
+    }
+    assert_eq!(keys(list().await), want);
+    assert_eq!(common::rows(&pool, run).await, before);
 }

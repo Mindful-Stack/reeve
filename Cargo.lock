@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "reeve"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-activity"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-identity"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3310,7 +3310,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-planning"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3331,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-protocol"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3343,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3388,7 +3388,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-testdb"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hex",
  "sha2 0.10.9",
@@ -5389,7 +5389,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

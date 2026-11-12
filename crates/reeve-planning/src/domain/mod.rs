@@ -3,6 +3,7 @@ pub mod decision;
 pub mod findings;
 pub mod items;
 pub mod progress;
+pub mod promise;
 pub mod pull_request;
 pub mod queue;
 pub mod readiness;

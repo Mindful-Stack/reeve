@@ -1,6 +1,7 @@
 // Pure helpers for required decisions: the check label, the "mine" and "closed" filters, due dates and item links.
 import type { ClosureKind, NeededIn, NeededInReason, NextStep, QueueLane, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-import { age, plural } from '#lib/format.ts';
+import { age, dayLabel, plural } from '#lib/format.ts';
+import { itemRoute } from '#lib/urgency.ts';
 
 export type CheckResult = RequiredDecision['check'];
 
@@ -157,17 +158,70 @@ export function nextStepText(s: NextStep, reversibility: Reversibility | null | 
 	}
 }
 
-/** Why the decision is needed when it is: the goal's outcome, or the discovery that waits on it. */
-export function neededInText(r: NeededInReason): string {
-	return r.kind === 'goal' ? `for goal: ${r.outcome}` : `${r.key} is in discovery`;
+type KeyedReason = Extract<NeededInReason, { kind: 'discovery' | 'promise' }>;
+/** A reason phrase split around the item key it names, so a view can make the key a link. */
+export type ReasonParts = { before: string; key: string; after: string };
+
+function keyedParts(r: KeyedReason): ReasonParts {
+	return r.kind === 'discovery'
+		? { before: '', key: r.key, after: ' is in discovery' }
+		: { before: `promised by ${dayLabel(r.on)}${r.overdue ? ', overdue' : ''}: `, key: r.key, after: '' };
 }
 
-/** Where the item in discovery opens: its initiative or epic page (a discovery item is never a story, but the story
- *  drawer is the fallback for one). Null for a goal reason, which names no item. */
-export function discoveryHref(r: NeededInReason): string | null {
-	if (r.kind !== 'discovery') return null;
-	const k = encodeURIComponent(r.key);
-	return r.level === 'initiative' ? `/initiatives/${k}` : r.level === 'epic' ? `/epics/${k}` : `/board?story=${k}`;
+/** `neededInText` split around the key of the item it names (in discovery, or holding a promise); null for a reason
+ *  that names no item (a goal, or one this client does not know). */
+export function reasonParts(r: NeededInReason): ReasonParts | null {
+	switch (r.kind) {
+		case 'discovery':
+		case 'promise':
+			return keyedParts(r);
+		case 'goal':
+		case 'unknown':
+			return null;
+		default: {
+			// A kind newer than the generated types: compile-time exhaustive, harmless at run time.
+			r satisfies never;
+			return null;
+		}
+	}
+}
+
+/** Why the decision is needed when it is: the goal's outcome, the discovery that waits on it, or the promise of an
+ *  affected story (the item holding it, the effective date, and whether it is overdue). A reason added after this
+ *  client was built reads `unknown`, and so does any kind the generated types do not list. */
+export function neededInText(r: NeededInReason): string {
+	switch (r.kind) {
+		case 'goal':
+			return `for goal: ${r.outcome}`;
+		case 'discovery':
+		case 'promise': {
+			const p = keyedParts(r);
+			return p.before + p.key + p.after;
+		}
+		case 'unknown':
+			return 'needed (reason not shown)';
+		default: {
+			r satisfies never;
+			return 'needed (reason not shown)';
+		}
+	}
+}
+
+/** Where the item a reason names opens: an initiative or epic page, or a story's drawer over `url`'s page. Null for a
+ *  reason that names no item (a goal, or one this client does not know). */
+export function reasonHref(r: NeededInReason, url: { readonly href: string }): string | null {
+	switch (r.kind) {
+		case 'discovery':
+		case 'promise':
+			return itemRoute({ item: r.level, key: r.key }, url);
+		case 'goal':
+		case 'unknown':
+			return null;
+		default: {
+			r satisfies never;
+			return null;
+		}
+	}
 }
 
 /** The sprint a decision is needed in. Shown beside `neededInText`, so a row in the review lane still says which sprint. */
