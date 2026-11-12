@@ -119,8 +119,9 @@ export function activeFilterCount(url: BacklogUrl, me: string | null | undefined
 	return Object.keys(backlogFilters(url, me)).length;
 }
 
-/** Clear filters: the URL without its filters. Text, state and view are kept: the text chip is what drops the text (and
- *  relevance with it, `withoutText`). */
+/** Clear filters: the URL without its filters. Text, state and view are kept, except a `state=todo`, which is the
+ *  default once the Promise filter is gone (`dropTodo`); the text chip is what drops the text (and relevance with it,
+ *  `withoutText`). */
 export function withoutFilters(url: BacklogUrl): URL {
 	const next = new URL(url.href);
 	for (const name of FILTER_PARAMS) next.searchParams.delete(name);
