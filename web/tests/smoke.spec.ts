@@ -736,6 +736,9 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	await resume.click({ trial: true }); // the bar's button is usable while the drawer is open
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
+	// The key and its glyph stay on one line; only the chips after it may wrap.
+	expect((await drawer.locator('h2 .key').boundingBox())!.height).toBeLessThan(30);
+	await expect(drawer.getByRole('button', { name: `Copy ${s.key}` })).toBeVisible();
 });
 
 for (const width of [1280, 360]) {

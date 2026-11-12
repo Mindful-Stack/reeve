@@ -48,6 +48,7 @@
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
+	import CopyKey from '#lib/ui/CopyKey.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
@@ -585,7 +586,7 @@
 <aside class="drawer" role="complementary" aria-label="Story {storyKey}" data-testid="story-drawer" bind:this={panel} onkeydown={keydown}>
 	<header class="top">
 		<h2 tabindex="-1" bind:this={heading}>
-			<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
+			<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span><CopyKey key={storyKey} />
 			{#if story}<span class="chip">{story.kind}</span>{/if}
 			{#if story?.external_ref}<span class="muted" title="External reference">from {story.external_ref}</span>{/if}
 		</h2>
@@ -1085,10 +1086,15 @@
 	}
 	h2 {
 		display: flex;
+		flex-wrap: wrap;
+		min-width: 0;
 		gap: 0.5rem;
 		align-items: center;
 		margin: 0;
 		font-size: 18px;
+	}
+	h2 .key {
+		white-space: nowrap;
 	}
 	h3 {
 		margin: 0 0 6px;
