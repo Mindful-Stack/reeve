@@ -21,7 +21,14 @@
 	/** The decision a gate's reason names: every decision gate carries a `decision_*` reason. */
 	const decisionOf = (r: Reason): { id: number; title: string } | null =>
 		'decision_id' in r ? { id: r.decision_id, title: r.title } : null;
-	const waiting = $derived(gates.discoveries.length + gates.decisions.length > 0);
+	/** The decision gates that name a decision, with it; the server always names one, so a gate without is left out. */
+	const decisions = $derived(
+		gates.decisions.flatMap((g) => {
+			const ref = decisionOf(g.reason);
+			return ref ? [{ g, ref }] : [];
+		})
+	);
+	const waiting = $derived(gates.discoveries.length + decisions.length > 0);
 	/** "Discovery m of n marked · decisions d of n decided"; a half whose n is 0 is left out. */
 	const line = $derived.by(() => {
 		const parts: string[] = [];
@@ -47,12 +54,11 @@
 						<span class="muted">{d.item} discovery</span>
 					</li>
 				{/each}
-				{#each gates.decisions as g (decisionOf(g.reason)?.id)}
-					{@const ref = decisionOf(g.reason)}
+				{#each decisions as { g, ref } (ref.id)}
 					<!-- One link for the id and title, as DecisionList links a decision's title; the parts apart by "·". -->
-					<li data-testid="decision-{ref?.id}">
-						{#if ref}<a data-sveltekit-reset="false" href={decisionHref(page.url, ref.id)}>#{ref.id} {ref.title}</a> ·{/if}
-						<span class="need">{shortLabel(g.reason)}</span> ·
+					<li data-testid="decision-{ref.id}">
+						<a data-sveltekit-reset="false" href={decisionHref(page.url, ref.id)}>#{ref.id} {ref.title}</a> ·
+						<span class="small">{shortLabel(g.reason)}</span> ·
 						<span class="muted">on {g.on}</span>
 					</li>
 				{/each}
@@ -81,12 +87,5 @@
 	ul {
 		margin: 0;
 		padding-left: 18px;
-	}
-	.key {
-		font-family: var(--mono);
-		font-size: 13px;
-	}
-	.need {
-		font-size: 13px;
 	}
 </style>
