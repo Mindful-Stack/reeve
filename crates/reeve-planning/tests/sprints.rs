@@ -1521,7 +1521,10 @@ mod lifecycle {
         until_waiting_on_a_lock(&pool, "record_confidence").await;
         opener.commit().await.unwrap();
         let r = write.await.unwrap();
-        assert!(matches!(r, Err(HandlerError::Conflict { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
         let now = goal_now(&h, g.id).await;
         assert_eq!((now.sprint_id, now.confidence), (d2, None));
     }
@@ -1542,8 +1545,42 @@ mod lifecycle {
         until_waiting_on_a_lock(&pool, "remove_goal").await;
         opener.commit().await.unwrap();
         let r = write.await.unwrap();
-        assert!(matches!(r, Err(HandlerError::Conflict { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
         assert_eq!(goal_now(&h, g.id).await.sprint_id, d2);
+    }
+
+    /// The same shape for unlink: the link stays, and the answer is the retry conflict.
+    #[tokio::test]
+    async fn an_unlink_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let s = story(&h, &c, "s").await;
+        h.link_goal(&c, g.id, std::slice::from_ref(s.key()))
+            .await
+            .unwrap();
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, k) = (h.clone(), c.clone(), s.key().clone());
+            async move { h.unlink_goal(&c, g.id, &k).await }
+        });
+        until_waiting_on_a_lock(&pool, "unlink_goal").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
+        let links: i64 = sqlx::query_scalar("SELECT count(*) FROM goal_links WHERE goal_id = $1")
+            .bind(g.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((goal_now(&h, g.id).await.sprint_id, links), (d2, 1));
     }
 
     /// A write that holds the sprint and goal row locks takes no second connection (ports.rs): run on a pool of one,

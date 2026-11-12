@@ -94,7 +94,10 @@ impl Handlers {
     }
 
     /// Locks a goal's sprint, then the goal; answers Conflict when the goal is no longer that sprint's (an opening moved
-    /// it to the next draft meanwhile, kb/ADR-0026 R2), and only then checks that the sprint's state allows `op`.
+    /// it to the next draft meanwhile, kb/ADR-0026 R2), and only then checks that the sprint's state allows `op`. The
+    /// Conflict is -1, "concurrent update, retry": a move does not bump the goal's version, and these writes take none.
+    /// Never lock `g.sprint_id` here on a mismatch: holding the goal while waiting for a sprint inverts the lock order
+    /// and deadlocks against a writer that read the new sprint. A goal removed meanwhile answers NotFound, unlink included.
     async fn goal_locked(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -106,7 +109,7 @@ impl Handlers {
         let s = self.ports.sprints.sprint_for_update(tx, sprint_id).await?;
         let g = self.ports.sprints.goal_for_update(tx, id).await?;
         if g.sprint_id != s.id {
-            return Err(HandlerError::Conflict { current: g.version });
+            return Err(HandlerError::Conflict { current: -1 });
         }
         allowed(&s, op)?;
         Ok((s, g))
