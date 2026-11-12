@@ -3130,7 +3130,7 @@ mod planning_gates {
     use super::lifecycle::mk;
     use super::started_at::{at, ctx};
     use reeve_planning::*;
-    use reeve_protocol::{ClosureKind, Key, Kind, Reason, Via};
+    use reeve_protocol::{ClosureKind, Key, Kind, Reason, Verdict, Via};
 
     async fn story(h: &Handlers, me: &Ctx, idem: &str, epic: &Key) -> Story {
         h.create_story(
@@ -3331,6 +3331,29 @@ mod planning_gates {
         )
         .await
         .unwrap();
+        // A goal of a sprint opened and closed before: never read.
+        let gx = h
+            .add_goal(
+                &me,
+                "gx",
+                "Old",
+                "done",
+                None,
+                "",
+                false,
+                std::slice::from_ref(e1.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        let d0 = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let s0 = h
+            .open_sprint(&ctx(Via::Interactive, 1), d0.id, d0.version, None)
+            .await
+            .unwrap();
+        h.close_sprint(&me, s0.id, s0.version, vec![(gx.id, Verdict::Met, None)])
+            .await
+            .unwrap();
         let ga = h
             .add_goal(
                 &me,
@@ -3376,8 +3399,10 @@ mod planning_gates {
             item,
             title: title.into(),
         };
+        let planned = h.sprint_planning().await.unwrap();
+        assert!(planned.iter().all(|g| g.goal_id != gx.id));
         assert_eq!(
-            h.sprint_planning().await.unwrap(),
+            planned,
             vec![
                 GoalGates {
                     goal_id: ga.id,
