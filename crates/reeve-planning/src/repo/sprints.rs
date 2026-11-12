@@ -95,6 +95,15 @@ impl SprintRepo for PgPlanningRepo {
     ) -> Result<(), RepoError> {
         delete_goal(tx, id).await
     }
+    async fn move_goals(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        ids: &[i64],
+        from: i64,
+        to: i64,
+    ) -> Result<(), RepoError> {
+        move_goals(tx, ids, from, to).await
+    }
     async fn goals_of_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -410,6 +419,16 @@ async fn save_goal(tx: Tx<'_, '_>, g: &Goal) -> Result<(), RepoError> {
         return Ok(());
     }
     conflict_or_missing(tx, "goals", g.id).await
+}
+
+async fn move_goals(tx: Tx<'_, '_>, ids: &[i64], from: i64, to: i64) -> Result<(), RepoError> {
+    sqlx::query("UPDATE goals SET sprint_id = $3 WHERE id = ANY($1) AND sprint_id = $2")
+        .bind(ids)
+        .bind(from)
+        .bind(to)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 async fn delete_goal(tx: Tx<'_, '_>, id: i64) -> Result<(), RepoError> {

@@ -82,6 +82,15 @@ pub trait SprintRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
     ) -> Result<(), RepoError>;
+    /// Moves these goals from sprint `from` to sprint `to`, links following by goal id; the goals' versions do not
+    /// change (an opening is the only caller, kb/ADR-0026 R1). Ids not in `from` are left alone.
+    async fn move_goals(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        ids: &[i64],
+        from: i64,
+        to: i64,
+    ) -> Result<(), RepoError>;
     /// The goals of these sprints, by sprint then id, in one statement.
     async fn goals_of_in(
         &self,

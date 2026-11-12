@@ -208,14 +208,27 @@ impl Handlers {
         Ok((g, sprint::warnings(count)))
     }
 
-    /// Opens the draft: it becomes active from `c.now`, and the next draft is created in the same transaction.
-    /// Interactive only (kb/ADR-0014 R5).
+    /// Opens the draft with every goal (kb/ADR-0014); `open_sprint_leaving` with nothing left out.
     pub async fn open_sprint(
         &self,
         c: &Ctx,
         id: i64,
         version: i64,
         ends_on: Option<NaiveDate>,
+    ) -> Result<Sprint, HandlerError> {
+        self.open_sprint_leaving(c, id, version, ends_on, &[]).await
+    }
+
+    /// Opens the draft: it becomes active from `c.now`, the next draft is created in the same transaction, and the goals
+    /// in `leave_out` move with their links to that next draft (kb/ADR-0026 R1). An id that is not this draft's goal
+    /// refuses the whole opening. Interactive only (kb/ADR-0014 R5).
+    pub async fn open_sprint_leaving(
+        &self,
+        c: &Ctx,
+        id: i64,
+        version: i64,
+        ends_on: Option<NaiveDate>,
+        leave_out: &[i64],
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
@@ -232,6 +245,29 @@ impl Handlers {
             .is_some()
         {
             return Err(HandlerError::Refused(vec![Reason::SprintActive]));
+        }
+        // Under the draft's lock: `add_goal` and `remove_goal` wait on it, so the draft's goals cannot change before the
+        // move below.
+        let mut left_out: Vec<i64> = Vec::new();
+        for gid in leave_out {
+            if !left_out.contains(gid) {
+                left_out.push(*gid);
+            }
+        }
+        if !left_out.is_empty() {
+            let held: Vec<i64> = self
+                .ports
+                .sprints
+                .goals_of_in(&mut tx, &[id])
+                .await?
+                .iter()
+                .map(|g| g.id)
+                .collect();
+            if let Some(gid) = left_out.iter().find(|g| !held.contains(g)) {
+                return Err(HandlerError::Validation(format!(
+                    "goal {gid} is not in sprint {id}"
+                )));
+            }
         }
         let (starts, ends) = sprint::open_dates(c.now, ends_on, self.settings.sprint_length_days)
             .map_err(|e| HandlerError::Validation(e.to_string()))?;
@@ -257,6 +293,12 @@ impl Handlers {
             .insert_draft(&mut tx, ns, ne, c.now)
             .await?
             .ok_or(HandlerError::Refused(vec![Reason::SprintNotDraft]))?;
+        if !left_out.is_empty() {
+            self.ports
+                .sprints
+                .move_goals(&mut tx, &left_out, id, next.id)
+                .await?;
+        }
         self.activity
             .record(
                 &mut tx,
@@ -265,7 +307,7 @@ impl Handlers {
                     "sprint",
                     &id.to_string(),
                     "opened",
-                    serde_json::json!({"starts_on": starts, "ends_on": ends, "next_draft": next.id}),
+                    serde_json::json!({"starts_on": starts, "ends_on": ends, "next_draft": next.id, "left_out": left_out}),
                 ),
             )
             .await?;

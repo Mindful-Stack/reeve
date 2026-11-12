@@ -1323,6 +1323,78 @@ mod lifecycle {
         ));
     }
 
+    /// Leaving C out: A and B open with the sprint, C moves with its link to the next draft at an unchanged version, a
+    /// repeated id counts once, and the `opened` entry names C. Catches a move that drops links, moves the wrong rows,
+    /// bumps versions, or mishandles duplicates (kb/ADR-0026 R1).
+    #[tokio::test]
+    async fn opening_leaves_chosen_goals_in_the_next_draft() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, sink) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let a = goal(&h, &c, "ga").await;
+        let b = goal(&h, &c, "gb").await;
+        let gc = goal(&h, &c, "gc").await;
+        let s = story(&h, &c, "s").await;
+        h.link_goal(&c, gc.id, std::slice::from_ref(s.key()))
+            .await
+            .unwrap();
+        let gc = goal_now(&h, gc.id).await;
+        let d = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let opened = h
+            .open_sprint_leaving(&c, d.id, d.version, None, &[gc.id, gc.id])
+            .await
+            .unwrap();
+        let v = h.sprints(at(1, 0)).await.unwrap();
+        let next = v.draft.unwrap();
+        assert_ne!(next.id, d.id);
+        let in_sprint = |sid: i64| {
+            let mut ids: Vec<i64> = v
+                .goals
+                .iter()
+                .filter(|g| g.sprint_id == sid)
+                .map(|g| g.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut ab = vec![a.id, b.id];
+        ab.sort();
+        assert_eq!(in_sprint(opened.id), ab);
+        assert_eq!(in_sprint(next.id), vec![gc.id]);
+        let moved = v.goals.iter().find(|g| g.id == gc.id).unwrap();
+        assert_eq!(moved.version, gc.version);
+        let linked: Vec<_> = v
+            .links
+            .iter()
+            .filter(|l| l.goal_id == gc.id)
+            .map(|l| l.item_key.clone())
+            .collect();
+        assert_eq!(linked, vec![s.key().clone()]);
+        let entries = sink.0.lock().unwrap();
+        let open = entries.iter().find(|e| e.action == "opened").unwrap();
+        assert_eq!(open.payload["left_out"], serde_json::json!([gc.id]));
+        assert_eq!(open.payload["next_draft"], serde_json::json!(next.id));
+    }
+
+    /// An id that is not the draft's goal refuses the whole opening: nothing moves, the draft stays a draft and no second
+    /// draft appears. Catches a partial write (a check after the state change, outside the transaction).
+    #[tokio::test]
+    async fn opening_refuses_leaving_out_a_goal_it_does_not_hold() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let a = goal(&h, &c, "ga").await;
+        let d = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let r = h
+            .open_sprint_leaving(&c, d.id, d.version, None, &[a.id + 1000])
+            .await;
+        assert!(matches!(r, Err(HandlerError::Validation(_))), "{r:?}");
+        let v = h.sprints(at(1, 0)).await.unwrap();
+        assert!(v.active.is_none());
+        assert_eq!(v.draft.unwrap().id, d.id);
+        assert_eq!(goal_now(&h, a.id).await.sprint_id, d.id);
+    }
+
     #[tokio::test]
     async fn two_concurrent_opens_leave_one_active_and_one_draft() {
         let (_c, pool) = super::common::pg().await;
@@ -1553,6 +1625,7 @@ mod lifecycle {
     }
 
     /// The same shape for unlink: the link stays, and the answer is the retry conflict.
+    /// Goes red if `unlink_goal` skips `goal_locked`: it would delete the link under the old, now active sprint.
     #[tokio::test]
     async fn an_unlink_conflicts_when_an_opening_moved_its_goal_meanwhile() {
         let (_c, pool) = super::common::pg().await;
