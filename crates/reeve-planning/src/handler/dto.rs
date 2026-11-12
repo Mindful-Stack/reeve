@@ -9,13 +9,10 @@ use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warni
 use crate::domain::urgency::{MarkState, Urgency};
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
-    DemoStoryDto, DiscoveryMarkDto, EpicDto, GoalDto, GoalProgressDto, InitiativeDto, Key,
+    DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
+    GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
     PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintState,
-    SprintViewDto, StoryDto,
-};
-use reeve_protocol::{
-    EpicPromiseDto, EpicPromiseRefDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
-    StoryPromiseDto,
+    SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.

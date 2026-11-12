@@ -679,7 +679,8 @@ impl Handlers {
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in
     /// one statement each, on the caller's transaction, in the order of `stories`, with the urgency and the promise clock
     /// the caller read on that same transaction. Each promise is derived through `story_promise` (kb/ADR-0025 R3-R5).
-    /// Callers pass distinct stories: a repeated story gets its blockers and pull requests only on its first occurrence.
+    /// Callers pass distinct stories: a repeated story gets its blockers, pull requests and goals only on its first
+    /// occurrence; its promise, derived from facts that are only read, is on every occurrence.
     pub async fn story_dtos_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -694,7 +695,10 @@ impl Handlers {
         let mut blockers = self.ports.reads.blockers_of_many(tx, &keys).await?;
         let mut prs = self.ports.reads.pull_requests_for_many(tx, &keys).await?;
         let mut goals = self.ports.reads.active_goals_of_stories(tx, &keys).await?;
-        let mut promises = self.ports.reads.promise_facts_in(tx, &keys, &[]).await?;
+        let promises = self.ports.reads.promise_facts_in(tx, &keys, &[]).await?;
+        // `promise_facts_in` answers every listed story that has a row, promised or not; a story read in this snapshot
+        // always has one, so the empty row is only a guard.
+        let no_row = StoryPromiseRow::default();
         Ok(stories
             .iter()
             .map(|s| {
@@ -713,7 +717,7 @@ impl Handlers {
                     .map(|(id, outcome, via)| GoalRefDto { id, outcome, via })
                     .collect();
                 (dto.urgent_mark, dto.urgent_sources) = urgent_fields(urg, s.key());
-                let row = promises.stories.remove(s.key()).unwrap_or_default();
+                let row = promises.stories.get(s.key()).unwrap_or(&no_row);
                 let facts = StoryFacts {
                     delivery: s.delivery(),
                     resolution: s.resolution(),
