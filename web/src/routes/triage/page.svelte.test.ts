@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Comment, Epic, SimilarStory, Story } from '#lib/api/types.ts';
 import { epic, story, withReadiness } from '#lib/test/fixtures.ts';
 import { settle, type FakePage } from '#lib/test/net.ts';
+import { goto } from '$app/navigation';
 import Triage from './+page.svelte';
 
 const live = vi.hoisted(() => ({ fns: [] as (() => unknown)[] }));
@@ -54,8 +55,10 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		const n = net.s;
 		if (method === 'GET') n.gets.push(path + url.search);
 		if (n.hold.has(path)) await new Promise<void>((r) => n.held.push(r));
-		const key = path.split('/')[4];
+		const parts = path.split('/'); // ['', 'api', 'v1', 'stories', key, sub]
+		const key = parts[4];
 		const at = n.stories.findIndex((s) => s.key === key);
+		const plain = parts[3] === 'stories' && parts.length === 5 && key !== 'similar';
 		if (method === 'GET') {
 			if (path === '/api/v1/stories') {
 				const params = [...url.searchParams.keys()];
@@ -65,20 +68,26 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			}
 			if (path === '/api/v1/epics') return n.epics;
 			if (path === '/api/v1/stories/similar') return n.similar[url.searchParams.get('q')!] ?? [];
-			if (at >= 0) return n.stories[at];
-			return failure('not found', 404, 'not_found');
+			if (plain) return at >= 0 ? n.stories[at] : failure('not found', 404, 'not_found');
+			throw new Error(`unexpected ${method} ${path}`);
 		}
+		const isComment = method === 'POST' && parts.length === 6 && parts[3] === 'stories' && parts[5] === 'comments';
+		const isMove = method === 'POST' && parts.length === 6 && parts[3] === 'stories' && parts[5] === 'move';
+		const isPatch = method === 'PATCH' && plain;
+		if (!(isComment || isMove || isPatch)) throw new Error(`unexpected ${method} ${path}`);
+		if (at < 0) return failure('not found', 404, 'not_found');
 		const sent = (body ?? {}) as Sent;
 		n.writes.push({ method, path, body: sent });
 		const s = n.stories[at];
-		if (path.endsWith('/comments')) {
+		if (isComment) {
 			if (n.failComment) return failure('comment refused');
 			const list = (n.comments[key] ??= []);
-			if (!list.some((c) => c.key === sent.idempotency_key)) list.push({ body: sent.body, key: sent.idempotency_key });
+			// A keyless comment is inserted every time; a keyed one once.
+			if (sent.idempotency_key == null || !list.some((c) => c.key === sent.idempotency_key)) list.push({ body: sent.body, key: sent.idempotency_key });
 			return [] as Comment[];
 		}
 		if (sent.version !== s.version) return conflict(s.version);
-		if (path.endsWith('/move')) {
+		if (isMove) {
 			n.stories[at] = { ...s, delivery: sent.to!, resolution: sent.resolution ?? null, version: s.version + 1 };
 			return n.stories[at];
 		}
@@ -160,6 +169,18 @@ describe('queue', () => {
 		press(t.list(), 'k');
 		expect(t.current()).toBe('GRA-12');
 	});
+	it('j and k leave focus on the listbox', async () => {
+		const t = await open();
+		press(t.list(), 'j');
+		expect(document.activeElement).toBe(t.list());
+		press(t.list(), 'k');
+		expect(document.activeElement).toBe(t.list());
+	});
+	it('o opens the item in the drawer without resetting scroll or focus', async () => {
+		const t = await open();
+		press(t.list(), 'o');
+		expect(goto).toHaveBeenCalledWith('/triage?story=GRA-9', { reset: false });
+	});
 	it('shows delivery and owner for work in progress, with the warning', async () => {
 		const t = await open();
 		press(t.list(), 'j');
@@ -197,3 +218,32 @@ describe('queue', () => {
 	});
 });
 
+describe('the current item leaves the queue', () => {
+	async function leave(keep: string[]) {
+		net.s.stories = net.s.stories.filter((s) => keep.includes(s.key) || s.epic);
+		const t = await open();
+		const i = net.s.stories.findIndex((s) => s.key === t.current());
+		net.s.stories[i] = { ...net.s.stories[i], epic: 'GRA-7', version: net.s.stories[i].version + 1 };
+		net.s.hold.add(`/api/v1/stories/${t.current()}`); // the read of where it went is slow: the window between
+		live.fns.forEach((f) => f());
+		await vi.waitFor(() => expect(net.s.held.length).toBe(1));
+		await settle();
+		return t;
+	}
+	it('hides the counter and keeps the item pane while a list remains', async () => {
+		await leave(['GRA-9', 'GRA-12']);
+		net.s.hold.clear();
+		net.s.held.forEach((r) => r());
+		expect(document.querySelector('.counter')?.textContent ?? '').not.toMatch(/\d+ of \d+/);
+	});
+	it('the last item leaving shows no empty state and keeps focus on the item heading', async () => {
+		await leave(['GRA-9']);
+		expect(document.body.textContent).not.toContain('Nothing to triage'); // while the read is pending
+		net.s.hold.clear();
+		net.s.held.forEach((r) => r());
+		await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-status"]')!.textContent).not.toBe(''));
+		expect(document.body.textContent).not.toContain('Nothing to triage');
+		expect(document.querySelector('.counter')?.textContent ?? '').not.toMatch(/\d+ of \d+/);
+		await vi.waitFor(() => expect(document.activeElement?.id).toBe('triage-item-title'));
+	});
+});

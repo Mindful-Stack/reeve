@@ -120,7 +120,10 @@
 	 *  when the list cannot take focus (hidden on a phone); the empty state's heading when nothing is left. */
 	async function focusQueue(): Promise<void> {
 		await tick();
-		if (!queue.length) return void area?.querySelector<HTMLElement>('#triage-empty')?.focus();
+		if (!queue.length) {
+			const empty = area?.querySelector<HTMLElement>('#triage-empty');
+			return void (empty ?? area?.querySelector<HTMLElement>('#triage-item-title'))?.focus();
+		}
 		list?.focus();
 		if (document.activeElement !== list) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
 	}
@@ -192,7 +195,7 @@
 		{#if notice?.open}<a href={storyHref(page.url, notice.open)} data-sveltekit-reset="false">Open {notice.open}</a>{/if}
 	</div>
 	{#if loadError}<p role="alert" class="error">Couldn't load the queue: {loadError}</p>{/if}
-	{#if loaded && !queue.length && !left}
+	{#if loaded && !queue.length && !left && currentKey === null}
 		<div class="empty">
 			<h2 id="triage-empty" tabindex="-1">Nothing to triage</h2>
 			<p><a href="/backlog">Go to the backlog</a></p>
@@ -222,7 +225,7 @@
 			{/each}
 		</ul>
 		<div class="pane">
-			<p class="counter">{position + 1} of {queue.length}
+			<p class="counter">{#if position >= 0}{position + 1} of {queue.length}{/if}
 				<button type="button" onclick={() => step(-1)}>Previous</button>
 				<button type="button" onclick={() => step(1)}>Next</button>
 				<button type="button" aria-expanded={help} onclick={() => (help = !help)}>Keys (?)</button>
