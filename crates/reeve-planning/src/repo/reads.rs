@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::{promise::Promise, queue::LineageItem};
+use crate::domain::queue::LineageItem;
 
 #[async_trait]
 impl PlanningReads for PgPlanningRepo {
@@ -539,38 +539,16 @@ async fn urgency_lineage_in(
     })
 }
 
-/// A promise from its four nullable columns (`<prefix>on`, `by`, `at`, `to`), None when there is none.
-fn promise_cols(
-    r: &sqlx::postgres::PgRow,
-    on: &str,
-    by: &str,
-    at: &str,
-    to: &str,
-) -> Result<Option<Promise>, sqlx::Error> {
-    let on: Option<NaiveDate> = r.try_get(on)?;
-    Ok(match on {
-        None => None,
-        Some(on) => Some(Promise::from_persisted(
-            on,
-            r.try_get::<Option<String>, _>(by)?
-                .ok_or_else(|| sqlx::Error::Decode("promised_by is null".into()))?,
-            r.try_get::<Option<DateTime<Utc>>, _>(at)?
-                .ok_or_else(|| sqlx::Error::Decode("promised_at is null".into()))?,
-            r.try_get(to)?,
-        )),
-    })
-}
-
 fn story_promise_row(r: &sqlx::postgres::PgRow) -> Result<StoryPromiseRow, sqlx::Error> {
     let epic = match (
         r.try_get::<Option<String>, _>("epic_key")?,
-        promise_cols(r, "e_on", "e_by", "e_at", "e_to")?,
+        promise_cols(r, "e_")?,
     ) {
         (Some(k), Some(p)) => Some((key(&k), p)),
         _ => None,
     };
     Ok(StoryPromiseRow {
-        own: promise_cols(r, "p_on", "p_by", "p_at", "p_to")?,
+        own: promise_cols(r, "p_")?,
         epic,
         done_at: r.try_get("done_at")?,
     })
@@ -610,11 +588,12 @@ async fn promise_facts_in(
             "story" => {
                 facts.stories.insert(k, story_promise_row(r)?);
             }
-            _ => {
-                if let Some(p) = promise_cols(r, "p_on", "p_by", "p_at", "p_to")? {
+            "epic" => {
+                if let Some(p) = promise_cols(r, "p_")? {
                     facts.epics.insert(k, p);
                 }
             }
+            other => return Err(bad("promise fact kind", other).into()),
         }
     }
     Ok(facts)
@@ -630,10 +609,9 @@ async fn promised_between_in(
                 s.promised_on AS p_on, s.promised_by AS p_by, s.promised_at AS p_at, s.promised_to AS p_to,
                 e.promised_on AS e_on, e.promised_by AS e_by, e.promised_at AS e_at, e.promised_to AS e_to
            FROM stories s LEFT JOIN epics e ON e.key = s.epic_key AND e.promised_on IS NOT NULL
-          WHERE (s.promised_on IS NOT NULL OR e.promised_on IS NOT NULL)
-            AND LEAST(s.promised_on, e.promised_on) <= $2
-            AND ($1::date IS NULL OR LEAST(s.promised_on, e.promised_on) > $1)
-          ORDER BY LEAST(s.promised_on, e.promised_on), s.key",
+          WHERE (s.promised_on <= $2 AND ($1::date IS NULL OR s.promised_on > $1))
+             OR (e.promised_on <= $2 AND ($1::date IS NULL OR e.promised_on > $1))
+          ORDER BY length(s.key), s.key",
     )
     .bind(after)
     .bind(upto)

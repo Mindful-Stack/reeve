@@ -2,7 +2,6 @@
 //! names `version` or `updated_at`, and nothing here reads the clock.
 use super::*;
 use crate::domain::promise::Promise;
-use chrono::NaiveDate;
 
 #[async_trait]
 impl PromiseRepo for PgPlanningRepo {
@@ -52,7 +51,7 @@ async fn lock_for_promise(
         _ => "NULL::text AS delivery",
     };
     let row = sqlx::query(&format!(
-        "SELECT {delivery}, promised_on, promised_by, promised_at, promised_to FROM {} WHERE key = $1 FOR UPDATE",
+        "SELECT {delivery}, promised_on, promised_by, promised_at, promised_to FROM {} WHERE key = $1 FOR NO KEY UPDATE",
         table(item)
     ))
     .bind(k.to_string())
@@ -60,21 +59,11 @@ async fn lock_for_promise(
     .await?;
     let Some(r) = row else { return Ok(None) };
     let delivery = r
-        .get::<Option<String>, _>("delivery")
+        .try_get::<Option<String>, _>("delivery")?
         .as_deref()
         .map(delivery_of)
         .transpose()?;
-    let promise = match r.get::<Option<NaiveDate>, _>("promised_on") {
-        None => None,
-        Some(on) => Some(Promise::from_persisted(
-            on,
-            r.get::<Option<String>, _>("promised_by")
-                .ok_or_else(|| sqlx::Error::Decode("promised_by is null".into()))?,
-            r.get::<Option<DateTime<Utc>>, _>("promised_at")
-                .ok_or_else(|| sqlx::Error::Decode("promised_at is null".into()))?,
-            r.get("promised_to"),
-        )),
-    };
+    let promise = promise_cols(&r, "promised_")?;
     Ok(Some(PromiseTarget { delivery, promise }))
 }
 

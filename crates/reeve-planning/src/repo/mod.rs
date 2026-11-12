@@ -2,6 +2,7 @@ use crate::{
     domain::{
         decision::*,
         items::*,
+        promise::Promise,
         pull_request::*,
         readiness::*,
         sprint::{Goal, GoalLink, Sprint, StoryTimes},
@@ -70,6 +71,27 @@ fn like_pattern(text: &str) -> String {
     }
     pattern.push('%');
     pattern
+}
+
+/// A promise from four nullable columns named `<prefix>on`, `<prefix>by`, `<prefix>at` and `<prefix>to` (`promised_` on
+/// the item's own row); None when `<prefix>on` is null.
+fn promise_cols(r: &sqlx::postgres::PgRow, prefix: &str) -> Result<Option<Promise>, sqlx::Error> {
+    let col = |c: &str| format!("{prefix}{c}");
+    let Some(on) = r.try_get::<Option<NaiveDate>, _>(col("on").as_str())? else {
+        return Ok(None);
+    };
+    let by = r
+        .try_get::<Option<String>, _>(col("by").as_str())?
+        .ok_or_else(|| {
+            sqlx::Error::Decode(format!("{} is null beside {}", col("by"), col("on")).into())
+        })?;
+    let at = r
+        .try_get::<Option<DateTime<Utc>>, _>(col("at").as_str())?
+        .ok_or_else(|| {
+            sqlx::Error::Decode(format!("{} is null beside {}", col("at"), col("on")).into())
+        })?;
+    let to = r.try_get::<Option<String>, _>(col("to").as_str())?;
+    Ok(Some(Promise::from_persisted(on, by, at, to)))
 }
 
 fn kind_str(k: Kind) -> &'static str {

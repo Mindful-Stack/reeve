@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative, ItemType,
-    RepoError, RequiredDecision, Settings, Story, StoryFilter, StoryText, UrgentMark,
-    compute_readiness, make_planning_ports, promise::Promise,
+    Promise, PromiseFacts, PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings,
+    Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark, compute_readiness,
+    make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -1622,13 +1623,32 @@ async fn promise_set_and_clear_touch_only_the_promise_columns() {
                 .await
                 .unwrap()
         );
+        let first = mk_promise(pday(12, 1), "ann@example.com", None);
+        assert!(
+            ports
+                .promises
+                .set_promise(&mut tx, item, &pkey(key), &first)
+                .await
+                .unwrap()
+        );
+        assert!(
+            ports
+                .promises
+                .set_promise(&mut tx, item, &pkey(key), &p)
+                .await
+                .unwrap()
+        );
         let got = ports
             .promises
             .lock_for_promise(&mut tx, item, &pkey(key))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(got.promise, Some(p.clone()));
+        assert_eq!(
+            got.promise,
+            Some(p.clone()),
+            "the second set replaces the first"
+        );
         tx.commit().await.unwrap();
         assert_eq!(before, sqlx::query_as(&q).fetch_one(&pool).await.unwrap());
         let mut tx = pool.begin().await.unwrap();
@@ -1678,7 +1698,7 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
         .unwrap();
     assert_eq!(
         done,
-        Some(reeve_planning::PromiseTarget {
+        Some(PromiseTarget {
             delivery: Some(DeliveryState::Done),
             promise: Some(p)
         })
@@ -1690,7 +1710,7 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
         .unwrap();
     assert_eq!(
         todo,
-        Some(reeve_planning::PromiseTarget {
+        Some(PromiseTarget {
             delivery: Some(DeliveryState::Todo),
             promise: None
         })
@@ -1702,7 +1722,7 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
         .unwrap();
     assert_eq!(
         epic,
-        Some(reeve_planning::PromiseTarget {
+        Some(PromiseTarget {
             delivery: None,
             promise: None
         })
@@ -1727,12 +1747,61 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
     tx.rollback().await.unwrap();
 }
 
+/// The lock is real, and is a `FOR NO KEY UPDATE`: a second lock waits (55P03), a foreign-key insert does not.
+#[tokio::test]
+async fn lock_for_promise_holds_the_row_without_blocking_foreign_key_inserts() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    let mut tx1 = pool.begin().await.unwrap();
+    ports
+        .promises
+        .lock_for_promise(&mut tx1, ItemType::Epic, &pkey("ABC-1"))
+        .await
+        .unwrap();
+    let mut tx2 = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx2)
+        .await
+        .unwrap();
+    let e = ports
+        .promises
+        .lock_for_promise(&mut tx2, ItemType::Epic, &pkey("ABC-1"))
+        .await
+        .unwrap_err();
+    let code = match e {
+        RepoError::Db(sqlx::Error::Database(d)) => d.code().map(|c| c.to_string()),
+        _ => None,
+    };
+    assert_eq!(code.as_deref(), Some("55P03"));
+    drop(tx2);
+    let mut tx3 = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx3)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-2','T','story','ABC-1','2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')")
+        .execute(&mut *tx3)
+        .await
+        .expect("a story under the locked epic is not blocked");
+    tx3.rollback().await.unwrap();
+    tx1.rollback().await.unwrap();
+}
+
 #[tokio::test]
 async fn promise_facts_in_returns_own_epic_and_done_at_for_the_listed_keys_only() {
     let (_c, pool) = common::pg().await;
     let ports = make_planning_ports(pool.clone());
     promise_epic(&pool, "ABC-1").await;
     promise_epic(&pool, "ABC-2").await;
+    promise_epic(&pool, "ABC-6").await;
+    put_promise(
+        &pool,
+        "epics",
+        "ABC-6",
+        &mk_promise(pday(11, 18), "ann@example.com", None),
+    )
+    .await;
     promise_story(&pool, "ABC-3", Some("ABC-1"), "done").await;
     promise_story(&pool, "ABC-4", Some("ABC-1"), "todo").await;
     promise_story(&pool, "ABC-5", Some("ABC-2"), "todo").await;
@@ -1754,10 +1823,10 @@ async fn promise_facts_in_returns_own_epic_and_done_at_for_the_listed_keys_only(
         .unwrap();
     tx.rollback().await.unwrap();
     let done_at = Utc.with_ymd_and_hms(2026, 11, 5, 10, 0, 0).unwrap();
-    let mut want = reeve_planning::PromiseFacts::default();
+    let mut want = PromiseFacts::default();
     want.stories.insert(
         pkey("ABC-3"),
-        reeve_planning::StoryPromiseRow {
+        StoryPromiseRow {
             own: Some(s3),
             epic: Some((pkey("ABC-1"), ep.clone())),
             done_at: Some(done_at),
@@ -1765,13 +1834,17 @@ async fn promise_facts_in_returns_own_epic_and_done_at_for_the_listed_keys_only(
     );
     want.stories.insert(
         pkey("ABC-5"),
-        reeve_planning::StoryPromiseRow {
+        StoryPromiseRow {
             own: Some(s5),
             epic: None,
             done_at: None,
         },
     );
     want.epics.insert(pkey("ABC-1"), ep);
+    assert!(
+        !facts.epics.contains_key(&pkey("ABC-6")),
+        "ABC-6 was not asked for"
+    );
     assert_eq!(facts, want);
 }
 
@@ -1823,20 +1896,42 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         &mk_promise(pday(11, 15), "a@b.c", None),
     )
     .await;
-    for (key, epic, on) in [
-        ("ABC-2", None, Some(pday(11, 9))),
-        ("ABC-3", None, Some(pday(11, 10))),
-        ("ABC-4", None, Some(pday(11, 11))),
-        ("ABC-5", None, Some(pday(11, 24))),
-        ("ABC-6", Some("ABC-1"), None),
-        ("ABC-7", None, None),
+    promise_epic(&pool, "ABC-20").await;
+    // Promised on 6 Nov, after ABC-21 was done on 5 Nov, so ABC-21 does not inherit it (R3).
+    put_promise(
+        &pool,
+        "epics",
+        "ABC-20",
+        &Promise::from_persisted(
+            pday(11, 15),
+            "a@b.c".into(),
+            Utc.with_ymd_and_hms(2026, 11, 6, 8, 0, 0).unwrap(),
+            None,
+        ),
+    )
+    .await;
+    for (key, epic, delivery, on) in [
+        ("ABC-2", None, "todo", Some(pday(11, 9))),
+        ("ABC-3", None, "todo", Some(pday(11, 10))),
+        ("ABC-4", None, "todo", Some(pday(11, 11))),
+        ("ABC-5", None, "todo", Some(pday(11, 24))),
+        ("ABC-6", Some("ABC-1"), "todo", None),
+        ("ABC-7", None, "todo", None),
+        ("ABC-8", None, "todo", Some(pday(11, 11))),
+        ("ABC-21", Some("ABC-20"), "done", Some(pday(11, 20))),
+        ("ABC-22", None, "done", Some(pday(11, 12))),
+        ("ABC-23", Some("ABC-1"), "todo", Some(pday(12, 3))),
     ] {
-        promise_story(&pool, key, epic, "todo").await;
+        promise_story(&pool, key, epic, delivery).await;
         if let Some(on) = on {
             put_promise(&pool, "stories", key, &mk_promise(on, "a@b.c", None)).await;
         }
     }
-    let keys = |rows: Vec<reeve_planning::PromisedStoryRow>| -> Vec<String> {
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = 'ABC-22'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let keys = |rows: &[PromisedStoryRow]| -> Vec<String> {
         rows.iter().map(|r| r.key.to_string()).collect()
     };
     let mut tx = pool.begin().await.unwrap();
@@ -1845,18 +1940,46 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         .promised_between_in(&mut tx, Some(pday(11, 10)), pday(11, 24))
         .await
         .unwrap();
-    assert_eq!(keys(got.clone()), ["ABC-4", "ABC-6", "ABC-5"]);
-    let inherited = got.iter().find(|r| r.key.to_string() == "ABC-6").unwrap();
+    // Ordered by key; ABC-4 and ABC-8 share a date. ABC-23's own date is out of range, its epic's is in.
+    assert_eq!(
+        keys(&got),
+        [
+            "ABC-4", "ABC-5", "ABC-6", "ABC-8", "ABC-21", "ABC-22", "ABC-23"
+        ]
+    );
+    let by = |k: &str| got.iter().find(|r| r.key.to_string() == k).unwrap();
+    let inherited = by("ABC-6");
     assert_eq!(inherited.title, "T ABC-6");
     assert_eq!(inherited.delivery, DeliveryState::Todo);
+    assert_eq!(inherited.resolution, None);
     assert_eq!(inherited.row.own, None);
+    assert_eq!(inherited.row.done_at, None);
     assert_eq!(inherited.row.epic.as_ref().unwrap().0, pkey("ABC-1"));
+    let epic_only = by("ABC-23");
+    assert_eq!(epic_only.row.own.as_ref().unwrap().on(), pday(12, 3));
+    assert_eq!(epic_only.row.epic.as_ref().unwrap().1.on(), pday(11, 15));
+    let done_at = Utc.with_ymd_and_hms(2026, 11, 5, 10, 0, 0).unwrap();
+    let done = by("ABC-21");
+    assert_eq!(done.delivery, DeliveryState::Done);
+    assert_eq!(done.resolution, Some(Resolution::Completed));
+    assert_eq!(done.row.done_at, Some(done_at));
+    let dropped = by("ABC-22");
+    assert_eq!(dropped.delivery, DeliveryState::Done);
+    assert_eq!(dropped.resolution, Some(Resolution::Dropped));
+    assert_eq!(dropped.row.done_at, Some(done_at));
     let got = ports
         .reads
         .promised_between_in(&mut tx, None, pday(11, 10))
         .await
         .unwrap();
-    assert_eq!(keys(got), ["ABC-2", "ABC-3"]);
+    assert_eq!(keys(&got), ["ABC-2", "ABC-3"]);
+    // Done before its epic promised: not inheriting, but its own date is in the window (17 Nov, 1 Dec].
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, Some(pday(11, 17)), pday(12, 1))
+        .await
+        .unwrap();
+    assert_eq!(keys(&got), ["ABC-5", "ABC-21"]);
     tx.rollback().await.unwrap();
 }
 
