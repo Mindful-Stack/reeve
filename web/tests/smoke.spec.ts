@@ -970,8 +970,8 @@ test('the header box filters the open backlog by relevance, links to search all,
 for (const width of [320, 720, 1280]) {
 	test(`the backlog's filter bar fits at ${width}px with the filters open: no horizontal scroll`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 800 });
-		// The widest options the selects can hold: an epic with an 80-character title (the Epic select) and a long label
-		// on a todo story (the Label select).
+		// The widest options the pickers can hold: an epic with an 80-character title (the Epic picker) and a long label
+		// on a todo story (the Label picker).
 		const title = `Smoke epic at ${width}px with a title long enough to fill eighty characters`.padEnd(80, '.');
 		expect(title).toHaveLength(80);
 		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title });

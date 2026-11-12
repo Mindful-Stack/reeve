@@ -1267,6 +1267,9 @@
 		min-width: 0;
 		font: inherit;
 	}
+	.fields :global(.picker) {
+		flex: 1 1 12rem;
+	}
 	.stack {
 		display: grid;
 	}

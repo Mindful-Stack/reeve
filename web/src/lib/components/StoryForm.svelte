@@ -1,5 +1,5 @@
 <!-- web/src/lib/components/StoryForm.svelte: creates a story. On an epic page the epic is fixed (`epic`); on the backlog an
-     epic select (with "none") picks it. Same send cycle as NewEpicForm (one request per double submit). Mount it under
+     epic picker (with "No epic") picks it. Same send cycle as NewEpicForm (one request per double submit). Mount it under
      `{#key}` of the page's item so a draft never moves to another item. -->
 <script lang="ts">
 	import { tick } from 'svelte';

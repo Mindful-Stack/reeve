@@ -13,7 +13,7 @@
 	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
 	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
-	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a select of
+	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a picker of
 	// `initiatives` plus "none" picks it. Mount it under `{#key}` of the page's item so a draft never moves to another item.
 	let {
 		initiative,

@@ -196,7 +196,7 @@ describe('NewEpicForm', () => {
 		expect(net.posts[1].idempotency_key).not.toBe(net.posts[0].idempotency_key);
 	});
 
-	it('picks the parent from a select on the epics index, keeping it after a success', async () => {
+	it('picks the parent from a picker on the epics index, keeping it after a success', async () => {
 		const oncreated = mountForm({ initiatives: [initiative({ key: 'ABC-1', title: 'One' }), initiative({ key: 'ABC-2', title: 'Two' })] });
 		choose(form(), 'Initiative', 'ABC-2');
 		type(field('Title'), 'An epic');

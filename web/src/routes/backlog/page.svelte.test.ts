@@ -210,7 +210,7 @@ describe('backlog page', () => {
 		expect(picker(form, 'Initiative').value).toBe('none');
 	});
 
-	it('opens New story with an epic select defaulting to none', async () => {
+	it('opens New story with an epic picker defaulting to No epic', async () => {
 		await open('Loose epic');
 		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New story')!.click();
 		flushSync();
@@ -1221,16 +1221,23 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 	it('choosing an epic in the filter navigates with epic=<key>, so the server filters', async () => {
 		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
 		await open('Loose epic');
+		(document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement).click();
+		flushSync();
 		pickOption(document.body, 'Epic', 'E-2');
 		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalled());
 		const [url] = vi.mocked(goto).mock.calls.at(-1)!;
 		expect(new URL(String(url)).searchParams.get('epic')).toBe('E-2');
-		await vi.waitFor(() => expect(page.url.searchParams.get('epic')).toBe('E-2')); // the fake navigates a tick later: let it land before the next test
+		await vi.waitFor(() => expect(page.url.searchParams.get('epic')).toBe('E-2')); // the fake navigates a tick later: let it land before the next step
+		pickOption(document.body, 'Epic', '', 'any'); // the empty choice is no filter (kb/ADR-0021)
+		await vi.waitFor(() => expect(new URL(String(vi.mocked(goto).mock.calls.at(-1)![0])).searchParams.has('epic')).toBe(false));
+		await vi.waitFor(() => expect(page.url.searchParams.has('epic')).toBe(false));
 	});
 
 	it('a URL change shows in the closed epic filter', async () => {
 		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
 		await open('Loose epic');
+		(document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement).click();
+		flushSync();
 		expect(picker(document.body, 'Epic').value).toBe('any');
 		go('?epic=E-2');
 		await vi.waitFor(() => {

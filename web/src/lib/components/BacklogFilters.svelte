@@ -41,7 +41,7 @@
 	}: {
 		epics: Epic[];
 		initiatives: Initiative[];
-		/** The Label select's options (the page's: the todo list's, the rows' and the selected one). */
+		/** The Label picker's options (the page's: the todo list's, the rows' and the selected one). */
 		labels: string[];
 		children?: Snippet;
 	} = $props();
@@ -78,7 +78,7 @@
 
 	const epic = $derived(p.get('epic') ?? '');
 	const initiative = $derived(p.get('initiative') ?? '');
-	/** The Epic select's options: the chosen initiative's epics (all of them when none is chosen, or when the URL names
+	/** The Epic picker's options: the chosen initiative's epics (all of them when none is chosen, or when the URL names
 	 *  one by a reference the list does not hold), plus the chosen epic. */
 	const epicOptions = $derived(
 		initiative && initiatives.some((i) => i.key === initiative) ? epics.filter((e) => e.initiative === initiative || e.key === epic) : epics
@@ -213,16 +213,13 @@
 		gap: 6px;
 		color: var(--muted);
 	}
-	/* A long option (an epic's key and title) shrinks the select, not the page: at 320px the label fits the panel. */
+	/* A long option (an epic's key and title) shrinks the picker, not the page: at 320px the label fits the panel. */
 	.inline {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		min-width: 0;
 		max-width: 100%;
-	}
-	.panel :global(.picker) {
-		flex: 1 1 12rem;
 	}
 	select {
 		flex: 0 1 auto;

@@ -62,9 +62,9 @@
 	let comments = $state<Comment[]>([]);
 	/** The epic's activity log, fetched best effort like the comments. */
 	let activity = $state<ActivityEntry[]>([]);
-	/** Every initiative, for the details select. */
+	/** Every initiative, for the details picker. */
 	let initiatives = $state<Initiative[]>([]);
-	/** The details select lists them in the planning page's order. */
+	/** The details picker lists them in the planning page's order. */
 	const orderedInitiatives = $derived(planningOrder(session.config?.horizon_buckets ?? [], initiatives));
 	let loadError = $state<string | null>(null);
 	/** A refetch failed after the page had loaded: the content (and its open editors) stays mounted; the banner offers a retry. */
