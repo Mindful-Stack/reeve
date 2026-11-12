@@ -63,13 +63,24 @@ it('typing into a picker focused by script replaces its label, also after Escape
 	expect(shown()).toEqual(['GRA-608 Each person lands on what they need']);
 });
 
+it('ArrowUp moves the active option back up, and stops at the first', () => {
+	const { type, key, input } = setup('');
+	type('gra');
+	const active = () => document.getElementById(input.getAttribute('aria-activedescendant') ?? '')?.textContent?.trim();
+	const first = active(); // typing makes the first match active
+	key('ArrowDown');
+	expect(active()).not.toBe(first);
+	key('ArrowUp');
+	expect(active()).toBe(first);
+	key('ArrowUp');
+	expect(active()).toBe(first);
+});
+
 it('narrows as you type and picks with the keyboard without submitting the form', () => {
 	const { type, key, shown, bound, onsubmit, onchange, input } = setup('', 'No epic');
 	type('live go');
 	expect(shown()).toEqual(['GRA-8 Go-live']);
 	key('ArrowDown');
-	expect(input.getAttribute('aria-activedescendant')).toBeTruthy();
-	key('ArrowUp');
 	expect(input.getAttribute('aria-activedescendant')).toBeTruthy();
 	const enter = key('Enter');
 	expect(enter.defaultPrevented).toBe(true);
