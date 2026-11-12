@@ -3,7 +3,7 @@ id: kb/ADR-0028
 title: "ADR-0028: A story's owner moves it at the moments of work"
 description: "We decided that a story's owner, or their agent, moves it when work starts, when the pull request completing it opens and merges, and when its criteria are verified, because pull-request status may not move a story and one pull request often completes several."
 tags: [adr, reeve, delivery, lorekeeper, process]
-status: proposed
+status: accepted
 date: 2026-11-12
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-12.
+Accepted 2026-11-12 by Daniel Thyselius.
 
 ## Context
 kb/ADR-0002 R4 gives stories five delivery states and forbids pull-request status from moving a story; the GitHub webhook only shows a story's pull requests. Nothing says who moves a story or when, and in the team's own instance a run of stories was implemented across stacked pull requests while every story stayed in todo, so progress read zero and every dependent read blocked.

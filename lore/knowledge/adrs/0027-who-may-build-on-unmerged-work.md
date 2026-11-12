@@ -3,7 +3,7 @@ id: kb/ADR-0027
 title: "ADR-0027: Unmerged work blocks other people, never its own owner"
 description: "We decided that a blocking story still in todo blocks every dependent, that one in progress or in review blocks only dependents with a different owner, and that a merged one blocks nobody, because a person must be able to build on their own unmerged work while nobody else starts on it unknowingly."
 tags: [adr, reeve, readiness, gate, domain, delivery]
-status: proposed
+status: accepted
 date: 2026-11-12
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-12.
+Accepted 2026-11-12 by Daniel Thyselius.
 
 ## Context
 This record replaces kb/ADR-0018. It changes R5 ("unfinished MUST mean delivery not done") and adds R6; R1 to R4 and kb/ADR-0018's assumptions carry over unchanged.
