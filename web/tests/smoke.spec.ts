@@ -909,3 +909,72 @@ test('the board banner counts a decision needed this sprint, links to its lane, 
 		});
 	}
 });
+
+test("a story promised by the end of this sprint shows its chip after a reload, and clearing it shows its epic's promise again", async ({ page }) => {
+	const tag = crypto.randomUUID().slice(0, 8);
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Promise smoke epic ${tag}` });
+	const story = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(), title: `Promise smoke story ${tag}`, kind: 'chore', criteria: ['it is promised'], labels: [], epic: epic.key
+	});
+
+	// An open sprint and a next draft, with planned ends for the shortcuts. The seed has no sprint (earlier tests need
+	// none), so this test opens its own and closes it at the end; a goal creates the draft when there is none.
+	type Listed = {
+		active: { sprint: { id: number; version: number; ends_on: string; goals: { id: number }[] } } | null;
+		draft: { id: number; version: number; ends_on: string } | null;
+	};
+	const listed = async () => ((await (await page.request.get('/api/v1/sprints', { headers })).json()) as { value: Listed }).value;
+	if ((await listed()).draft == null) {
+		await post(page, '/api/v1/goals', { idempotency_key: crypto.randomUUID(), outcome: `Promise smoke goal ${tag}`, check: 'the chip shows it' });
+	}
+	const draft = (await listed()).draft!;
+	await post(page, `/api/v1/sprints/${draft.id}/open`, { version: draft.version });
+	const { active, draft: next } = await listed();
+	const sprint = active!.sprint;
+
+	try {
+		// The epic is promised by the next sprint's end, after the active sprint's: the story inherits it.
+		expect(next!.ends_on > sprint.ends_on).toBe(true);
+		await post(page, `/api/v1/epics/${epic.key}/promise`, { shortcut: 'next_sprint', to: 'the customer' });
+		const day = (iso: string) => {
+			const [, m, d] = iso.split('-').map(Number);
+			return `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]}`;
+		};
+
+		await page.goto(`/board?story=${story.key}`);
+		const drawer = page.getByRole('complementary');
+		const line = drawer.getByTestId('promise-line');
+		await expect(line).toContainText(`Promised ${day(next!.ends_on)} via epic ${epic.key}`);
+
+		await drawer.getByRole('button', { name: `More actions for ${story.key}` }).click();
+		await page.getByRole('menuitem', { name: 'Promise by…' }).click();
+		const dialog = page.getByRole('dialog', { name: `Promise ${story.key} by…` });
+		await dialog.getByRole('button', { name: `End of this sprint (${day(sprint.ends_on)})` }).click();
+		await dialog.getByRole('button', { name: 'Promise', exact: true }).click();
+		await expect(dialog).toBeHidden();
+
+		// The story is not ready (its epic's discovery is open), so its card sits in the Not ready disclosure.
+		const card = page.getByTestId(`card-${story.key}`);
+		const chip = card.locator('.promise-chip');
+		const openNotReady = async () => {
+			const closed = page.locator('details.not-ready:not([open]) > summary');
+			if ((await closed.count()) > 0) await closed.click();
+		};
+		await openNotReady();
+		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
+
+		await page.reload();
+		await openNotReady();
+		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
+
+		await page.getByRole('complementary').getByRole('button', { name: `More actions for ${story.key}` }).click();
+		await page.getByRole('menuitem', { name: 'Clear promise' }).click();
+		await expect(chip).toHaveText(`Promised ${day(next!.ends_on)} · next sprint · via ${epic.key}`);
+		await expect(page.getByRole('complementary').getByTestId('promise-line')).toContainText(`via epic ${epic.key}`);
+	} finally {
+		await post(page, `/api/v1/sprints/${sprint.id}/close`, {
+			version: sprint.version,
+			verdicts: sprint.goals.map((g) => ({ goal_id: g.id, verdict: 'missed' }))
+		});
+	}
+});
