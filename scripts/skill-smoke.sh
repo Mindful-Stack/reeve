@@ -364,12 +364,16 @@ main() {
 
 	log "seeding a story with one screenshot, under an epic and an initiative (the fake's GRA-31 has both)"
 	local shot_story attachment shot_initiative shot_epic
-	shot_initiative="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json initiative create --title "Skill smoke screenshot initiative" \
-		--horizon now --idempotency-key skill-smoke-shot:1 | node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))')" ||
-		{ echo "seeding the screenshot initiative failed" >&2; exit 1; }
-	shot_epic="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json epic create --title "Skill smoke screenshot epic" \
-		--initiative "$shot_initiative" --idempotency-key skill-smoke-shot:2 | node -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(JSON.parse(s).value.key))')" ||
-		{ echo "seeding the screenshot epic failed" >&2; exit 1; }
+	# One CLI call with the automation token; prints the created key, or the CLI's answer on failure.
+	shot_key() {
+		local out
+		out="$(REEVE_URL="$url" REEVE_TOKEN="$token" "$reeve" --json "$@")" || { echo "seeding the screenshot story: reeve $* answered $out" >&2; return 1; }
+		node -e 'process.stdout.write(JSON.parse(process.argv[1]).value.key)' "$out"
+	}
+	shot_initiative="$(shot_key initiative create --title "Skill smoke screenshot initiative" --horizon Now \
+		--idempotency-key skill-smoke-shot:1)" || exit 1
+	shot_epic="$(shot_key epic create --title "Skill smoke screenshot epic" --initiative "$shot_initiative" \
+		--idempotency-key skill-smoke-shot:2)" || exit 1
 	attachment="$(
 		curl -fsS -X POST -H "authorization: Bearer $token" -H 'content-type: application/octet-stream' \
 			--data-binary "@$root/crates/reeve/tests/fixtures/one.png" "$url/api/v1/attachments?filename=one.png" |
