@@ -203,7 +203,7 @@ pub struct DecisionGate {
 
 /// Each goal's gates, in `goals` order. A goal's items are what it links, their ancestors (an epic's initiative; a
 /// story's epic and that epic's initiative) and, for a linked initiative, its epics. Its stories are the ones `serves`
-/// gives it, of any delivery state: ancestors widen the items, never the stories. A discovery gate is an initiative or
+/// gives it, done ones included but not those resolved as dropped (never delivered, as `summarise` skips them): ancestors widen the items, never the stories. A discovery gate is an initiative or
 /// epic among the items without its mark, whatever its horizon, as readiness treats every ancestor. The goal's
 /// decisions are those on its items and stories, withdrawn ones excluded; a gate is one for which `decision_reason`
 /// gives a reason. A link to an item that no longer exists adds nothing. Nothing here reads urgency (kb/ADR-0024 R7).
@@ -221,6 +221,9 @@ pub fn goal_gates(
     // The stories each goal serves, decided by `serves` exactly as the sprint's numbers decide them.
     let mut served: HashMap<i64, Vec<&Key>> = HashMap::new();
     for s in stories {
+        if s.resolution() == Some(Resolution::Dropped) {
+            continue; // never delivered, as `summarise` skips it
+        }
         let times = StoryTimes {
             key: s.key().clone(),
             title: String::new(),
@@ -242,12 +245,12 @@ pub fn goal_gates(
     goals
         .iter()
         .map(|&goal_id| {
-            let mut items: HashSet<&Key> = HashSet::new();
+            let mut goal_items: HashSet<&Key> = HashSet::new();
             let mut goal_initiatives: Vec<Key> = Vec::new();
             for l in links.iter().filter(|l| l.goal_id == goal_id) {
                 let k = &l.item_key;
                 let parent: Option<&Key> = if initiative.contains_key(k) {
-                    items.extend(
+                    goal_items.extend(
                         epics
                             .iter()
                             .filter(|e| e.initiative() == Some(k))
@@ -257,22 +260,22 @@ pub fn goal_gates(
                 } else if let Some(e) = epic.get(k).copied() {
                     e.initiative()
                 } else if let Some(s) = story.get(k).copied() {
-                    items.extend(s.epic());
+                    goal_items.extend(s.epic());
                     s.epic()
                         .and_then(|e| epic.get(e).copied())
                         .and_then(Epic::initiative)
                 } else {
                     continue; // removed since it was linked
                 };
-                items.insert(k);
+                goal_items.insert(k);
                 if let Some(i) = parent {
-                    items.insert(i);
+                    goal_items.insert(i);
                     if !goal_initiatives.contains(i) {
                         goal_initiatives.push(i.clone());
                     }
                 }
             }
-            let mut sorted: Vec<&Key> = items.iter().copied().collect();
+            let mut sorted: Vec<&Key> = goal_items.iter().copied().collect();
             sorted.sort_by_key(|k| (k.number(), k.to_string()));
             let mut discoveries = Vec::new();
             let mut discovery_total = 0u32;
@@ -300,11 +303,12 @@ pub fn goal_gates(
                     }
                 }
             }
-            let mut under = items;
+            let mut under = goal_items;
             under.extend(served.get(&goal_id).into_iter().flatten().copied());
             let mut gates = Vec::new();
             let mut decisions_total = 0u32;
             for (d, fact) in decisions {
+                debug_assert_eq!(d.id(), fact.id, "a decision paired with another's fact");
                 let withdrawn = d
                     .closed()
                     .is_some_and(|c| matches!(c.kind, Some(ClosureKind::Withdrawn)));
@@ -943,6 +947,14 @@ mod tests {
         )
     }
     fn story(key: &str, parent: Option<&str>) -> Story {
+        story_with(key, parent, DeliveryState::Todo, None)
+    }
+    fn story_with(
+        key: &str,
+        parent: Option<&str>,
+        delivery: DeliveryState,
+        resolution: Option<Resolution>,
+    ) -> Story {
         Story::from_persisted(
             k(key),
             key.into(),
@@ -953,8 +965,8 @@ mod tests {
             None,
             vec![],
             0,
-            DeliveryState::Todo,
-            None,
+            delivery,
+            resolution,
             None,
             1,
         )
@@ -964,13 +976,14 @@ mod tests {
     fn dec(
         id: i64,
         on: &str,
+        on_type: ItemType,
         check: CheckResult,
         closed: Option<Option<ClosureKind>>,
     ) -> (RequiredDecision, DecisionFact) {
         let d = RequiredDecision::from_persisted(
             id,
             k(on),
-            ItemType::Story,
+            on_type,
             format!("d{id}"),
             "dan".into(),
             None,
@@ -993,8 +1006,8 @@ mod tests {
         (d, f)
     }
     /// Open, unchecked, no record: a `DecisionNoRecord` gate.
-    fn pending(id: i64, on: &str) -> (RequiredDecision, DecisionFact) {
-        dec(id, on, CheckResult::Unchecked, None)
+    fn pending(id: i64, on: &str, on_type: ItemType) -> (RequiredDecision, DecisionFact) {
+        dec(id, on, on_type, CheckResult::Unchecked, None)
     }
     fn lk(goal_id: i64, key: &str) -> GoalLink {
         GoalLink {
@@ -1035,9 +1048,9 @@ mod tests {
         ];
         let s = [story("ABC-4", Some("ABC-2")), story("ABC-5", Some("ABC-2"))];
         let decisions = [
-            pending(1, "ABC-4"),
-            pending(2, "ABC-5"),
-            pending(3, "ABC-2"),
+            pending(1, "ABC-4", ItemType::Story),
+            pending(2, "ABC-5", ItemType::Story),
+            pending(3, "ABC-2", ItemType::Epic),
         ];
         assert_eq!(
             goal_gates(
@@ -1067,7 +1080,10 @@ mod tests {
             epic("ABC-3", Some("ABC-9"), false),
         ];
         let s = [story("ABC-4", Some("ABC-2"))];
-        let decisions = [pending(1, "ABC-3"), pending(2, "ABC-4")];
+        let decisions = [
+            pending(1, "ABC-3", ItemType::Epic),
+            pending(2, "ABC-4", ItemType::Story),
+        ];
         let got = goal_gates(
             &[1, 2],
             &[lk(1, "ABC-2"), lk(2, "ABC-9")],
@@ -1113,12 +1129,36 @@ mod tests {
         let e = [epic("ABC-2", Some("ABC-1"), true)];
         let s = [story("ABC-4", Some("ABC-2"))];
         let decisions = [
-            dec(1, "ABC-1", accepted, None), // satisfied
-            dec(2, "ABC-2", CheckResult::Unchecked, Some(Some(Decided))), // closed decided
-            dec(3, "ABC-2", CheckResult::Unchecked, Some(None)), // closed, no kind
-            dec(4, "ABC-4", CheckResult::Unchecked, Some(Some(Withdrawn))), // withdrawn
-            pending(5, "ABC-4"),             // a gate
-            dec(6, "ABC-4", CheckResult::ProposedPrOpen, None), // a gate, its own reason
+            dec(1, "ABC-1", ItemType::Initiative, accepted, None), // satisfied
+            dec(
+                2,
+                "ABC-2",
+                ItemType::Epic,
+                CheckResult::Unchecked,
+                Some(Some(Decided)),
+            ), // closed decided
+            dec(
+                3,
+                "ABC-2",
+                ItemType::Epic,
+                CheckResult::Unchecked,
+                Some(None),
+            ), // closed, no kind
+            dec(
+                4,
+                "ABC-4",
+                ItemType::Story,
+                CheckResult::Unchecked,
+                Some(Some(Withdrawn)),
+            ), // withdrawn
+            pending(5, "ABC-4", ItemType::Story),                  // a gate
+            dec(
+                6,
+                "ABC-4",
+                ItemType::Story,
+                CheckResult::ProposedPrOpen,
+                None,
+            ), // a gate, its own reason
         ];
         let g = &goal_gates(
             &[1],
@@ -1156,7 +1196,7 @@ mod tests {
         let i: [Initiative; 0] = [];
         let e: [Epic; 0] = [];
         let s = [story("ABC-6", None)];
-        let decisions = [pending(1, "ABC-6")];
+        let decisions = [pending(1, "ABC-6", ItemType::Story)];
         assert_eq!(
             goal_gates(
                 &[1],
@@ -1191,5 +1231,52 @@ mod tests {
             &[],
         );
         assert_eq!(got[0].initiatives, vec![k("ABC-11"), k("ABC-10")]);
+    }
+
+    /// A done story's decisions still count; a dropped story is not the goal's, so its open decision is neither a gate
+    /// nor in the total.
+    #[test]
+    fn gates_done_story_counts_dropped_story_does_not() {
+        let i = [ini("ABC-1", true)];
+        let e = [epic("ABC-2", Some("ABC-1"), true)];
+        let done = story_with("ABC-4", Some("ABC-2"), DeliveryState::Done, None);
+        let dropped = story_with(
+            "ABC-5",
+            Some("ABC-2"),
+            DeliveryState::Done,
+            Some(Resolution::Dropped),
+        );
+        let s = [done, dropped];
+        let decisions = [
+            pending(1, "ABC-4", ItemType::Story),
+            pending(2, "ABC-5", ItemType::Story),
+        ];
+        let g = &goal_gates(
+            &[1],
+            &[lk(1, "ABC-2")],
+            (&i[..], &e[..], &s[..]),
+            &decisions,
+        )[0];
+        assert_eq!(g.decisions, vec![no_record(1, "ABC-4")]);
+        assert_eq!(g.decisions_total, 1);
+    }
+
+    /// A link to an item that no longer exists adds nothing.
+    #[test]
+    fn gates_link_to_a_removed_item_adds_nothing() {
+        let i: [Initiative; 0] = [];
+        let e: [Epic; 0] = [];
+        let s: [Story; 0] = [];
+        assert_eq!(
+            goal_gates(&[1], &[lk(1, "ABC-99")], (&i[..], &e[..], &s[..]), &[]),
+            vec![GoalGates {
+                goal_id: 1,
+                initiatives: vec![],
+                discoveries: vec![],
+                decisions: vec![],
+                discovery_total: 0,
+                decisions_total: 0,
+            }]
+        );
     }
 }
