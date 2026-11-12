@@ -49,6 +49,8 @@ type Net = {
 	failComment: boolean;
 	/** A PATCH answers 500 (after it is recorded). */
 	failPatch: boolean;
+	/** A move is recorded, then answers 500 ('fail') or a refusal no override can get past ('refuse'). */
+	failMove: null | 'fail' | 'refuse';
 };
 const net = vi.hoisted(() => ({ s: null as unknown as Net }));
 vi.mock('#lib/api/client.ts', async (orig) => {
@@ -90,6 +92,8 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			return [] as Comment[];
 		}
 		if (isPatch && n.failPatch) return failure('boom');
+		if (isMove && n.failMove === 'fail') return failure('boom');
+		if (isMove && n.failMove === 'refuse') return json({ outcome: 'refused', reasons: [{ reason: 'untriaged' }], overridable: false });
 		if (sent.version !== s.version) return conflict(s.version);
 		if (isMove) {
 			n.stories[at] = { ...s, delivery: sent.to!, resolution: sent.resolution ?? null, version: s.version + 1 };
@@ -117,7 +121,8 @@ const fresh = (): Net => ({
 	hold: new Set(),
 	held: [],
 	failComment: false,
-	failPatch: false
+	failPatch: false,
+	failMove: null
 });
 
 let app: ReturnType<typeof mount> | null = null;
@@ -952,5 +957,155 @@ describe('similar and duplicates', () => {
 		flushSync();
 		expect(t.pane().textContent).toContain('Export is blank');
 		expect(t.pane().textContent).not.toContain('Accents break search');
+	});
+});
+
+describe('triage review fixes', () => {
+	beforeEach(() => {
+		net.s.similar['Search ignores accents'] = [
+			hit('GRA-9', 'Search ignores accents'),
+			hit('GRA-3', 'Accents break search', { delivery: 'done', resolution: 'dropped' }),
+			hit('GRA-4', 'Search and diacritics', { resolution: 'dropped' }) // todo with a stale resolution: not shown
+		];
+		net.s.similar['Export shows blank page'] = [hit('GRA-5', 'Export is blank')];
+	});
+	/** A Place for GRA-9 whose PATCH answer is held; returns what releases it. */
+	async function heldPlace() {
+		pickEpic('GRA-7');
+		net.s.hold.add('/api/v1/stories/GRA-9');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		return async (t: Awaited<ReturnType<typeof open>>) => {
+			net.s.hold.clear();
+			net.s.held.splice(0).forEach((r) => r());
+			await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+			await settle();
+		};
+	}
+	it('a late answer does not take focus from a non-control outside the triage area (the drawer heading)', async () => {
+		const t = await open();
+		const release = await heldPlace();
+		const heading = document.createElement('h2');
+		heading.tabIndex = -1;
+		document.body.append(heading);
+		heading.focus();
+		await release(t);
+		expect(document.activeElement).toBe(heading);
+	});
+	it.each([
+		['a link', () => Object.assign(document.createElement('a'), { href: '/somewhere', textContent: 'link' })],
+		['an input', () => document.createElement('input')],
+		['a select', () => document.createElement('select')]
+	])('a late answer does not take focus from %s inside the triage area', async (_name, make) => {
+		const t = await open();
+		const release = await heldPlace();
+		const el = make();
+		document.querySelector('.triage')!.append(el);
+		el.focus();
+		expect(document.activeElement).toBe(el);
+		await release(t);
+		expect(document.activeElement).toBe(el);
+	});
+	it('marking during a held duplicate drop does nothing; the retry posts no second comment', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), '1');
+		net.s.stories[1] = { ...net.s.stories[1], version: 2 }; // the move will 409 after the comment
+		net.s.hold.add('/api/v1/stories/GRA-9/comments');
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		press(t.list(), '2'); // a write is in flight: ignored
+		expect(t.status()).not.toContain('marked');
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toContain('Comment saved; drop failed: GRA-9 changed meanwhile'));
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.comments['GRA-9']).toEqual([{ body: 'Duplicate of GRA-3.', key: 'triage-dup:GRA-9:GRA-3' }]);
+	});
+	it('selecting the current item again asks for its similar list no second time', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		document.querySelector<HTMLElement>('#triage-opt-GRA-9')!.click();
+		flushSync();
+		await settle();
+		expect(similarGets()).toHaveLength(1);
+		expect(hits()).toHaveLength(2);
+	});
+	it('a digit marks nothing while the similar list is not the current item\'s, and its hits are not shown', async () => {
+		net.s.hold.add('/api/v1/stories/similar');
+		const t = await open();
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		net.s.held[0]();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), 'j'); // GRA-12: its own list is on the way, GRA-9's is still the stored one
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(2));
+		expect(t.current()).toBe('GRA-12');
+		expect(t.pane().textContent).not.toContain('Accents break search');
+		press(t.list(), '1');
+		expect(t.status()).not.toContain('marked');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toBe('Drop GRA-12? Press d or click again.'));
+	});
+	it('the similar list is read again after a conflict that changed the title', async () => {
+		net.s.similar['Accents break search'] = [hit('GRA-6', 'Diacritics in search')];
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Accents break search', version: 2 };
+		pickEpic('GRA-7');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.status()).toContain('changed meanwhile'));
+		await vi.waitFor(() => expect(t.pane().textContent).toContain('Diacritics in search'));
+		expect(similarGets()).toHaveLength(2);
+	});
+	it('"Comment saved; drop failed" leads a non-409 failure and a refusal of the move after a duplicate comment', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), '1');
+		net.s.failMove = 'fail';
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toMatch(/^Comment saved; drop failed: boom/));
+		net.s.failMove = 'refuse';
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toMatch(/^Comment saved; drop failed: GRA-9 was not moved to done/));
+	});
+	it('without a duplicate the same failures say "was not dropped"', async () => {
+		const t = await open();
+		net.s.failMove = 'fail';
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 was not dropped: boom'));
+		net.s.failMove = 'refuse';
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not dropped: GRA-9 was not moved to done/));
+	});
+	it('Inspect keeps scroll and focus (reset=false); only a done hit shows its resolution', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		for (const a of t.pane().querySelectorAll('[aria-label="Similar"] a')) expect(a.getAttribute('data-sveltekit-reset')).toBe('false');
+		const [done, todo] = hits();
+		expect(done.textContent).toContain('done · dropped');
+		expect(todo.textContent).not.toContain('dropped');
+	});
+	it('the Duplicate button marks, shows it pressed, and a second click clears it', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		const button = (n: number) => [...t.pane().querySelectorAll<HTMLButtonElement>('[aria-label="Similar"] button')].find((b) => b.textContent!.trim() === `Duplicate (${n})`)!;
+		expect(button(2).getAttribute('aria-pressed')).toBe('false');
+		button(2).click();
+		flushSync();
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-4 marked as the duplicate.'));
+		expect(button(2).getAttribute('aria-pressed')).toBe('true');
+		expect(button(1).getAttribute('aria-pressed')).toBe('false');
+		expect(hits()[1].classList.contains('marked')).toBe(true);
+		button(2).click();
+		flushSync();
+		await vi.waitFor(() => expect(t.status()).toBe('Duplicate cleared.'));
+		expect(button(2).getAttribute('aria-pressed')).toBe('false');
 	});
 });

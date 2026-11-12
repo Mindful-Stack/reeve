@@ -184,8 +184,11 @@
 
 	/** Back to the queue after a write or a live change disabled the form, unless the user is on an enabled control or
 	 *  field (another item's Skip, the Keys toggle, a link in the top bar, a field whose letters must not become
-	 *  commands). Free is the page itself, the item heading or body, the queue (a `ul[tabindex]`) and a disabled control. */
+	 *  commands). Free is the page itself, the item heading or body, the queue (a `ul[tabindex]`) and a disabled control.
+	 *  Focus outside the triage area (the drawer's heading, a control there) is never taken. */
 	function focusBack(): void {
+		const a = document.activeElement;
+		if (a && a !== document.body && !area?.contains(a)) return;
 		if (!document.activeElement?.matches('a[href], button:enabled, input:enabled, select:enabled, textarea:enabled')) void focusQueue();
 	}
 
@@ -260,10 +263,10 @@
 	}
 
 	/** Marks (or, the same hit again, unmarks) the current item's duplicate. A drop armed before names no duplicate, so
-	 *  it is disarmed. */
-	function mark(hit: string | null): void {
+	 *  it is disarmed. Not while the item is gone or a write for it is in flight (the drop in flight named its duplicate). */
+	function mark(hit: string): void {
 		const d = currentKey ? drafts[currentKey] : undefined;
-		if (!d) return;
+		if (!d || left || writing === currentKey) return;
 		d.duplicate = d.duplicate === hit ? null : hit;
 		disarm();
 		void say({ text: d.duplicate ? `${d.duplicate} marked as the duplicate.` : 'Duplicate cleared.' });

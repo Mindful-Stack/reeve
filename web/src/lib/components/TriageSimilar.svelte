@@ -15,7 +15,7 @@
 		/** The key marked as the duplicate, or null. */
 		marked: string | null;
 		inspect: (key: string) => string;
-		onmark: (key: string | null) => void;
+		onmark: (key: string) => void;
 	} = $props();
 </script>
 
@@ -33,7 +33,7 @@
 					<span class="key">{h.key}</span> {h.title}
 					<span class="state">{COLUMN_LABEL[h.delivery]}{#if h.delivery === 'done' && h.resolution}{' '}· {h.resolution}{/if}</span>
 					<a href={inspect(h.key)} data-sveltekit-reset="false">Inspect {h.key}</a>
-					<button type="button" aria-pressed={marked === h.key} onclick={() => onmark(marked === h.key ? null : h.key)}>
+					<button type="button" aria-pressed={marked === h.key} onclick={() => onmark(h.key)}>
 						Duplicate ({i + 1})
 					</button>
 				</li>
