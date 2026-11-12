@@ -1384,6 +1384,55 @@ async fn urgent_columns_refuse_half_a_mark() {
     }
 }
 
+#[tokio::test]
+async fn promise_columns_refuse_half_a_promise_and_a_long_recipient() {
+    let (_c, pool) = common::pg().await;
+    sqlx::query("INSERT INTO initiatives (key, title, horizon, created_at, updated_at) VALUES ('ABC-1','i','Now',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO epics (key, title, initiative_key, created_at, updated_at) VALUES ('ABC-2','e','ABC-1',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-3','s','story','ABC-2',now(),now())").execute(&pool).await.unwrap();
+    let whole = "promised_on = '2026-11-20', promised_by = 'a@b.c', promised_at = now()";
+    let long_ok = "é".repeat(200);
+    let long_bad = "é".repeat(201);
+    assert_eq!(long_bad.len(), 402);
+    let refused = [
+        ("on alone", "promised_on = '2026-11-20'".to_string()),
+        ("by alone", "promised_by = 'a@b.c'".to_string()),
+        ("at alone", "promised_at = now()".to_string()),
+        ("to alone", "promised_to = 'Acme'".to_string()),
+        ("201 chars", format!("{whole}, promised_to = '{long_bad}'")),
+    ];
+    let accepted = [
+        ("whole, no recipient", whole.to_string()),
+        ("200 chars", format!("{whole}, promised_to = '{long_ok}'")),
+    ];
+    for (table, key) in [("epics", "ABC-2"), ("stories", "ABC-3")] {
+        for (label, set) in &refused {
+            let e = sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_err();
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.to_string());
+            assert_eq!(code.as_deref(), Some("23514"), "{table}: {label}");
+        }
+        for (label, set) in &accepted {
+            sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{table}: {label}: {e}"));
+            sqlx::query(&format!("UPDATE {table} SET promised_on = NULL, promised_by = NULL, promised_at = NULL, promised_to = NULL WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+}
+
 /// Inserts I ABC-1, its epic ABC-2 (stories ABC-3 done, ABC-4 todo) and an unrelated epic ABC-5.
 async fn seed_urgent_tree(pool: &sqlx::PgPool) {
     let t = "2026-11-01T00:00:00Z";
