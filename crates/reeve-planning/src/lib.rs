@@ -17,7 +17,8 @@ pub use domain::{
     },
     progress::progress,
     promise::{
-        Clock as PromiseClock, Promise, SprintPromise, StoryFacts, StoryPromise, story_promise,
+        Clock as PromiseClock, HeldBy, Promise, SprintPromise, StoryFacts, StoryPromise,
+        story_promise,
     },
     pull_request::{PrChange, PullRequest},
     queue::{LineageItem, QueueEntry, QueueStory, QueueSummary},

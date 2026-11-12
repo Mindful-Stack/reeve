@@ -2061,7 +2061,7 @@ mod views {
             &h.sprint_view(n.id, at_hm(20, 13, 0))
                 .await
                 .unwrap()
-                .3
+                .summary
                 .unwrap()
                 .counts,
         );
@@ -2070,7 +2070,7 @@ mod views {
             &h.sprint_view(n1.id, at_hm(20, 13, 0))
                 .await
                 .unwrap()
-                .3
+                .summary
                 .unwrap()
                 .counts,
         );
@@ -2098,7 +2098,7 @@ mod views {
             &h.sprint_view(n.id, at_hm(21, 10, 0))
                 .await
                 .unwrap()
-                .3
+                .summary
                 .unwrap()
                 .counts,
         );
@@ -2229,7 +2229,7 @@ mod views {
             &h.sprint_view(s1.id, at(21, 9))
                 .await
                 .unwrap()
-                .3
+                .summary
                 .unwrap()
                 .counts,
         );
@@ -2247,7 +2247,7 @@ mod views {
             &h.sprint_view(s2.id, at(21, 9))
                 .await
                 .unwrap()
-                .3
+                .summary
                 .unwrap()
                 .counts,
         );
@@ -2375,7 +2375,12 @@ mod views {
             .await
             .unwrap();
         let d = draft(&h).await;
-        let (_, goals, links, summary, _) = h.sprint_view(d.id, at(4, 0)).await.unwrap();
+        let SprintView {
+            goals,
+            links,
+            summary,
+            ..
+        } = h.sprint_view(d.id, at(4, 0)).await.unwrap();
         assert!(summary.is_none());
         assert_eq!(goals.len(), 1);
         assert_eq!(links.len(), 1);
@@ -2516,7 +2521,23 @@ mod views {
         assert_eq!(three, twelve);
     }
 
-    /// The sprint view costs the same for 1 goal over 3 stories and 4 goals over 12.
+    /// Promises a story through the port on 10 Nov (inside the active sprint planned to end 17 Nov).
+    async fn promise_10_nov(h: &Handlers, key: &reeve_protocol::Key) {
+        let on = chrono::NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let p = Promise::from_persisted(on, "pm@x".into(), at(2, 9), None);
+        let mut tx = h.pool.begin().await.unwrap();
+        assert!(
+            h.ports
+                .promises
+                .set_promise(&mut tx, reeve_protocol::ItemType::Story, key, &p)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+    }
+
+    /// The sprint view and the sprint list cost the same for 1 goal over 3 stories and 1 promised story as for 4 goals
+    /// over 12, 7 promised stories and one more closed sprint before it.
     #[tokio::test]
     async fn sprint_view_costs_the_same_for_one_goal_and_four() {
         let (_c, pool) = super::common::pg_counted().await;
@@ -2550,14 +2571,27 @@ mod views {
             }
         };
         start(stories[0].clone()).await;
+        promise_10_nov(&h, stories[1].key()).await;
         let view = || {
             let h = h.clone();
             async move {
                 h.sprint_view(a.id, at(10, 0)).await.unwrap();
             }
         };
+        let list = || {
+            let h = h.clone();
+            async move {
+                h.sprints(at(10, 0)).await.unwrap();
+            }
+        };
         view().await; // warm up
+        list().await;
+        assert_eq!(
+            h.sprint_view(a.id, at(10, 0)).await.unwrap().promises.len(),
+            1
+        );
         let one = super::common::statements(&pool, view).await;
+        let list_one = super::common::statements(&pool, list).await;
         for n in 0..3 {
             let g = h
                 .add_goal(
@@ -2578,13 +2612,23 @@ mod views {
                 keys.push(s.key().clone());
                 if m == 0 {
                     start(s).await;
+                } else {
+                    promise_10_nov(&h, &keys[m]).await;
                 }
             }
             h.link_goal(&ctx(Via::Interactive, 5), g.id, &keys)
                 .await
                 .unwrap();
         }
-        let (_, goals, _, sum, _) = h.sprint_view(a.id, at(10, 0)).await.unwrap();
+        sqlx::query("INSERT INTO sprints (state, starts_on, ends_on, opened_at, closed_at, created_at) VALUES ('closed', '2026-10-18', '2026-11-01', $1, $1, $1)")
+            .bind(at(1, 0))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let v = h.sprint_view(a.id, at(10, 0)).await.unwrap();
+        assert_eq!(v.promises.len(), 7);
+        assert_eq!(h.sprints(at(10, 0)).await.unwrap().promises.len(), 7);
+        let (goals, sum) = (v.goals, v.summary);
         assert_eq!(goals.len(), 4);
         assert_eq!(
             sum.unwrap()
@@ -2597,6 +2641,8 @@ mod views {
         );
         let four = super::common::statements(&pool, view).await;
         assert_eq!(one, four);
+        let list_four = super::common::statements(&pool, list).await;
+        assert_eq!(list_one, list_four);
     }
 }
 
@@ -2604,14 +2650,15 @@ mod views {
 mod promises {
     use super::lifecycle::mk;
     use super::started_at::{at, ctx};
-    use chrono::{NaiveDate, TimeZone, Utc};
+    use chrono::{DateTime, NaiveDate, TimeZone, Utc};
     use reeve_planning::*;
-    use reeve_protocol::{
-        ItemType, Key, Kind, PromiseHolder, PromiseState, SetPromise, SprintState, Via,
-    };
+    use reeve_protocol::{ItemType, Key, Kind, PromiseState, SetPromise, SprintState, Via};
 
     fn nov(d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, d).unwrap()
+    }
+    fn utc(m: u32, d: u32, h: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, m, d, h, 0, 0).unwrap()
     }
 
     async fn story(h: &Handlers, c: &Ctx, name: &str, epic: Option<&Key>) -> Key {
@@ -2633,9 +2680,10 @@ mod promises {
         .clone()
     }
 
-    /// Stores a promise through the port, as an earlier request would have: some of these dates are past today.
-    async fn promise(h: &Handlers, item: ItemType, key: &Key, on: NaiveDate) {
-        let p = Promise::from_persisted(on, "pm@x".into(), at(1, 9), None);
+    /// Stores a promise set at `at` through the port, as an earlier request would have: some of these dates are past
+    /// today, and R3's inheritance boundary is `at`.
+    async fn promise(h: &Handlers, item: ItemType, key: &Key, on: NaiveDate, at: DateTime<Utc>) {
+        let p = Promise::from_persisted(on, "pm@x".into(), at, None);
         let mut tx = h.pool.begin().await.unwrap();
         assert!(
             h.ports
@@ -2647,7 +2695,7 @@ mod promises {
         tx.commit().await.unwrap();
     }
 
-    async fn done(h: &Handlers, key: &Key, at: Option<chrono::DateTime<Utc>>) {
+    async fn done(h: &Handlers, key: &Key, at: Option<DateTime<Utc>>) {
         sqlx::query(
             "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = $2 WHERE key = $1",
         )
@@ -2663,8 +2711,8 @@ mod promises {
         state: &str,
         starts: &str,
         ends: &str,
-        opened: Option<chrono::DateTime<Utc>>,
-        closed: Option<chrono::DateTime<Utc>>,
+        opened: Option<DateTime<Utc>>,
+        closed: Option<DateTime<Utc>>,
     ) -> i64 {
         sqlx::query_scalar(
             "INSERT INTO sprints (state, starts_on, ends_on, opened_at, closed_at, created_at) \
@@ -2681,22 +2729,25 @@ mod promises {
         .unwrap()
     }
 
-    /// The row's derived state and holder, as the wire spells them.
-    fn st(p: &SprintPromise) -> Option<PromiseState> {
-        p.promise.state.map(Into::into)
-    }
-    fn holder(p: &SprintPromise) -> PromiseHolder {
-        p.promise.holder.into()
-    }
-
     fn keys(ps: &[SprintPromise]) -> Vec<Key> {
         ps.iter().map(|p| p.key.clone()).collect()
     }
+    fn row<'a>(ps: &'a [SprintPromise], k: &Key) -> &'a SprintPromise {
+        ps.iter().find(|p| &p.key == k).unwrap()
+    }
+    /// The row's derived state, as the wire spells it.
+    fn st(p: &SprintPromise) -> PromiseState {
+        p.state.into()
+    }
 
-    /// S1 is planned to end 10 Nov and closes 12 Nov; S2 opens 12 Nov and is planned to end 24 Nov. A sprint lists the
-    /// effective dates after the previous sprint's planned end and up to its own: P2 (promised 11 Nov) is S2's although
-    /// S1 closed on 12 Nov; P5 is under S2 through its epic; P4 (25 Nov) and P6 (done without `done_at`, so it never
-    /// inherits) are in neither. The list follows a changed date (it is derived, never frozen).
+    /// S1 is planned to end 10 Nov and closes 12 Nov; S2 opens 12 Nov and is planned to end 24 Nov; S3, closed early,
+    /// was planned to end 15 Dec, after the draft's 8 Dec. A sprint lists the effective dates after the previous
+    /// non-draft sprint's planned end and up to its own:
+    /// - P2 (promised 11 Nov) is S2's although S1 closed on 12 Nov.
+    /// - P5 is S2's through its epic; P11's epic date (10 Nov) beats its own 22 Nov, so it is S1's only.
+    /// - P4 (25 Nov) and P10 (1 Dec) are S3's: the draft's planned end is never a previous end.
+    /// - P6 (done without `done_at`, so it never inherits) and P9 are in no list.
+    /// - The draft lists nothing. The list follows a changed date (it is derived, never frozen).
     #[tokio::test]
     async fn a_sprint_lists_the_promises_after_the_previous_planned_end() {
         let (_c, pool) = super::common::pg().await;
@@ -2706,8 +2757,8 @@ mod promises {
             "closed",
             "2026-10-27",
             "2026-11-10",
-            Some(at(1, 0) - chrono::Duration::days(5)),
-            Some(at(12, 9)),
+            Some(utc(10, 27, 9)),
+            Some(utc(11, 12, 9)),
         )
         .await;
         let s2 = insert_sprint(
@@ -2715,14 +2766,23 @@ mod promises {
             "active",
             "2026-11-12",
             "2026-11-24",
-            Some(at(12, 9)),
+            Some(utc(11, 12, 9)),
             None,
         )
         .await;
-        // A draft planned to end later than S2: never S2's previous end, and P4 is not S2's.
-        insert_sprint(&h, "draft", "2026-11-24", "2026-12-08", None, None).await;
+        let s3 = insert_sprint(
+            &h,
+            "closed",
+            "2026-11-04",
+            "2026-12-15",
+            Some(utc(11, 4, 9)),
+            Some(utc(11, 5, 9)),
+        )
+        .await;
+        let draft = insert_sprint(&h, "draft", "2026-11-24", "2026-12-08", None, None).await;
         let c = ctx(Via::Interactive, 13);
         let e = h.create_epic(&c, "e", "E", None, "", None).await.unwrap();
+        let e2 = h.create_epic(&c, "e2", "E2", None, "", None).await.unwrap();
         let p1 = story(&h, &c, "P1", None).await;
         let p2 = story(&h, &c, "P2", None).await;
         let p3 = story(&h, &c, "P3", None).await;
@@ -2731,36 +2791,36 @@ mod promises {
         let p6 = story(&h, &c, "P6", Some(e.key())).await;
         let p7 = story(&h, &c, "P7", None).await;
         // P8 was done (31 Oct) before its epic's promise was set (1 Nov), so it keeps only its own 10 Nov: S1's, never
-        // S2's through the epic's 20 Nov. P9 is promised but done without `done_at`, so it has no state and no row.
+        // S2's through the epic's 20 Nov.
         let p8 = story(&h, &c, "P8", Some(e.key())).await;
+        // P9 is promised and done without `done_at`: no state, so no row. Only a direct write (an import of a done
+        // story) reaches this; R2 refuses promising a done story.
         let p9 = story(&h, &c, "P9", None).await;
-        promise(&h, ItemType::Story, &p1, nov(10)).await;
-        promise(&h, ItemType::Story, &p2, nov(11)).await;
-        promise(&h, ItemType::Story, &p3, nov(24)).await;
-        promise(&h, ItemType::Story, &p4, nov(25)).await;
-        promise(&h, ItemType::Epic, e.key(), nov(20)).await;
-        promise(&h, ItemType::Story, &p7, nov(9)).await;
-        promise(&h, ItemType::Story, &p8, nov(10)).await;
-        promise(&h, ItemType::Story, &p9, nov(20)).await;
-        done(
+        let p10 = story(&h, &c, "P10", None).await;
+        let p11 = story(&h, &c, "P11", Some(e2.key())).await;
+        let set = utc(11, 1, 9);
+        promise(&h, ItemType::Story, &p1, nov(10), set).await;
+        promise(&h, ItemType::Story, &p2, nov(11), set).await;
+        promise(&h, ItemType::Story, &p3, nov(24), set).await;
+        promise(&h, ItemType::Story, &p4, nov(25), set).await;
+        promise(&h, ItemType::Epic, e.key(), nov(20), set).await;
+        promise(&h, ItemType::Story, &p7, nov(9), set).await;
+        promise(&h, ItemType::Story, &p8, nov(10), utc(10, 30, 9)).await;
+        promise(&h, ItemType::Story, &p9, nov(20), set).await;
+        promise(
             &h,
-            &p1,
-            Some(Utc.with_ymd_and_hms(2026, 11, 9, 15, 0, 0).unwrap()),
+            ItemType::Story,
+            &p10,
+            NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+            set,
         )
         .await;
-        done(
-            &h,
-            &p2,
-            Some(Utc.with_ymd_and_hms(2026, 11, 12, 8, 0, 0).unwrap()),
-        )
-        .await;
+        promise(&h, ItemType::Epic, e2.key(), nov(10), set).await;
+        promise(&h, ItemType::Story, &p11, nov(22), set).await;
+        done(&h, &p1, Some(utc(11, 9, 15))).await;
+        done(&h, &p2, Some(utc(11, 12, 8))).await;
         done(&h, &p6, None).await;
-        done(
-            &h,
-            &p8,
-            Some(Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap()),
-        )
-        .await;
+        done(&h, &p8, Some(utc(10, 31, 12))).await;
         done(&h, &p9, None).await;
         let now = c.now;
 
@@ -2770,48 +2830,54 @@ mod promises {
             keys(&list.promises),
             vec![p2.clone(), p5.clone(), p3.clone()]
         );
-        let row = |ps: &[SprintPromise], k: &Key| ps.iter().find(|p| &p.key == k).unwrap().clone();
         let r2 = row(&list.promises, &p2);
         assert_eq!(
-            (r2.promise.on, st(&r2), r2.promise.done_on, r2.promise.days),
-            (nov(11), Some(PromiseState::Late), Some(nov(12)), Some(1))
+            (r2.on, st(r2), r2.done_on, r2.days),
+            (nov(11), PromiseState::Late, Some(nov(12)), Some(1))
         );
         let r5 = row(&list.promises, &p5);
         assert_eq!(r5.title, "P5");
         assert_eq!(
-            (r5.promise.on, holder(&r5), st(&r5)),
-            (nov(20), PromiseHolder::Epic, Some(PromiseState::Open))
+            (r5.on, &r5.held_by, st(r5)),
+            (nov(20), &HeldBy::Epic(e.key().clone()), PromiseState::Open)
         );
-        assert_eq!(r5.promise.epic.as_ref().map(|(k, _)| k), Some(e.key()));
         let r3 = row(&list.promises, &p3);
-        assert_eq!(
-            (holder(&r3), st(&r3)),
-            (PromiseHolder::Own, Some(PromiseState::Open))
-        );
+        assert_eq!((&r3.held_by, st(r3)), (&HeldBy::Own, PromiseState::Open));
 
-        let (s, _, _, _, s1_promises) = h.sprint_view(s1, now).await.unwrap();
-        assert_eq!(s.state, SprintState::Closed);
-        assert_eq!(keys(&s1_promises), vec![p7.clone(), p1.clone(), p8.clone()]);
-        let r8 = row(&s1_promises, &p8);
+        let v1 = h.sprint_view(s1, now).await.unwrap();
+        assert_eq!(v1.sprint.state, SprintState::Closed);
         assert_eq!(
-            (holder(&r8), st(&r8), r8.promise.epic.clone()),
-            (PromiseHolder::Own, Some(PromiseState::Kept), None)
+            keys(&v1.promises),
+            vec![p7.clone(), p1.clone(), p8.clone(), p11.clone()]
         );
-        let r7 = row(&s1_promises, &p7);
+        let r7 = row(&v1.promises, &p7);
+        assert_eq!((st(r7), r7.days), (PromiseState::Overdue, Some(4)));
+        let r1 = row(&v1.promises, &p1);
+        assert_eq!((st(r1), r1.done_on), (PromiseState::Kept, Some(nov(9))));
+        let r8 = row(&v1.promises, &p8);
+        assert_eq!((&r8.held_by, st(r8)), (&HeldBy::Own, PromiseState::Kept));
+        let r11 = row(&v1.promises, &p11);
         assert_eq!(
-            (st(&r7), r7.promise.days),
-            (Some(PromiseState::Overdue), Some(4))
+            (r11.on, &r11.held_by, st(r11)),
+            (
+                nov(10),
+                &HeldBy::Epic(e2.key().clone()),
+                PromiseState::Overdue
+            )
         );
-        let r1 = row(&s1_promises, &p1);
-        assert_eq!(
-            (st(&r1), r1.promise.done_on),
-            (Some(PromiseState::Kept), Some(nov(9)))
-        );
-        let (_, _, _, _, s2_promises) = h.sprint_view(s2, now).await.unwrap();
-        assert_eq!(s2_promises, list.promises, "the view and the list agree");
-        for k in [&p4, &p6, &p9] {
+        let v2 = h.sprint_view(s2, now).await.unwrap();
+        assert_eq!(v2.promises, list.promises, "the view and the list agree");
+        let v3 = h.sprint_view(s3, now).await.unwrap();
+        assert_eq!(keys(&v3.promises), vec![p4.clone(), p10.clone()]);
+        let vd = h.sprint_view(draft, now).await.unwrap();
+        assert_eq!(vd.promises, vec![], "a draft lists no promises");
+        for k in [&p6, &p9] {
             assert!(
-                !s1_promises.iter().chain(&s2_promises).any(|p| &p.key == k),
+                !v1.promises
+                    .iter()
+                    .chain(&v2.promises)
+                    .chain(&v3.promises)
+                    .any(|p| &p.key == k),
                 "{k}"
             );
         }
@@ -2829,8 +2895,8 @@ mod promises {
         )
         .await
         .unwrap();
-        let (_, _, _, _, s1_after) = h.sprint_view(s1, now).await.unwrap();
-        assert_eq!(keys(&s1_after), vec![p1.clone(), p8.clone()]);
+        let v1 = h.sprint_view(s1, now).await.unwrap();
+        assert_eq!(keys(&v1.promises), vec![p1, p8, p11]);
         let after = h.sprints(now).await.unwrap().promises;
         assert_eq!(keys(&after), vec![p2, p5, p7, p3]);
     }

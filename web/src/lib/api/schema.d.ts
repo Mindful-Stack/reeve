@@ -2870,7 +2870,8 @@ export interface components {
                 demo: components["schemas"]["DemoStoryDto"][];
                 /**
                  * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
+                 *     active and closed sprints; always empty for a draft.
                  */
                 promises: components["schemas"]["SprintPromiseDto"][];
                 sprint: components["schemas"]["SprintDto"];
@@ -3618,7 +3619,8 @@ export interface components {
             demo: components["schemas"]["DemoStoryDto"][];
             /**
              * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
+             *     active and closed sprints; always empty for a draft.
              */
             promises: components["schemas"]["SprintPromiseDto"][];
             sprint: components["schemas"]["SprintDto"];

@@ -2,7 +2,7 @@
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
-use crate::domain::promise::{self, Clock, Promise, SprintPromise, StoryPromise, epic_due};
+use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{PromiseWindow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
@@ -279,33 +279,28 @@ pub fn sprint_view_dto(
                     .collect()
             })
             .unwrap_or_default(),
-        promises: promises.iter().filter_map(sprint_promise_dto).collect(),
+        promises: promises.iter().map(sprint_promise_dto).collect(),
     }
 }
 
-/// One row of a sprint's promise list on the wire: the effective date, the recipient of the promise that sets it, the
-/// epic's key when the epic's promise holds, and the derived state. None for a row without a state, which the handler
-/// never lists.
-pub fn sprint_promise_dto(p: &SprintPromise) -> Option<SprintPromiseDto> {
-    let sp = &p.promise;
-    let (to, epic) = match sp.holder {
-        promise::Holder::Own => (sp.own.as_ref().and_then(|o| o.to()), None),
-        promise::Holder::Epic => match &sp.epic {
-            Some((k, e)) => (e.to(), Some(k.clone())),
-            None => (None, None),
-        },
+/// One row of a sprint's promise list on the wire. `holder` and `epic` both come from `held_by`, so an epic holder
+/// always names its epic.
+pub fn sprint_promise_dto(p: &SprintPromise) -> SprintPromiseDto {
+    let (holder, epic) = match &p.held_by {
+        HeldBy::Own => (PromiseHolder::Own, None),
+        HeldBy::Epic(k) => (PromiseHolder::Epic, Some(k.clone())),
     };
-    Some(SprintPromiseDto {
+    SprintPromiseDto {
         key: p.key.clone(),
         title: p.title.clone(),
-        on: sp.on,
-        to: to.map(str::to_string),
-        holder: sp.holder.into(),
+        on: p.on,
+        to: p.to.clone(),
+        holder,
         epic,
-        state: sp.state?.into(),
-        done_on: sp.done_on,
-        days: sp.days,
-    })
+        state: p.state.into(),
+        done_on: p.done_on,
+        days: p.days,
+    }
 }
 
 /// The two urgency fields every item DTO carries: the mark stored on `key` (active or expired) and the active marks that

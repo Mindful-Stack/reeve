@@ -2,8 +2,9 @@
 //! in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so a close and a goal
 //! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
 //! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
+use super::promise::promise_clock_of;
 use super::*;
-use crate::domain::promise::{SprintPromise, StoryFacts, in_sprint, previous_end, story_promise};
+use crate::domain::promise::{SprintPromise, StoryFacts, previous_end, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -20,6 +21,18 @@ pub struct Sprints {
     pub links: Vec<GoalLink>,
     pub active_summary: Option<sprint::Summary>,
     /// The active sprint's promises (kb/ADR-0025 R8), by date then key; empty without an active sprint.
+    pub promises: Vec<SprintPromise>,
+}
+
+/// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
+#[derive(Debug, Clone)]
+pub struct SprintView {
+    pub sprint: Sprint,
+    pub goals: Vec<Goal>,
+    pub links: Vec<GoalLink>,
+    /// Its numbers; None for a draft, which has no window.
+    pub summary: Option<sprint::Summary>,
+    /// Its promises (kb/ADR-0025 R8), by date then key; empty for a draft.
     pub promises: Vec<SprintPromise>,
 }
 
@@ -598,6 +611,10 @@ impl Handlers {
         let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
         let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
         let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
+        let promises = match all.iter().find(|s| s.state == SprintState::Active) {
+            Some(a) => self.sprint_promises_in(tx, a, &all, now).await?,
+            None => vec![],
+        };
         let mut out = Sprints {
             active: None,
             draft: None,
@@ -605,7 +622,7 @@ impl Handlers {
             goals,
             links,
             active_summary: None,
-            promises: vec![],
+            promises,
         };
         for s in all {
             match s.state {
@@ -616,7 +633,6 @@ impl Handlers {
         }
         if let Some(a) = &out.active {
             out.active_summary = self.summary_in(tx, a, &out.goals, &out.links, now).await?;
-            out.promises = self.sprint_promises_in(tx, a, now).await?;
         }
         Ok(out)
     }
@@ -629,16 +645,7 @@ impl Handlers {
         &self,
         id: i64,
         now: DateTime<Utc>,
-    ) -> Result<
-        (
-            Sprint,
-            Vec<Goal>,
-            Vec<GoalLink>,
-            Option<sprint::Summary>,
-            Vec<SprintPromise>,
-        ),
-        HandlerError,
-    > {
+    ) -> Result<SprintView, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -646,8 +653,15 @@ impl Handlers {
         let out = async {
             let (s, goals, links) = self.sprint_with_goals_in(&mut tx, id).await?;
             let summary = self.summary_in(&mut tx, &s, &goals, &links, now).await?;
-            let promises = self.sprint_promises_in(&mut tx, &s, now).await?;
-            Ok((s, goals, links, summary, promises))
+            let all = self.ports.sprints.sprints_in(&mut tx).await?;
+            let promises = self.sprint_promises_in(&mut tx, &s, &all, now).await?;
+            Ok(SprintView {
+                sprint: s,
+                goals,
+                links,
+                summary,
+                promises,
+            })
         }
         .await;
         end_read(tx, out).await
@@ -658,24 +672,26 @@ impl Handlers {
     /// (`in_sprint`), whatever the sprint's start or close: a sprint that closes late does not keep the promises due after
     /// its planned end. The reads give candidates by the story's or its epic's date; `story_promise` decides inheritance
     /// and the effective date, so a story that does not inherit its epic's date is judged on its own. A row without a
-    /// state (done without `done_at`) is left out. By date, then key.
+    /// state (done without `done_at`) is left out. By date, then key. A draft lists none: the list is filled for active
+    /// and closed sprints. `all` is every sprint, read on the caller's snapshot; the clock is built from it rather than
+    /// read again.
     async fn sprint_promises_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         s: &Sprint,
+        all: &[Sprint],
         now: DateTime<Utc>,
     ) -> Result<Vec<SprintPromise>, HandlerError> {
-        let others: Vec<(i64, chrono::NaiveDate)> = self
-            .ports
-            .sprints
-            .sprints_in(tx)
-            .await?
+        if s.state == SprintState::Draft {
+            return Ok(vec![]);
+        }
+        let others: Vec<(i64, chrono::NaiveDate)> = all
             .iter()
             .filter(|o| o.id != s.id && o.state != SprintState::Draft)
             .map(|o| (o.id, o.ends_on))
             .collect();
         let prev = previous_end((s.id, s.ends_on), &others);
-        let clock = self.promise_clock_in(tx, now).await?;
+        let clock = promise_clock_of(all, now);
         let rows = self
             .ports
             .reads
@@ -692,16 +708,11 @@ impl Handlers {
                     own: r.row.own.as_ref(),
                     epic: r.row.epic.as_ref().map(|(k, p)| (k, p)),
                 };
-                let promise = story_promise(&facts, &clock)
-                    .filter(|sp| sp.state.is_some() && in_sprint(sp.on, prev, s.ends_on))?;
-                Some(SprintPromise {
-                    key: r.key,
-                    title: r.title,
-                    promise,
-                })
+                let sp = story_promise(&facts, &clock)?;
+                SprintPromise::listed(r.key, r.title, sp, prev, s.ends_on)
             })
             .collect();
-        out.sort_by_key(|p| p.promise.on);
+        out.sort_by_key(|p| p.on);
         Ok(out)
     }
 

@@ -367,12 +367,62 @@ pub fn epic_due(p: &Promise, clock: &Clock) -> Option<Due> {
     (clock.today <= p.on).then(|| due(p.on, clock))
 }
 
-/// One row of a sprint's promise list (R8), built by the handler from the reads and `story_promise`.
+/// Whose promise sets a listed row's date: the story's own, or the epic's, named by its key. An epic holder always
+/// names its epic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeldBy {
+    Own,
+    Epic(Key),
+}
+
+/// One row of a sprint's promise list (R8). Only `SprintPromise::listed` builds one, so a row always has a state and
+/// always falls in its sprint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SprintPromise {
     pub key: Key,
     pub title: String,
-    pub promise: StoryPromise,
+    /// The effective date (R3).
+    pub on: NaiveDate,
+    pub held_by: HeldBy,
+    /// The recipient of the promise that sets `on`.
+    pub to: Option<String>,
+    pub state: State,
+    pub done_on: Option<NaiveDate>,
+    pub days: Option<u32>,
+}
+
+impl SprintPromise {
+    /// R8: the row a story's promise gives the sprint planned to end `ends` whose previous sprint was planned to end
+    /// `previous_ends`; None when the effective date is outside that range or the promise has no state (a done story
+    /// without `done_at`).
+    pub fn listed(
+        key: Key,
+        title: String,
+        sp: StoryPromise,
+        previous_ends: Option<NaiveDate>,
+        ends: NaiveDate,
+    ) -> Option<SprintPromise> {
+        let state = sp.state?;
+        if !in_sprint(sp.on, previous_ends, ends) {
+            return None;
+        }
+        // `story_promise` names the holder's promise: the own one for `Own`, the inherited one for `Epic`.
+        let (held_by, to) = match (sp.holder, sp.own, sp.epic) {
+            (Holder::Own, Some(own), _) => (HeldBy::Own, own.to),
+            (Holder::Epic, _, Some((k, e))) => (HeldBy::Epic(k), e.to),
+            (Holder::Own, None, _) | (Holder::Epic, _, None) => return None,
+        };
+        Some(SprintPromise {
+            key,
+            title,
+            on: sp.on,
+            held_by,
+            to,
+            state,
+            done_on: sp.done_on,
+            days: sp.days,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1575,6 +1625,74 @@ mod tests {
         ];
         for (label, e, want) in rows {
             assert_eq!(e.to_string(), want, "{label}");
+        }
+    }
+    #[test]
+    fn listed_keeps_a_stated_row_in_its_sprint_and_names_the_holder() {
+        let ek = key("ABC-7");
+        let own = promise(d(2026, 11, 22), "2026-11-01T09:00:00Z", Some("Acme"));
+        let epic = promise(d(2026, 11, 18), "2026-11-01T09:00:00Z", Some("Beta"));
+        let later_epic = promise(d(2026, 11, 25), "2026-11-01T09:00:00Z", Some("Beta"));
+        let today = clock(d(2026, 11, 26), None, None);
+        let facts = |delivery, done_at: Option<&str>, own, epic| StoryFacts {
+            delivery,
+            resolution: (delivery == Done).then_some(Resolution::Completed),
+            done_at: done_at.map(t),
+            own,
+            epic,
+        };
+        let sp = |f: StoryFacts<'_>| story_promise(&f, &today).unwrap();
+        let prev = Some(d(2026, 11, 10));
+        let ends = d(2026, 11, 24);
+        type Want<'a> = Option<(NaiveDate, HeldBy, Option<&'a str>, State)>;
+        let rows: Vec<(&str, StoryPromise, Option<NaiveDate>, Want<'_>)> = vec![
+            (
+                "epic holds: its key and recipient",
+                sp(facts(Todo, None, Some(&own), Some((&ek, &epic)))),
+                prev,
+                Some((
+                    d(2026, 11, 18),
+                    HeldBy::Epic(ek.clone()),
+                    Some("Beta"),
+                    State::Overdue,
+                )),
+            ),
+            (
+                "own holds beside a later epic: the own recipient",
+                sp(facts(Todo, None, Some(&own), Some((&ek, &later_epic)))),
+                prev,
+                Some((d(2026, 11, 22), HeldBy::Own, Some("Acme"), State::Overdue)),
+            ),
+            (
+                "own end inclusive",
+                sp(facts(Done, Some("2026-11-21T10:00:00Z"), Some(&own), None)),
+                Some(d(2026, 11, 21)),
+                Some((d(2026, 11, 22), HeldBy::Own, Some("Acme"), State::Kept)),
+            ),
+            (
+                "on the previous end: not this sprint's",
+                sp(facts(Todo, None, Some(&own), None)),
+                Some(d(2026, 11, 22)),
+                None,
+            ),
+            (
+                "after this end: not this sprint's",
+                sp(facts(Todo, None, None, Some((&ek, &later_epic)))),
+                prev,
+                None,
+            ),
+            (
+                "done without done_at: no state, no row",
+                sp(facts(Done, None, Some(&own), None)),
+                prev,
+                None,
+            ),
+        ];
+        for (label, sp, previous, want) in rows {
+            let got = SprintPromise::listed(key("ABC-9"), "T".into(), sp, previous, ends)
+                .map(|r| (r.on, r.held_by, r.to, r.state));
+            let want = want.map(|(on, h, to, st)| (on, h, to.map(str::to_string), st));
+            assert_eq!(got, want, "{label}");
         }
     }
 }

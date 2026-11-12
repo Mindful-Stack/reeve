@@ -67,13 +67,13 @@ async fn get(
     c: Caller,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<Response<SprintViewDto>>, AppError> {
-    let (sp, goals, links, summary, promises) = s.handlers.sprint_view(id, c.ctx().now).await?;
+    let v = s.handlers.sprint_view(id, c.ctx().now).await?;
     Ok(ok(sprint_view_dto(
-        &sp,
-        &goals,
-        &links,
-        summary.as_ref(),
-        &promises,
+        &v.sprint,
+        &v.goals,
+        &v.links,
+        v.summary.as_ref(),
+        &v.promises,
         s.handlers.settings.upkeep_line,
     )))
 }

@@ -19,6 +19,18 @@ fn promisable(item: ItemType) -> Result<(), HandlerError> {
     Ok(())
 }
 
+/// The clock `promise_clock_in` reads, built from every sprint already read on the caller's snapshot (the sprint views
+/// read them all anyway): today, and the active and the draft sprint's planned ends.
+pub(super) fn promise_clock_of(all: &[crate::domain::sprint::Sprint], now: DateTime<Utc>) -> Clock {
+    let ends =
+        |st: reeve_protocol::SprintState| all.iter().find(|s| s.state == st).map(|s| s.ends_on);
+    Clock {
+        today: now.date_naive(),
+        active_ends: ends(reeve_protocol::SprintState::Active),
+        draft_ends: ends(reeve_protocol::SprintState::Draft),
+    }
+}
+
 impl Handlers {
     /// Today (the UTC date of `now`) and the active and draft sprints' planned ends, read once on the caller's snapshot
     /// in one statement. Every story and epic assembler classifies promises against this one value, beside `urgency_in`.

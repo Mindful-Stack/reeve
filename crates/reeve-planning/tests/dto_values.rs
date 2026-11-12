@@ -690,11 +690,14 @@ fn epic_promise_dto_carries_every_field() {
 }
 
 /// A sprint's promise row: the epic's earlier date holds, so `to` is the epic's recipient (not the story's own), the
-/// epic's key is named, and the story, done two days after it, is late with its done day. Every field distinct.
+/// epic's key is named, and the story, done two days after it, is late with its done day. Beside a later epic promise,
+/// the story's own date holds: its own recipient, and no epic named although the story inherits one. Every field
+/// distinct.
 #[test]
 fn sprint_promise_dto_carries_every_field() {
     let own = kept_promise(ymd(2026, 11, 22), "pm@x", t(5), Some("Acme"));
     let epic = kept_promise(ymd(2026, 11, 18), "lead@x", t(4), Some("Beta"));
+    let later_epic = kept_promise(ymd(2026, 11, 25), "lead@x", t(4), Some("Beta"));
     let epic_key = k("ABC-7");
     let facts = StoryFacts {
         delivery: DeliveryState::Done,
@@ -703,33 +706,30 @@ fn sprint_promise_dto_carries_every_field() {
         own: Some(&own),
         epic: Some((&epic_key, &epic)),
     };
-    let promise = story_promise(&facts, &promise_clock(ymd(2026, 11, 25))).unwrap();
-    let row = SprintPromise {
-        key: k("ABC-9"),
-        title: "Ship it".into(),
-        promise,
+    let row = |f: &StoryFacts<'_>| {
+        let sp = story_promise(f, &promise_clock(ymd(2026, 11, 25))).unwrap();
+        SprintPromise::listed(
+            k("ABC-9"),
+            "Ship it".into(),
+            sp,
+            Some(ymd(2026, 11, 10)),
+            ymd(2026, 11, 24),
+        )
+        .unwrap()
     };
     assert_eq!(
-        v!(sprint_promise_dto(&row)),
+        v!(sprint_promise_dto(&row(&facts))),
         json!({
             "key": "ABC-9", "title": "Ship it", "on": "2026-11-18", "to": "Beta", "holder": "epic",
             "epic": "ABC-7", "state": "late", "done_on": "2026-11-20", "days": 2
         })
     );
-    let own_row = SprintPromise {
-        key: k("ABC-9"),
-        title: "Ship it".into(),
-        promise: story_promise(
-            &StoryFacts {
-                epic: None,
-                ..facts
-            },
-            &promise_clock(ymd(2026, 11, 25)),
-        )
-        .unwrap(),
+    let own_holds = StoryFacts {
+        epic: Some((&epic_key, &later_epic)),
+        ..facts
     };
     assert_eq!(
-        v!(sprint_promise_dto(&own_row)),
+        v!(sprint_promise_dto(&row(&own_holds))),
         json!({
             "key": "ABC-9", "title": "Ship it", "on": "2026-11-22", "to": "Acme", "holder": "own",
             "epic": null, "state": "kept", "done_on": "2026-11-20", "days": null

@@ -5834,7 +5834,7 @@
                     "type": "array"
                   },
                   "promises": {
-                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.",
+                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for\nactive and closed sprints; always empty for a draft.",
                     "items": {
                       "$ref": "#/components/schemas/SprintPromiseDto"
                     },
@@ -8433,7 +8433,7 @@
             "type": "array"
           },
           "promises": {
-            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.",
+            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for\nactive and closed sprints; always empty for a draft.",
             "items": {
               "$ref": "#/components/schemas/SprintPromiseDto"
             },

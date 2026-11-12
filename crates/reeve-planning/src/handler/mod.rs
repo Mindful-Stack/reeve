@@ -27,7 +27,7 @@ pub use dto::{
 };
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;
-pub use sprints::Sprints;
+pub use sprints::{SprintView, Sprints};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 pub use urgent::{WarRoomEntry, WarRoomInitiative};

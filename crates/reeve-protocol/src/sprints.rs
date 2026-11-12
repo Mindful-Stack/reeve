@@ -142,7 +142,8 @@ pub struct SprintViewDto {
     pub upkeep_line: u8,
     pub demo: Vec<DemoStoryDto>,
     /// The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-    /// sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere.
+    /// sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
+    /// active and closed sprints; always empty for a draft.
     #[serde(default)]
     #[schema(required = true)]
     pub promises: Vec<SprintPromiseDto>,
