@@ -394,10 +394,11 @@ async fn starting_a_story_assigns_an_owner_only_when_it_has_none() {
         Some("dan@example.com"),
         "todo to testing assigns too (kb/ADR-0027 R6)"
     );
-    // The story is owned now, so entering in_progress from testing keeps that owner.
+    // An owner is never overwritten: another person moving the now-owned story keeps Dan as owner.
+    let mia = ctx("mia@example.com", Via::Interactive);
     let c2 = h
         .move_story(
-            &mixed,
+            &mia,
             testing.key(),
             2,
             DeliveryState::InProgress,

@@ -9266,7 +9266,8 @@ async fn own_unmerged_work_blocks_others_but_not_its_owner() {
     let d1 = mk_story("d1", None).await;
     let d2 = mk_story("d2", None).await;
     let d3 = mk_story("d3", Some("dan@example.com")).await;
-    for d in [&d1, &d2, &d3] {
+    let d4 = mk_story("d4", Some("mia@example.com")).await;
+    for d in [&d1, &d2, &d3, &d4] {
         h.add_block(&dan, d.key(), b.key()).await.unwrap();
     }
     // Dan starts B (becoming its owner) and puts it in review.
@@ -9334,6 +9335,21 @@ async fn own_unmerged_work_blocks_others_but_not_its_owner() {
             &mia,
             d2.key(),
             d2.version(),
+            DeliveryState::InProgress,
+            None,
+            None,
+        )
+        .await
+    {
+        Err(HandlerError::Refused(reasons)) => assert_eq!(reasons, expected),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    // The mover never replaces an existing owner: Dan's agent is refused on Mia's D4, judged as Mia's.
+    match h
+        .move_story(
+            &dan_bot,
+            d4.key(),
+            d4.version(),
             DeliveryState::InProgress,
             None,
             None,

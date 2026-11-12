@@ -392,7 +392,8 @@ impl Story {
     /// The delivery policy: two rules, everything else free (kb/ADR-0002 R4). Readiness is computed by the caller
     /// (kb/ADR-0018 R1); nothing about sprints or goals is an input (kb/ADR-0014 R4). On `Moved` the story carries
     /// the new delivery, the resolution (the given one when entering done, none otherwise) and, when it enters an
-    /// active state without an owner, `actor_email` (normalised by the caller) as its owner (kb/ADR-0027 R6). Untouched on `Unchanged` and on refusal.
+    /// active state without an owner, `actor_email` (normalised by the caller) as its owner (kb/ADR-0027 R6). Untouched on
+    /// `Unchanged` and on refusal.
     pub fn move_to(
         &mut self,
         m: Move,
@@ -782,9 +783,11 @@ mod tests {
             }
         }
 
-        /// Owner on start, four cases. Catches the rule applied on other states or over an existing owner.
+        /// Owner on entering any active state: an unowned story gets the mover, from todo, done or another active state;
+        /// an owner is kept; leaving for done assigns nobody. Catches a rule limited to one state or to entries from
+        /// outside active work, and one applied over an existing owner.
         #[test]
-        fn entering_active_work_from_todo_or_done_assigns_an_unowned_story_to_the_mover() {
+        fn entering_an_active_state_assigns_an_unowned_story_to_the_mover() {
             let mut a = story(Todo, None, None);
             a.move_to(mv(InProgress, None, None), true, I, "dan@example.com")
                 .unwrap();
@@ -808,6 +811,14 @@ mod tests {
                 c2.owner(),
                 Some("dan@example.com"),
                 "done to in review assigns too (R6)"
+            );
+            let mut c3 = story(InReview, None, None);
+            c3.move_to(mv(Testing, None, None), true, I, "dan@example.com")
+                .unwrap();
+            assert_eq!(
+                c3.owner(),
+                Some("dan@example.com"),
+                "any active entry assigns"
             );
             let mut c4 = story(Todo, None, None);
             c4.move_to(
