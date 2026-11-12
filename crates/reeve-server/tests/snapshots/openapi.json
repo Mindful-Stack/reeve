@@ -668,7 +668,7 @@
             "type": "string"
           },
           "links": {
-            "description": "Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.\nA replay of the idempotency key returns the first goal unchanged, whatever `links` it sends.",
+            "description": "Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.\nA replay of the idempotency key returns the goal as it now stands, unchanged by this call, whatever `links` it\nsends.",
             "items": {
               "$ref": "#/components/schemas/Key"
             },
@@ -1802,7 +1802,7 @@
             "type": "integer"
           },
           "initiatives": {
-            "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key\nnumber); the sprint page groups the goal under the first.",
+            "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
             "items": {
               "$ref": "#/components/schemas/Key"
             },
@@ -7489,7 +7489,7 @@
                       "type": "integer"
                     },
                     "initiatives": {
-                      "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key\nnumber); the sprint page groups the goal under the first.",
+                      "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
                       "items": {
                         "$ref": "#/components/schemas/Key"
                       },

@@ -46,7 +46,8 @@ async fn list(
                 &x.goals,
                 &x.links,
                 x.active_summary.as_ref(),
-                // The active sprint's promises are read only by `GET /sprints/{id}` until a follow-up of GRA-608 renders them here.
+                // The active sprint's promises are read only by `GET /sprints/{id}` until a follow-up of GRA-608
+                // renders them here.
                 &[],
                 None,
                 line,

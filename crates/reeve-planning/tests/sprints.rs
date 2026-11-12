@@ -3037,7 +3037,8 @@ mod promises {
 
         let list = h.sprints(now).await.unwrap();
         assert_eq!(list.active.as_ref().map(|a| a.id), Some(s2));
-        // The active sprint's list is read through its view (`GET /sprints` leaves it empty until a follow-up of GRA-608).
+        // The active sprint's list is read through its view (`GET /sprints` leaves it empty until a follow-up of
+        // GRA-608).
         let list = h.sprint_view(s2, now).await.unwrap();
         assert_eq!(
             keys(&list.promises),

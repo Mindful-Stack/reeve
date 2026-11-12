@@ -920,7 +920,7 @@ mod tests {
         );
     }
 
-    // --- goal_gates ---------------------------------------------------------------------------------------------------
+    // --- goal_gates -------------------------------------------------------------------------------------------------
 
     fn ini(key: &str, marked: bool) -> Initiative {
         Initiative::from_persisted(
@@ -1043,8 +1043,8 @@ mod tests {
         }
     }
 
-    /// A story link takes in its epic and that epic's initiative as items, never its siblings: the sibling's decision is
-    /// not the goal's, and the initiative's other epic (ABC-3) is not an item.
+    /// A story link takes in its epic and that epic's initiative as items, never its siblings: the sibling's decision
+    /// is not the goal's, and the initiative's other epic (ABC-3) is not an item.
     #[test]
     fn gates_story_link_takes_in_ancestors_not_siblings() {
         let i = [ini("ABC-1", false)];

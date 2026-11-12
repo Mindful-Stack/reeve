@@ -1,7 +1,8 @@
-<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates the
-     first draft; given `links`, the add also links those items in the same write (`POST /goals` `links`), and `title` heads
-     and names the add form; both add only, ignored when editing), or, given `goal`, edits that goal (`PATCH /goals/{id}` at its version). Mount a new form under
-     `{#key}` of the draft so a half-typed goal never moves to another sprint. -->
+<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates
+    the first draft; given `links`, the add also links those items in the same write (`POST /goals` `links`), and
+    `title` heads and names the add form; both add only, ignored when editing), or, given `goal`, edits that goal
+    (`PATCH /goals/{id}` at its version). Mount a new form under `{#key}` of the draft so a half-typed goal never
+    moves to another sprint. -->
 <script lang="ts">
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { CreatedGoal, Goal } from '#lib/api/types.ts';

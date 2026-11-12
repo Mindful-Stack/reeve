@@ -127,11 +127,12 @@ impl Handlers {
         Ok(())
     }
 
-    /// Adds a goal to the draft (or to the active sprint with `to_active`), linked to `links` in the same transaction.
-    /// Interactive only (kb/ADR-0014 R5); the owner defaults to the caller. Each link is checked as `link_goal` checks it
-    /// (the item exists; an existing link writes nothing) and logged under the item; an unknown key refuses the whole
-    /// create, so no goal is made. A replay of the idempotency key returns the goal as it now stands, unchanged by this call,
-    /// whatever `links` it sends. Returns the goal and the target sprint's warnings after the add.
+    /// Adds a goal to the draft (or to the active sprint with `to_active`), linked to `links` in the same
+    /// transaction. Interactive only (kb/ADR-0014 R5); the owner defaults to the caller. Each link is checked as
+    /// `link_goal` checks it (the item exists; an existing link writes nothing) and logged under the item; an unknown
+    /// key refuses the whole create, so no goal is made. A replay of the idempotency key returns the goal as it now
+    /// stands, unchanged by this call, whatever `links` it sends. Returns the goal and the target sprint's warnings
+    /// after the add.
     pub async fn add_goal(
         &self,
         c: &Ctx,
@@ -655,8 +656,8 @@ impl Handlers {
     }
 
     /// Every sprint with its goals and links, and the active sprint's numbers up to `now`, from one read-only snapshot.
-    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (a follow-up of GRA-608), so
-    /// this read, made on every board load, does not pay for it.
+    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (a
+    /// follow-up of GRA-608), so this read, made on every board load, does not pay for it.
     pub async fn sprints(&self, now: DateTime<Utc>) -> Result<Sprints, HandlerError> {
         let mut tx = self
             .pool
@@ -698,8 +699,8 @@ impl Handlers {
         Ok(out)
     }
 
-    /// Each goal of the active and the draft sprint with what its work waits on, from one read-only snapshot. Derived on
-    /// read, never stored (kb/ADR-0014 R6). Nothing in `handler/moves.rs` reaches it (kb/ADR-0014 R4).
+    /// Each goal of the active and the draft sprint with what its work waits on, from one read-only snapshot.
+    /// Derived on read, never stored (kb/ADR-0014 R6). Nothing in `handler/moves.rs` reaches it (kb/ADR-0014 R4).
     pub async fn sprint_planning(&self) -> Result<Vec<GoalGates>, HandlerError> {
         let mut tx = self
             .pool

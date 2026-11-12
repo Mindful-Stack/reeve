@@ -2993,7 +2993,8 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
     let (_, ev) = admin_get(&h, &format!("/api/v1/epics/{epic}")).await;
     assert_eq!(ev["value"]["promise"], epic_promise);
     // The sprint view lists the promise (kb/ADR-0025 R8): the active sprint's list is read from `GET /sprints/{id}`;
-    // `GET /sprints` leaves it empty and `promises_after` null until a client renders it there (a follow-up of GRA-608).
+    // `GET /sprints` leaves it empty and `promises_after` null until a client renders it there (a follow-up of
+    // GRA-608).
     let (_, one) = admin_get(&h, &format!("/api/v1/sprints/{}", opened["id"])).await;
     let promises = &one["value"]["promises"];
     assert_eq!(promises.as_array().map(Vec::len), Some(1), "{one}");

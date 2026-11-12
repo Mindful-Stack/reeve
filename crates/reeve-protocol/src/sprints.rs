@@ -192,8 +192,8 @@ pub struct CreatedGoalDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct GoalGatesDto {
     pub goal_id: i64,
-    /// Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key
-    /// number); the sprint page groups the goal under the first.
+    /// Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
+    /// key number); the sprint page groups the goal under the first.
     pub initiatives: Vec<Key>,
     /// Initiatives first, then epics, each by key number.
     pub discoveries: Vec<DiscoveryGateDto>,
@@ -259,7 +259,8 @@ pub struct CreateGoal {
     #[serde(default)]
     pub active: bool,
     /// Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.
-    /// A replay of the idempotency key returns the first goal unchanged, whatever `links` it sends.
+    /// A replay of the idempotency key returns the goal as it now stands, unchanged by this call, whatever `links` it
+    /// sends.
     #[serde(default)]
     pub links: Vec<Key>,
 }

@@ -1402,7 +1402,8 @@ export interface components {
             idempotency_key: string;
             /**
              * @description Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.
-             *     A replay of the idempotency key returns the first goal unchanged, whatever `links` it sends.
+             *     A replay of the idempotency key returns the goal as it now stands, unchanged by this call, whatever `links` it
+             *     sends.
              */
             links?: components["schemas"]["Key"][];
             notes?: string | null;
@@ -1745,8 +1746,8 @@ export interface components {
             /** Format: int64 */
             goal_id: number;
             /**
-             * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key
-             *     number); the sprint page groups the goal under the first.
+             * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
+             *     key number); the sprint page groups the goal under the first.
              */
             initiatives: components["schemas"]["Key"][];
         };
@@ -3435,8 +3436,8 @@ export interface components {
                 /** Format: int64 */
                 goal_id: number;
                 /**
-                 * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key
-                 *     number); the sprint page groups the goal under the first.
+                 * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
+                 *     key number); the sprint page groups the goal under the first.
                  */
                 initiatives: components["schemas"]["Key"][];
             }[];
