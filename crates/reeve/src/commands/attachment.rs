@@ -2,6 +2,7 @@
 //! authenticated route, kb/ADR-0023 R5) and print the path of the local copy.
 use super::finish;
 use crate::client::{Client, Outcome};
+use anyhow::Context;
 use clap::Subcommand;
 use reeve_protocol::ErrorCode;
 use std::path::PathBuf;
@@ -48,22 +49,33 @@ fn default_dir() -> std::io::Result<PathBuf> {
     // A shared temp directory lets another user pre-create the name; refuse anything but a private directory.
     let meta = std::fs::symlink_metadata(&dir)?;
     #[cfg(unix)]
-    let shared = {
+    let mode = {
         use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o077 != 0
+        meta.permissions().mode() & 0o7777
     };
     #[cfg(not(unix))]
-    let shared = false;
-    if !meta.is_dir() || shared {
-        #[cfg(unix)]
-        let mode = {
-            use std::os::unix::fs::PermissionsExt;
-            meta.permissions().mode() & 0o7777
-        };
-        #[cfg(not(unix))]
-        let mode = 0;
+    let mode = 0;
+    let shared = mode & 0o077 != 0;
+    // A directory another user owns (reachable by root, or pre-created with a loose parent) is not ours either:
+    // a file created inside is owned by this process's user, so compare the directory's owner with that.
+    #[cfg(unix)]
+    let foreign = {
+        use std::os::unix::fs::MetadataExt;
+        let probe = dir.join(format!(".owner-probe.{}", std::process::id()));
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)?;
+        let own = f.metadata()?.uid();
+        drop(f);
+        let _ = std::fs::remove_file(&probe);
+        meta.uid() != own
+    };
+    #[cfg(not(unix))]
+    let foreign = false;
+    if !meta.is_dir() || shared || foreign {
         return Err(std::io::Error::other(format!(
-            "{} is not a private directory (mode {mode:o}); remove it or pass --dir",
+            "{} is not a private directory of yours (mode {mode:o}); remove it or pass --dir",
             dir.display()
         )));
     }
@@ -92,6 +104,7 @@ pub async fn run(c: &Client, cmd: Attachment, json: bool) -> anyhow::Result<i32>
         None => default_dir()?,
     };
     let path = dir.join(format!("{id}.{ext}"));
-    crate::atomic_file::write_atomically(&path, &bytes)?;
+    crate::atomic_file::write_atomically(&path, &bytes)
+        .with_context(|| format!("writing {}", path.display()))?;
     Ok(finish(Outcome::Ok(Written { path }), json, render))
 }
