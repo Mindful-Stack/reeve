@@ -16,7 +16,7 @@
 # Lorekeeper (kb/ADR-0005 R5); only this script, its mise task and its CI job read it.
 #
 # Builds both binaries (static-oidc), starts the server on 127.0.0.1:7476, issues an automation token for the smoke admin,
-# seeds the sprints and the promise a person makes (seed_sprints and seed_promise, with an interactive token), builds a household with one accepted record, runs Lorekeeper's reeve-real-server and reeve-reference tests against them
+# seeds the sprints and the promises a person makes (seed_sprints and seed_promise, with an interactive token), builds a household with one accepted record, runs Lorekeeper's reeve-real-server and reeve-reference tests against them
 # (every test must run and pass: none skipped, todo or cancelled), then stops the server and drops its database.
 #
 # Sourcing the script defines its functions without running the smoke: scripts/tests/skill-smoke.sh drives them
@@ -185,16 +185,21 @@ seed_sprints() {
 	sp goal confidence "$active" on_track "seeded by the skill smoke" >/dev/null || return 1
 }
 
-# seed_promise REEVE: a story promised by the active sprint's end (kb/ADR-0025 R2: only a person promises), so Lorekeeper's
-# `story ls --promised` entry has a row to read. Run after seed_sprints (the shortcut needs the active sprint), with an
+# seed_promise REEVE: a story promised by the active sprint's end and an epic (migrated from PRM-1) promised by the next
+# sprint's end (kb/ADR-0025 R2: only a person promises), so Lorekeeper's `story ls --promised` and `epic show PRM-1`
+# entries read a promise. Run after seed_sprints (the shortcuts need the active sprint and the draft), with an
 # interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
 seed_promise() {
 	local reeve=$1 out key
-	out="$("$reeve" --json story create --title "Skill smoke promised story" --kind chore --criterion "It is promised" \
-		--idempotency-key skill-smoke:promise:1)" || { echo "seeding the promise: story create answered $out" >&2; return 1; }
-	key="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).value.key)' "$out")" || return 1
-	out="$("$reeve" --json story promise "$key" --on this-sprint --to "the skill smoke")" ||
-		{ echo "seeding the promise: story promise $key answered $out" >&2; return 1; }
+	pr() {
+		out="$("$reeve" --json "$@")" || { echo "seeding the promises: reeve $* answered $out" >&2; return 1; }
+		node -e 'process.stdout.write(JSON.parse(process.argv[1]).value.key)' "$out"
+	}
+	key="$(pr story create --title "Skill smoke promised story" --kind chore --criterion "It is promised" \
+		--idempotency-key skill-smoke:promise:1)" || return 1
+	pr story promise "$key" --on this-sprint --to "the skill smoke" >/dev/null || return 1
+	key="$(pr epic create --title "Skill smoke promised epic" --external-ref PRM-1 --idempotency-key skill-smoke:promise:2)" || return 1
+	pr epic promise "$key" --on next-sprint --to "the skill smoke" >/dev/null || return 1
 }
 
 # Installed before anything is created: it stops what this run started and drops only the database this run created.

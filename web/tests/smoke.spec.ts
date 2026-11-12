@@ -941,7 +941,9 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 			return `${d} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]}`;
 		};
 
-		await page.goto(`/board?story=${story.key}`);
+		// The story is not ready (its epic's discovery is open), so its card sits in the Not ready disclosure: `notready=1`
+		// opens it, and the URL keeps it open across the reload.
+		await page.goto(`/board?story=${story.key}&notready=1`);
 		const drawer = page.getByRole('complementary');
 		const line = drawer.getByTestId('promise-line');
 		await expect(line).toContainText(`Promised ${day(next!.ends_on)} via epic ${epic.key}`);
@@ -953,22 +955,18 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 		await dialog.getByRole('button', { name: 'Promise', exact: true }).click();
 		await expect(dialog).toBeHidden();
 
-		// The story is not ready (its epic's discovery is open), so its card sits in the Not ready disclosure.
-		const card = page.getByTestId(`card-${story.key}`);
-		const chip = card.locator('.promise-chip');
-		const openNotReady = async () => {
-			const closed = page.locator('details.not-ready:not([open]) > summary');
-			if ((await closed.count()) > 0) await closed.click();
-		};
-		await openNotReady();
+		const chip = page.getByTestId(`card-${story.key}`).locator('.promise-chip');
+		await expect(chip).toBeVisible();
 		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
 
 		await page.reload();
-		await openNotReady();
+		await expect(page.locator('details.not-ready')).toHaveAttribute('open', '');
+		await expect(chip).toBeVisible();
 		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
 
 		await page.getByRole('complementary').getByRole('button', { name: `More actions for ${story.key}` }).click();
 		await page.getByRole('menuitem', { name: 'Clear promise' }).click();
+		await expect(chip).toBeVisible();
 		await expect(chip).toHaveText(`Promised ${day(next!.ends_on)} · next sprint · via ${epic.key}`);
 		await expect(page.getByRole('complementary').getByTestId('promise-line')).toContainText(`via epic ${epic.key}`);
 	} finally {
