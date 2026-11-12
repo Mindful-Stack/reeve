@@ -133,7 +133,7 @@
 						{#each d.view.promises as x (x.key)}
 							<li>
 								<a href="?story={x.key}"><span class="key">{x.key}</span> {x.title}</a>{x.to ? ` · to ${x.to}` : ''}
-								· {sprintPromiseText(x)}{x.holder === 'epic' && x.epic != null ? ` · via ${x.epic}` : ''}
+								· {sprintPromiseText(x)}{x.holder === 'epic' && x.epic_key != null ? ` · via ${x.epic_key}` : ''}
 							</li>
 						{/each}
 					</ul>

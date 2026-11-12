@@ -415,6 +415,25 @@ impl Handlers {
         urg: &Urgency,
         clock: &Clock,
     ) -> Result<Vec<StoryWithReadiness>, HandlerError> {
+        Ok(self
+            .list_story_rows_in(tx, f, ready_only, done, urg, clock)
+            .await?
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect())
+    }
+
+    /// `list_stories_in`, with each row's derived promise (the domain value) beside it, so the decision queue reads the
+    /// promise from the domain and never back off the wire.
+    pub(super) async fn list_story_rows_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        f: &StoryFilter,
+        ready_only: bool,
+        done: DoneWindow,
+        urg: &Urgency,
+        clock: &Clock,
+    ) -> Result<Vec<(StoryWithReadiness, Option<StoryPromise>)>, HandlerError> {
         let stories = self.ports.stories.list_stories(tx, f, done).await?;
         let keys: Vec<Key> = stories.iter().map(|s| s.key().clone()).collect();
         let mut inputs = self.ports.reads.readiness_inputs(tx, &keys).await?;
@@ -434,7 +453,7 @@ impl Handlers {
         }
         // The promise filter classifies the promise each row shows, through the domain's one rule (kb/ADR-0025 R5).
         let filter = f.promised.map(promise::Filter::from);
-        let mut out: Vec<StoryWithReadiness> = self
+        let mut out: Vec<(StoryWithReadiness, Option<StoryPromise>)> = self
             .story_rows_in(tx, &kept, urg, clock)
             .await?
             .into_iter()
@@ -442,12 +461,12 @@ impl Handlers {
             .filter(|((_, sp), _)| {
                 filter.is_none_or(|p| sp.as_ref().is_some_and(|sp| p.matches(sp)))
             })
-            .map(|((story, _), readiness)| StoryWithReadiness { story, readiness })
+            .map(|((story, sp), readiness)| (StoryWithReadiness { story, readiness }, sp))
             .collect();
         // Goal membership is read with the DTOs (one statement), so it filters after them; it only drops rows and never
         // changes what a kept row shows (a started story still lists under its goal).
         if let Some(g) = f.goal {
-            out.retain(|s| match g {
+            out.retain(|(s, _)| match g {
                 GoalFilter::Id(id) => s.story.goals.iter().any(|x| x.id == id),
                 GoalFilter::Any => !s.story.goals.is_empty(),
                 GoalFilter::None => s.story.goals.is_empty(),
@@ -456,7 +475,7 @@ impl Handlers {
         // Urgency is computed once per snapshot (`urgency_in`) and shown on every row; the filter keeps exactly the
         // rows shown urgent rather than restating kb/ADR-0017 R3 in SQL.
         if f.urgent {
-            out.retain(|s| !s.story.urgent_sources.is_empty());
+            out.retain(|(s, _)| !s.story.urgent_sources.is_empty());
         }
         Ok(out)
     }
@@ -702,8 +721,8 @@ impl Handlers {
             .collect())
     }
 
-    /// `story_dtos_in`, with each story's derived promise beside its DTO, so a filter classifies through the domain
-    /// (`promise::Filter::matches`) and never re-reads the wire enums.
+    /// `story_dtos_in`, with each story's derived promise beside its DTO, so a filter and the decision queue classify
+    /// through the domain (`promise::Filter::matches`, `PromiseWindow::of`) and never re-read the wire enums.
     async fn story_rows_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

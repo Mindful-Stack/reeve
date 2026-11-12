@@ -33,10 +33,11 @@ fn days_text(days: Option<u32>) -> String {
     days.map(|d| format!(" {d} d")).unwrap_or_default()
 }
 
-/// The one table of state words, lower case (the web's `STATE_WORDS`); `None` for open.
+/// The one table of state words, lower case (the web's `STATE_WORDS`); `None` for open and for a state this build does
+/// not know (shown neutrally, "Promised 20 Nov").
 pub fn state_words(state: PromiseState, days: Option<u32>) -> Option<String> {
     match state {
-        PromiseState::Open => None,
+        PromiseState::Open | PromiseState::Unknown => None,
         PromiseState::Overdue => Some(format!("overdue{}", days_text(days))),
         PromiseState::Kept => Some("kept".into()),
         PromiseState::Late => Some(format!("done{} late", days_text(days))),

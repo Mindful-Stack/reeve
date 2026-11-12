@@ -1,11 +1,11 @@
 use super::*;
-use crate::domain::promise::Promise;
+use crate::domain::promise::{Promisable, Promise, PromiseItem};
 
-/// What the promise action needs from the item it promises, read under a row lock.
+/// What the promise action needs from the item it promises, read under a row lock: what it is (a story with its
+/// delivery, or an epic) and its current promise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseTarget {
-    /// None for an epic (no delivery state).
-    pub delivery: Option<DeliveryState>,
+    pub item: Promisable,
     pub promise: Option<Promise>,
 }
 
@@ -38,19 +38,19 @@ pub struct PromisedStoryRow {
 #[async_trait]
 pub trait PromiseRepo: Send + Sync {
     /// Locks the item's row (`FOR NO KEY UPDATE`: a promise never changes a key, so foreign-key inserts on the row
-    /// stay unblocked) and returns its delivery and current promise; None when no item of that type has the key.
-    /// Never asked for an initiative.
+    /// stay unblocked) and returns what it is and its current promise; None when no item of that kind has the key.
+    /// `PromiseItem` has no initiative (R1), so none can be asked for.
     async fn lock_for_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
     ) -> Result<Option<PromiseTarget>, RepoError>;
     /// Writes the promise, replacing any; touches no other column. Ok(false) when the item does not exist.
     async fn set_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
         p: &Promise,
     ) -> Result<bool, RepoError>;
@@ -58,7 +58,7 @@ pub trait PromiseRepo: Send + Sync {
     async fn clear_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
     ) -> Result<bool, RepoError>;
 }

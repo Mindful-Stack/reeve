@@ -142,9 +142,4 @@ pub trait PlanningReads: Send + Sync {
         after: Option<NaiveDate>,
         upto: NaiveDate,
     ) -> Result<Vec<PromisedStoryRow>, RepoError>;
-    /// The planned ends of the active and the draft sprint, in one statement.
-    async fn planned_ends_in(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-    ) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError>;
 }

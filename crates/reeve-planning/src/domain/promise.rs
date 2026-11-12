@@ -1,7 +1,8 @@
 //! Promises (kb/ADR-0025): a date by which a story or an epic will be done. Pure: dates and facts in, state out.
 //! Nothing here reads the clock or the database; `today` is the handler's `c.now` as a UTC date.
+use super::sprint::Sprint;
 use chrono::{DateTime, NaiveDate, Utc};
-use reeve_protocol::{DeliveryState, Key, NeededIn, Resolution};
+use reeve_protocol::{DeliveryState, Key, NeededIn, Resolution, SprintState};
 
 pub const MAX_RECIPIENT: usize = 200;
 
@@ -90,24 +91,57 @@ pub enum PromiseError {
     #[error("give a date or a sprint shortcut, not both")]
     Both,
     /// Neither, and no current promise whose recipient could change.
-    #[error("give a date or a sprint shortcut")]
-    Neither,
+    #[error("{0} has no promise to change: give a date")]
+    Neither(Key),
 }
 
-/// R2: a done story (dropped included: dropped is a resolution of done) cannot be promised.
-pub fn may_promise(key: &Key, delivery: DeliveryState) -> Result<(), PromiseError> {
-    if delivery == DeliveryState::Done {
-        return Err(PromiseError::Done(key.clone()));
+/// Which kind of item a promise action names (R1): a story or an epic, never an initiative. What the port is asked
+/// for before the row is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseItem {
+    Story,
+    Epic,
+}
+
+impl PromiseItem {
+    /// R1: None for an initiative, which is never promised.
+    pub fn of(item: reeve_protocol::ItemType) -> Option<PromiseItem> {
+        match item {
+            reeve_protocol::ItemType::Story => Some(PromiseItem::Story),
+            reeve_protocol::ItemType::Epic => Some(PromiseItem::Epic),
+            reeve_protocol::ItemType::Initiative => None,
+        }
     }
-    Ok(())
 }
 
-/// Today and the two planned ends, read once per snapshot. `today` is the request's UTC date.
+/// Who may be promised (R1, R2), as read under the row lock: a story with its delivery state, or an epic, which has
+/// none. `change` refuses a done story.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Promisable {
+    Story(DeliveryState),
+    Epic,
+}
+
+/// Today and the two planned ends, built once per snapshot by `Clock::at`. `today` is the request's UTC date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Clock {
     pub today: NaiveDate,
     pub active_ends: Option<NaiveDate>,
     pub draft_ends: Option<NaiveDate>,
+}
+
+impl Clock {
+    /// The one assembly of a clock: today is the UTC date of `now`, and the active and the draft sprint's planned ends
+    /// come from `sprints` (closed sprints are ignored, a missing one gives None). Callers pass the sprints read on
+    /// their snapshot: every sprint, or only the active and the draft.
+    pub fn at(now: DateTime<Utc>, sprints: &[Sprint]) -> Clock {
+        let ends = |st: SprintState| sprints.iter().find(|s| s.state == st).map(|s| s.ends_on);
+        Clock {
+            today: now.date_naive(),
+            active_ends: ends(SprintState::Active),
+            draft_ends: ends(SprintState::Draft),
+        }
+    }
 }
 
 /// R6: the planned end of the shortcut's sprint; refused when the sprint is missing or its end is before today.
@@ -137,24 +171,39 @@ fn clean_to(to: String) -> Result<Option<String>, PromiseError> {
     Ok(to)
 }
 
-/// R2 and the change rules: the promise to store, given the current one (if any). `clock.today` is the UTC date of
-/// `at`, the request's timestamp.
+/// R2 and the change rules: the promise to store on `key`, given what it is and its current promise (if any), or None
+/// when nothing changes (the same date and the same recipient: a retry or a double submit writes and logs nothing, and
+/// the promise keeps its `by`).
+/// - A done story cannot be promised (R2; dropped included: dropped is a resolution of done).
 /// - A date or a shortcut, not both. Neither: change only the recipient of the current promise (refused without one).
 /// - A new date before today is refused; keeping the current date is not (an overdue promise's recipient can change).
 /// - Keeping the date keeps `at` (R3's boundary does not move) and records the editor in `by`; a new date sets both.
 /// - `to` None keeps the current recipient; blank clears it.
+///
+/// `at` is the request's timestamp; the dates are judged against `clock.today` only. The caller's contract is that
+/// the clock was built for that same request (`Clock::at(at, ..)`), so `clock.today == at.date_naive()`.
 pub fn change(
+    key: &Key,
+    item: Promisable,
     current: Option<&Promise>,
     req: Request,
     by: &str,
     at: DateTime<Utc>,
     clock: &Clock,
-) -> Result<Promise, PromiseError> {
+) -> Result<Option<Promise>, PromiseError> {
+    debug_assert_eq!(clock.today, at.date_naive(), "the clock is the request's");
+    if item == Promisable::Story(DeliveryState::Done) {
+        return Err(PromiseError::Done(key.clone()));
+    }
     let on = match (req.on, req.shortcut) {
         (Some(_), Some(_)) => return Err(PromiseError::Both),
         (Some(d), None) => d,
         (None, Some(s)) => shortcut(s, clock)?,
-        (None, None) => current.ok_or(PromiseError::Neither)?.on,
+        (None, None) => {
+            current
+                .ok_or_else(|| PromiseError::Neither(key.clone()))?
+                .on
+        }
     };
     let kept = current.filter(|c| c.on == on);
     if kept.is_none() && on < clock.today {
@@ -164,12 +213,15 @@ pub fn change(
         None => current.and_then(|c| c.to.clone()),
         Some(t) => clean_to(t)?,
     };
-    Ok(Promise {
+    if kept.is_some_and(|c| c.to == to) {
+        return Ok(None);
+    }
+    Ok(Some(Promise {
         on,
         by: by.to_string(),
         at: kept.map_or(at, |c| c.at),
         to,
-    })
+    }))
 }
 
 /// R3: a story gets its epic's promise unless it was done before that promise was set. A done story without
@@ -182,21 +234,40 @@ pub fn inherits(
     delivery != DeliveryState::Done || done_at.is_some_and(|d| d >= epic_promised_at)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Holder {
+/// Whose promise sets a story's effective date: the story's own, or the epic's, named by its key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeldBy {
     Own,
-    Epic,
+    Epic(Key),
 }
 
-/// R3: the earlier date; the story's own wins a tie, so its recipient is the one shown.
-pub fn effective(
-    own: Option<NaiveDate>,
-    from_epic: Option<NaiveDate>,
-) -> Option<(NaiveDate, Holder)> {
-    match (own, from_epic) {
-        (Some(o), Some(e)) if e < o => Some((e, Holder::Epic)),
-        (Some(o), _) => Some((o, Holder::Own)),
-        (None, Some(e)) => Some((e, Holder::Epic)),
+/// The promises a story shows (R3: both remain visible), arranged by which one holds. A holder without its promise
+/// cannot be built.
+#[derive(Debug, Clone, PartialEq)]
+enum Held {
+    /// The story's own promise sets the date; `epic` is the inherited one when the story also has it (a later date, or
+    /// the same: the story's own wins a tie).
+    Own {
+        own: Promise,
+        epic: Option<(Key, Promise)>,
+    },
+    /// The inherited epic promise sets the date; `own` is the story's own when it has one (a later date).
+    Epic {
+        epic: (Key, Promise),
+        own: Option<Promise>,
+    },
+}
+
+/// R3: the earlier date holds; the story's own wins a tie, so its recipient is the one shown. `epic` is the promise
+/// the story inherits (already filtered by `inherits`).
+fn effective(own: Option<Promise>, epic: Option<(Key, Promise)>) -> Option<Held> {
+    match (own, epic) {
+        (Some(o), Some(e)) if e.1.on < o.on => Some(Held::Epic {
+            epic: e,
+            own: Some(o),
+        }),
+        (Some(o), e) => Some(Held::Own { own: o, epic: e }),
+        (None, Some(e)) => Some(Held::Epic { epic: e, own: None }),
         (None, None) => None,
     }
 }
@@ -268,7 +339,7 @@ pub fn days(st: State, on: NaiveDate, done_on: Option<NaiveDate>, today: NaiveDa
 
 /// R8: the planned end a sprint's promise list starts after: the greatest planned end among the other non-draft
 /// sprints below this one's, ties broken by the lower id. `others` excludes this sprint and the draft.
-pub fn previous_end(this: (i64, NaiveDate), others: &[(i64, NaiveDate)]) -> Option<NaiveDate> {
+fn previous_end(this: (i64, NaiveDate), others: &[(i64, NaiveDate)]) -> Option<NaiveDate> {
     others
         .iter()
         .filter(|(id, e)| *e < this.1 || (*e == this.1 && *id < this.0))
@@ -279,6 +350,22 @@ pub fn previous_end(this: (i64, NaiveDate), others: &[(i64, NaiveDate)]) -> Opti
 /// R8: after the previous planned end (exclusive) and up to this one's (inclusive).
 pub fn in_sprint(on: NaiveDate, previous_ends: Option<NaiveDate>, ends: NaiveDate) -> bool {
     previous_ends.is_none_or(|p| on > p) && on <= ends
+}
+
+/// R8: a sprint's promise range, `(after, upto)`: after the previous sprint's planned end (exclusive; None for the
+/// first sprint) and up to this sprint's own planned end (inclusive). The previous sprint is chosen by
+/// `previous_end` among the other non-draft sprints in `all`. A draft has no range (None): its promises are not yet
+/// a sprint's. `all` is every sprint, read on the caller's snapshot; `this` may or may not be among them.
+pub fn sprint_range(this: &Sprint, all: &[Sprint]) -> Option<(Option<NaiveDate>, NaiveDate)> {
+    if this.state == SprintState::Draft {
+        return None;
+    }
+    let others: Vec<(i64, NaiveDate)> = all
+        .iter()
+        .filter(|o| o.id != this.id && o.state != SprintState::Draft)
+        .map(|o| (o.id, o.ends_on))
+        .collect();
+    Some((previous_end((this.id, this.ends_on), &others), this.ends_on))
 }
 
 /// R7: the decision window an unfinished story's promise asks for; only this sprint and next sprint.
@@ -307,28 +394,80 @@ impl Filter {
     /// Whether a story's promise passes this filter; the window decides the sprint filters.
     pub fn matches(self, sp: &StoryPromise) -> bool {
         match self {
-            Filter::ThisSprint => window(sp.state, sp.due) == NeededIn::ThisSprint,
-            Filter::NextSprint => window(sp.state, sp.due) == NeededIn::NextSprint,
+            Filter::ThisSprint => sp.window() == NeededIn::ThisSprint,
+            Filter::NextSprint => sp.window() == NeededIn::NextSprint,
             Filter::Overdue => sp.state == Some(State::Overdue),
             Filter::Any => matches!(sp.state, Some(State::Open | State::Overdue)),
         }
     }
 }
 
-/// Everything a reader shows about one story's promise, computed once (R3-R5).
+/// Everything a reader shows about one story's promise, computed once (R3-R5). The fields are private:
+/// `story_promise` is the only constructor, so the holder always comes with its promise.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoryPromise {
-    pub own: Option<Promise>,
-    /// The epic's key and promise, only when the story inherits it (R3).
-    pub epic: Option<(Key, Promise)>,
-    pub on: NaiveDate,
-    pub holder: Holder,
-    pub state: Option<State>,
+    held: Held,
+    state: Option<State>,
     /// Only for `Open`.
-    pub due: Option<Due>,
-    pub days: Option<u32>,
+    due: Option<Due>,
+    days: Option<u32>,
     /// The UTC day of `done_at`, when the story is done with one.
-    pub done_on: Option<NaiveDate>,
+    done_on: Option<NaiveDate>,
+}
+
+impl StoryPromise {
+    /// The story's own promise, whether or not it holds.
+    pub fn own(&self) -> Option<&Promise> {
+        match &self.held {
+            Held::Own { own, .. } => Some(own),
+            Held::Epic { own, .. } => own.as_ref(),
+        }
+    }
+    /// The epic's key and promise, only when the story inherits it (R3), whether or not it holds.
+    pub fn epic(&self) -> Option<(&Key, &Promise)> {
+        match &self.held {
+            Held::Own { epic, .. } => epic.as_ref().map(|(k, p)| (k, p)),
+            Held::Epic { epic, .. } => Some((&epic.0, &epic.1)),
+        }
+    }
+    /// Whose promise sets the effective date.
+    pub fn held_by(&self) -> HeldBy {
+        match &self.held {
+            Held::Own { .. } => HeldBy::Own,
+            Held::Epic { epic, .. } => HeldBy::Epic(epic.0.clone()),
+        }
+    }
+    /// The promise that sets the effective date.
+    pub fn holder(&self) -> &Promise {
+        match &self.held {
+            Held::Own { own, .. } => own,
+            Held::Epic { epic, .. } => &epic.1,
+        }
+    }
+    /// The effective date (R3).
+    pub fn on(&self) -> NaiveDate {
+        self.holder().on
+    }
+    /// None only for a done story without `done_at`.
+    pub fn state(&self) -> Option<State> {
+        self.state
+    }
+    /// The due period, only while open.
+    pub fn due(&self) -> Option<Due> {
+        self.due
+    }
+    /// Days overdue or late.
+    pub fn days(&self) -> Option<u32> {
+        self.days
+    }
+    /// The UTC day of `done_at`, when the story is done with one.
+    pub fn done_on(&self) -> Option<NaiveDate> {
+        self.done_on
+    }
+    /// R7: the decision window this promise asks for.
+    pub fn window(&self) -> NeededIn {
+        window(self.state, self.due)
+    }
 }
 
 /// The story facts `story_promise` reads: its delivery, and the promises it owns and inherits from its epic.
@@ -345,16 +484,18 @@ pub struct StoryFacts<'a> {
 pub fn story_promise(f: &StoryFacts<'_>, clock: &Clock) -> Option<StoryPromise> {
     let epic = f
         .epic
-        .filter(|(_, p)| inherits(p.at, f.delivery, f.done_at));
-    let (on, holder) = effective(f.own.map(|p| p.on), epic.map(|(_, p)| p.on))?;
+        .filter(|(_, p)| inherits(p.at, f.delivery, f.done_at))
+        .map(|(k, p)| (k.clone(), p.clone()));
+    let held = effective(f.own.cloned(), epic)?;
+    let on = match &held {
+        Held::Own { own, .. } => own.on,
+        Held::Epic { epic, .. } => epic.1.on,
+    };
     let done = f.done_at.map(done_on);
     let st = state(on, f.delivery, f.resolution, done, clock.today);
     let d = (st == Some(State::Open)).then(|| due(on, clock));
     Some(StoryPromise {
-        own: f.own.cloned(),
-        epic: epic.map(|(k, p)| (k.clone(), p.clone())),
-        on,
-        holder,
+        held,
         state: st,
         due: d,
         days: st.and_then(|s| days(s, on, done, clock.today)),
@@ -365,14 +506,6 @@ pub fn story_promise(f: &StoryFacts<'_>, clock: &Clock) -> Option<StoryPromise> 
 /// An epic's own promise has no state (R4): its due period while not past, None once past.
 pub fn epic_due(p: &Promise, clock: &Clock) -> Option<Due> {
     (clock.today <= p.on).then(|| due(p.on, clock))
-}
-
-/// Whose promise sets a listed row's date: the story's own, or the epic's, named by its key. An epic holder always
-/// names its epic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeldBy {
-    Own,
-    Epic(Key),
 }
 
 /// One row of a sprint's promise list (R8). The fields are private: `SprintPromise::listed` is the only constructor, so
@@ -401,22 +534,15 @@ impl SprintPromise {
         ends: NaiveDate,
     ) -> Option<SprintPromise> {
         let state = sp.state?;
-        if !in_sprint(sp.on, previous_ends, ends) {
+        if !in_sprint(sp.on(), previous_ends, ends) {
             return None;
         }
-        // `story_promise` names the holder's promise: the own one for `Own`, the inherited one for `Epic`.
-        let (held_by, to) = match (sp.holder, sp.own, sp.epic) {
-            (Holder::Own, Some(own), _) => (HeldBy::Own, own.to),
-            (Holder::Epic, _, Some((k, e))) => (HeldBy::Epic(k), e.to),
-            // Cannot happen: `story_promise` never gives a holder without that holder's promise.
-            (Holder::Own, None, _) | (Holder::Epic, _, None) => return None,
-        };
         Some(SprintPromise {
             key,
             title,
-            on: sp.on,
-            held_by,
-            to,
+            on: sp.on(),
+            held_by: sp.held_by(),
+            to: sp.holder().to.clone(),
             state,
             done_on: sp.done_on,
             days: sp.days,
@@ -475,6 +601,17 @@ mod tests {
     }
     fn promise(on: NaiveDate, at: &str, to: Option<&str>) -> Promise {
         Promise::from_persisted(on, "old@x.y".into(), t(at), to.map(str::to_string))
+    }
+    fn sprint(id: i64, state: SprintState, ends_on: NaiveDate) -> Sprint {
+        Sprint {
+            id,
+            state,
+            starts_on: d(2026, 10, 1),
+            ends_on,
+            opened_at: None,
+            closed_at: None,
+            version: 1,
+        }
     }
 
     #[test]
@@ -709,16 +846,39 @@ mod tests {
     #[test]
     fn effective_takes_the_earlier_date_and_own_wins_a_tie() {
         let (a, b) = (d(2026, 11, 20), d(2026, 11, 25));
+        let ek = key("ABC-2");
+        let p = |on| promise(on, "2026-11-01T00:00:00Z", None);
+        let epic = |on| Some((ek.clone(), p(on)));
         let rows = [
-            ("epic earlier", Some(b), Some(a), Some((a, Holder::Epic))),
-            ("epic later", Some(a), Some(b), Some((a, Holder::Own))),
-            ("equal", Some(a), Some(a), Some((a, Holder::Own))),
-            ("own only", Some(a), None, Some((a, Holder::Own))),
-            ("epic only", None, Some(a), Some((a, Holder::Epic))),
+            (
+                "epic earlier",
+                Some(b),
+                epic(a),
+                Some((a, HeldBy::Epic(ek.clone()))),
+            ),
+            ("epic later", Some(a), epic(b), Some((a, HeldBy::Own))),
+            ("equal", Some(a), epic(a), Some((a, HeldBy::Own))),
+            ("own only", Some(a), None, Some((a, HeldBy::Own))),
+            (
+                "epic only",
+                None,
+                epic(a),
+                Some((a, HeldBy::Epic(ek.clone()))),
+            ),
             ("neither", None, None, None),
         ];
         for (label, own, epic, want) in rows {
-            assert_eq!(effective(own, epic), want, "{label}");
+            let got = effective(own.map(p), epic).map(|held| {
+                let sp = StoryPromise {
+                    held,
+                    state: None,
+                    due: None,
+                    days: None,
+                    done_on: None,
+                };
+                (sp.on(), sp.held_by())
+            });
+            assert_eq!(got, want, "{label}");
         }
     }
 
@@ -748,19 +908,114 @@ mod tests {
         }
     }
 
+    /// R2: of the promisable items only a done story is refused, whatever the request; an epic has no delivery.
     #[test]
-    fn may_promise_refuses_only_done_stories() {
+    fn change_refuses_only_done_stories() {
         let k = key("ABC-7");
+        let now = t("2026-11-20T09:00:00Z");
+        let c = clock(d(2026, 11, 20), None, None);
+        let on = d(2026, 11, 25);
         let rows = [
-            ("todo", Todo, Ok(())),
-            ("in progress", InProgress, Ok(())),
-            ("in review", InReview, Ok(())),
-            ("testing", Testing, Ok(())),
-            ("done", Done, Err(PromiseError::Done(k.clone()))),
+            ("todo", Promisable::Story(Todo), true),
+            ("in progress", Promisable::Story(InProgress), true),
+            ("in review", Promisable::Story(InReview), true),
+            ("testing", Promisable::Story(Testing), true),
+            ("epic", Promisable::Epic, true),
+            ("done", Promisable::Story(Done), false),
         ];
-        for (label, delivery, want) in rows {
-            assert_eq!(may_promise(&k, delivery), want, "{label}");
+        for (label, item, ok) in rows {
+            let req = Request {
+                on: Some(on),
+                shortcut: None,
+                to: None,
+            };
+            let got = change(&k, item, None, req, "ed@x.y", now, &c);
+            let want = if ok {
+                Ok(Some(Promise::from_persisted(
+                    on,
+                    "ed@x.y".into(),
+                    now,
+                    None,
+                )))
+            } else {
+                Err(PromiseError::Done(k.clone()))
+            };
+            assert_eq!(got, want, "{label}");
         }
+        // Done is checked before anything else: even an empty request on a done story reads as done.
+        let empty = Request {
+            on: None,
+            shortcut: None,
+            to: None,
+        };
+        assert_eq!(
+            change(&k, Promisable::Story(Done), None, empty, "ed@x.y", now, &c),
+            Err(PromiseError::Done(k.clone()))
+        );
+    }
+
+    /// `Clock::at` is the one clock assembly: the active and the draft sprint's planned ends, closed sprints ignored
+    /// whatever their ends, None for a missing one; today is the UTC date of `now`.
+    #[test]
+    fn clock_at_takes_the_active_and_draft_ends_only() {
+        let now = t("2026-11-12T23:30:00Z");
+        let all = vec![
+            sprint(1, SprintState::Closed, d(2026, 11, 30)),
+            sprint(2, SprintState::Active, d(2026, 11, 24)),
+            sprint(3, SprintState::Closed, d(2026, 12, 20)),
+            sprint(4, SprintState::Draft, d(2026, 12, 8)),
+        ];
+        assert_eq!(
+            Clock::at(now, &all),
+            clock(d(2026, 11, 12), Some(d(2026, 11, 24)), Some(d(2026, 12, 8)))
+        );
+        let closed_only = vec![
+            sprint(1, SprintState::Closed, d(2026, 11, 30)),
+            sprint(3, SprintState::Closed, d(2026, 12, 20)),
+        ];
+        assert_eq!(
+            Clock::at(now, &closed_only),
+            clock(d(2026, 11, 12), None, None)
+        );
+        assert_eq!(
+            Clock::at(now, &[sprint(4, SprintState::Draft, d(2026, 12, 8))]),
+            clock(d(2026, 11, 12), None, Some(d(2026, 12, 8)))
+        );
+    }
+
+    /// R8's range: a draft has none; otherwise after the previous non-draft planned end (the draft never counts as the
+    /// previous sprint, whatever its end) and up to this sprint's own.
+    #[test]
+    fn sprint_range_follows_r8_and_skips_the_draft() {
+        let all = vec![
+            sprint(1, SprintState::Closed, d(2026, 11, 10)),
+            sprint(2, SprintState::Closed, d(2026, 11, 24)),
+            sprint(3, SprintState::Active, d(2026, 12, 8)),
+            // A draft planned to end before the active sprint: still not its previous sprint.
+            sprint(4, SprintState::Draft, d(2026, 12, 1)),
+        ];
+        let rows = [
+            ("first sprint", 0, Some((None, d(2026, 11, 10)))),
+            (
+                "closed after the first",
+                1,
+                Some((Some(d(2026, 11, 10)), d(2026, 11, 24))),
+            ),
+            (
+                "active: the draft is skipped",
+                2,
+                Some((Some(d(2026, 11, 24)), d(2026, 12, 8))),
+            ),
+            ("draft: no range", 3, None),
+        ];
+        for (label, i, want) in rows {
+            assert_eq!(sprint_range(&all[i], &all), want, "{label}");
+        }
+        // `this` need not be among `all`.
+        assert_eq!(
+            sprint_range(&all[2], &all[..2]),
+            Some((Some(d(2026, 11, 24)), d(2026, 12, 8)))
+        );
     }
 
     #[test]
@@ -777,34 +1032,35 @@ mod tests {
         };
         let long_ok = "é".repeat(200);
         let long_bad = "é".repeat(201);
+        let k = key("ABC-7");
         #[allow(clippy::type_complexity)]
         let rows: Vec<(
             &str,
             Option<Promise>,
             Request,
             Clock,
-            Result<(NaiveDate, &str, DateTime<Utc>, Option<String>), PromiseError>,
+            Result<Option<(NaiveDate, &str, DateTime<Utc>, Option<String>)>, PromiseError>,
         )> = vec![
             (
                 "new promise with a date",
                 None,
                 req(Some(d(2026, 11, 25)), None, None),
                 std,
-                Ok((d(2026, 11, 25), "ed@x.y", now, None)),
+                Ok(Some((d(2026, 11, 25), "ed@x.y", now, None))),
             ),
             (
                 "new promise dated today",
                 None,
                 req(Some(today), None, Some("Acme")),
                 std,
-                Ok((today, "ed@x.y", now, Some("Acme".into()))),
+                Ok(Some((today, "ed@x.y", now, Some("Acme".into())))),
             ),
             (
                 "new promise with neither",
                 None,
                 req(None, None, Some("Acme")),
                 std,
-                Err(PromiseError::Neither),
+                Err(PromiseError::Neither(k.clone())),
             ),
             (
                 "both a date and a shortcut",
@@ -832,56 +1088,87 @@ mod tests {
                 Some(overdue.clone()),
                 req(Some(overdue.on()), None, Some("Bolt")),
                 std,
-                Ok((overdue.on(), "ed@x.y", overdue.at(), Some("Bolt".into()))),
+                Ok(Some((
+                    overdue.on(),
+                    "ed@x.y",
+                    overdue.at(),
+                    Some("Bolt".into()),
+                ))),
             ),
             (
                 "overdue, no date, recipient cleared",
                 Some(overdue.clone()),
                 req(None, None, Some("")),
                 std,
-                Ok((overdue.on(), "ed@x.y", overdue.at(), None)),
+                Ok(Some((overdue.on(), "ed@x.y", overdue.at(), None))),
             ),
             (
                 "overdue, no date, recipient blank spaces clears",
                 Some(overdue.clone()),
                 req(None, None, Some("   ")),
                 std,
-                Ok((overdue.on(), "ed@x.y", overdue.at(), None)),
+                Ok(Some((overdue.on(), "ed@x.y", overdue.at(), None))),
             ),
             (
-                "same date, to omitted keeps the recipient",
+                "same date, to omitted: nothing changes",
                 Some(future.clone()),
                 req(Some(future.on()), None, None),
                 std,
-                Ok((future.on(), "ed@x.y", future.at(), Some("Acme".into()))),
+                Ok(None),
             ),
             (
-                "neither, to omitted: date, at and recipient kept, by is the editor",
+                "same date and the same recipient: nothing changes",
+                Some(future.clone()),
+                req(Some(future.on()), None, Some(" Acme ")),
+                std,
+                Ok(None),
+            ),
+            (
+                "neither, to omitted: nothing changes",
                 Some(future.clone()),
                 req(None, None, None),
                 std,
-                Ok((future.on(), "ed@x.y", future.at(), Some("Acme".into()))),
+                Ok(None),
+            ),
+            (
+                "same past date, same recipient: nothing changes, not refused as past",
+                Some(overdue.clone()),
+                req(Some(overdue.on()), None, Some("Acme")),
+                std,
+                Ok(None),
+            ),
+            (
+                "neither, new recipient: date and at kept, by is the editor",
+                Some(future.clone()),
+                req(None, None, Some("Bolt")),
+                std,
+                Ok(Some((
+                    future.on(),
+                    "ed@x.y",
+                    future.at(),
+                    Some("Bolt".into()),
+                ))),
             ),
             (
                 "a new later date moves at",
                 Some(future.clone()),
                 req(Some(d(2026, 12, 5)), None, None),
                 std,
-                Ok((d(2026, 12, 5), "ed@x.y", now, Some("Acme".into()))),
+                Ok(Some((d(2026, 12, 5), "ed@x.y", now, Some("Acme".into())))),
             ),
             (
                 "a new earlier future date moves at",
                 Some(future.clone()),
                 req(Some(d(2026, 11, 22)), None, Some("Bolt")),
                 std,
-                Ok((d(2026, 11, 22), "ed@x.y", now, Some("Bolt".into()))),
+                Ok(Some((d(2026, 11, 22), "ed@x.y", now, Some("Bolt".into())))),
             ),
             (
                 "a new date on an overdue promise moves at",
                 Some(overdue.clone()),
                 req(Some(d(2026, 11, 21)), None, None),
                 std,
-                Ok((d(2026, 11, 21), "ed@x.y", now, Some("Acme".into()))),
+                Ok(Some((d(2026, 11, 21), "ed@x.y", now, Some("Acme".into())))),
             ),
             (
                 "shortcut with no sprint",
@@ -905,21 +1192,38 @@ mod tests {
                 None,
                 req(None, Some(Shortcut::NextSprint), None),
                 std,
-                Ok((d(2026, 12, 11), "ed@x.y", now, None)),
+                Ok(Some((d(2026, 12, 11), "ed@x.y", now, None))),
             ),
             (
                 "shortcut to the same end as the current keeps at",
                 Some(promise(d(2026, 11, 27), "2026-11-03T00:00:00Z", None)),
+                req(None, Some(Shortcut::ThisSprint), Some("Acme")),
+                std,
+                Ok(Some((
+                    d(2026, 11, 27),
+                    "ed@x.y",
+                    t("2026-11-03T00:00:00Z"),
+                    Some("Acme".into()),
+                ))),
+            ),
+            (
+                "shortcut to the same end, nothing else: nothing changes",
+                Some(promise(d(2026, 11, 27), "2026-11-03T00:00:00Z", None)),
                 req(None, Some(Shortcut::ThisSprint), None),
                 std,
-                Ok((d(2026, 11, 27), "ed@x.y", t("2026-11-03T00:00:00Z"), None)),
+                Ok(None),
             ),
             (
                 "200 characters of two bytes",
                 None,
                 req(Some(d(2026, 11, 25)), None, Some(&long_ok)),
                 std,
-                Ok((d(2026, 11, 25), "ed@x.y", now, Some(long_ok.clone()))),
+                Ok(Some((
+                    d(2026, 11, 25),
+                    "ed@x.y",
+                    now,
+                    Some(long_ok.clone()),
+                ))),
             ),
             (
                 "201 characters of two bytes",
@@ -933,7 +1237,12 @@ mod tests {
                 None,
                 req(Some(d(2026, 11, 25)), None, Some(&format!("  {long_ok} "))),
                 std,
-                Ok((d(2026, 11, 25), "ed@x.y", now, Some(long_ok.clone()))),
+                Ok(Some((
+                    d(2026, 11, 25),
+                    "ed@x.y",
+                    now,
+                    Some(long_ok.clone()),
+                ))),
             ),
             (
                 "a NUL in the recipient",
@@ -947,12 +1256,21 @@ mod tests {
                 None,
                 req(Some(d(2026, 11, 25)), None, Some("  Acme ")),
                 std,
-                Ok((d(2026, 11, 25), "ed@x.y", now, Some("Acme".into()))),
+                Ok(Some((d(2026, 11, 25), "ed@x.y", now, Some("Acme".into())))),
             ),
         ];
         for (label, current, request, c, want) in rows {
-            let got = change(current.as_ref(), request, "ed@x.y", now, &c);
-            let want = want.map(|(on, by, at, to)| Promise::from_persisted(on, by.into(), at, to));
+            let got = change(
+                &k,
+                Promisable::Story(Todo),
+                current.as_ref(),
+                request,
+                "ed@x.y",
+                now,
+                &c,
+            );
+            let want = want
+                .map(|w| w.map(|(on, by, at, to)| Promise::from_persisted(on, by.into(), at, to)));
             assert_eq!(got, want, "{label}");
         }
     }
@@ -1241,10 +1559,10 @@ mod tests {
 
     fn sp(state: Option<State>, due: Option<Due>) -> StoryPromise {
         StoryPromise {
-            own: None,
-            epic: None,
-            on: d(2026, 11, 20),
-            holder: Holder::Own,
+            held: Held::Own {
+                own: promise(d(2026, 11, 20), "2026-11-01T00:00:00Z", None),
+                epic: None,
+            },
             state,
             due,
             days: None,
@@ -1344,7 +1662,7 @@ mod tests {
                 epic: None,
             };
             let got = story_promise(&f, &c).unwrap();
-            assert_eq!((got.state, got.due), (st, dd), "{label}");
+            assert_eq!((got.state(), got.due()), (st, dd), "{label}");
             for (flt, name, w) in [
                 (Filter::ThisSprint, "this_sprint", want[0]),
                 (Filter::NextSprint, "next_sprint", want[1]),
@@ -1378,10 +1696,10 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.on, got.holder, got.state, got.due, got.days),
+            (got.on(), got.held_by(), got.state(), got.due(), got.days()),
             (
                 own.on(),
-                Holder::Own,
+                HeldBy::Own,
                 Some(State::Open),
                 Some(Due::ThisSprint),
                 None
@@ -1389,7 +1707,7 @@ mod tests {
             "own only"
         );
         assert_eq!(
-            (got.own.as_ref(), got.epic.as_ref()),
+            (got.own(), got.epic()),
             (Some(&own), None),
             "own only keeps both sides"
         );
@@ -1404,21 +1722,21 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.on, got.holder, got.state, got.due),
+            (got.on(), got.held_by(), got.state(), got.due()),
             (
                 epic_late.on(),
-                Holder::Epic,
+                HeldBy::Epic(ek.clone()),
                 Some(State::Open),
                 Some(Due::NextSprint)
             ),
             "inherited only"
         );
         assert_eq!(
-            got.epic,
-            Some((ek.clone(), epic_late.clone())),
+            got.epic(),
+            Some((&ek, &epic_late)),
             "inherited only carries the epic"
         );
-        assert!(got.own.is_none(), "inherited only has no own");
+        assert!(got.own().is_none(), "inherited only has no own");
 
         // both, epic earlier: both stay visible
         let f = StoryFacts {
@@ -1430,12 +1748,12 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.on, got.holder),
-            (epic_early.on(), Holder::Epic),
+            (got.on(), got.held_by()),
+            (epic_early.on(), HeldBy::Epic(ek.clone())),
             "both, epic earlier"
         );
         assert!(
-            got.own.is_some() && got.epic.is_some(),
+            got.own().is_some() && got.epic().is_some(),
             "both remain visible"
         );
 
@@ -1449,8 +1767,8 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.on, got.holder),
-            (own.on(), Holder::Own),
+            (got.on(), got.held_by()),
+            (own.on(), HeldBy::Own),
             "both, epic later"
         );
 
@@ -1474,8 +1792,8 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.holder, got.state, got.epic.is_none()),
-            (Holder::Own, Some(State::Kept), true),
+            (got.held_by(), got.state(), got.epic().is_none()),
+            (HeldBy::Own, Some(State::Kept), true),
             "done before the epic promised, own kept"
         );
 
@@ -1489,7 +1807,7 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.state, got.days, got.due),
+            (got.state(), got.days(), got.due()),
             (Some(State::Late), Some(2), None),
             "done late"
         );
@@ -1505,7 +1823,7 @@ mod tests {
         };
         let got = story_promise(&f, &late_clock).unwrap();
         assert_eq!(
-            (got.state, got.days, got.due),
+            (got.state(), got.days(), got.due()),
             (Some(State::Overdue), Some(3), None),
             "overdue"
         );
@@ -1520,8 +1838,13 @@ mod tests {
         };
         let got = story_promise(&f, &clock(d(2026, 11, 23), None, None)).unwrap();
         assert_eq!(
-            (got.holder, got.state, got.due, got.days),
-            (Holder::Epic, Some(State::Overdue), None, Some(1)),
+            (got.held_by(), got.state(), got.due(), got.days()),
+            (
+                HeldBy::Epic(ek.clone()),
+                Some(State::Overdue),
+                None,
+                Some(1)
+            ),
             "effective date drives overdue"
         );
         let f = StoryFacts {
@@ -1533,7 +1856,7 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.state, got.days, got.done_on),
+            (got.state(), got.days(), got.done_on()),
             (Some(State::Late), Some(2), Some(d(2026, 11, 24))),
             "effective date drives late"
         );
@@ -1546,7 +1869,7 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.state, got.days),
+            (got.state(), got.days()),
             (Some(State::Kept), None),
             "done 23:59:59Z on the epic's date is kept"
         );
@@ -1561,7 +1884,7 @@ mod tests {
         };
         let got = story_promise(&f, &c).unwrap();
         assert_eq!(
-            (got.state, got.due, got.days),
+            (got.state(), got.due(), got.days()),
             (None, None, None),
             "done without done_at"
         );
@@ -1646,8 +1969,8 @@ mod tests {
             ),
             (
                 "neither",
-                PromiseError::Neither,
-                "give a date or a sprint shortcut",
+                PromiseError::Neither(key("ABC-7")),
+                "ABC-7 has no promise to change: give a date",
             ),
         ];
         for (label, e, want) in rows {

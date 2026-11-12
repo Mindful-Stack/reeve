@@ -2844,7 +2844,8 @@
         "enum": [
           "this_sprint",
           "next_sprint",
-          "later"
+          "later",
+          "unknown"
         ],
         "type": "string"
       },
@@ -2880,7 +2881,8 @@
         "description": "Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).",
         "enum": [
           "own",
-          "epic"
+          "epic",
+          "unknown"
         ],
         "type": "string"
       },
@@ -2899,7 +2901,8 @@
           "overdue",
           "kept",
           "late",
-          "dropped"
+          "dropped",
+          "unknown"
         ],
         "type": "string"
       },
@@ -5834,14 +5837,14 @@
                     "type": "array"
                   },
                   "promises": {
-                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for\nactive and closed sprints; always empty for a draft.",
+                    "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`\nfills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list\nempty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.",
                     "items": {
                       "$ref": "#/components/schemas/SprintPromiseDto"
                     },
                     "type": "array"
                   },
                   "promises_after": {
-                    "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for\na draft.",
+                    "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for\na draft, and for the active sprint in `GET /sprints`.",
                     "format": "date",
                     "type": [
                       "string",
@@ -8377,14 +8380,14 @@
               "null"
             ]
           },
-          "epic": {
+          "epic_key": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
                 "$ref": "#/components/schemas/Key",
-                "description": "The epic whose promise this is, when `holder` is `epic`."
+                "description": "The key of the epic whose promise this is, when `holder` is `epic`."
               }
             ]
           },
@@ -8442,14 +8445,14 @@
             "type": "array"
           },
           "promises": {
-            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for\nactive and closed sprints; always empty for a draft.",
+            "description": "The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous\nsprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`\nfills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list\nempty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.",
             "items": {
               "$ref": "#/components/schemas/SprintPromiseDto"
             },
             "type": "array"
           },
           "promises_after": {
-            "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for\na draft.",
+            "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for\na draft, and for the active sprint in `GET /sprints`.",
             "format": "date",
             "type": [
               "string",

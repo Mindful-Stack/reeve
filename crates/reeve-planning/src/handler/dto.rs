@@ -4,17 +4,16 @@ use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{PromiseWindow, QueueEntry, QueueStory, QueueSummary};
+use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
     DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
-    GoalProgressDto, InitiativeDto, ItemType, Key, PromiseDue, PromiseFactDto, PromiseHolder,
-    PromiseState, PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto,
-    SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto, StoryDto,
-    StoryPromiseDto,
+    GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
+    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -286,20 +285,25 @@ pub fn sprint_view_dto(
     }
 }
 
-/// One row of a sprint's promise list on the wire. `holder` and `epic` both come from `held_by`, so an epic holder
-/// always names its epic.
-pub fn sprint_promise_dto(p: &SprintPromise) -> SprintPromiseDto {
-    let (holder, epic) = match p.held_by() {
+/// `held_by` on the wire: the holder, and the epic's key when the epic holds.
+fn holder_of(h: &HeldBy) -> (PromiseHolder, Option<Key>) {
+    match h {
         HeldBy::Own => (PromiseHolder::Own, None),
         HeldBy::Epic(k) => (PromiseHolder::Epic, Some(k.clone())),
-    };
+    }
+}
+
+/// One row of a sprint's promise list on the wire. `holder` and `epic_key` both come from `held_by`, so an epic holder
+/// always names its epic.
+pub fn sprint_promise_dto(p: &SprintPromise) -> SprintPromiseDto {
+    let (holder, epic_key) = holder_of(p.held_by());
     SprintPromiseDto {
         key: p.key().clone(),
         title: p.title().to_string(),
         on: p.on(),
         to: p.to().map(str::to_string),
         holder,
-        epic,
+        epic_key,
         state: p.state().into(),
         done_on: p.done_on(),
         days: p.days(),
@@ -428,58 +432,6 @@ impl From<promise::Due> for PromiseDue {
     }
 }
 
-impl From<promise::Holder> for PromiseHolder {
-    fn from(h: promise::Holder) -> Self {
-        match h {
-            promise::Holder::Own => PromiseHolder::Own,
-            promise::Holder::Epic => PromiseHolder::Epic,
-        }
-    }
-}
-
-impl From<PromiseState> for promise::State {
-    fn from(s: PromiseState) -> Self {
-        match s {
-            PromiseState::Open => promise::State::Open,
-            PromiseState::Overdue => promise::State::Overdue,
-            PromiseState::Kept => promise::State::Kept,
-            PromiseState::Late => promise::State::Late,
-            PromiseState::Dropped => promise::State::Dropped,
-        }
-    }
-}
-
-impl From<PromiseDue> for promise::Due {
-    fn from(d: PromiseDue) -> Self {
-        match d {
-            PromiseDue::ThisSprint => promise::Due::ThisSprint,
-            PromiseDue::NextSprint => promise::Due::NextSprint,
-            PromiseDue::Later => promise::Due::Later,
-        }
-    }
-}
-
-/// The queue's view of a story's promise (kb/ADR-0025 R7), read back off the DTO the story list already derived on
-/// the queue's snapshot: the holder (the story, or the epic it inherits from), the effective date, the window
-/// `promise::window` gives for its state and due period, and whether it is overdue. None without a promise.
-pub fn promise_window(s: &StoryDto) -> Option<PromiseWindow> {
-    let p = s.promise.as_ref()?;
-    let (key, level) = match p.holder {
-        PromiseHolder::Own => (s.key.clone(), ItemType::Story),
-        // `story_promise_field` fills `epic` whenever the holder is the epic (holder == Epic implies epic is present);
-        // were that ever broken, the story counts as unpromised here rather than panicking.
-        PromiseHolder::Epic => (p.epic.as_ref()?.key.clone(), ItemType::Epic),
-    };
-    let state = p.state.map(promise::State::from);
-    Some(PromiseWindow {
-        key,
-        level,
-        on: p.on,
-        window: promise::window(state, p.due.map(Into::into)),
-        overdue: state == Some(promise::State::Overdue),
-    })
-}
-
 /// The story list's `promised` parameter as the domain's filter; `Filter::matches` is the only rule that classifies.
 impl From<PromisedFilter> for promise::Filter {
     fn from(f: PromisedFilter) -> Self {
@@ -495,16 +447,16 @@ impl From<PromisedFilter> for promise::Filter {
 /// A story DTO's `promise`: the domain's derived view (`story_promise`) on the wire, or None without one.
 pub fn story_promise_field(sp: Option<&StoryPromise>) -> Option<StoryPromiseDto> {
     sp.map(|sp| StoryPromiseDto {
-        own: sp.own.as_ref().map(Into::into),
-        epic: sp.epic.as_ref().map(|(k, p)| EpicPromiseRefDto {
+        own: sp.own().map(Into::into),
+        epic: sp.epic().map(|(k, p)| EpicPromiseRefDto {
             key: k.clone(),
             fact: p.into(),
         }),
-        on: sp.on,
-        holder: sp.holder.into(),
-        state: sp.state.map(Into::into),
-        due: sp.due.map(Into::into),
-        days: sp.days,
+        on: sp.on(),
+        holder: holder_of(&sp.held_by()).0,
+        state: sp.state().map(Into::into),
+        due: sp.due().map(Into::into),
+        days: sp.days(),
     })
 }
 

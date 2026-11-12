@@ -22,6 +22,9 @@ pub enum PromiseState {
     Kept,
     Late,
     Dropped,
+    /// A state added after this client was built; shown without a state word.
+    #[serde(other)]
+    Unknown,
 }
 
 /// An open promise's due period against the sprints' planned ends, derived on read (R5).
@@ -31,6 +34,9 @@ pub enum PromiseDue {
     ThisSprint,
     NextSprint,
     Later,
+    /// A period added after this client was built; shown without a period.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).
@@ -39,6 +45,9 @@ pub enum PromiseDue {
 pub enum PromiseHolder {
     Own,
     Epic,
+    /// A holder added after this client was built.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The epic whose promise a story inherits, and that promise.
@@ -117,8 +126,8 @@ pub struct SprintPromiseDto {
     pub on: NaiveDate,
     pub to: Option<String>,
     pub holder: PromiseHolder,
-    /// The epic whose promise this is, when `holder` is `epic`.
-    pub epic: Option<Key>,
+    /// The key of the epic whose promise this is, when `holder` is `epic`.
+    pub epic_key: Option<Key>,
     pub state: PromiseState,
     /// The UTC day the story was done, when it was.
     pub done_on: Option<NaiveDate>,

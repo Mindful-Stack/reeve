@@ -2,9 +2,8 @@
 //! in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so a close and a goal
 //! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
 //! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
-use super::promise::promise_clock_of;
 use super::*;
-use crate::domain::promise::{SprintPromise, StoryFacts, previous_end, story_promise};
+use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
@@ -21,10 +20,6 @@ pub struct Sprints {
     pub goals: Vec<Goal>,
     pub links: Vec<GoalLink>,
     pub active_summary: Option<sprint::Summary>,
-    /// The active sprint's promises (kb/ADR-0025 R8), by date then key; empty without an active sprint.
-    pub promises: Vec<SprintPromise>,
-    /// The planned end the active sprint's promises start after (`previous_end`); None without one or for the first.
-    pub promises_after: Option<NaiveDate>,
 }
 
 /// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
@@ -37,7 +32,7 @@ pub struct SprintView {
     pub summary: Option<sprint::Summary>,
     /// Its promises (kb/ADR-0025 R8), by date then key; empty for a draft.
     pub promises: Vec<SprintPromise>,
-    /// The planned end its promises start after (`previous_end`); None for the first sprint and for a draft.
+    /// The planned end its promises start after (`sprint_range`); None for the first sprint and for a draft.
     pub promises_after: Option<NaiveDate>,
 }
 
@@ -597,6 +592,8 @@ impl Handlers {
     }
 
     /// Every sprint with its goals and links, and the active sprint's numbers up to `now`, from one read-only snapshot.
+    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (GRA-610), so
+    /// this read, made on every board load, does not pay for it.
     pub async fn sprints(&self, now: DateTime<Utc>) -> Result<Sprints, HandlerError> {
         let mut tx = self
             .pool
@@ -616,10 +613,6 @@ impl Handlers {
         let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
         let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
         let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
-        let (promises_after, promises) = match all.iter().find(|s| s.state == SprintState::Active) {
-            Some(a) => self.sprint_promises_in(tx, a, &all, now).await?,
-            None => (None, vec![]),
-        };
         let mut out = Sprints {
             active: None,
             draft: None,
@@ -627,8 +620,6 @@ impl Handlers {
             goals,
             links,
             active_summary: None,
-            promises,
-            promises_after,
         };
         for s in all {
             match s.state {
@@ -675,9 +666,9 @@ impl Handlers {
         end_read(tx, out).await
     }
 
-    /// kb/ADR-0025 R8: the sprint's promises, derived on read and never stored. The effective dates after the previous
-    /// sprint's planned end (`previous_end` over the other non-draft sprints) and up to this sprint's own planned end
-    /// (`in_sprint`), whatever the sprint's start or close: a sprint that closes late does not keep the promises due after
+    /// kb/ADR-0025 R8: the sprint's promises, derived on read and never stored. The effective dates in the sprint's
+    /// promise range (`sprint_range`: after the previous non-draft sprint's planned end, up to this sprint's own), whatever
+    /// the sprint's start or close: a sprint that closes late does not keep the promises due after
     /// its planned end. The reads give candidates by the story's or its epic's date; `story_promise` decides inheritance
     /// and the effective date, so a story that does not inherit its epic's date is judged on its own. A row without a
     /// state (done without `done_at`) is left out. By date, then key. A draft lists none: the list is filled for active
@@ -690,21 +681,11 @@ impl Handlers {
         all: &[Sprint],
         now: DateTime<Utc>,
     ) -> Result<(Option<NaiveDate>, Vec<SprintPromise>), HandlerError> {
-        if s.state == SprintState::Draft {
+        let Some((prev, upto)) = sprint_range(s, all) else {
             return Ok((None, vec![]));
-        }
-        let others: Vec<(i64, NaiveDate)> = all
-            .iter()
-            .filter(|o| o.id != s.id && o.state != SprintState::Draft)
-            .map(|o| (o.id, o.ends_on))
-            .collect();
-        let prev = previous_end((s.id, s.ends_on), &others);
-        let clock = promise_clock_of(all, now);
-        let rows = self
-            .ports
-            .reads
-            .promised_between_in(tx, prev, s.ends_on)
-            .await?;
+        };
+        let clock = Clock::at(now, all);
+        let rows = self.ports.reads.promised_between_in(tx, prev, upto).await?;
         // The reads order by key; the stable sort by date keeps that order within a date.
         let mut out: Vec<SprintPromise> = rows
             .into_iter()
@@ -717,7 +698,7 @@ impl Handlers {
                     epic: r.row.epic.as_ref().map(|(k, p)| (k, p)),
                 };
                 let sp = story_promise(&facts, &clock)?;
-                SprintPromise::listed(r.key, r.title, sp, prev, s.ends_on)
+                SprintPromise::listed(r.key, r.title, sp, prev, upto)
             })
             .collect();
         out.sort_by_key(|p| p.on());

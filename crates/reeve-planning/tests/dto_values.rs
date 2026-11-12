@@ -725,7 +725,7 @@ fn sprint_promise_dto_carries_every_field() {
         v!(sprint_promise_dto(&row(&facts))),
         json!({
             "key": "ABC-9", "title": "Ship it", "on": "2026-11-18", "to": "Beta", "holder": "epic",
-            "epic": "ABC-7", "state": "late", "done_on": "2026-11-20", "days": 2
+            "epic_key": "ABC-7", "state": "late", "done_on": "2026-11-20", "days": 2
         })
     );
     let own_holds = StoryFacts {
@@ -736,7 +736,7 @@ fn sprint_promise_dto_carries_every_field() {
         v!(sprint_promise_dto(&row(&own_holds))),
         json!({
             "key": "ABC-9", "title": "Ship it", "on": "2026-11-22", "to": "Acme", "holder": "own",
-            "epic": null, "state": "kept", "done_on": "2026-11-20", "days": null
+            "epic_key": null, "state": "kept", "done_on": "2026-11-20", "days": null
         })
     );
 }
@@ -888,5 +888,34 @@ fn an_unknown_needed_in_reason_decodes_to_unknown() {
     assert_eq!(
         serde_json::from_value::<NeededInReason>(json!({"kind": "future_thing", "x": 1})).unwrap(),
         NeededInReason::Unknown
+    );
+}
+
+/// A promise state, due period or holder this build does not know decodes to `Unknown` rather than failing every story
+/// list an older client reads; the known values still decode as themselves.
+#[test]
+fn unknown_promise_values_decode_to_unknown() {
+    let d = |v: Value| serde_json::from_value::<PromiseState>(v).unwrap();
+    assert_eq!(d(json!("promised_twice")), PromiseState::Unknown);
+    assert_eq!(d(json!("overdue")), PromiseState::Overdue);
+    let d = |v: Value| serde_json::from_value::<PromiseDue>(v).unwrap();
+    assert_eq!(d(json!("in_a_month")), PromiseDue::Unknown);
+    assert_eq!(d(json!("later")), PromiseDue::Later);
+    let d = |v: Value| serde_json::from_value::<PromiseHolder>(v).unwrap();
+    assert_eq!(d(json!("initiative")), PromiseHolder::Unknown);
+    assert_eq!(d(json!("epic")), PromiseHolder::Epic);
+    // A whole story promise from a newer server still reads.
+    let p: StoryPromiseDto = serde_json::from_value(json!({
+        "own": null, "epic": null, "on": "2026-11-20", "holder": "team", "state": "paused", "due": "someday",
+        "days": null
+    }))
+    .unwrap();
+    assert_eq!(
+        (p.holder, p.state, p.due),
+        (
+            PromiseHolder::Unknown,
+            Some(PromiseState::Unknown),
+            Some(PromiseDue::Unknown)
+        )
     );
 }

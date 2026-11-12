@@ -2992,16 +2992,23 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
     assert_eq!(sv["value"]["promise"], story_promise);
     let (_, ev) = admin_get(&h, &format!("/api/v1/epics/{epic}")).await;
     assert_eq!(ev["value"]["promise"], epic_promise);
-    // The sprint views list the promise (kb/ADR-0025 R8): the active one in `GET /sprints` and `GET /sprints/{id}`.
-    let (_, all) = admin_get(&h, "/api/v1/sprints").await;
-    let promises = &all["value"]["active"]["promises"];
-    assert_eq!(promises[0]["key"], story.as_str(), "{all}");
+    // The sprint view lists the promise (kb/ADR-0025 R8): the active sprint's list is read from `GET /sprints/{id}`;
+    // `GET /sprints` leaves it empty and `promises_after` null until a client renders it there (GRA-610).
+    let (_, one) = admin_get(&h, &format!("/api/v1/sprints/{}", opened["id"])).await;
+    let promises = &one["value"]["promises"];
+    assert_eq!(promises.as_array().map(Vec::len), Some(1), "{one}");
+    assert_eq!(promises[0]["key"], story.as_str(), "{one}");
     assert_eq!(promises[0]["on"], ends.as_str());
     assert_eq!(promises[0]["to"], "Acme");
     assert_eq!(promises[0]["holder"], "own");
+    assert_eq!(promises[0]["epic_key"], serde_json::Value::Null);
     assert_eq!(promises[0]["state"], "open");
-    let (_, one) = admin_get(&h, &format!("/api/v1/sprints/{}", opened["id"])).await;
-    assert_eq!(&one["value"]["promises"], promises, "{one}");
+    let (_, all) = admin_get(&h, "/api/v1/sprints").await;
+    assert_eq!(all["value"]["active"]["promises"], json!([]), "{all}");
+    assert_eq!(
+        all["value"]["active"]["promises_after"],
+        serde_json::Value::Null
+    );
     // An unknown field is refused, not ignored.
     let (st, body) = call(
         &h.app,
@@ -3063,6 +3070,21 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
         assert_eq!(st, 200, "{p}: {v}");
         assert_eq!(v["value"]["promise"], serde_json::Value::Null, "{p}");
     }
+    // With no promise, a request without a date or a shortcut has nothing to change, and says which item.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"to": "Acme"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": format!("{story} has no promise to change: give a date")})
+    );
 
     // Initiatives cannot be promised (R1): no such route.
     let (_, i) = call(

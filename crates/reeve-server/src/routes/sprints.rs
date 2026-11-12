@@ -46,8 +46,9 @@ async fn list(
                 &x.goals,
                 &x.links,
                 x.active_summary.as_ref(),
-                &x.promises,
-                x.promises_after,
+                // The active sprint's promises are read only by `GET /sprints/{id}` until GRA-610 renders them here.
+                &[],
+                None,
                 line,
             )
         }),

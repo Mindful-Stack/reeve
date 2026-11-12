@@ -3,13 +3,13 @@ use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative, ItemType,
-    Promise, PromiseFacts, PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings,
-    Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark, compute_readiness,
-    make_planning_ports,
+    Promisable, Promise, PromiseFacts, PromiseItem, PromiseTarget, PromisedStoryRow, RepoError,
+    RequiredDecision, Settings, Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark,
+    compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
-    TokenKind, Via,
+    SprintState, TokenKind, Via,
 };
 use std::sync::Arc;
 
@@ -1601,8 +1601,8 @@ async fn promise_set_and_clear_touch_only_the_promise_columns() {
     promise_story(&pool, "ABC-2", Some("ABC-1"), "todo").await;
     let p = mk_promise(pday(11, 20), "dan@example.com", Some("Acme"));
     for (item, table, key) in [
-        (ItemType::Story, "stories", "ABC-2"),
-        (ItemType::Epic, "epics", "ABC-1"),
+        (PromiseItem::Story, "stories", "ABC-2"),
+        (PromiseItem::Epic, "epics", "ABC-1"),
     ] {
         let q = format!("SELECT version, updated_at FROM {table} WHERE key='{key}'");
         let before: (i64, chrono::DateTime<Utc>) =
@@ -1673,7 +1673,7 @@ async fn promise_set_and_clear_touch_only_the_promise_columns() {
     assert!(
         !ports
             .promises
-            .set_promise(&mut tx, ItemType::Story, &pkey("ABC-99"), &p)
+            .set_promise(&mut tx, PromiseItem::Story, &pkey("ABC-99"), &p)
             .await
             .unwrap(),
         "unknown key"
@@ -1693,44 +1693,44 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
     let mut tx = pool.begin().await.unwrap();
     let done = ports
         .promises
-        .lock_for_promise(&mut tx, ItemType::Story, &pkey("ABC-2"))
+        .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-2"))
         .await
         .unwrap();
     assert_eq!(
         done,
         Some(PromiseTarget {
-            delivery: Some(DeliveryState::Done),
+            item: Promisable::Story(DeliveryState::Done),
             promise: Some(p)
         })
     );
     let todo = ports
         .promises
-        .lock_for_promise(&mut tx, ItemType::Story, &pkey("ABC-3"))
+        .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-3"))
         .await
         .unwrap();
     assert_eq!(
         todo,
         Some(PromiseTarget {
-            delivery: Some(DeliveryState::Todo),
+            item: Promisable::Story(DeliveryState::Todo),
             promise: None
         })
     );
     let epic = ports
         .promises
-        .lock_for_promise(&mut tx, ItemType::Epic, &pkey("ABC-1"))
+        .lock_for_promise(&mut tx, PromiseItem::Epic, &pkey("ABC-1"))
         .await
         .unwrap();
     assert_eq!(
         epic,
         Some(PromiseTarget {
-            delivery: None,
+            item: Promisable::Epic,
             promise: None
         })
     );
     assert_eq!(
         ports
             .promises
-            .lock_for_promise(&mut tx, ItemType::Story, &pkey("ABC-1"))
+            .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-1"))
             .await
             .unwrap(),
         None,
@@ -1739,7 +1739,7 @@ async fn lock_for_promise_returns_delivery_and_the_current_promise() {
     assert_eq!(
         ports
             .promises
-            .lock_for_promise(&mut tx, ItemType::Epic, &pkey("ABC-77"))
+            .lock_for_promise(&mut tx, PromiseItem::Epic, &pkey("ABC-77"))
             .await
             .unwrap(),
         None
@@ -1756,7 +1756,7 @@ async fn lock_for_promise_holds_the_row_without_blocking_foreign_key_inserts() {
     let mut tx1 = pool.begin().await.unwrap();
     ports
         .promises
-        .lock_for_promise(&mut tx1, ItemType::Epic, &pkey("ABC-1"))
+        .lock_for_promise(&mut tx1, PromiseItem::Epic, &pkey("ABC-1"))
         .await
         .unwrap();
     let mut tx2 = pool.begin().await.unwrap();
@@ -1766,7 +1766,7 @@ async fn lock_for_promise_holds_the_row_without_blocking_foreign_key_inserts() {
         .unwrap();
     let e = ports
         .promises
-        .lock_for_promise(&mut tx2, ItemType::Epic, &pkey("ABC-1"))
+        .lock_for_promise(&mut tx2, PromiseItem::Epic, &pkey("ABC-1"))
         .await
         .unwrap_err();
     let code = match e {
@@ -2002,9 +2002,11 @@ async fn planned_ends_in_reads_active_and_draft_in_one_statement() {
     let ports = make_planning_ports(pool.clone());
     let ends = || async {
         let mut tx = pool.begin().await.unwrap();
-        let r = ports.reads.planned_ends_in(&mut tx).await.unwrap();
+        let r = ports.sprints.planned_ends_in(&mut tx).await.unwrap();
         tx.rollback().await.unwrap();
-        r
+        let end = |st: SprintState| r.iter().find(|s| s.state == st).map(|s| s.ends_on);
+        assert!(r.iter().all(|s| s.state != SprintState::Closed));
+        (end(SprintState::Active), end(SprintState::Draft))
     };
     assert_eq!(ends().await, (None, None));
     let at = Utc.with_ymd_and_hms(2026, 11, 3, 8, 0, 0).unwrap();

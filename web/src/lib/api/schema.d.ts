@@ -1981,7 +1981,7 @@ export interface components {
          * @description An open promise's due period against the sprints' planned ends, derived on read (R5).
          * @enum {string}
          */
-        PromiseDue: "this_sprint" | "next_sprint" | "later";
+        PromiseDue: "this_sprint" | "next_sprint" | "later" | "unknown";
         /** @description A stored promise (kb/ADR-0025 R1): the date, who set it, when, and an optional recipient. */
         PromiseFactDto: {
             /** Format: date-time */
@@ -1995,7 +1995,7 @@ export interface components {
          * @description Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).
          * @enum {string}
          */
-        PromiseHolder: "own" | "epic";
+        PromiseHolder: "own" | "epic" | "unknown";
         /**
          * @description A sprint whose planned end a promise takes (R6): the active sprint or the draft (next) one.
          * @enum {string}
@@ -2005,7 +2005,7 @@ export interface components {
          * @description A story's promise state, derived on read (R4).
          * @enum {string}
          */
-        PromiseState: "open" | "overdue" | "kept" | "late" | "dropped";
+        PromiseState: "open" | "overdue" | "kept" | "late" | "dropped" | "unknown";
         /**
          * @description The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open
          *     ones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or
@@ -2870,15 +2870,16 @@ export interface components {
                 demo: components["schemas"]["DemoStoryDto"][];
                 /**
                  * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
-                 *     active and closed sprints; always empty for a draft.
+                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`
+                 *     fills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list
+                 *     empty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.
                  */
                 promises: components["schemas"]["SprintPromiseDto"][];
                 /**
                  * Format: date
                  * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
-                 *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
-                 *     a draft.
+                 *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for
+                 *     a draft, and for the active sprint in `GET /sprints`.
                  */
                 promises_after: string | null;
                 sprint: components["schemas"]["SprintDto"];
@@ -3601,7 +3602,7 @@ export interface components {
              * @description The UTC day the story was done, when it was.
              */
             done_on?: string | null;
-            epic?: null | components["schemas"]["Key"];
+            epic_key?: null | components["schemas"]["Key"];
             holder: components["schemas"]["PromiseHolder"];
             key: components["schemas"]["Key"];
             /**
@@ -3626,15 +3627,16 @@ export interface components {
             demo: components["schemas"]["DemoStoryDto"][];
             /**
              * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
-             *     active and closed sprints; always empty for a draft.
+             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`
+             *     fills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list
+             *     empty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.
              */
             promises: components["schemas"]["SprintPromiseDto"][];
             /**
              * Format: date
              * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
-             *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
-             *     a draft.
+             *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for
+             *     a draft, and for the active sprint in `GET /sprints`.
              */
             promises_after: string | null;
             sprint: components["schemas"]["SprintDto"];

@@ -436,7 +436,7 @@ impl Handlers {
         let urg = self.urgency_in(tx, now).await?;
         let clock = self.promise_clock_in(tx, now).await?;
         let stories = self
-            .list_stories_in(
+            .list_story_rows_in(
                 tx,
                 &StoryFilter::default(),
                 false,
@@ -445,7 +445,7 @@ impl Handlers {
                 &clock,
             )
             .await?;
-        let keys: Vec<Key> = stories.iter().map(|s| s.story.key.clone()).collect();
+        let keys: Vec<Key> = stories.iter().map(|(s, _)| s.story.key.clone()).collect();
         let mut draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;
         // `Key` is not `Ord`, so dedupe with a set; `unnest($1)` does not care about order.
         let items: Vec<Key> = ds
@@ -457,7 +457,7 @@ impl Handlers {
         let lineage = self.ports.reads.decision_lineage_in(tx, &items).await?;
         let affected: Vec<queue::AffectedStory> = stories
             .into_iter()
-            .map(|s| queue::AffectedStory {
+            .map(|(s, sp)| queue::AffectedStory {
                 draft_goals: draft
                     .remove(&s.story.key)
                     .map(|g| g.into_iter().map(|(id, o, _)| (id, o)).collect())
@@ -469,7 +469,9 @@ impl Handlers {
                     .map(|g| (g.id, g.outcome.clone()))
                     .collect(),
                 urgent: !s.story.urgent_sources.is_empty(),
-                promise: dto::promise_window(&s.story),
+                promise: sp
+                    .as_ref()
+                    .map(|sp| queue::PromiseWindow::of(&s.story.key, sp)),
                 key: s.story.key,
                 title: s.story.title,
                 kind: s.story.kind,

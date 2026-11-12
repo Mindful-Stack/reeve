@@ -20,7 +20,7 @@ describe('ActivityList', () => {
 				entries: [
 					activity({ id: 1, action: 'promised', payload: { item_type: 'story', on: '2026-11-20', to: 'Acme', previous: null } }),
 					activity({ id: 2, action: 'promised', payload: { item_type: 'story', on: '2026-11-20', to: null, previous: { on: '2026-11-20', to: 'Acme' } } }),
-					activity({ id: 3, action: 'unpromised', payload: { item_type: 'story', previous: { on: '2026-11-20', to: null } } }),
+					activity({ id: 3, action: 'promise_cleared', payload: { item_type: 'story', previous: { on: '2026-11-20', to: null } } }),
 					activity({ id: 4, action: 'moved' }),
 					activity({ id: 5, action: 'attachment_added', payload: { attachment_id: 'x', filename: 'shot.png' } })
 				]

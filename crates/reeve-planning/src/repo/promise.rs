@@ -1,14 +1,14 @@
 //! The SQL behind the promise methods (kb/ADR-0025). Free functions the `PromiseRepo` impl delegates to. No statement
 //! names `version` or `updated_at`, and nothing here reads the clock.
 use super::*;
-use crate::domain::promise::Promise;
+use crate::domain::promise::{Promisable, Promise, PromiseItem};
 
 #[async_trait]
 impl PromiseRepo for PgPlanningRepo {
     async fn lock_for_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
     ) -> Result<Option<PromiseTarget>, RepoError> {
         lock_for_promise(tx, item, key).await
@@ -16,7 +16,7 @@ impl PromiseRepo for PgPlanningRepo {
     async fn set_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
         p: &Promise,
     ) -> Result<bool, RepoError> {
@@ -25,30 +25,28 @@ impl PromiseRepo for PgPlanningRepo {
     async fn clear_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        item: ItemType,
+        item: PromiseItem,
         key: &Key,
     ) -> Result<bool, RepoError> {
         clear_promise(tx, item, key).await
     }
 }
 
-/// Initiatives cannot be promised (R1); no caller asks.
-fn table(item: ItemType) -> &'static str {
+fn table(item: PromiseItem) -> &'static str {
     match item {
-        ItemType::Epic => "epics",
-        ItemType::Story => "stories",
-        ItemType::Initiative => unreachable!("an initiative cannot be promised (kb/ADR-0025 R1)"),
+        PromiseItem::Epic => "epics",
+        PromiseItem::Story => "stories",
     }
 }
 
 async fn lock_for_promise(
     tx: Tx<'_, '_>,
-    item: ItemType,
+    item: PromiseItem,
     k: &Key,
 ) -> Result<Option<PromiseTarget>, RepoError> {
     let delivery = match item {
-        ItemType::Story => "delivery",
-        _ => "NULL::text AS delivery",
+        PromiseItem::Story => "delivery",
+        PromiseItem::Epic => "NULL::text AS delivery",
     };
     let row = sqlx::query(&format!(
         "SELECT {delivery}, promised_on, promised_by, promised_at, promised_to FROM {} WHERE key = $1 FOR NO KEY UPDATE",
@@ -58,18 +56,17 @@ async fn lock_for_promise(
     .fetch_optional(&mut **tx)
     .await?;
     let Some(r) = row else { return Ok(None) };
-    let delivery = r
-        .try_get::<Option<String>, _>("delivery")?
-        .as_deref()
-        .map(delivery_of)
-        .transpose()?;
+    let item = match item {
+        PromiseItem::Story => Promisable::Story(delivery_of(r.try_get::<&str, _>("delivery")?)?),
+        PromiseItem::Epic => Promisable::Epic,
+    };
     let promise = promise_cols(&r, "promised_")?;
-    Ok(Some(PromiseTarget { delivery, promise }))
+    Ok(Some(PromiseTarget { item, promise }))
 }
 
 async fn set_promise(
     tx: Tx<'_, '_>,
-    item: ItemType,
+    item: PromiseItem,
     k: &Key,
     p: &Promise,
 ) -> Result<bool, RepoError> {
@@ -87,7 +84,7 @@ async fn set_promise(
     Ok(r.rows_affected() == 1)
 }
 
-async fn clear_promise(tx: Tx<'_, '_>, item: ItemType, k: &Key) -> Result<bool, RepoError> {
+async fn clear_promise(tx: Tx<'_, '_>, item: PromiseItem, k: &Key) -> Result<bool, RepoError> {
     let r = sqlx::query(&format!(
         "UPDATE {} SET promised_on = NULL, promised_by = NULL, promised_at = NULL, promised_to = NULL WHERE key = $1 AND promised_on IS NOT NULL",
         table(item)

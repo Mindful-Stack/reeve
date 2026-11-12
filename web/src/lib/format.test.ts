@@ -126,9 +126,9 @@ describe('actionLabel', () => {
 			'promised by 20 Nov to Acme',
 			'promised ABC-12 by 20 Nov to Acme'
 		],
-		['cleared', 'unpromised', { item_type: 'story', previous: { on: '2026-11-20', to: 'Acme' } }, 'cleared the promise', 'cleared the promise on ABC-12'],
+		['cleared', 'promise_cleared', { item_type: 'story', previous: { on: '2026-11-20', to: 'Acme' } }, 'cleared the promise', 'cleared the promise on ABC-12'],
 		['an unreadable promise', 'promised', null, 'promised', 'promised ABC-12'],
-		['an unreadable clear', 'unpromised', null, 'cleared the promise', 'cleared the promise on ABC-12']
+		['an unreadable clear', 'promise_cleared', null, 'cleared the promise', 'cleared the promise on ABC-12']
 	])('%s', async (_, action, payload, plain, keyed) => {
 		const { actionLabel } = await import('./format.ts');
 		expect(actionLabel(action, payload)).toBe(plain);
@@ -136,7 +136,7 @@ describe('actionLabel', () => {
 	});
 	it('names its own words for attachments and promises only', async () => {
 		const { hasOwnWords } = await import('./format.ts');
-		expect(['attachment_added', 'attachment_removed', 'promised', 'unpromised'].every(hasOwnWords)).toBe(true);
+		expect(['attachment_added', 'attachment_removed', 'promised', 'promise_cleared'].every(hasOwnWords)).toBe(true);
 		expect(['moved', 'goal_linked', 'override'].some(hasOwnWords)).toBe(false);
 	});
 });

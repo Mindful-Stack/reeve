@@ -46,7 +46,7 @@ export function errorMessage(e: unknown): string {
 
 /** The actions `actionLabel` words from their payload; every other one reads as its action with spaces. */
 export function hasOwnWords(action: string): boolean {
-	return action.startsWith('attachment_') || action === 'promised' || action === 'unpromised';
+	return action.startsWith('attachment_') || action === 'promised' || action === 'promise_cleared';
 }
 
 const payloadField = (o: unknown, name: string): unknown => (o && typeof o === 'object' && name in o ? (o as Record<string, unknown>)[name] : undefined);
@@ -83,7 +83,7 @@ export function actionLabel(action: string, payload: unknown, key?: string): str
 		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name == null ? '' : ` ${name}`}`;
 	}
 	if (action === 'promised') return promisedWords(payload, key);
-	if (action === 'unpromised') return key == null ? 'cleared the promise' : `cleared the promise on ${key}`;
+	if (action === 'promise_cleared') return key == null ? 'cleared the promise' : `cleared the promise on ${key}`;
 	return action.replaceAll('_', ' ');
 }
 

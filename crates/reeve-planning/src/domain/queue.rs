@@ -3,6 +3,7 @@
 //! next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
 
 use crate::domain::decision::RequiredDecision;
+use crate::domain::promise::{HeldBy, State, StoryPromise};
 use chrono::NaiveDate;
 use reeve_protocol::{
     CheckResult, DeliveryState, ItemType, Key, Kind, NeededIn, NeededInReason, NextStep,
@@ -39,6 +40,25 @@ pub struct PromiseWindow {
     pub on: NaiveDate,
     pub window: NeededIn,
     pub overdue: bool,
+}
+
+impl PromiseWindow {
+    /// The queue's view of story `story`'s promise, read from the domain value the story list derived on the queue's
+    /// snapshot: the holder is the story itself or the epic it inherits from (`held_by`), and the window is
+    /// `StoryPromise::window` (kb/ADR-0025 R7).
+    pub fn of(story: &Key, sp: &StoryPromise) -> PromiseWindow {
+        let (key, level) = match sp.held_by() {
+            HeldBy::Own => (story.clone(), ItemType::Story),
+            HeldBy::Epic(k) => (k, ItemType::Epic),
+        };
+        PromiseWindow {
+            key,
+            level,
+            on: sp.on(),
+            window: sp.window(),
+            overdue: sp.state() == Some(State::Overdue),
+        }
+    }
 }
 
 /// One item on a decision item's lineage, nearest first: the item itself, then its epic or initiative.

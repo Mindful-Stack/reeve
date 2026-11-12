@@ -602,7 +602,7 @@ describe('the history', () => {
 			on: '2026-11-20',
 			to: null,
 			holder: 'own',
-			epic: null,
+			epic_key: null,
 			state: 'kept',
 			done_on: '2026-11-19',
 			days: null,
@@ -618,7 +618,7 @@ describe('the history', () => {
 				promises: [
 					promise('ABC-12', { to: 'Acme' }),
 					promise('ABC-14', { on: '2026-11-21', state: 'late', done_on: '2026-11-23', days: 2 }),
-					promise('ABC-15', { on: '2026-11-24', state: 'overdue', done_on: null, days: 3, holder: 'epic', epic: 'ABC-7' })
+					promise('ABC-15', { on: '2026-11-24', state: 'overdue', done_on: null, days: 3, holder: 'epic', epic_key: 'ABC-7' })
 				]
 			});
 			const row = await expand(7);

@@ -22,7 +22,8 @@ function period(due: PromiseDue | null | undefined): string {
 /** " 3 d", or "" when the server sent no count. */
 const daysText = (days: number | null | undefined) => (days == null ? '' : ` ${days} d`);
 
-type Settled = Exclude<PromiseState, 'open'>;
+/** States with words; `unknown` (a state added after this build) is shown neutrally, like open: "Promised 20 Nov". */
+type Settled = Exclude<PromiseState, 'open' | 'unknown'>;
 
 /** The one table of state words, lower case; every surface formats from it (the CLI copies it). */
 export const STATE_WORDS: Record<Settled, (days: number | null | undefined) => string> = {
@@ -32,10 +33,10 @@ export const STATE_WORDS: Record<Settled, (days: number | null | undefined) => s
 	dropped: () => 'dropped'
 };
 
-/** The state's words, or null for open and no state. */
+/** The state's words, or null for open, an unknown state and no state. */
 function stateWords(p: Pick<StoryPromise, 'state' | 'days'>): string | null {
 	const st = p.state ?? null;
-	return st == null || st === 'open' ? null : STATE_WORDS[st](p.days);
+	return st == null || st === 'open' || st === 'unknown' ? null : STATE_WORDS[st](p.days);
 }
 
 const capital = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);

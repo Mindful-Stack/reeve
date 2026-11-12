@@ -7235,7 +7235,12 @@ async fn set_promise(h: &Handlers, item: ItemType, key: &Key, p: &Promise) {
     assert!(
         h.ports
             .promises
-            .set_promise(&mut tx, item, key, p)
+            .set_promise(
+                &mut tx,
+                reeve_planning::PromiseItem::of(item).unwrap(),
+                key,
+                p
+            )
             .await
             .unwrap()
     );
@@ -7502,7 +7507,7 @@ async fn promise_entries(
     key: &Key,
 ) -> Vec<(String, String, serde_json::Value)> {
     sqlx::query_as(
-        "SELECT entity_type, action, payload FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'unpromised') ORDER BY id",
+        "SELECT entity_type, action, payload FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'promise_cleared') ORDER BY id",
     )
     .bind(key.to_string())
     .fetch_all(pool)
@@ -7566,7 +7571,7 @@ fn at_utc(m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<Utc> {
 }
 
 /// kb/ADR-0025 R2: setting, changing and clearing are interactive-only, refused with the domain's texts, and logged
-/// under `promised` / `unpromised` with what was there before. A kept date keeps `promised_at` (and so may be past);
+/// under `promised` / `promise_cleared` with what was there before. A kept date keeps `promised_at` (and so may be past);
 /// `to` left out keeps the recipient and `""` clears it; clearing nothing logs nothing.
 #[tokio::test]
 async fn promises_are_set_changed_and_cleared_by_people_only() {
@@ -7631,7 +7636,7 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
         promise_entries(&pool, &done).await,
         vec![(
             "story".to_string(),
-            "unpromised".to_string(),
+            "promise_cleared".to_string(),
             json!({"item_type": "story", "previous": {"on": "2026-11-20", "to": null}})
         )]
     );
@@ -7707,6 +7712,7 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
             let k = k.clone();
             async move { h.set_promise(&cx, item, &k, b).await }
         };
+        let no_promise = format!("{k} has no promise to change: give a date");
         // Refusals: nothing stored, nothing logged.
         assert!(matches!(
             set(bot.clone(), promise_body(Some(nov(20)), None, None)).await.unwrap_err(),
@@ -7752,12 +7758,12 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
             (
                 c.clone(),
                 promise_body(None, None, None),
-                "give a date or a sprint shortcut",
+                no_promise.as_str(),
             ),
             (
                 c.clone(),
                 promise_body(None, None, Some("Acme")),
-                "give a date or a sprint shortcut",
+                no_promise.as_str(),
             ),
         ];
         for (cx, b, want) in texts {
@@ -7897,14 +7903,14 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
                            "previous": {"on": "2026-11-21", "to": "Beta"}})
                 ),
                 want(
-                    "unpromised",
+                    "promise_cleared",
                     json!({"item_type": name, "previous": {"on": "2026-11-21", "to": null}})
                 ),
             ],
             "{name}"
         );
         let actors: Vec<String> = sqlx::query_scalar(
-            "SELECT actor FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'unpromised') ORDER BY id",
+            "SELECT actor FROM test_activity WHERE entity_key = $1 AND action IN ('promised', 'promise_cleared') ORDER BY id",
         )
         .bind(k.to_string())
         .fetch_all(&pool)

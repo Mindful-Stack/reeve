@@ -142,14 +142,15 @@ pub struct SprintViewDto {
     pub upkeep_line: u8,
     pub demo: Vec<DemoStoryDto>,
     /// The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
-    /// sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. Filled for
-    /// active and closed sprints; always empty for a draft.
+    /// sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`
+    /// fills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list
+    /// empty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.
     #[serde(default)]
     #[schema(required = true)]
     pub promises: Vec<SprintPromiseDto>,
     /// The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
-    /// day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
-    /// a draft.
+    /// day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for
+    /// a draft, and for the active sprint in `GET /sprints`.
     #[serde(default)]
     #[schema(required = true)]
     pub promises_after: Option<NaiveDate>,

@@ -368,12 +368,6 @@ impl PlanningReads for PgPlanningRepo {
     ) -> Result<Vec<PromisedStoryRow>, RepoError> {
         promised_between_in(tx, after, upto).await
     }
-    async fn planned_ends_in(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-    ) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError> {
-        planned_ends_in(tx).await
-    }
 }
 
 fn via_of(s: &str) -> Result<GoalVia, sqlx::Error> {
@@ -628,15 +622,4 @@ async fn promised_between_in(
             })
         })
         .collect()
-}
-
-async fn planned_ends_in(
-    tx: Tx<'_, '_>,
-) -> Result<(Option<NaiveDate>, Option<NaiveDate>), RepoError> {
-    let rows: Vec<(String, NaiveDate)> =
-        sqlx::query_as("SELECT state, ends_on FROM sprints WHERE state IN ('active','draft')")
-            .fetch_all(&mut **tx)
-            .await?;
-    let end = |s: &str| rows.iter().find(|(st, _)| st == s).map(|(_, d)| *d);
-    Ok((end("active"), end("draft")))
 }
