@@ -1,7 +1,7 @@
 // The words, tone and icon of a promise (kb/ADR-0025). Every value comes from the server: state, due period and days are
 // derived on read there, so nothing here reads a clock or computes a date. The CLI uses the same words: the rows of
 // promise.fixture.json pin both.
-import type { EpicPromise, PromiseDue, PromiseFact, PromiseShortcut, PromiseState, PromisedFilter, SprintPromise, StoryPromise } from '#lib/api/types.ts';
+import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, SprintPromise, StoryPromise } from '#lib/api/types.ts';
 import { dateLabel, dayLabel, short } from './format.ts';
 
 export type PromiseTone = 'warn' | 'ready' | 'muted' | 'neutral';
@@ -194,19 +194,4 @@ export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }
 /** Whether a URL value is one of the `promised` filter's values (as `isKind` is for kinds). */
 export function isPromisedFilter(s: string | null | undefined): s is PromisedFilter {
 	return PROMISED_OPTIONS.some((o) => o.value === s);
-}
-
-/** A sprint-end shortcut: which end, its words with the day, and the date it fills. */
-export type SprintEnd = { s: PromiseShortcut; label: string; ends: string };
-
-/** The sprint-end shortcuts on `today` (the server's date): the active sprint's end and the draft's, the next sprint
- *  (kb/ADR-0025, kb/ADR-0026), each only when it is today or later (a promise refuses a past date; a past end is no use as a
- *  due date either). None while `today` is unknown. The promise dialog and a decision's Due date offer the same ones. */
-export function sprintEnds(activeEnds: string | null, draftEnds: string | null, today: string | null): SprintEnd[] {
-	if (today == null) return [];
-	const ends = [
-		['this_sprint', 'End of this sprint', activeEnds],
-		['next_sprint', 'End of next sprint', draftEnds]
-	] as const;
-	return ends.flatMap(([s, label, on]) => (on != null && on >= today ? [{ s, label: `${label} (${dayLabel(on)})`, ends: on }] : []));
 }

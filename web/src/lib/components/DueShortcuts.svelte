@@ -6,14 +6,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, unwrap } from '#lib/api/client.ts';
-	import { sprintEnds, type SprintEnd } from '#lib/promise.ts';
+	import { sprintEnds, type SprintEnd } from '#lib/sprint.ts';
 
 	let { value = $bindable(''), disabled = false }: { value?: string; disabled?: boolean } = $props();
 
 	let shortcuts = $state<SprintEnd[]>([]);
 	onMount(() => {
 		unwrap(api.GET('/api/v1/sprints')).then(
-			(sp) => (shortcuts = sprintEnds(sp.active?.sprint.ends_on ?? null, sp.draft?.ends_on ?? null, sp.today)),
+			(sp) => (shortcuts = sprintEnds(sp)),
 			() => {} // no shortcuts; the date field is enough
 		);
 	});
@@ -21,7 +21,7 @@
 
 {#if shortcuts.length}
 	<div class="shortcuts" role="group" aria-label="Due date shortcuts">
-		{#each shortcuts as sc (sc.s)}
+		{#each shortcuts as sc (sc.shortcut)}
 			<!-- Pressed while it is the date in the field: the visible and announced confirmation of a click. -->
 			<button
 				type="button"

@@ -162,6 +162,8 @@ describe('small helpers', () => {
 	it('withoutSelf drops the item itself and keeps at most five', () => {
 		const hits = ['GRA-5', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'].map((key) => ({ key, title: key, kind: 'story' as const, delivery: 'todo' as const }));
 		expect(withoutSelf(hits, 'GRA-5').map((h) => h.key)).toEqual(['A-1', 'A-2', 'A-3', 'A-4', 'A-5']);
+		const six = ['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'].map((key) => ({ key, title: key, kind: 'story' as const, delivery: 'todo' as const }));
+		expect(withoutSelf(six, 'GRA-5').map((h) => h.key)).toEqual(['A-1', 'A-2', 'A-3', 'A-4', 'A-5']);
 	});
 	it('similarQuery: the trimmed title within 8..200 characters, counted as the server counts (code points), else null', () => {
 		expect(similarQuery('  short ')).toBeNull();

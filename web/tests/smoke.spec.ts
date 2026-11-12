@@ -390,7 +390,7 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	// Move the epic to no initiative, then back through the banner.
 	await page.getByRole('button', { name: 'Edit details' }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('combobox', { name: 'Initiative' }).click();
-	await page.getByRole('option', { name: 'none', exact: true }).click();
+	await page.getByRole('option', { name: 'No initiative', exact: true }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('button', { name: 'Save details' }).click();
 	await expect(page.getByText('This epic belongs to no initiative.')).toBeVisible();
 	await page.getByRole('button', { name: 'Choose an initiative' }).click();
@@ -408,7 +408,7 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	await page.getByRole('button', { name: 'New epic' }).click();
 	const indexForm = page.getByRole('dialog').getByRole('form', { name: 'New epic' });
 	await indexForm.getByLabel('Title').fill('Smoke loose epic');
-	await expect(indexForm.getByRole('combobox', { name: 'Initiative' })).toHaveValue('none'); // the closed picker shows the empty choice
+	await expect(indexForm.getByRole('combobox', { name: 'Initiative' })).toHaveValue('No initiative'); // the closed picker shows the empty choice
 	await indexForm.getByRole('button', { name: 'Create epic' }).click();
 	await expect(page.getByRole('region', { name: 'No initiative' }).getByRole('link', { name: 'Smoke loose epic' })).toBeVisible();
 	// The old index redirects, also on a full load through the server's page fallback.
@@ -714,6 +714,9 @@ for (const width of [320, 1280]) {
 		});
 		await page.setViewportSize({ width, height: 900 });
 		await page.goto(`/initiatives/${ini.key}`);
+		// Measure the loaded page, not its "Loading…" frame.
+		await expect(page.getByRole('button', { name: '+ Add decision' })).toBeVisible();
+		await expect(page.locator('#decisions').getByText('Nothing blocking')).toBeVisible();
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll with no decisions').toBe(true);
 		const title = 'Portal ADR (one-way): the org profile carries the fields and drives a hidden watch';
 		await post(page, '/api/v1/decisions', {

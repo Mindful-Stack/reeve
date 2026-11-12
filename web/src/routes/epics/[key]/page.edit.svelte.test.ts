@@ -202,7 +202,7 @@ function type(el: HTMLInputElement, v: string) {
 	flushSync();
 }
 function choose(v: string) {
-	pickOption(detailsForm(), 'Initiative', v, v === '' ? 'none' : v);
+	pickOption(detailsForm(), 'Initiative', v, v === '' ? 'No initiative' : v);
 }
 async function open() {
 	app = mount(Page, { target: document.body });
@@ -227,10 +227,10 @@ const closed = () =>
 	});
 
 describe('epic page: edit details', () => {
-	it('offers none, every initiative and the current parent in the select', async () => {
+	it('offers No initiative, every initiative and the current parent in the select', async () => {
 		net.initiatives = [initiative({ key: 'ABC-2', title: 'Other' })]; // the list lags: ABC-1 is not in it
 		await startEditing();
-		expect(offered(detailsForm(), 'Initiative')).toEqual(['none', 'ABC-2 Other', 'ABC-1']);
+		expect(offered(detailsForm(), 'Initiative')).toEqual(['No initiative', 'ABC-2 Other', 'ABC-1']);
 		expect(parent().value).toBe('ABC-1');
 	});
 
@@ -242,7 +242,7 @@ describe('epic page: edit details', () => {
 			initiative({ key: 'ABC-3', title: 'Atlas', horizon: 'Now' })
 		];
 		await startEditing();
-		expect(offered(detailsForm(), 'Initiative')).toEqual(['none', 'ABC-3 Atlas', 'ABC-2 Other', 'ABC-1 Orion']);
+		expect(offered(detailsForm(), 'Initiative')).toEqual(['No initiative', 'ABC-3 Atlas', 'ABC-2 Other', 'ABC-1 Orion']);
 	});
 
 	it('sends only the changed title with the version the editor started from', async () => {
@@ -287,7 +287,7 @@ describe('epic page: edit details', () => {
 		await open();
 		btn('Choose an initiative').click();
 		flushSync();
-		expect(parent().value).toBe('none');
+		expect(parent().value).toBe('No initiative');
 		expect(btn('Choose an initiative')).toBeUndefined();
 		await vi.waitFor(() => {
 			flushSync();
@@ -451,7 +451,7 @@ describe('epic page: edit details', () => {
 			flushSync();
 			expect(notice()).toContain('Someone else changed');
 		});
-		expect(parent().value).toBe('none');
+		expect(parent().value).toBe('No initiative');
 		expect(title().value).toBe('Theirs');
 		net.patchAnswer = null;
 		detailsForm().requestSubmit();

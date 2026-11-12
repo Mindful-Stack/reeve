@@ -3,7 +3,8 @@
 // overdue promise sends no date. The parent owns the write.
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PromiseFact, SetPromise } from '#lib/api/types.ts';
+import type { PromiseFact, SetPromise, Sprints } from '#lib/api/types.ts';
+import { sprint, sprintView } from '#lib/test/fixtures.ts';
 import PromiseDialog from './PromiseDialog.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
@@ -12,6 +13,17 @@ afterEach(() => {
 	app = null;
 	document.body.innerHTML = '';
 });
+
+/** The sprints the host holds: the active sprint ends on `activeEnds`, the draft on `draftEnds`, the server's date is `today`. */
+function sprintsOf(activeEnds: string | null, draftEnds: string | null, today: string | null): Sprints | null {
+	if (today == null && activeEnds == null && draftEnds == null) return null;
+	return {
+		active: activeEnds ? sprintView(sprint({ ends_on: activeEnds })) : null,
+		draft: draftEnds ? sprint({ id: 2, state: 'draft', ends_on: draftEnds }) : null,
+		closed: [],
+		today
+	};
+}
 
 type Props = {
 	activeEnds?: string | null;
@@ -24,16 +36,14 @@ type Props = {
 	error?: string | null;
 };
 
-function open(over: Props = {}) {
+function open({ activeEnds = '2026-11-24', draftEnds = '2026-12-08', today = '2026-11-12', ...over }: Props = {}) {
 	const saved: SetPromise[] = [];
 	let closed = 0;
 	app = mount(PromiseDialog, {
 		target: document.body,
 		props: {
 			key: 'ABC-12',
-			activeEnds: '2026-11-24',
-			draftEnds: '2026-12-08',
-			today: '2026-11-12',
+			sprints: sprintsOf(activeEnds, draftEnds, today),
 			current: null,
 			epic: null,
 			busy: false,
@@ -217,9 +227,8 @@ describe('PromiseDialog', () => {
 			target: document.body,
 			props: {
 				key: 'ABC-12',
-				today: '2026-11-12',
-				get activeEnds() {
-					return props.activeEnds;
+				get sprints() {
+					return sprintsOf(props.activeEnds, null, '2026-11-12');
 				},
 				onsave: (b: SetPromise) => saved.push(b),
 				onclose: () => {}

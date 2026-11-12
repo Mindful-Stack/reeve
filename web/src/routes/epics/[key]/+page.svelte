@@ -1,7 +1,7 @@
 <script lang="ts">
 	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
 	import Picker from '#lib/ui/Picker.svelte';
-	import { keyed } from '#lib/picker.ts';
+	import { keyed, PICKER_INPUT } from '#lib/picker.ts';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import GoalLinkButton from '#lib/components/GoalLinkButton.svelte';
 	import { levelOfKind } from '#lib/glyphs.ts';
@@ -355,7 +355,7 @@
 		else if (conflicted && epic) briefBase = rebase({ version: epic.version, text: epic.brief ?? '' });
 	}
 
-	function startDetails(first = 'input') {
+	function startDetails(field: 'title' | 'initiative' = 'title') {
 		const e = epic;
 		if (!e) return;
 		details = epicDetails(e);
@@ -364,7 +364,7 @@
 		detailsError = null;
 		editingDetails = true;
 		// The trigger is replaced by the form: focus moves to its first field, not to <body>.
-		void tick().then(() => detailsForm?.querySelector<HTMLElement>(first)?.focus());
+		void tick().then(() => detailsForm?.querySelector<HTMLElement>(field === 'title' ? 'input' : PICKER_INPUT)?.focus());
 	}
 
 	/** Cancel, an unchanged save and a successful one all close the editor and return focus to its toggle. */
@@ -579,7 +579,7 @@
 					<label>Title <input bind:value={details.title} required disabled={busy} /></label>
 					<label>
 						Initiative
-						<Picker label="Initiative" options={keyed(orderedInitiatives)} bind:value={details.initiative} empty="none" disabled={busy} />
+						<Picker label="Initiative" options={keyed(orderedInitiatives)} bind:value={details.initiative} empty="No initiative" disabled={busy} />
 					</label>
 					{#if detailsError}<p class="error" role="alert">{detailsError}</p>{/if}
 					<button type="button" onclick={closeDetails}>Cancel</button>
@@ -591,7 +591,7 @@
 		{#if !ep.initiative}
 			<p class="banner" role="status">
 				<span>This epic belongs to no initiative.</span>
-				{#if !editingDetails}<button type="button" onclick={() => startDetails('input[role="combobox"]')}>Choose an initiative</button>{/if}
+				{#if !editingDetails}<button type="button" onclick={() => startDetails('initiative')}>Choose an initiative</button>{/if}
 			</p>
 		{/if}
 
@@ -812,9 +812,7 @@
 	{#if promise.open}
 		<PromiseDialog
 			key={ep.key}
-			activeEnds={promise.sprints?.active?.sprint.ends_on ?? null}
-			draftEnds={promise.sprints?.draft?.ends_on ?? null}
-			today={promise.sprints?.today ?? null}
+			sprints={promise.sprints}
 			sprintsFailed={promise.sprintsFailed}
 			current={ep.promise?.fact ?? null}
 			{busy}

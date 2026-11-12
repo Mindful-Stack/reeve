@@ -94,7 +94,7 @@
 	{#if initiative === undefined}
 		<label class="field">
 			Initiative
-			<Picker label="Initiative" options={keyed(ordered)} bind:value={draft.initiative} empty="none" disabled={busy} />
+			<Picker label="Initiative" options={keyed(ordered)} bind:value={draft.initiative} empty="No initiative" disabled={busy} />
 		</label>
 	{/if}
 	<div class="field">

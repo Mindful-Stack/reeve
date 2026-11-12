@@ -112,7 +112,7 @@ describe('NewEpicForm', () => {
 			ini('ABC-4', 'Alpha', 'Now', '2026-12')
 		];
 		mountForm({ initiatives });
-		expect(offered(form(), 'Initiative')).toEqual(['none', 'ABC-4 Alpha', 'ABC-3 Beta', 'ABC-1 Later thing', 'ABC-2 Unplanned']);
+		expect(offered(form(), 'Initiative')).toEqual(['No initiative', 'ABC-4 Alpha', 'ABC-3 Beta', 'ABC-1 Later thing', 'ABC-2 Unplanned']);
 	});
 
 	it('sends the fixed initiative and no parent picker on an initiative page', async () => {

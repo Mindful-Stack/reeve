@@ -1009,9 +1009,7 @@
 {#if promise.open && story}
 	<PromiseDialog
 		key={story.key}
-		activeEnds={sprints?.active?.sprint.ends_on ?? null}
-		draftEnds={sprints?.draft?.ends_on ?? null}
-		today={sprints?.today ?? null}
+		{sprints}
 		sprintsFailed={sprints == null}
 		current={story.promise?.own ?? null}
 		epic={inheritedEpic(story.promise)}

@@ -1,4 +1,4 @@
-import type { Confidence, GoalProgress, SprintCounts, SprintWarning, Story, Verdict } from '#lib/api/types.ts';
+import type { Confidence, GoalProgress, PromiseShortcut, SprintCounts, SprintWarning, Sprints, Story, Verdict } from '#lib/api/types.ts';
 import { dayLabel } from '#lib/format.ts';
 
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
@@ -115,4 +115,21 @@ export function promisesHeading(previous: string | null, endsOn: string): string
 	const from = nextDay(previous);
 	const sameMonth = from.slice(0, 7) === endsOn.slice(0, 7);
 	return `Promises due ${sameMonth ? String(Number(from.slice(8, 10))) : dayLabel(from)}–${end}`;
+}
+
+/** A sprint-end shortcut: which end, its words with the day, and the date it fills. */
+export type SprintEnd = { shortcut: PromiseShortcut; label: string; ends: string };
+
+/** The sprint-end shortcuts on the server's `today` (`GET /sprints`): the active sprint's end and the draft's, the next
+ *  sprint (kb/ADR-0025, kb/ADR-0026), each only when it is today or later (a promise refuses a past date; a past end is
+ *  no use as a due date either). None while the sprints or `today` are unknown. The promise dialog and a decision's Due
+ *  date offer the same ones. */
+export function sprintEnds(sprints: Pick<Sprints, 'active' | 'draft' | 'today'> | null): SprintEnd[] {
+	const today = sprints?.today;
+	if (!sprints || today == null) return [];
+	const ends = [
+		['this_sprint', 'End of this sprint', sprints.active?.sprint.ends_on],
+		['next_sprint', 'End of next sprint', sprints.draft?.ends_on]
+	] as const;
+	return ends.flatMap(([shortcut, label, on]) => (on != null && on >= today ? [{ shortcut, label: `${label} (${dayLabel(on)})`, ends: on }] : []));
 }

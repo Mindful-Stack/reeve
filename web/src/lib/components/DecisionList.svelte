@@ -892,7 +892,8 @@
 	.decision-list {
 		container-type: inline-size;
 		display: grid;
-		grid-template-columns: minmax(min(16rem, 100% - 84px), 1fr) repeat(7, auto);
+		/* The title column keeps 16rem, or what is left of the row once the seven 12px column gaps are taken (fits 320px). */
+		grid-template-columns: minmax(min(16rem, calc(100% - 7 * 12px)), 1fr) repeat(7, auto);
 		gap: var(--decision-list-row-gap, 10px) 12px;
 		min-width: 0;
 	}

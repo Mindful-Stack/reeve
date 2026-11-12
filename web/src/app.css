@@ -164,6 +164,12 @@ button.primary:hover:not(:disabled),
 	background: color-mix(in srgb, var(--accent) 88%, var(--foreground));
 	border-color: color-mix(in srgb, var(--accent) 88%, var(--foreground));
 }
+/* A toggle button that is on (aria-pressed): the visible half of what a screen reader hears. Components with their own
+   pressed look (chips, segmented choices) are more specific and keep it. */
+button[aria-pressed='true'] {
+	border-color: var(--accent);
+	background: var(--selection);
+}
 button.primary,
 .button.primary {
 	border-color: var(--accent);

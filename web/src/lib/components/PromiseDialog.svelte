@@ -3,15 +3,14 @@
      planned ends and `today`; this never reads the client's clock. -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import type { PromiseFact, PromiseShortcut, SetPromise } from '#lib/api/types.ts';
-	import { epicNote, sprintEnds } from '#lib/promise.ts';
+	import type { PromiseFact, PromiseShortcut, SetPromise, Sprints } from '#lib/api/types.ts';
+	import { epicNote } from '#lib/promise.ts';
+	import { sprintEnds } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 
 	let {
 		key,
-		activeEnds = null,
-		draftEnds = null,
-		today = null,
+		sprints = null,
 		sprintsFailed = false,
 		current = null,
 		epic = null,
@@ -22,12 +21,8 @@
 	}: {
 		/** The story or epic being promised, named in the title. */
 		key: string;
-		/** The active sprint's planned end, or null. */
-		activeEnds?: string | null;
-		/** The draft (next) sprint's planned end, or null. */
-		draftEnds?: string | null;
-		/** The server's UTC date; until it is known there are no shortcuts and no `min`. */
-		today?: string | null;
+		/** The sprints with the server's UTC date; until they are known there are no shortcuts and no `min`. */
+		sprints?: Sprints | null;
 		/** The sprints could not be read: there will be no shortcuts, and the dialog says so instead of waiting. */
 		sprintsFailed?: boolean;
 		/** The item's own promise, when changing it. */
@@ -59,13 +54,14 @@
 	let toInput = $state<HTMLInputElement | null>(null);
 
 	/** A shortcut is offered only when its sprint's end is today or later (the server refuses a past one). */
-	const shortcuts = $derived(sprintEnds(activeEnds, draftEnds, today));
+	const shortcuts = $derived(sprintEnds(sprints));
+	const today = $derived(sprints?.today ?? null);
 	/** A new date may not be before today; an overdue promise's own date may be kept. */
 	const min = $derived(today == null ? undefined : startOn && startOn < today ? startOn : today);
 
 	/** The end now offered for the picked shortcut. The host refetches the sprints while the dialog is open, so it can
 	 *  move (an edited end) or go (a closed sprint) after the pick. */
-	const offered = $derived(shortcut == null ? null : (shortcuts.find((x) => x.s === shortcut)?.ends ?? null));
+	const offered = $derived(shortcut == null ? null : (shortcuts.find((x) => x.shortcut === shortcut)?.ends ?? null));
 	/** The shortcut is sent only while its end is still the date in the field; otherwise the date the person sees is. */
 	const sendShortcut = $derived(shortcut != null && offered === on);
 
@@ -135,8 +131,8 @@
 			<p class="note" data-testid="promise-shortcuts-unavailable">Sprint shortcuts are unavailable.</p>
 		{:else if today == null || shortcuts.length > 0}
 			<div class="shortcuts" data-testid="promise-shortcuts">
-				{#each shortcuts as sc (sc.s)}
-					<button type="button" aria-pressed={shortcut === sc.s && sc.ends === on} disabled={busy} onclick={() => pick(sc.s, sc.ends)}
+				{#each shortcuts as sc (sc.shortcut)}
+					<button type="button" aria-pressed={shortcut === sc.shortcut && sc.ends === on} disabled={busy} onclick={() => pick(sc.shortcut, sc.ends)}
 						>{sc.label}</button
 					>
 				{/each}

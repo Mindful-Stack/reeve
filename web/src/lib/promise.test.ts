@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, SprintPromise, StoryPromise } from '#lib/api/types.ts';
 import words from './promise.fixture.json';
-import { PROMISED_OPTIONS, chip, epicNote, inheritedEpic, isPromisedFilter, lineParts, promiseActions, promisedMatches, sprintEnds, sprintRowParts, type PromisePart } from './promise.ts';
+import { PROMISED_OPTIONS, chip, epicNote, inheritedEpic, isPromisedFilter, lineParts, promiseActions, promisedMatches, sprintRowParts, type PromisePart } from './promise.ts';
 
 const fact = (on: string, to: string | null = 'Acme', by = 'Dana'): PromiseFact => ({ on, to, by, at: '2026-11-01T09:00:00Z' });
 
@@ -113,19 +113,5 @@ describe('the Promise filter', () => {
 	it('accepts only its four values', () => {
 		expect(['any', 'this_sprint', 'next_sprint', 'overdue'].every(isPromisedFilter)).toBe(true);
 		expect([null, undefined, '', 'bogus', 'later'].some(isPromisedFilter)).toBe(false);
-	});
-});
-
-describe('sprintEnds', () => {
-	it('offers both ends from today on, labelled with the day', () => {
-		expect(sprintEnds('2026-11-17', '2026-12-01', '2026-11-12')).toEqual([
-			{ s: 'this_sprint', label: 'End of this sprint (17 Nov)', ends: '2026-11-17' },
-			{ s: 'next_sprint', label: 'End of next sprint (1 Dec)', ends: '2026-12-01' }
-		]);
-	});
-	it('offers an end on today itself, never a past one, and none while today is unknown', () => {
-		expect(sprintEnds('2026-11-12', null, '2026-11-12').map((x) => x.s)).toEqual(['this_sprint']);
-		expect(sprintEnds('2026-11-10', null, '2026-11-12')).toEqual([]);
-		expect(sprintEnds('2026-11-17', '2026-12-01', null)).toEqual([]);
 	});
 });
