@@ -2871,6 +2871,22 @@ mod promises {
         assert_eq!(keys(&v3.promises), vec![p4.clone(), p10.clone()]);
         let vd = h.sprint_view(draft, now).await.unwrap();
         assert_eq!(vd.promises, vec![], "a draft lists no promises");
+        // Each list says the planned end it starts after: none for the first sprint and the draft; S3's is S2's 24 Nov,
+        // never the draft's 8 Dec.
+        assert_eq!(
+            (
+                v1.promises_after,
+                v2.promises_after,
+                v3.promises_after,
+                vd.promises_after
+            ),
+            (None, Some(nov(10)), Some(nov(24)), None)
+        );
+        assert_eq!(
+            list.promises_after,
+            Some(nov(10)),
+            "the list and the view agree"
+        );
         for k in [&p6, &p9] {
             assert!(
                 !v1.promises

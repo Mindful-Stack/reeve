@@ -5840,6 +5840,14 @@
                     },
                     "type": "array"
                   },
+                  "promises_after": {
+                    "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for\na draft.",
+                    "format": "date",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "sprint": {
                     "$ref": "#/components/schemas/SprintDto"
                   },
@@ -5855,7 +5863,8 @@
                   "counts",
                   "upkeep_line",
                   "demo",
-                  "promises"
+                  "promises",
+                  "promises_after"
                 ],
                 "type": "object"
               }
@@ -8439,6 +8448,14 @@
             },
             "type": "array"
           },
+          "promises_after": {
+            "description": "The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the\nday after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for\na draft.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "sprint": {
             "$ref": "#/components/schemas/SprintDto"
           },
@@ -8454,7 +8471,8 @@
           "counts",
           "upkeep_line",
           "demo",
-          "promises"
+          "promises",
+          "promises_after"
         ],
         "type": "object"
       },

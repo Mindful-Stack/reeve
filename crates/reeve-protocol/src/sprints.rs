@@ -147,6 +147,12 @@ pub struct SprintViewDto {
     #[serde(default)]
     #[schema(required = true)]
     pub promises: Vec<SprintPromiseDto>,
+    /// The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
+    /// day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
+    /// a draft.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub promises_after: Option<NaiveDate>,
 }
 
 /// `GET /sprints`: the active sprint with its numbers, the draft, and the closed sprints newest first.

@@ -2874,6 +2874,13 @@ export interface components {
                  *     active and closed sprints; always empty for a draft.
                  */
                 promises: components["schemas"]["SprintPromiseDto"][];
+                /**
+                 * Format: date
+                 * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
+                 *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
+                 *     a draft.
+                 */
+                promises_after: string | null;
                 sprint: components["schemas"]["SprintDto"];
                 /**
                  * Format: int32
@@ -3623,6 +3630,13 @@ export interface components {
              *     active and closed sprints; always empty for a draft.
              */
             promises: components["schemas"]["SprintPromiseDto"][];
+            /**
+             * Format: date
+             * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
+             *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, and for
+             *     a draft.
+             */
+            promises_after: string | null;
             sprint: components["schemas"]["SprintDto"];
             /**
              * Format: int32

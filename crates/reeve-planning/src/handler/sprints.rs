@@ -6,6 +6,7 @@ use super::promise::promise_clock_of;
 use super::*;
 use crate::domain::promise::{SprintPromise, StoryFacts, previous_end, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
+use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
 /// What the sprint page and the board strip read in one call, from one snapshot. `active_summary` is the active
@@ -22,6 +23,8 @@ pub struct Sprints {
     pub active_summary: Option<sprint::Summary>,
     /// The active sprint's promises (kb/ADR-0025 R8), by date then key; empty without an active sprint.
     pub promises: Vec<SprintPromise>,
+    /// The planned end the active sprint's promises start after (`previous_end`); None without one or for the first.
+    pub promises_after: Option<NaiveDate>,
 }
 
 /// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
@@ -34,6 +37,8 @@ pub struct SprintView {
     pub summary: Option<sprint::Summary>,
     /// Its promises (kb/ADR-0025 R8), by date then key; empty for a draft.
     pub promises: Vec<SprintPromise>,
+    /// The planned end its promises start after (`previous_end`); None for the first sprint and for a draft.
+    pub promises_after: Option<NaiveDate>,
 }
 
 fn allowed(s: &Sprint, op: Op) -> Result<(), HandlerError> {
@@ -204,7 +209,7 @@ impl Handlers {
         c: &Ctx,
         id: i64,
         version: i64,
-        ends_on: Option<chrono::NaiveDate>,
+        ends_on: Option<NaiveDate>,
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
@@ -611,9 +616,9 @@ impl Handlers {
         let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
         let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
         let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
-        let promises = match all.iter().find(|s| s.state == SprintState::Active) {
+        let (promises_after, promises) = match all.iter().find(|s| s.state == SprintState::Active) {
             Some(a) => self.sprint_promises_in(tx, a, &all, now).await?,
-            None => vec![],
+            None => (None, vec![]),
         };
         let mut out = Sprints {
             active: None,
@@ -623,6 +628,7 @@ impl Handlers {
             links,
             active_summary: None,
             promises,
+            promises_after,
         };
         for s in all {
             match s.state {
@@ -654,13 +660,15 @@ impl Handlers {
             let (s, goals, links) = self.sprint_with_goals_in(&mut tx, id).await?;
             let summary = self.summary_in(&mut tx, &s, &goals, &links, now).await?;
             let all = self.ports.sprints.sprints_in(&mut tx).await?;
-            let promises = self.sprint_promises_in(&mut tx, &s, &all, now).await?;
+            let (promises_after, promises) =
+                self.sprint_promises_in(&mut tx, &s, &all, now).await?;
             Ok(SprintView {
                 sprint: s,
                 goals,
                 links,
                 summary,
                 promises,
+                promises_after,
             })
         }
         .await;
@@ -674,18 +682,18 @@ impl Handlers {
     /// and the effective date, so a story that does not inherit its epic's date is judged on its own. A row without a
     /// state (done without `done_at`) is left out. By date, then key. A draft lists none: the list is filled for active
     /// and closed sprints. `all` is every sprint, read on the caller's snapshot; the clock is built from it rather than
-    /// read again.
+    /// read again. Returns the previous planned end beside the rows (None for the first sprint and for a draft).
     async fn sprint_promises_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         s: &Sprint,
         all: &[Sprint],
         now: DateTime<Utc>,
-    ) -> Result<Vec<SprintPromise>, HandlerError> {
+    ) -> Result<(Option<NaiveDate>, Vec<SprintPromise>), HandlerError> {
         if s.state == SprintState::Draft {
-            return Ok(vec![]);
+            return Ok((None, vec![]));
         }
-        let others: Vec<(i64, chrono::NaiveDate)> = all
+        let others: Vec<(i64, NaiveDate)> = all
             .iter()
             .filter(|o| o.id != s.id && o.state != SprintState::Draft)
             .map(|o| (o.id, o.ends_on))
@@ -713,7 +721,7 @@ impl Handlers {
             })
             .collect();
         out.sort_by_key(|p| p.on());
-        Ok(out)
+        Ok((prev, out))
     }
 
     /// One sprint with its goals and links, from one read-only snapshot.

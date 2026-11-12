@@ -1523,6 +1523,7 @@ mod tests {
                 title: "Demo me".into(),
             }],
             promises: vec![],
+            promises_after: None,
         }
     }
 

@@ -365,6 +365,7 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
         &[link(42, "ABC-9")],
         Some(&summary()),
         &[],
+        Some("2026-11-02".parse().unwrap()),
         20
     ));
     assert_eq!(
@@ -386,7 +387,8 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
                 {"key": "ABC-104", "title": "title ABC-104"},
                 {"key": "ABC-102", "title": "title ABC-102"},
             ],
-            "promises": []
+            "promises": [],
+            "promises_after": "2026-11-02"
         })
     );
 }
@@ -399,6 +401,7 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
         &[],
         None,
         &[],
+        None,
         17
     ));
     assert_eq!(
@@ -408,6 +411,7 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
     assert_eq!(got["demo"], json!([]));
     assert_eq!(got["upkeep_line"], json!(17));
     assert_eq!(got["promises"], json!([]));
+    assert_eq!(got["promises_after"], json!(null));
     assert_eq!(got["sprint"]["warnings"], json!(["no_goals"]));
 }
 
@@ -751,6 +755,7 @@ fn old_sprint_view_json_without_promises_parses() {
     });
     let v: SprintViewDto = serde_json::from_value(view).unwrap();
     assert_eq!(v.promises, vec![]);
+    assert_eq!(v.promises_after, None);
 }
 
 /// An older server's story and epic (no `promise`) still read, as no promise.

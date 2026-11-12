@@ -47,6 +47,7 @@ async fn list(
                 &x.links,
                 x.active_summary.as_ref(),
                 &x.promises,
+                x.promises_after,
                 line,
             )
         }),
@@ -74,6 +75,7 @@ async fn get(
         &v.links,
         v.summary.as_ref(),
         &v.promises,
+        v.promises_after,
         s.handlers.settings.upkeep_line,
     )))
 }

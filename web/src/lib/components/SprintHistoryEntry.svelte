@@ -12,14 +12,10 @@
 
 	let {
 		sprint,
-		previousEnd = null,
 		refresh = 0
 	}: {
 		/** The closed sprint, as `GET /sprints` lists it. */
 		sprint: Sprint;
-		/** The previous sprint's planned end (`previousEnd` in #lib/sprint.ts), which the promise list's dates start after;
-		 *  null for the first sprint. */
-		previousEnd?: string | null;
 		/** Bumped by the page on every reload: open numbers refetch, since they are derived on read too. */
 		refresh?: number;
 	} = $props();
@@ -132,7 +128,7 @@
 			{/if}
 			{#if d.view.promises.length}
 				<section class="promises" data-testid="promises">
-					<h4>{promisesHeading(previousEnd, d.view.sprint.ends_on)}</h4>
+					<h4>{promisesHeading(d.view.promises_after ?? null, d.view.sprint.ends_on)}</h4>
 					<ul>
 						{#each d.view.promises as x (x.key)}
 							<li>

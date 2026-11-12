@@ -7,6 +7,7 @@ use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{PromiseWindow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
+use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
     DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
@@ -260,6 +261,7 @@ pub fn sprint_view_dto(
     links: &[GoalLink],
     summary: Option<&Summary>,
     promises: &[SprintPromise],
+    promises_after: Option<NaiveDate>,
     upkeep_line: u8,
 ) -> SprintViewDto {
     SprintViewDto {
@@ -280,6 +282,7 @@ pub fn sprint_view_dto(
             })
             .unwrap_or_default(),
         promises: promises.iter().map(sprint_promise_dto).collect(),
+        promises_after,
     }
 }
 

@@ -10,7 +10,7 @@
 	import SprintHistoryEntry from '#lib/components/SprintHistoryEntry.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { blockedText, confidenceLabel, previousEnd, RULE, upkeepText, warningText } from '#lib/sprint.ts';
+	import { blockedText, confidenceLabel, RULE, upkeepText, warningText } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -307,7 +307,7 @@
 	<section class="panel" aria-labelledby="history-title">
 		<h2 id="history-title">History</h2>
 		{#each sprints.closed as s (s.id)}
-			<SprintHistoryEntry sprint={s} previousEnd={previousEnd(s, [...(active ? [active.sprint] : []), ...sprints.closed])} {refresh} />
+			<SprintHistoryEntry sprint={s} {refresh} />
 		{:else}
 			<p class="muted">No closed sprints yet.</p>
 		{/each}

@@ -610,9 +610,11 @@ describe('the history', () => {
 		});
 		const dated = (id: number, starts_on: string, ends_on: string) => sprint({ id, state: 'closed', closed_at: `${ends_on}T16:00:00Z`, starts_on, ends_on });
 
+		// The heading's first day is the day after the server's `promises_after`; the client never picks the previous sprint.
 		it('lists them under the dates after the previous sprint\'s planned end, then the note', async () => {
-			net.sprints!.closed = [dated(7, '2026-11-11', '2026-11-24'), dated(6, '2026-10-28', '2026-11-10')];
+			net.sprints!.closed = [dated(7, '2026-11-11', '2026-11-24')];
 			net.views[7] = sprintView(dated(7, '2026-11-11', '2026-11-24'), {
+				promises_after: '2026-11-10',
 				promises: [
 					promise('ABC-12', { to: 'Acme' }),
 					promise('ABC-14', { on: '2026-11-21', state: 'late', done_on: '2026-11-23', days: 2 }),
@@ -636,7 +638,7 @@ describe('the history', () => {
 
 		it('spans two months, and the first sprint takes every date up to its end', async () => {
 			net.sprints!.closed = [dated(7, '2026-10-28', '2026-11-10'), dated(6, '2026-10-14', '2026-10-27')];
-			net.views[7] = sprintView(dated(7, '2026-10-28', '2026-11-10'), { promises: [promise('ABC-12', { on: '2026-11-02' })] });
+			net.views[7] = sprintView(dated(7, '2026-10-28', '2026-11-10'), { promises_after: '2026-10-27', promises: [promise('ABC-12', { on: '2026-11-02' })] });
 			net.views[6] = sprintView(dated(6, '2026-10-14', '2026-10-27'), { promises: [promise('ABC-9', { on: '2026-10-20' })] });
 			expect(text(q('[data-testid="promises"] h4', await expand(7)))).toBe('Promises due 28 Oct–10 Nov');
 			button(/^Show numbers/, q('[data-testid="history-6"]')!)!.click();

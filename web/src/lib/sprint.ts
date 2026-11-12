@@ -1,4 +1,4 @@
-import type { Confidence, GoalProgress, Sprint, SprintCounts, SprintWarning, Story, Verdict } from '#lib/api/types.ts';
+import type { Confidence, GoalProgress, SprintCounts, SprintWarning, Story, Verdict } from '#lib/api/types.ts';
 import { dayLabel } from '#lib/format.ts';
 
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
@@ -98,14 +98,6 @@ export function upkeepTextAt(
 	if (!atClose || (atClose.completed === now.completed && atClose.upkeep_completed === now.upkeep_completed))
 		return upkeepText(now, line);
 	return `${now.upkeep_completed} of ${now.completed} completed stories were upkeep (at close: ${atClose.upkeep_completed} of ${atClose.completed}) · team line ${line}%`;
-}
-
-/** The planned end a sprint's promise list starts after, as the server picks it for `promises` (kb/ADR-0025 R8, the Rust
- *  `previous_end`): the greatest planned end among the other non-draft sprints below this one's, a tie only from a
- *  lower id. Null for the first sprint. Used only for the list's heading; the rows are the server's. */
-export function previousEnd(s: Pick<Sprint, 'id' | 'ends_on'>, others: Pick<Sprint, 'id' | 'ends_on'>[]): string | null {
-	const below = others.filter((o) => o.id !== s.id && (o.ends_on < s.ends_on || (o.ends_on === s.ends_on && o.id < s.id)));
-	return below.reduce<string | null>((best, o) => (best == null || o.ends_on > best ? o.ends_on : best), null);
 }
 
 /** The ISO day after `iso` (calendar arithmetic only, no clock). */
