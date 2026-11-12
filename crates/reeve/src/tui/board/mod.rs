@@ -803,11 +803,11 @@ mod tests {
             story("ABC-2", Todo, 1),
             vec![Reason::BlockedBy {
                 story: key("ABC-1"),
-                delivery: Testing,
-                owner: None,
+                delivery: InReview,
+                owner: Some("mia@example.com".into()),
             }],
         );
-        let mut b = loaded(vec![story("ABC-1", Testing, 1), blocked.clone()], 1);
+        let mut b = loaded(vec![story("ABC-1", InReview, 1), blocked.clone()], 1);
         let _ = b.request_load(); // sent 3, in flight across the write's completion
         let done = story("ABC-1", Done, 2);
         let _ = b.on_note(
@@ -831,8 +831,8 @@ mod tests {
             b.get(&key("ABC-2")).unwrap().item.readiness.reasons,
             vec![Reason::BlockedBy {
                 story: key("ABC-1"),
-                delivery: Testing,
-                owner: None
+                delivery: InReview,
+                owner: Some("mia@example.com".into())
             }],
             "the stale load's readiness was not applied"
         );

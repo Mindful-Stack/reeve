@@ -37,7 +37,7 @@ pub fn blocks(blocker: &BlockerFact, dependent_owner: Option<&str>) -> bool {
     match blocker.delivery {
         DeliveryState::Todo => true,
         DeliveryState::InProgress | DeliveryState::InReview => {
-            !matches!((blocker.owner.as_deref(), dependent_owner), (Some(b), Some(d)) if b == d)
+            !matches!((blocker.owner.as_deref(), dependent_owner), (Some(b), Some(d)) if !b.is_empty() && b == d)
         }
         DeliveryState::Testing | DeliveryState::Done => false,
     }
@@ -106,8 +106,8 @@ pub(crate) fn satisfies(check: &CheckResult) -> bool {
 
 /// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0027 R4); then ancestors
 /// in the order given (nearest first, each with its discovery reason then its decisions);
-/// then own decisions; then no-criteria; then blockers that are unfinished for this story's owner (kb/ADR-0027 R5). Duplicates are not removed, so the
-/// repo must supply unique ancestors and blockers.
+/// then own decisions; then no-criteria; then blockers that are unfinished for this story's owner
+/// (kb/ADR-0027 R5). Duplicates are not removed, so the repo must supply unique ancestors and blockers.
 pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
     let mut reasons = Vec::new();
     if !i.has_epic {
@@ -144,6 +144,7 @@ pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reeve_protocol::DeliveryState::{self, *};
     use reeve_protocol::{CheckResult, Kind, Reason};
 
     fn key(s: &str) -> reeve_protocol::Key {
@@ -382,8 +383,6 @@ mod tests {
         }
     }
 
-    use reeve_protocol::DeliveryState::{self, *};
-
     /// kb/ADR-0027 R5 as literal rows: (blocker delivery, blocker owner, dependent owner, blocks). Written from the
     /// record's sentence, not from the implementation.
     #[test]
@@ -399,6 +398,7 @@ mod tests {
             (InProgress, D, None, true),
             (InProgress, None, D, true),
             (InProgress, None, None, true),
+            (InProgress, Some(""), Some(""), true),
             (InReview, D, D, false),
             (InReview, D, M, true),
             (InReview, None, None, true),
