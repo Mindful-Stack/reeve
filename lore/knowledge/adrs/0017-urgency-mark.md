@@ -3,7 +3,7 @@ id: kb/ADR-0017
 title: "ADR-0017: Urgency is a one-cycle, display-only mark on one item, spread along its lineage on read"
 description: "A person can mark any initiative, epic or story urgent with an optional reason; the mark lasts one cycle unless renewed, its ancestors and descendants are urgent while it is active, computed on read, and urgency never touches delivery, readiness, progress, goals, the webhook or the importer, because a temporary focus must not become a horizon or a planning state."
 tags: [adr, reeve, planning, urgency]
-status: accepted
+status: superseded
 date: 2026-11-09
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: []
 scope: ["reeve:crates/reeve-planning/**", "reeve:crates/reeve-protocol/**", "reeve:crates/reeve-server/**", "reeve:web/**"]
 supersedes: []
-superseded_by:
+superseded_by: kb/ADR-0024
 depends_on: [kb/ADR-0002, kb/ADR-0003, kb/ADR-0010]
 related: [kb/ADR-0014, kb/ADR-0015, kb/ADR-0016]
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-11-09.
 Accepted 2026-11-09 by Daniel Thyselius.
+Superseded 2026-11-11 by kb/ADR-0024.
 
 ## Context
 Work comes up that needs the team's full focus ahead of everything in "Now". The planning page groups initiatives
