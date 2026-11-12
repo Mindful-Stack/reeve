@@ -2527,7 +2527,7 @@
         ]
       },
       "OpenSprint": {
-        "description": "Opens the draft; the end defaults to one `[sprints] length_days` after today.",
+        "description": "Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay\nin the next draft (kb/ADR-0026); empty or absent opens every goal.",
         "properties": {
           "ends_on": {
             "format": "date",
@@ -2535,6 +2535,13 @@
               "string",
               "null"
             ]
+          },
+          "leave_out": {
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
           },
           "version": {
             "format": "int64",

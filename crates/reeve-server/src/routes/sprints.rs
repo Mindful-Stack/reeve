@@ -90,7 +90,7 @@ async fn open(
     ApiJson(b): ApiJson<OpenSprint>,
 ) -> Result<Json<Response<SprintDto>>, AppError> {
     s.handlers
-        .open_sprint(&c.ctx(), id, b.version, b.ends_on)
+        .open_sprint_leaving(&c.ctx(), id, b.version, b.ends_on, &b.leave_out)
         .await?;
     Ok(ok(sprint_now(&s.handlers, id).await?))
 }

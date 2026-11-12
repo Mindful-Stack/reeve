@@ -1906,10 +1906,14 @@ export interface components {
             /** @enum {string} */
             kind: "await_check";
         };
-        /** @description Opens the draft; the end defaults to one `[sprints] length_days` after today. */
+        /**
+         * @description Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay
+         *     in the next draft (kb/ADR-0026); empty or absent opens every goal.
+         */
         OpenSprint: {
             /** Format: date */
             ends_on?: string | null;
+            leave_out?: number[];
             /** Format: int64 */
             version: number;
         };
