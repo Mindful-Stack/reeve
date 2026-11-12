@@ -22,6 +22,29 @@ async function open(items: { label: string; onselect: () => void; disabled?: boo
 	return trigger;
 }
 
+describe('ActionsMenu under the top bar', () => {
+	afterEach(() => document.documentElement.style.removeProperty('--top-bar-height'));
+	const rect = (top: number, bottom: number) => ({ top, bottom, left: 10, right: 60, width: 50, height: bottom - top, x: 10, y: top, toJSON() {} }) as DOMRect;
+
+	it('closes when its trigger scrolls behind the bar', async () => {
+		document.documentElement.style.setProperty('--top-bar-height', '60px');
+		let at = rect(100, 120); // below the bar (bottom 60)
+		const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+			return this.matches('button[aria-haspopup="menu"]') ? at : rect(0, 0);
+		});
+		const trigger = await open([{ label: 'Move up', onselect: vi.fn() }]);
+		expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+		// Trigger bottom (50) is above the bar's bottom (60), but still inside the viewport.
+		at = rect(20, 50);
+		window.dispatchEvent(new Event('scroll'));
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('[role="menu"]')).toBeNull();
+		expect(trigger.getAttribute('aria-expanded')).toBe('false');
+		spy.mockRestore();
+	});
+});
+
 describe('ActionsMenu', () => {
 	it('opens a menu, focuses the first enabled item and moves with arrows', async () => {
 		const trigger = await open([

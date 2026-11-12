@@ -36,7 +36,9 @@
 	function place() {
 		if (!button) return;
 		const r = button.getBoundingClientRect();
-		if (open && (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth)) {
+		// The sticky top bar publishes its height; a trigger scrolled behind it is out of sight.
+		const barBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-bar-height')) || 0;
+		if (open && (r.bottom < barBottom || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth)) {
 			open = false;
 			button.focus({ preventScroll: true });
 			return;
@@ -47,7 +49,7 @@
 		const below = r.bottom + 4;
 		const top = below + h > window.innerHeight - 8 ? r.top - 4 - h : below;
 		pos = {
-			top: Math.max(8, Math.min(top, window.innerHeight - h - 8)),
+			top: Math.max(barBottom + 8, Math.min(top, window.innerHeight - h - 8)),
 			left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8))
 		};
 	}
