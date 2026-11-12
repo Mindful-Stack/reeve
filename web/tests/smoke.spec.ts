@@ -650,31 +650,48 @@ test('decision rows keep every cell within its column at desktop widths', async 
 	}
 });
 
-// The Add decision form (GRA-636): every input and the sprint-end shortcut row stay inside the form's box, narrow and wide.
+// The Add decision form (GRA-636): the sprint-end shortcut row is offered and its buttons lie inside the form's box.
 for (const width of [320, 1280]) {
-	test(`the Add decision form keeps its fields and shortcuts inside its box at ${width}px`, async ({ page }) => {
+	test(`the Add decision form keeps its sprint-end shortcuts inside its box at ${width}px`, async ({ page }) => {
 		const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 			idempotency_key: crypto.randomUUID(),
 			title: `Decision form smoke ${crypto.randomUUID().slice(0, 8)}`,
 			horizon: 'Now'
 		});
-		await page.setViewportSize({ width, height: 900 });
-		await page.goto(`/initiatives/${ini.key}`);
-		const sprints = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/sprints');
-		await page.getByRole('button', { name: '+ Add decision' }).click();
-		const form = page.getByRole('dialog').getByRole('form', { name: 'Add decision' });
-		await expect(form).toBeVisible();
-		await sprints;
-		const box = (await form.boundingBox())!;
-		const inside = async (what: Locator) => {
-			for (const el of await what.all()) {
+		// The shortcuts need a sprint end: open a sprint (a goal creates the draft when there is none) and close it after.
+		type Listed = {
+			active: { sprint: { id: number; version: number; goals: { id: number }[] } } | null;
+			draft: { id: number; version: number } | null;
+		};
+		const listed = async () => ((await (await page.request.get('/api/v1/sprints', { headers })).json()) as { value: Listed }).value;
+		if ((await listed()).draft == null) {
+			await post(page, '/api/v1/goals', { idempotency_key: crypto.randomUUID(), outcome: `Decision form goal ${crypto.randomUUID().slice(0, 8)}`, check: 'the shortcuts show' });
+		}
+		const draft = (await listed()).draft!;
+		await post(page, `/api/v1/sprints/${draft.id}/open`, { version: draft.version });
+		const sprint = (await listed()).active!.sprint;
+		try {
+			await page.setViewportSize({ width, height: 900 });
+			await page.goto(`/initiatives/${ini.key}`);
+			await page.getByRole('button', { name: '+ Add decision' }).click();
+			const form = page.getByRole('dialog').getByRole('form', { name: 'Add decision' });
+			await expect(form).toBeVisible();
+			const group = form.getByRole('group', { name: 'Due date shortcuts' });
+			await expect(group).toBeVisible();
+			const box = (await form.boundingBox())!;
+			const buttons = await group.getByRole('button').all();
+			expect(buttons.length).toBeGreaterThan(0);
+			for (const el of buttons) {
 				const b = (await el.boundingBox())!;
-				expect(b.x + b.width, `${await el.evaluate((e) => e.outerHTML.slice(0, 60))} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+				expect(b.x + b.width, `${await el.innerText()} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
 				expect(b.x).toBeGreaterThanOrEqual(box.x - 0.5);
 			}
-		};
-		await inside(form.locator('input'));
-		await inside(form.getByRole('group', { name: 'Due date shortcuts' }));
+		} finally {
+			await post(page, `/api/v1/sprints/${sprint.id}/close`, {
+				version: sprint.version,
+				verdicts: sprint.goals.map((g) => ({ goal_id: g.id, verdict: 'missed' }))
+			});
+		}
 	});
 }
 
@@ -710,11 +727,13 @@ for (const width of [320, 1280]) {
 			expect(b.x, `${field} left edge`).toBeGreaterThanOrEqual(box.x - 0.5);
 			if (field === 'title') expect(b.width, 'title width').toBeGreaterThanOrEqual(box.width * 0.6);
 		}
-		for (const field of ['title', 'decider']) {
-			const el = form.locator(`[data-field="${field}"]`);
-			const [wide, shown] = await el.evaluate((e: HTMLInputElement) => [e.scrollWidth, e.clientWidth]);
-			// The title is longer than a phone's line: only the wide layout shows all of it.
-			if (width >= 1280) expect(wide, `${field} shows its full value`).toBeLessThanOrEqual(shown + 1);
+		// The title is longer than a phone's line: only the wide layout shows all of it.
+		if (width >= 1280) {
+			for (const field of ['title', 'decider']) {
+				const el = form.locator(`[data-field="${field}"]`);
+				const [wide, shown] = await el.evaluate((e: HTMLInputElement) => [e.scrollWidth, e.clientWidth]);
+				expect(wide, `${field} shows its full value`).toBeLessThanOrEqual(shown + 1);
+			}
 		}
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll').toBe(true);
 	});

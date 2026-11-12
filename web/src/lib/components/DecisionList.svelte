@@ -892,7 +892,7 @@
 	.decision-list {
 		container-type: inline-size;
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) repeat(7, auto);
+		grid-template-columns: minmax(min(16rem, 100% - 84px), 1fr) repeat(7, auto);
 		gap: var(--decision-list-row-gap, 10px) 12px;
 		min-width: 0;
 	}
@@ -1091,12 +1091,13 @@
 	.edit select {
 		width: 100%;
 		min-width: 0;
-		box-sizing: border-box;
 	}
 	.due {
 		display: grid;
 		gap: 6px;
-		justify-items: start;
+	}
+	.due button {
+		justify-self: start;
 	}
 	.buttons {
 		display: flex;

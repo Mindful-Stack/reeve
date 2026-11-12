@@ -818,19 +818,6 @@
 		gap: 0.2rem;
 		font-size: 14px;
 	}
-	.decision-form {
-		display: grid;
-		gap: 12px;
-		min-width: 0;
-	}
-	.decision-form input {
-		width: 100%;
-		min-width: 0;
-		box-sizing: border-box;
-	}
-	.decision-form button {
-		justify-self: start;
-	}
 	.error {
 		margin: 0;
 		flex-basis: 100%;
