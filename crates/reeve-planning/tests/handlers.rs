@@ -8696,34 +8696,66 @@ async fn open_promises_pull_decisions_by_due_period() {
     assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
 }
 
-/// Waits until exactly `n` sessions of this database wait on a lock.
-async fn wait_until_waiting(pool: &sqlx::PgPool, n: i64) {
-    tokio::time::timeout(PAUSE, async {
-        loop {
-            let waiting: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
-            )
-            .fetch_one(pool)
-            .await
-            .unwrap();
-            if waiting == n {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+/// Pauses the first entry it records once armed, inside the write that records it and so while that write still holds
+/// its row lock, until the test releases it; every other entry goes straight through. Entries land in `test_activity`
+/// as `DbSink`'s do. The race tests order their writes with it instead of relying on PostgreSQL's lock queue.
+#[derive(Default)]
+struct GateSink {
+    armed: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+#[async_trait]
+impl ActivitySink for GateSink {
+    async fn record(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        rec: ActivityRecord,
+    ) -> Result<(), RepoError> {
+        insert_test_activity(tx, &rec).await?;
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
         }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("{n} calls never queued on the row lock the test took"));
+        Ok(())
+    }
+}
+impl GateSink {
+    /// Arms the gate: the next entry recorded pauses.
+    fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// Waits until a write paused in the gate.
+    async fn paused(&self) {
+        tokio::time::timeout(PAUSE, self.entered.notified())
+            .await
+            .expect("the first write never reached its entry");
+    }
+    /// Lets the paused write go on to commit.
+    fn open(&self) {
+        self.release.notify_one();
+    }
 }
 
-/// Two real promise writes queued on one row (a set then a set, a set then a clear, on a story and an epic): both
-/// commit, each logs the promise the other left as its `previous`, and the stored promise is what the last entry left.
-/// Row locks queue in order, so the first queued write goes first.
+/// Handlers whose entries go through a `GateSink` into `test_activity` (created by `mk_db`).
+async fn mk_gated(pool: sqlx::PgPool) -> (Handlers, Arc<GateSink>) {
+    let gate = Arc::new(GateSink::default());
+    let h = Handlers {
+        activity: gate.clone(),
+        ..mk_db(pool).await
+    };
+    (h, gate)
+}
+
+/// Two real promise writes on one row (a set then a set, a set then a clear, on a story and an epic): the first pauses
+/// in its entry while it holds the row, the second is started and seen blocked on that row, then the first is released.
+/// Both commit, each logs the promise the other left as its `previous`, and the stored promise is what the last entry
+/// left.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn queued_promise_writes_chain_their_entries() {
     use serde_json::{Value, json};
     let (_c, pool) = common::pg().await;
-    let h = mk_db(pool.clone()).await;
+    let (h, gate) = mk_gated(pool.clone()).await;
     let c = promise_ctx();
     let mut cases = Vec::new();
     for (n, second_sets) in [(0, true), (1, false)] {
@@ -8755,15 +8787,7 @@ async fn queued_promise_writes_chain_their_entries() {
         )
         .await
         .unwrap();
-        let mut w = pool.begin().await.unwrap();
-        sqlx::query(&format!(
-            "SELECT 1 FROM {} WHERE key = $1 FOR UPDATE",
-            promise_table(item)
-        ))
-        .bind(k.to_string())
-        .execute(&mut *w)
-        .await
-        .unwrap();
+        gate.arm();
         let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
         let first = tokio::spawn(async move {
             hh.set_promise(
@@ -8774,7 +8798,7 @@ async fn queued_promise_writes_chain_their_entries() {
             )
             .await
         });
-        wait_until_waiting(&pool, 1).await;
+        gate.paused().await;
         let (hh, cc, kk) = (h.clone(), c.clone(), k.clone());
         let second = tokio::spawn(async move {
             if second_sets {
@@ -8784,8 +8808,9 @@ async fn queued_promise_writes_chain_their_entries() {
                 hh.clear_promise(&cc, item, &kk).await.map(|_| ())
             }
         });
-        wait_until_waiting(&pool, 2).await;
-        w.commit().await.unwrap();
+        wait_until_blocked(&pool).await;
+        assert!(!second.is_finished(), "{name}: the second write waits");
+        gate.open();
         for call in [first, second] {
             tokio::time::timeout(PAUSE, call)
                 .await
@@ -8809,7 +8834,7 @@ async fn queued_promise_writes_chain_their_entries() {
             .await
             .map_or(Value::Null, |(on, _, _, to)| json!({"on": on, "to": to}));
         assert_eq!(now, left, "{name}");
-        // The first queued write went first: its entry names the first promise, the second's names it.
+        // The first write went first: its entry names the first promise, the second's names it.
         let it = if item == ItemType::Story {
             "story"
         } else {
@@ -8831,21 +8856,17 @@ async fn queued_promise_writes_chain_their_entries() {
     }
 }
 
-/// Completion first (kb/ADR-0025 R2): a move to done and a promise queued behind it on the story's row; the move
-/// commits, and the promise, judged on the row it then locks, is refused as done. Nothing is stored or logged.
+/// Completion first (kb/ADR-0025 R2): a move to done pauses in its entry while it holds the story's row, a promise is
+/// started and seen blocked on that row, then the move is released and commits; the promise, judged on the row it then
+/// locks, is refused as done. Nothing is stored or logged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_promise_queued_behind_a_move_to_done_is_refused() {
     let (_c, pool) = common::pg().await;
-    let h = mk_db(pool.clone()).await;
+    let (h, gate) = mk_gated(pool.clone()).await;
     let c = promise_ctx();
     let s = plain_story(&h, &c, "s", "S", None).await;
     let version = h.story_dto(&s, c.now).await.unwrap().version;
-    let mut w = pool.begin().await.unwrap();
-    sqlx::query("SELECT 1 FROM stories WHERE key = $1 FOR UPDATE")
-        .bind(s.to_string())
-        .execute(&mut *w)
-        .await
-        .unwrap();
+    gate.arm();
     let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
     let mv = tokio::spawn(async move {
         hh.move_story(
@@ -8858,7 +8879,7 @@ async fn a_promise_queued_behind_a_move_to_done_is_refused() {
         )
         .await
     });
-    wait_until_waiting(&pool, 1).await;
+    gate.paused().await;
     let (hh, cc, kk) = (h.clone(), c.clone(), s.clone());
     let promise = tokio::spawn(async move {
         hh.set_promise(
@@ -8869,8 +8890,9 @@ async fn a_promise_queued_behind_a_move_to_done_is_refused() {
         )
         .await
     });
-    wait_until_waiting(&pool, 2).await;
-    w.commit().await.unwrap();
+    wait_until_blocked(&pool).await;
+    assert!(!promise.is_finished(), "the promise waits on the move");
+    gate.open();
     tokio::time::timeout(PAUSE, mv)
         .await
         .expect("the move never finished")
