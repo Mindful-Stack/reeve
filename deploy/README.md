@@ -337,6 +337,13 @@ next upload after that.
 
 ### Releases and rollback
 
+Migration 1012 adds the promise columns to the epic and story tables (kb/ADR-0025). The same strict `VersionMissing`
+applies: the 0.4.0 image refuses to start on a database that 1012 has been applied to, so a rollback past this release
+restores the pre-release backup (see "Restore after an incident"), and every promise set since that backup is lost.
+Two clients built before this release meet the new decision-queue reason (`promise`): a `reeve` CLI older than 0.5.0
+fails `reeve decision ls --queue` as soon as any decision is needed for a promise (update the CLI), and a web tab opened
+before the deploy words a promise reason as "… is in discovery" until it is reloaded.
+
 Migration 1011 adds the `attachments` and `attachment_chunks` tables. The server refuses to start on a database that
 has a migration it does not know (sqlx's `VersionMissing`, kept strict on purpose), and `reeve-server export` refuses
 it too, so the image from before this release cannot run against a database that 1011 has been applied to. A rollback
