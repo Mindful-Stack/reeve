@@ -6,7 +6,8 @@
 //! immediately before commit.
 use super::*;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
-use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
+use crate::domain::readiness::decision_fact;
+use crate::domain::sprint::{self, Goal, GoalGates, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -695,6 +696,52 @@ impl Handlers {
             out.active_summary = self.summary_in(tx, a, &out.goals, &out.links, now).await?;
         }
         Ok(out)
+    }
+
+    /// Each goal of the active and the draft sprint with what its work waits on, from one read-only snapshot. Derived on
+    /// read, never stored (kb/ADR-0014 R6). Nothing in `handler/moves.rs` reaches it (kb/ADR-0014 R4).
+    pub async fn sprint_planning(&self) -> Result<Vec<GoalGates>, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.sprint_planning_in(&mut tx).await;
+        end_read(tx, out).await
+    }
+
+    /// A fixed number of statements whatever the number of goals, links, stories or decisions: the two sprints, their
+    /// goals, their links, then whole-table reads filtered in memory (one small team; the export reads the same way).
+    /// Each decision's fact is built and marked as readiness builds and marks it.
+    async fn sprint_planning_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<GoalGates>, HandlerError> {
+        let sprints = self.ports.sprints.active_and_draft_in(tx).await?;
+        let ids: Vec<i64> = sprints.iter().map(|s| s.id).collect();
+        let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
+        let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
+        let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
+        let initiatives = self.ports.reads.initiatives_in(tx).await?;
+        let epics = self.ports.reads.epics_in(tx).await?;
+        let stories = self.ports.reads.stories_in(tx).await?;
+        let decisions: Vec<_> = self
+            .ports
+            .reads
+            .decisions_in(tx)
+            .await?
+            .into_iter()
+            .map(|d| {
+                let mut f = decision_fact(&d);
+                self.mark_repo_configured(&mut f);
+                (d, f)
+            })
+            .collect();
+        Ok(sprint::goal_gates(
+            &goal_ids,
+            &links,
+            (&initiatives, &epics, &stories),
+            &decisions,
+        ))
     }
 
     /// One sprint with its goals and links, its numbers and its promises. The numbers are over `[opened_at, closed_at)`
