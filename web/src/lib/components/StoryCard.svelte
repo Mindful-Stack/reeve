@@ -9,6 +9,7 @@
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import GoalChip from './GoalChip.svelte';
 	import UrgentChip from './UrgentChip.svelte';
+	import PromiseChip from './PromiseChip.svelte';
 	import { urgentLine } from '#lib/urgency.ts';
 
 	let {
@@ -94,6 +95,7 @@
 	<div class="meta">
 		<span class="key">{s.key}</span>
 		{#if urgent}<UrgentChip line={urgentTip()} />{/if}
+		{#if s.promise}<PromiseChip promise={s.promise} />{/if}
 		{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}
 		{#if epicTitle}<span class="epic" title={s.epic ?? undefined}>{epicTitle}</span>{/if}
 		<GoalChip goals={s.goals} />

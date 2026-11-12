@@ -52,6 +52,10 @@ const net = vi.hoisted(() => {
 		patches: [] as Patched[],
 		urgentFail: false,
 		urgentWrites: [] as { method: string; path: string; body: unknown }[],
+		promiseWrites: [] as { method: string; body: unknown }[],
+		/** While set, `GET /sprints` answers only when the gate resolves; `sprintsFail` makes it fail. */
+		sprintsGate: null as null | Promise<void>,
+		sprintsFail: false,
 		stories: [] as StoryWithReadiness[],
 		decisions: [] as RequiredDecision[],
 		initiativeDecisions: [] as RequiredDecision[],
@@ -83,6 +87,23 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			const mark = method === 'POST' ? { at: '2026-11-09T08:00:00Z', by: 'dan@example.com', reason: (body as { reason: string | null }).reason, expires_at: '2099-01-01T00:00:00Z', active: true, done: false } : null;
 			s.epic = { ...s.epic, urgent_mark: mark, urgent_sources: mark ? [{ key: 'ABC-5', item: 'epic' }] : [] };
 			return s.epic;
+		}
+		if ((method === 'POST' || method === 'DELETE') && path === '/api/v1/epics/ABC-5/promise') {
+			s.promiseWrites.push({ method, body });
+			const on = (body as { on?: string } | null)?.on ?? '2026-11-24';
+			const fact = { on, to: 'Acme', by: 'dan@example.com', at: '2026-11-12T08:00:00Z' };
+			s.epic = { ...s.epic, promise: method === 'POST' ? { fact, due: 'this_sprint', past: false } : null };
+			return s.epic;
+		}
+		if (method === 'GET' && path === '/api/v1/sprints') {
+			if (s.sprintsGate) await s.sprintsGate;
+			if (s.sprintsFail) return failure('boom');
+			return {
+				active: { sprint: { id: 1, state: 'active', starts_on: '2026-11-10', ends_on: '2026-11-24', opened_at: '2026-11-10T08:00:00Z', closed_at: null, goals: [], warnings: [], version: 1 }, counts: { completed: 0, upkeep_completed: 0, goals: [] }, demo: [], upkeep_line: 20, promises: [] },
+				closed: [],
+				draft: null,
+				today: '2026-11-12'
+			};
 		}
 		if (method === 'GET' && path === '/api/v1/epics/ABC-5') return s.epic;
 		if (method === 'GET' && path === '/api/v1/epics/JIRA-55') return s.epic;
@@ -140,6 +161,9 @@ afterEach(() => {
 	net.initiatives = net.freshInitiatives();
 	net.patches.length = 0;
 	net.urgentWrites.length = 0;
+	net.promiseWrites.length = 0;
+	net.sprintsGate = null;
+	net.sprintsFail = false;
 	net.urgentFail = false;
 	net.stories = [];
 	net.decisions = [];
@@ -830,7 +854,7 @@ describe('epic page: urgent mark', () => {
 
 	it('always offers Mark urgent…, and Clear urgent mark only with a mark', async () => {
 		await open();
-		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…']);
+		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Promise by…']);
 		unmount(app!);
 		app = null;
 		document.body.innerHTML = '';
@@ -1012,5 +1036,85 @@ describe('epic page: brief images', () => {
 		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
 		expect(net.patches[0]).toMatchObject({ attachments: ['img-b'] });
 		expect((net.patches[0] as unknown as { brief: string }).brief).toContain('![shot](/api/v1/attachments/img-b)');
+	});
+});
+
+describe('epic page: promise', () => {
+	const fact = { on: '2026-11-20', to: 'Acme', by: 'dan@example.com', at: '2026-11-01T08:00:00Z' };
+	const menu = async () => {
+		(document.body.querySelector('button[aria-label="Actions for ABC-5"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull();
+		});
+		return [...document.body.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+	};
+	const item = (items: HTMLButtonElement[], name: string) => items.find((b) => b.textContent?.trim() === name);
+	const shortcut = () => [...document.body.querySelectorAll('dialog button')].find((b) => b.textContent?.startsWith('End of'));
+
+	it('has no shortcuts and no min until the sprints answer, then promises by the shortcut', async () => {
+		let release = () => {};
+		net.sprintsGate = new Promise((r) => (release = r));
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		flushSync();
+		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Promise ABC-5 by…');
+		expect(shortcut()).toBeUndefined();
+		expect(document.body.querySelector('dialog input[type="date"]')!.hasAttribute('min')).toBe(false);
+		release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shortcut()?.textContent).toBe('End of this sprint (24 Nov)');
+		});
+		expect((document.body.querySelector('dialog input[type="date"]') as HTMLInputElement).min).toBe('2026-11-12');
+		(shortcut() as HTMLButtonElement).click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised 24 Nov to Acme · set by dan');
+		});
+		expect(net.promiseWrites).toEqual([{ method: 'POST', body: { shortcut: 'this_sprint' } }]);
+	});
+
+	it('a failed sprints read leaves the dialog usable without shortcuts', async () => {
+		net.sprintsFail = true;
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		flushSync();
+		await new Promise((r) => setTimeout(r, 10));
+		flushSync();
+		expect(shortcut()).toBeUndefined();
+		expect(document.body.querySelector('dialog input[type="date"]')).not.toBeNull();
+	});
+
+	it('with a promise offers Change and Clear, shows the line, and clears with DELETE', async () => {
+		net.epic = { ...net.epic, promise: { fact, due: 'later', past: false } };
+		await open();
+		expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised 20 Nov to Acme · set by dan');
+		const items = await menu();
+		expect(items.map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Change promise…', 'Clear promise']);
+		item(items, 'Clear promise')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="promise-line"]')).toBeNull();
+		});
+		expect(net.promiseWrites).toEqual([{ method: 'DELETE', body: null }]);
+	});
+
+	it('a story row carries its promise chip', async () => {
+		net.stories = [
+			withReadiness({
+				key: 'ABC-9',
+				epic: 'ABC-5',
+				promise: { own: null, epic: { key: 'ABC-5', fact }, on: '2026-11-20', holder: 'epic', state: 'open', due: 'later', days: null }
+			})
+		];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised 20 Nov · via ABC-5');
+		});
 	});
 });

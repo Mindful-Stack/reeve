@@ -839,7 +839,7 @@ describe('StoryDrawer urgent mark', () => {
 		serve(storyDto({ ...story }));
 		const d = await open();
 		await openMenu(d);
-		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…']);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Promise by…']);
 		items()[0].click();
 		flushSync();
 		await tick();
@@ -882,7 +882,7 @@ describe('StoryDrawer urgent mark', () => {
 			expect(line.textContent).toContain('via epic RV-2 Migration findings');
 		});
 		await openMenu(d);
-		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Clear urgent mark']);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Clear urgent mark', 'Promise by…']);
 		items()[1].click();
 		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/urgent')).toBe(true));
 		await vi.waitFor(() => {
@@ -1010,5 +1010,120 @@ describe('StoryDrawer urgent mark', () => {
 			expect(d.textContent).toContain('boom');
 			expect(document.activeElement).toBe(d.querySelector('button[aria-label="Clear urgent mark on RV-5"]'));
 		});
+	});
+});
+
+describe('StoryDrawer promise', () => {
+	const fact = (on: string, to: string | null = 'Acme') => ({ on, to, by: 'dana@example.com', at: '2026-11-01T09:00:00Z' });
+	const own = (on: string, to: string | null = 'Acme'): NonNullable<Story['promise']> => ({
+		own: fact(on, to),
+		epic: null,
+		on,
+		holder: 'own',
+		state: on < '2026-11-12' ? 'overdue' : 'open',
+		due: on < '2026-11-12' ? null : 'later',
+		days: on < '2026-11-12' ? 7 : null
+	});
+	/** Serves `current` for the story and a sprint list with `today`; applies the promise POST and DELETE to it. */
+	function serve(current: Story, failPost = false) {
+		net.answers.of = (url, method) => {
+			if (url.pathname === '/api/v1/stories/RV-5/promise') {
+				if (method === 'POST' && failPost) return failure('boom');
+				const body = net.bodies.at(-1)?.body as { on?: string } | undefined;
+				current = { ...current, promise: method === 'POST' ? own(body?.on ?? '2026-11-24') : null };
+				return current;
+			}
+			if (url.pathname === '/api/v1/sprints')
+				return { active: sprintView(sprint({ ends_on: '2026-11-24' })), closed: [], draft: sprint({ id: 2, state: 'draft', ends_on: '2026-12-08' }), today: '2026-11-12' };
+			if (url.pathname === '/api/v1/stories/RV-5') return current;
+			return answer(url, method);
+		};
+	}
+	async function open(): Promise<HTMLElement> {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		return vi.waitFor(() => {
+			flushSync();
+			const el = document.body.querySelector<HTMLElement>('[data-testid="story-drawer"]');
+			expect(el?.querySelector('.title')).not.toBeNull();
+			return el!;
+		});
+	}
+	const items = () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+	async function openMenu(d: HTMLElement) {
+		d.querySelector<HTMLButtonElement>('button[aria-label="More actions for RV-5"]')!.click();
+		flushSync();
+		await tick();
+	}
+	const dialogButton = (label: string) =>
+		[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent?.trim() === label);
+
+	it('promises by a sprint shortcut from the server\'s ends and shows the line', async () => {
+		serve(storyDto({ ...story }));
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Promise by…')!.click();
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('dialog')?.textContent).toContain('Promise RV-5 by…');
+		dialogButton('End of this sprint (24 Nov)')!.click();
+		flushSync();
+		dialogButton('Promise')!.click();
+		await vi.waitFor(() => expect(net.bodies.at(-1)).toEqual({ path: '/api/v1/stories/RV-5/promise', body: { shortcut: 'this_sprint' } }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(d.querySelector('[data-testid="promise-line"]')?.textContent).toContain('Promised 24 Nov to Acme · set by dana');
+		});
+	});
+
+	it('changes the recipient of an overdue promise without a date, and clears with DELETE', async () => {
+		serve(storyDto({ ...story, promise: own('2026-11-05') }));
+		const d = await open();
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Change promise…', 'Clear promise']);
+		items()[1].click();
+		flushSync();
+		await tick();
+		const to = document.body.querySelector<HTMLInputElement>('dialog input[name="to"]')!;
+		to.value = 'Beta';
+		to.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		dialogButton('Promise')!.click();
+		await vi.waitFor(() => expect(net.bodies.at(-1)).toEqual({ path: '/api/v1/stories/RV-5/promise', body: { to: 'Beta' } }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+		});
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/promise')).toBe(true));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(d.querySelector('[data-testid="promise-line"]')).toBeNull();
+		});
+	});
+
+	it('a done story offers only Clear promise', async () => {
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: { ...own('2026-11-20'), state: 'kept', due: null } }));
+		const d = await open();
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Clear promise']);
+	});
+
+	it('shows a failed save in the dialog, not the drawer notice', async () => {
+		serve(storyDto({ ...story }), true);
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Promise by…')!.click();
+		flushSync();
+		await tick();
+		dialogButton('End of next sprint (8 Dec)')!.click();
+		flushSync();
+		dialogButton('Promise')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
 	});
 });

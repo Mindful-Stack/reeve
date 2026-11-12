@@ -6,6 +6,7 @@
 	import Glyph from '#lib/components/Glyph.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import UrgentChip from './UrgentChip.svelte';
+	import PromiseChip from './PromiseChip.svelte';
 	import { urgentLine } from '#lib/urgency.ts';
 	import { epicStatus, type EpicCounts } from '#lib/initiative.ts';
 
@@ -13,7 +14,7 @@
 		epic,
 		counts: c,
 		waiting
-	}: { epic: Pick<Epic, 'key' | 'title' | 'urgent_mark' | 'urgent_sources'>; counts: EpicCounts; waiting: string | null } = $props();
+	}: { epic: Pick<Epic, 'key' | 'title' | 'urgent_mark' | 'urgent_sources' | 'promise'>; counts: EpicCounts; waiting: string | null } = $props();
 
 	const pct = $derived(c.total ? Math.round((c.done / c.total) * 100) : 0);
 </script>
@@ -35,6 +36,7 @@
 	{:else if epic.urgent_mark && !epic.urgent_mark.active}
 		<span class="muted line">Urgent mark expired</span>
 	{/if}
+	{#if epic.promise}<span class="line"><PromiseChip promise={epic.promise} /></span>{/if}
 	<GoalLinkButton key={epic.key} />
 </li>
 

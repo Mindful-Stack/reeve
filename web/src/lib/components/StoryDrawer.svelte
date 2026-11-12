@@ -15,6 +15,7 @@
 		Readiness,
 		Reason,
 		RequiredDecision,
+		SetPromise,
 		Sprints,
 		Story
 	} from '#lib/api/types.ts';
@@ -42,6 +43,9 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
+	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
+	import PromiseLine from '#lib/components/PromiseLine.svelte';
+	import { CLEAR_PROMISE, epicNote, promiseActions } from '#lib/promise.ts';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
@@ -374,8 +378,43 @@
 	const menuItems = $derived<MenuItem[]>([
 		// A done story cannot be urgent: its mark can only be cleared.
 		...(story?.delivery === 'done' ? [] : [{ label: 'Mark urgent…', onselect: openMark, disabled: busy }]),
-		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : [])
+		...(story?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : []),
+		// A done story cannot be promised (kb/ADR-0025 R2): its own promise can only be cleared.
+		...promiseActions(story?.promise?.own != null, story?.delivery === 'done').map((label) => ({
+			label,
+			onselect: label === CLEAR_PROMISE ? () => void clearPromise() : openPromise,
+			disabled: busy
+		}))
 	]);
+
+	/** Whether the promise dialog is open, and the reason a failed save left in it. */
+	let promising = $state(false);
+	let promiseError = $state<string | null>(null);
+
+	function openPromise() {
+		promiseError = null;
+		promising = true;
+	}
+
+	async function savePromise(body: SetPromise) {
+		const s = story;
+		if (!s) return;
+		if (await write(() => unwrap(api.POST('/api/v1/stories/{key}/promise', { params: { path: { key: s.key } }, body })))) {
+			promising = false;
+			await refocusActions();
+		} else {
+			promiseError = notice;
+			notice = null;
+		}
+	}
+
+	async function clearPromise() {
+		const s = story;
+		if (!s) return;
+		if (await write(() => unwrap(api.DELETE('/api/v1/stories/{key}/promise', { params: { path: { key: s.key } } })))) {
+			await refocusActions();
+		}
+	}
 
 	function openMark() {
 		markError = null;
@@ -655,6 +694,7 @@
 				<button type="button" class="ghost" aria-label="Clear urgent mark on {s.key}" onclick={() => void clearUrgent()} disabled={busy}>Clear</button>
 			</p>
 		{/if}
+		{#if s.promise}<PromiseLine promise={s.promise} />{/if}
 
 		<section class="readiness {r.ready ? 'ready' : 'blocked'}" aria-labelledby="drawer-readiness">
 			<h3 id="drawer-readiness">{r.ready ? 'Ready to start' : 'Not ready'}</h3>
@@ -985,6 +1025,23 @@
 		onsubmit={markUrgent}
 		oncancel={() => {
 			if (!busy) marking = false;
+		}}
+	/>
+{/if}
+
+{#if promising && story}
+	<PromiseDialog
+		key={story.key}
+		activeEnds={sprints?.active?.sprint.ends_on ?? null}
+		draftEnds={sprints?.draft?.ends_on ?? null}
+		today={sprints?.today ?? null}
+		current={story.promise?.own ?? null}
+		epicNote={epicNote(story.promise)}
+		{busy}
+		error={promiseError}
+		onsave={savePromise}
+		onclose={() => {
+			if (!busy) promising = false;
 		}}
 	/>
 {/if}
