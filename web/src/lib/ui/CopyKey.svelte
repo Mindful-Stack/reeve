@@ -33,13 +33,13 @@
 </script>
 
 <!-- Pressing a non-draggable descendant of a draggable card starts the card's drag (dragstart fires on the card, never
-     on the button), so the press itself is cancelled; a click, Enter and Space still work. -->
+     on the button), so the mouse press is cancelled (mousedown, not pointerdown: cancelling pointerdown suppresses mousedown, which page menus close on); a click, Enter and Space still work. -->
 <button
 	type="button"
 	class="ghost icon copy"
 	aria-label="Copy {key}"
 	title={said || `Copy ${key}`}
-	onpointerdown={(e) => e.preventDefault()}
+	onmousedown={(e) => e.preventDefault()}
 	onclickcapture={copy}
 	><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 		{#if said === 'Copied'}

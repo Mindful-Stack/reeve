@@ -2,6 +2,7 @@
 // web/src/lib/ui/CopyKey.svelte.test.ts
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, expect, it, vi } from 'vitest';
+import ActionsMenu from './ActionsMenu.svelte';
 import CopyKey from './CopyKey.svelte';
 
 let app: ReturnType<typeof mount> | null = null;
@@ -27,7 +28,7 @@ it('copies exactly the key, says so, and keeps the click and the drag from the c
 	const b = parent.querySelector('button')!;
 	expect(b.getAttribute('aria-label')).toBe('Copy GRA-633');
 	// A press that is not cancelled lets the browser start the draggable card's drag (pinned for real in the smoke).
-	const press = new Event('pointerdown', { bubbles: true, cancelable: true });
+	const press = new Event('mousedown', { bubbles: true, cancelable: true });
 	b.dispatchEvent(press);
 	expect(press.defaultPrevented).toBe(true);
 	b.click();
@@ -112,4 +113,17 @@ it('schedules nothing after unmount', async () => {
 	} finally {
 		vi.useRealTimers();
 	}
+});
+
+it('lets an open actions menu close when the copy button is pressed', async () => {
+	app = mount(ActionsMenu, { target: document.body, props: { label: 'Actions for GRA-1', items: [{ label: 'Move up', onselect: () => {} }], control: 'menu' } });
+	const copy = mount(CopyKey, { target: document.body, props: { key: 'GRA-1' } });
+	flushSync();
+	document.body.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!.click();
+	flushSync();
+	await vi.waitFor(() => expect(document.body.querySelector('[role="menu"]')).not.toBeNull());
+	document.body.querySelector('button[aria-label="Copy GRA-1"]')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+	flushSync();
+	expect(document.body.querySelector('[role="menu"]')).toBeNull();
+	unmount(copy);
 });

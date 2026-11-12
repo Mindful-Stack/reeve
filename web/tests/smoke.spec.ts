@@ -764,7 +764,9 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	// The key and its glyph stay on one line; only the chips after it may wrap.
 	const key = drawer.locator('h2 .key');
 	expect((await key.boundingBox())!.height).toBeLessThan(30);
-	expect(await key.evaluate((el) => getComputedStyle(el).whiteSpace)).toBe('nowrap');
+	// Squeeze the heading line: the key must not break even when it has to overflow.
+	await drawer.locator('.heading-line').evaluate((el) => ((el as HTMLElement).style.width = '40px'));
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
 	await expect(drawer.getByRole('button', { name: `Copy ${s.key}` })).toBeVisible();
 });
 
