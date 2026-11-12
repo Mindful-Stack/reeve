@@ -706,6 +706,51 @@ async fn webhook_never_touches_an_urgent_mark() {
     );
 }
 
+/// The webhook never touches a promise (kb/ADR-0025 R2): a linked pull request opening and merging leaves the story's
+/// promise as it was and writes no promise activity entry.
+#[tokio::test]
+async fn webhook_never_touches_a_promise() {
+    let h = harness().await;
+    let key = seed_story(&h, "s1").await;
+    let on = (chrono::Utc::now().date_naive() + chrono::Duration::days(30)).to_string();
+    let (st, v) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/stories/{key}/promise"),
+        Some(json!({"on": on, "to": "Acme"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    let promise = get_story(&h, &key).await["promise"].clone();
+    assert_eq!(promise["own"]["on"], on.as_str(), "{promise}");
+    let promise_entries = |entries: Vec<Value>| {
+        entries
+            .into_iter()
+            .filter(|e| e["action"].as_str().is_some_and(|a| a.contains("promised")))
+            .collect::<Vec<_>>()
+    };
+    let before = promise_entries(activity(&h, &format!("entity_key={key}")).await);
+    assert_eq!(before.len(), 1, "{before:?}");
+
+    let branch = format!("{key}-fix-login");
+    for (fixture, at, result) in [
+        ("pr_opened", "2026-10-26T10:00:00Z", "linked"),
+        ("pr_closed_merged", "2026-10-26T11:00:00Z", "updated"),
+    ] {
+        let (st, v) =
+            post_signed(&h, "pull_request", &payload(fixture, &branch, REPO, 42, at)).await;
+        assert_eq!((st, v["result"].as_str()), (202, Some(result)), "{v}");
+    }
+    let s = get_story(&h, &key).await;
+    assert_eq!(s["prs"][0]["status"], "merged");
+    assert_eq!(s["promise"], promise);
+    assert_eq!(
+        promise_entries(activity(&h, &format!("entity_key={key}")).await),
+        before
+    );
+}
+
 #[tokio::test]
 async fn webhook_resolves_a_story_key_of_an_earlier_prefix_before_external_refs() {
     // Stories and an epic issued under OLD, then the instance switches to TST (with OLD also a legacy prefix, so the

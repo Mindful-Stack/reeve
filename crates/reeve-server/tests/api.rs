@@ -2904,3 +2904,136 @@ async fn urgent_writes_refuse_automation_and_a_wrong_typed_item_fails() {
     assert_eq!(st, 400, "{body}");
     assert_eq!(body["code"], "validation");
 }
+
+/// kb/ADR-0025 R2 over the wire: the promise routes answer with the item, refuse automation with the same envelope as
+/// the urgent routes, refuse a done story with the domain's text, and exist only for stories and epics (R1).
+#[tokio::test]
+async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
+    let h = harness().await;
+    let t = Some(h.admin_token.as_str());
+    let bot = Some(h.bot_token.as_str());
+    // An active sprint, so `this_sprint` has a planned end.
+    admin_post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key": "g", "outcome": "o", "check": "c"}),
+    )
+    .await;
+    let (_, all) = admin_get(&h, "/api/v1/sprints").await;
+    let draft = all["value"]["draft"].clone();
+    let opened = admin_post(
+        &h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version": draft["version"]}),
+    )
+    .await;
+    let ends = opened["ends_on"].as_str().unwrap().to_string();
+    let story = chore(&h, "p1").await;
+    let done = chore(&h, "p2").await;
+    let epic = admin_post(
+        &h,
+        "/api/v1/epics",
+        json!({"idempotency_key": "pe", "title": "E", "description": ""}),
+    )
+    .await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"shortcut": "this_sprint", "to": "Acme"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["value"]["key"], story.as_str());
+    assert_eq!(v["value"]["promise"]["own"]["on"], ends.as_str());
+    assert_eq!(v["value"]["promise"]["own"]["to"], "Acme");
+    assert_eq!(v["value"]["promise"]["due"], "this_sprint");
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/epics/{epic}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["value"]["key"], epic.as_str());
+    assert_eq!(v["value"]["promise"]["fact"]["on"], ends.as_str());
+
+    for (m, p, b) in [
+        (
+            "POST",
+            format!("/api/v1/stories/{story}/promise"),
+            Some(json!({"on": ends})),
+        ),
+        ("DELETE", format!("/api/v1/stories/{story}/promise"), None),
+        (
+            "POST",
+            format!("/api/v1/epics/{epic}/promise"),
+            Some(json!({"on": ends})),
+        ),
+        ("DELETE", format!("/api/v1/epics/{epic}/promise"), None),
+    ] {
+        let (st, body) = call(&h.app, bot, m, &p, b).await;
+        assert_eq!(st, 422, "{m} {p}: {body}");
+        assert_eq!(body["outcome"], "refused", "{m} {p}");
+        assert_eq!(body["reasons"], json!([{"reason": "interactive_only"}]));
+        assert_eq!(body["overridable"], false, "{m} {p}");
+    }
+
+    sqlx::query(
+        "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = now() WHERE key = $1",
+    )
+    .bind(&done)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{done}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": format!("{done} is done: a done story cannot be promised")})
+    );
+
+    for p in [
+        format!("/api/v1/stories/{story}/promise"),
+        format!("/api/v1/epics/{epic}/promise"),
+    ] {
+        let (st, v) = call(&h.app, t, "DELETE", &p, None).await;
+        assert_eq!(st, 200, "{p}: {v}");
+        assert_eq!(v["value"]["promise"], serde_json::Value::Null, "{p}");
+    }
+
+    // Initiatives cannot be promised (R1): no such route.
+    let (_, i) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key":"pi","title":"I","horizon":"Now"})),
+    )
+    .await;
+    let ik = i["value"]["key"].as_str().unwrap().to_string();
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/initiatives/{ik}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!((st, v["code"].as_str()), (404, Some("not_found")), "{v}");
+}

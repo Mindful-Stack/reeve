@@ -438,3 +438,23 @@ pub fn epic_promise_field(p: Option<&Promise>, clock: &Clock) -> Option<EpicProm
         }
     })
 }
+
+impl From<reeve_protocol::PromiseShortcut> for promise::Shortcut {
+    fn from(s: reeve_protocol::PromiseShortcut) -> Self {
+        match s {
+            reeve_protocol::PromiseShortcut::ThisSprint => promise::Shortcut::ThisSprint,
+            reeve_protocol::PromiseShortcut::NextSprint => promise::Shortcut::NextSprint,
+        }
+    }
+}
+
+/// The request body as the domain's request: `to` passes through untouched (None keeps, `""` clears).
+impl From<reeve_protocol::SetPromise> for promise::Request {
+    fn from(b: reeve_protocol::SetPromise) -> Self {
+        promise::Request {
+            on: b.on,
+            shortcut: b.shortcut.map(Into::into),
+            to: b.to,
+        }
+    }
+}

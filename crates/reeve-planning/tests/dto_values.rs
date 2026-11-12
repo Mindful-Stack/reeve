@@ -742,3 +742,55 @@ fn story_promise_dto_of_an_open_own_promise() {
         })
     );
 }
+
+/// `SetPromise` takes a date, a shortcut, a recipient, any of them or none; the domain, not the parser, refuses an empty
+/// request and a recipient-only request when there is no promise to change.
+#[test]
+fn set_promise_body_parses() {
+    let parse = |v: Value| serde_json::from_value::<SetPromise>(v).unwrap();
+    let body = |on, shortcut, to: Option<&str>| SetPromise {
+        on,
+        shortcut,
+        to: to.map(str::to_string),
+    };
+    assert_eq!(
+        parse(json!({"on": "2026-11-20"})),
+        body(Some(ymd(2026, 11, 20)), None, None)
+    );
+    assert_eq!(
+        parse(json!({"shortcut": "this_sprint"})),
+        body(None, Some(PromiseShortcut::ThisSprint), None)
+    );
+    assert_eq!(
+        parse(json!({"shortcut": "next_sprint"})),
+        body(None, Some(PromiseShortcut::NextSprint), None)
+    );
+    assert_eq!(
+        parse(json!({"on": "2026-11-20", "to": "Acme"})),
+        body(Some(ymd(2026, 11, 20)), None, Some("Acme"))
+    );
+    assert_eq!(parse(json!({"to": ""})), body(None, None, Some("")));
+    assert_eq!(parse(json!({})), body(None, None, None));
+
+    let clock = PromiseClock {
+        today: ymd(2026, 11, 12),
+        active_ends: Some(ymd(2026, 11, 24)),
+        draft_ends: None,
+    };
+    let now = Utc.with_ymd_and_hms(2026, 11, 12, 10, 0, 0).unwrap();
+    for v in [json!({}), json!({"to": "Acme"})] {
+        assert_eq!(
+            change_promise(None, PromiseRequest::from(parse(v)), "a@x", now, &clock),
+            Err(PromiseError::Neither)
+        );
+    }
+    let p = change_promise(
+        None,
+        PromiseRequest::from(parse(json!({"shortcut": "this_sprint", "to": "Acme"}))),
+        "a@x",
+        now,
+        &clock,
+    )
+    .unwrap();
+    assert_eq!((p.on(), p.to()), (ymd(2026, 11, 24), Some("Acme")));
+}

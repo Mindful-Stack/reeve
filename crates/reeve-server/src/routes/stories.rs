@@ -296,6 +296,36 @@ async fn unblock(
     Ok(ok(Empty {}))
 }
 
+/// Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only
+/// the recipient. Interactive only; takes no version.
+#[utoipa::path(post, path = "/stories/{key}/promise", params(("key" = String, Path)), request_body = SetPromise, responses((status = 200, body = Response<StoryDto>)))]
+async fn set_promise(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(b): ApiJson<SetPromise>,
+) -> Result<Json<Response<StoryDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
+    let ctx = c.ctx();
+    s.handlers
+        .set_promise(&ctx, ItemType::Story, &key, b)
+        .await?;
+    Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
+}
+/// Clears the promise (R2); clearing none changes nothing. Interactive only.
+#[utoipa::path(delete, path = "/stories/{key}/promise", params(("key" = String, Path)), responses((status = 200, body = Response<StoryDto>)))]
+async fn clear_promise(
+    State(s): State<AppState>,
+    c: Caller,
+    ApiPath(key): ApiPath<String>,
+) -> Result<Json<Response<StoryDto>>, AppError> {
+    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
+    let ctx = c.ctx();
+    s.handlers
+        .clear_promise(&ctx, ItemType::Story, &key)
+        .await?;
+    Ok(ok(s.handlers.story_dto(&key, ctx.now).await?))
+}
 #[utoipa::path(post, path = "/stories/{key}/urgent", params(("key" = String, Path)), request_body = MarkUrgent, responses((status = 200, body = Response<StoryDto>)))]
 async fn mark_urgent(
     State(s): State<AppState>,
@@ -347,6 +377,7 @@ async fn similar(
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(mark_urgent, clear_urgent))
+        .routes(routes!(set_promise, clear_promise))
         .routes(routes!(list, create))
         .routes(routes!(similar))
         .routes(routes!(get, edit))

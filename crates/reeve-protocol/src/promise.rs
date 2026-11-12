@@ -71,3 +71,23 @@ pub struct EpicPromiseDto {
     pub due: Option<PromiseDue>,
     pub past: bool,
 }
+
+/// A sprint whose planned end a promise takes (R6): the active sprint or the draft (next) one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PromiseShortcut {
+    ThisSprint,
+    NextSprint,
+}
+
+/// `POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only
+/// the recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SetPromise {
+    #[serde(default)]
+    pub on: Option<NaiveDate>,
+    #[serde(default)]
+    pub shortcut: Option<PromiseShortcut>,
+    #[serde(default)]
+    pub to: Option<String>,
+}

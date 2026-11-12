@@ -1150,3 +1150,24 @@ fn the_importer_has_no_path_to_an_urgent_mark() {
         );
     }
 }
+
+/// kb/ADR-0025 R2: the importer has no path to a promise: neither its handler nor its route names one, so an import never
+/// reads, sets or clears it.
+#[test]
+fn the_importer_has_no_path_to_a_promise() {
+    for (path, src) in [
+        (
+            "reeve-planning/src/handler/import.rs",
+            include_str!("../../reeve-planning/src/handler/import.rs"),
+        ),
+        (
+            "reeve-server/src/routes/import.rs",
+            include_str!("../src/routes/import.rs"),
+        ),
+    ] {
+        assert!(
+            !src.to_lowercase().contains("promis"),
+            "{path} names a promise"
+        );
+    }
+}
