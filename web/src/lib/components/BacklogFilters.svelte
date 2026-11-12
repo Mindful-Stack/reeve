@@ -25,9 +25,10 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { Epic, Initiative } from '#lib/api/types.ts';
-	import { activeFilterCount, backlogState, backlogText, backlogView, withoutFilters, withoutText, type BacklogState, type BacklogView } from '#lib/backlog.ts';
+	import { activeFilterCount, backlogState, backlogText, backlogView, stateParam, withoutFilters, withoutText, withPromised, type BacklogState, type BacklogView } from '#lib/backlog.ts';
 	import { isKind, KINDS } from '#lib/board.ts';
 	import { session } from '#lib/me.svelte.ts';
+	import { isPromisedFilter, PROMISED_NONE, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import Toggle from '#lib/ui/Toggle.svelte';
 
 	let {
@@ -90,7 +91,7 @@
 		{ value: 'all', label: 'All' }
 	]}
 	value={listState}
-	onchange={(v: BacklogState) => set('state', v === 'todo' ? null : v)}
+	onchange={(v: BacklogState) => set('state', stateParam(v, page.url))}
 />
 <Toggle
 	label="View"
@@ -143,6 +144,19 @@
 		<select value={p.get('label') ?? ''} onchange={(e) => set('label', e.currentTarget.value || null)}>
 			<option value="">any</option>
 			{#each labels as l (l)}<option value={l}>{l}</option>{/each}
+		</select>
+	</label>
+	<label class="field inline">
+		Promise
+		<select
+			value={isPromisedFilter(p.get('promised')) ? p.get('promised') : ''}
+			onchange={(e) => {
+				const v = e.currentTarget.value;
+				return goto(withPromised(page.url, isPromisedFilter(v) ? v : null), { replace: true, reset: false });
+			}}
+		>
+			<option value="">{PROMISED_NONE}</option>
+			{#each PROMISED_OPTIONS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
 		</select>
 	</label>
 	<label class="check">

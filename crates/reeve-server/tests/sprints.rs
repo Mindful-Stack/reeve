@@ -321,3 +321,16 @@ async fn goal_edits_and_links_on_the_draft() {
     assert_eq!(all["draft"]["goals"], json!([]));
     assert_eq!(all["draft"]["warnings"], json!(["no_goals"]));
 }
+
+/// `GET /sprints` carries the server's UTC date as `today`, so clients never read their own clock for promises
+/// (kb/ADR-0025). Either side of the call is accepted, to tolerate midnight.
+#[tokio::test]
+async fn sprints_carry_the_request_utc_date() {
+    let h = harness().await;
+    let before = chrono::Utc::now().date_naive();
+    let (st, b) = req(&h, &h.admin_token, "GET", "/api/v1/sprints", None).await;
+    let after = chrono::Utc::now().date_naive();
+    assert_eq!(st, 200, "{b}");
+    let today: chrono::NaiveDate = b["value"]["today"].as_str().unwrap().parse().unwrap();
+    assert!(today == before || today == after, "{today}");
+}

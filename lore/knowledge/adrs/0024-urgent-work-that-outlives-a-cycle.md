@@ -81,6 +81,7 @@ becomes a standing priority.
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
+- 2026-11-12 (kb/ADR-0025): Items can now carry a promised-by date, so R4's conversion is due; it is not built yet (GRA-632). An urgent initiative cannot be converted, because an initiative cannot be promised (kb/ADR-0025 R1). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0017 (replaced), kb/ADR-0014 (sprints and goals; promises are not goals), kb/ADR-0002.

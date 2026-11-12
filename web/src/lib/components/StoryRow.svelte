@@ -1,5 +1,5 @@
 <!-- web/src/lib/components/StoryRow.svelte: one compact story row on Home: the key and title (opening the story drawer over the
-     page), the urgent and goal chips, the delivery state and the epic key, and, when Home offers it, a Start button. -->
+     page), the urgent, goal and promise chips, the delivery state and the epic key, and, when Home offers it, a Start button. -->
 <script lang="ts">
 	import { page } from '$app/state';
 	import type { StoryWithReadiness } from '#lib/api/types.ts';
@@ -7,6 +7,7 @@
 	import { storyHref } from '#lib/drawer.ts';
 	import { urgentLine } from '#lib/urgency.ts';
 	import GoalChip from './GoalChip.svelte';
+	import PromiseChip from './PromiseChip.svelte';
 	import UrgentChip from './UrgentChip.svelte';
 
 	let {
@@ -31,6 +32,7 @@
 		<span class="meta">
 			{#if s.urgent_sources.length > 0}<UrgentChip line={urgentLine(s.urgent_mark, s.urgent_sources, s.key, new Date(), () => undefined)} />{/if}
 			<GoalChip goals={s.goals} />
+			{#if s.promise}<PromiseChip promise={s.promise} />{/if}
 			<span>{COLUMN_LABEL[s.delivery]}</span>
 			{#if s.epic}<span>{s.epic}</span>{/if}
 		</span>

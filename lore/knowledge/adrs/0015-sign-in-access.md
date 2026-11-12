@@ -79,6 +79,7 @@ We decided that sign-in access is the union of the instance configuration, as a 
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-09 (kb/ADR-0017): R7's interactive-only actions grow by marking an item urgent and clearing the mark (kb/ADR-0017 R4). No trigger fired; the decision holds.
 - 2026-11-09 (https://github.com/Mindful-Stack/reeve/pull/13): F3 ("`AppState.identity` built once from config") and F5 ("validation checks neither that an admin is named nor that a named admin is allowed") describe the code before this decision was implemented. The policy is now loaded on every request and every event-stream batch from the floor and the tables (`AccessStore`, `crates/reeve-identity/src/access_repo.rs`), and `ServerConfig::validate` refuses a configuration without an allowed admin. No trigger fired; the decision holds.
+- 2026-11-12 (kb/ADR-0025 R2): R7's interactive-only actions grow by setting, changing and clearing a promise. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0008 (superseded by this record).

@@ -96,6 +96,14 @@ pub enum Epic {
         #[arg(long)]
         clear: bool,
     },
+    /// Promise the epic by a date, change the promise or its recipient, or --clear it (interactive tokens only). Each
+    /// story not done when it is set gets the date too; a promise gates nothing.
+    Promise {
+        /// Epic key.
+        key: KeyRef,
+        #[command(flatten)]
+        args: super::PromiseArgs,
+    },
 }
 
 pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
@@ -132,6 +140,17 @@ pub async fn run(c: &Client, e: Epic, json: bool) -> anyhow::Result<i32> {
                     sources: &s.urgent_sources,
                 }
             })
+            .await?
+        }
+        Epic::Promise { key, args } => {
+            super::promise::<EpicDto, EpicPromiseCleared>(
+                c,
+                format!("/epics/{key}"),
+                args,
+                json,
+                crate::render::epic_promise_cleared,
+                crate::render::epic_promise_answer,
+            )
             .await?
         }
         Epic::Show { key } => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalProgress, SprintCounts } from '#lib/api/types.ts';
+import words from './promise.fixture.json';
 import {
+	promisesHeading,
 	blockedText,
 	confidenceLabel,
 	confidenceTone,
@@ -180,4 +182,15 @@ describe('upkeepTextAt', () => {
 			'0 of 0 completed stories were upkeep (at close: 1 of 1) · team line 20%'
 		);
 	});
+});
+
+// The heading rows live in promise.fixture.json, which the CLI's sprint view heading (crates/reeve/src/promise.rs)
+// reads too.
+const headingRows = words.promisesHeading as { label: string; after: string | null; ends_on: string; text: string }[];
+
+describe('a closed sprint\'s promise dates', () => {
+	it('has heading rows', () => expect(headingRows.length).toBeGreaterThan(0));
+	it.each(headingRows.map((r) => [r.label, r] as const))('promisesHeading: %s', (_, r) =>
+		expect(promisesHeading(r.after, r.ends_on)).toBe(r.text)
+	);
 });

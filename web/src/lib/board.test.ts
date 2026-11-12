@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Reason, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import type { Reason, Story, StoryPromise, StoryWithReadiness } from '#lib/api/types.ts';
 import {
 	accepts,
 	afterPart,
@@ -106,6 +106,35 @@ describe('applyFilters', () => {
 		expect(by({ goal: 'none' })).toEqual(['ABC-5']);
 		expect(by({ goal: null })).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5']);
 		expect(by({ goal: 1, kind: 'bug' })).toEqual([]);
+	});
+
+	it('promised: keeps the stories the server classifies, as promisedMatches reads state and due; done stories never match', () => {
+		const pr = (state: StoryPromise['state'], due: StoryPromise['due'], days: number | null = null): StoryPromise => ({
+			own: { on: '2026-11-20', to: null, by: 'dana@x.se', at: '2026-11-01T09:00:00Z' },
+			epic: null,
+			on: '2026-11-20',
+			holder: 'own',
+			state,
+			due,
+			days
+		});
+		const rows = [
+			sw('ABC-2', { promise: pr('open', 'this_sprint') }),
+			sw('ABC-3', { promise: pr('overdue', null, 3), delivery: 'in_progress' }),
+			sw('ABC-4', { promise: pr('open', 'next_sprint') }),
+			sw('ABC-5', { promise: pr('open', 'later') }),
+			sw('ABC-6', { promise: pr('kept', null), delivery: 'done' }),
+			sw('ABC-7', { promise: pr('late', null, 2), delivery: 'done' }),
+			sw('ABC-8')
+		];
+		const by = (f: Parameters<typeof applyFilters>[1]) => applyFilters(rows, f).map((s) => s.story.key);
+		expect(by({ promised: 'this_sprint' })).toEqual(['ABC-2', 'ABC-3']);
+		expect(by({ promised: 'next_sprint' })).toEqual(['ABC-4']);
+		expect(by({ promised: 'overdue' })).toEqual(['ABC-3']);
+		expect(by({ promised: 'any' })).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5']);
+		expect(by({ promised: null })).toHaveLength(7);
+		// The done column is empty while the filter is set.
+		expect(columnise(applyFilters(rows, { promised: 'this_sprint' })).done).toEqual([]);
 	});
 });
 

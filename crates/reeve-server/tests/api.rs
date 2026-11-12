@@ -2904,3 +2904,210 @@ async fn urgent_writes_refuse_automation_and_a_wrong_typed_item_fails() {
     assert_eq!(st, 400, "{body}");
     assert_eq!(body["code"], "validation");
 }
+
+/// kb/ADR-0025 R2 over the wire: the promise routes answer with the item, refuse automation with the same envelope as
+/// the urgent routes, refuse a done story with the domain's text, and exist only for stories and epics (R1).
+#[tokio::test]
+async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
+    let h = harness().await;
+    let t = Some(h.admin_token.as_str());
+    let bot = Some(h.bot_token.as_str());
+    // An active sprint, so `this_sprint` has a planned end.
+    admin_post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key": "g", "outcome": "o", "check": "c"}),
+    )
+    .await;
+    let (_, all) = admin_get(&h, "/api/v1/sprints").await;
+    let draft = all["value"]["draft"].clone();
+    let opened = admin_post(
+        &h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version": draft["version"]}),
+    )
+    .await;
+    let ends = opened["ends_on"].as_str().unwrap().to_string();
+    let story = chore(&h, "p1").await;
+    let done = chore(&h, "p2").await;
+    let epic = admin_post(
+        &h,
+        "/api/v1/epics",
+        json!({"idempotency_key": "pe", "title": "E", "description": ""}),
+    )
+    .await["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"shortcut": "this_sprint", "to": "Acme"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["value"]["key"], story.as_str());
+    assert_eq!(v["value"]["promise"]["own"]["on"], ends.as_str());
+    assert_eq!(v["value"]["promise"]["own"]["to"], "Acme");
+    assert_eq!(v["value"]["promise"]["due"], "this_sprint");
+    let story_promise = v["value"]["promise"].clone();
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/epics/{epic}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["value"]["key"], epic.as_str());
+    assert_eq!(v["value"]["promise"]["fact"]["on"], ends.as_str());
+    let epic_promise = v["value"]["promise"].clone();
+
+    for (m, p, b) in [
+        (
+            "POST",
+            format!("/api/v1/stories/{story}/promise"),
+            Some(json!({"on": ends})),
+        ),
+        ("DELETE", format!("/api/v1/stories/{story}/promise"), None),
+        (
+            "POST",
+            format!("/api/v1/epics/{epic}/promise"),
+            Some(json!({"on": ends})),
+        ),
+        ("DELETE", format!("/api/v1/epics/{epic}/promise"), None),
+    ] {
+        let (st, body) = call(&h.app, bot, m, &p, b).await;
+        assert_eq!(st, 422, "{m} {p}: {body}");
+        assert_eq!(body["outcome"], "refused", "{m} {p}");
+        assert_eq!(body["reasons"], json!([{"reason": "interactive_only"}]));
+        assert_eq!(body["overridable"], false, "{m} {p}");
+    }
+    // The refused writes changed nothing.
+    let (_, sv) = admin_get(&h, &format!("/api/v1/stories/{story}")).await;
+    assert_eq!(sv["value"]["promise"], story_promise);
+    let (_, ev) = admin_get(&h, &format!("/api/v1/epics/{epic}")).await;
+    assert_eq!(ev["value"]["promise"], epic_promise);
+    // The sprint view lists the promise (kb/ADR-0025 R8): the active sprint's list is read from `GET /sprints/{id}`;
+    // `GET /sprints` leaves it empty and `promises_after` null until a client renders it there (GRA-610).
+    let (_, one) = admin_get(&h, &format!("/api/v1/sprints/{}", opened["id"])).await;
+    let promises = &one["value"]["promises"];
+    assert_eq!(promises.as_array().map(Vec::len), Some(1), "{one}");
+    assert_eq!(promises[0]["key"], story.as_str(), "{one}");
+    assert_eq!(promises[0]["on"], ends.as_str());
+    assert_eq!(promises[0]["to"], "Acme");
+    assert_eq!(promises[0]["holder"], "own");
+    assert_eq!(promises[0]["epic_key"], serde_json::Value::Null);
+    assert_eq!(promises[0]["state"], "open");
+    let (_, all) = admin_get(&h, "/api/v1/sprints").await;
+    assert_eq!(all["value"]["active"]["promises"], json!([]), "{all}");
+    assert_eq!(
+        all["value"]["active"]["promises_after"],
+        serde_json::Value::Null
+    );
+    // An unknown field is refused, not ignored.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"date": "2026-11-20"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": "Failed to deserialize the JSON body into the target type: date: unknown field `date`, \
+                           expected one of `on`, `shortcut`, `to` at line 1 column 7"})
+    );
+    // A NUL in the recipient is the person's error, not the server's.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"on": ends, "to": "Ac\u{0}me"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body["message"],
+        "the recipient cannot contain a NUL character"
+    );
+
+    sqlx::query(
+        "UPDATE stories SET delivery = 'done', resolution = 'completed', done_at = now() WHERE key = $1",
+    )
+    .bind(&done)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{done}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": format!("{done} is done: a done story cannot be promised")})
+    );
+
+    // A clear answers whether it cleared, and the item as it is now; clearing again clears nothing.
+    for (p, item, k) in [
+        (format!("/api/v1/stories/{story}/promise"), "story", &story),
+        (format!("/api/v1/epics/{epic}/promise"), "epic", &epic),
+    ] {
+        for cleared in [true, false] {
+            let (st, v) = call(&h.app, t, "DELETE", &p, None).await;
+            assert_eq!(st, 200, "{p}: {v}");
+            assert_eq!(v["value"]["cleared"], cleared, "{p}: {v}");
+            assert_eq!(v["value"][item]["key"], k.as_str(), "{p}");
+            assert_eq!(v["value"][item]["promise"], serde_json::Value::Null, "{p}");
+        }
+    }
+    // With no promise, a request without a date or a shortcut has nothing to change, and says which item.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"to": "Acme"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": format!("{story} has no promise to change: give a date")})
+    );
+
+    // Initiatives cannot be promised (R1): no such route.
+    let (_, i) = call(
+        &h.app,
+        t,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key":"pi","title":"I","horizon":"Now"})),
+    )
+    .await;
+    let ik = i["value"]["key"].as_str().unwrap().to_string();
+    let (st, v) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/initiatives/{ik}/promise"),
+        Some(json!({"on": ends})),
+    )
+    .await;
+    assert_eq!((st, v["code"].as_str()), (404, Some("not_found")), "{v}");
+}

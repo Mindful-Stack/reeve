@@ -1,14 +1,15 @@
 mod common;
 use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative, ItemType,
-    RepoError, RequiredDecision, Settings, Story, StoryFilter, StoryText, UrgentMark,
+    Promisable, Promise, PromiseFacts, PromiseItem, PromiseTarget, PromisedStoryRow, RepoError,
+    RequiredDecision, Settings, Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark,
     compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
-    TokenKind, Via,
+    SprintState, TokenKind, Via,
 };
 use std::sync::Arc;
 
@@ -1384,6 +1385,65 @@ async fn urgent_columns_refuse_half_a_mark() {
     }
 }
 
+#[tokio::test]
+async fn promise_columns_refuse_half_a_promise_and_a_long_recipient() {
+    let (_c, pool) = common::pg().await;
+    sqlx::query("INSERT INTO initiatives (key, title, horizon, created_at, updated_at) VALUES ('ABC-1','i','Now',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO epics (key, title, initiative_key, created_at, updated_at) VALUES ('ABC-2','e','ABC-1',now(),now())").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-3','s','story','ABC-2',now(),now())").execute(&pool).await.unwrap();
+    let whole = "promised_on = '2026-11-20', promised_by = 'a@b.c', promised_at = now()";
+    let long_ok = "é".repeat(200);
+    let long_bad = "é".repeat(201);
+    assert_eq!(long_ok.len(), 400);
+    let refused = [
+        ("on alone", "promised_on = '2026-11-20'".to_string()),
+        ("by alone", "promised_by = 'a@b.c'".to_string()),
+        ("at alone", "promised_at = now()".to_string()),
+        ("to alone", "promised_to = 'Acme'".to_string()),
+        ("201 chars", format!("{whole}, promised_to = '{long_bad}'")),
+        ("blank recipient", format!("{whole}, promised_to = '   '")),
+        ("empty recipient", format!("{whole}, promised_to = ''")),
+        (
+            "empty by",
+            "promised_on = '2026-11-20', promised_by = '', promised_at = now()".to_string(),
+        ),
+        (
+            "blank by",
+            "promised_on = '2026-11-20', promised_by = '  ', promised_at = now()".to_string(),
+        ),
+    ];
+    let accepted = [
+        ("whole, no recipient", whole.to_string()),
+        ("200 chars", format!("{whole}, promised_to = '{long_ok}'")),
+    ];
+    for (table, key) in [("epics", "ABC-2"), ("stories", "ABC-3")] {
+        for (label, set) in &refused {
+            let e = sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_err();
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.to_string());
+            assert_eq!(code.as_deref(), Some("23514"), "{table}: {label}");
+        }
+        for (label, set) in &accepted {
+            sqlx::query(&format!("UPDATE {table} SET {set} WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("{table}: {label}: {e}"));
+            sqlx::query(&format!("UPDATE {table} SET promised_on = NULL, promised_by = NULL, promised_at = NULL, promised_to = NULL WHERE key = $1"))
+                .bind(key)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+}
+
 /// Inserts I ABC-1, its epic ABC-2 (stories ABC-3 done, ABC-4 todo) and an unrelated epic ABC-5.
 async fn seed_urgent_tree(pool: &sqlx::PgPool) {
     let t = "2026-11-01T00:00:00Z";
@@ -1504,6 +1564,482 @@ async fn urgent_marks_round_trip_without_touching_the_item() {
             .await
             .unwrap();
     assert_eq!(before, after, "clearing leaves the item alone too");
+}
+
+fn pday(m: u32, d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, m, d).unwrap()
+}
+fn pkey(s: &str) -> Key {
+    s.parse().unwrap()
+}
+fn mk_promise(on: NaiveDate, by: &str, to: Option<&str>) -> Promise {
+    Promise::from_persisted(
+        on,
+        by.into(),
+        Utc.with_ymd_and_hms(2026, 11, 2, 8, 0, 0).unwrap(),
+        to.map(Into::into),
+    )
+}
+async fn promise_story(pool: &sqlx::PgPool, key: &str, epic: Option<&str>, delivery: &str) {
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, delivery, resolution, done_at, created_at, updated_at) VALUES ($1,'T '||$1,'story',$2,$3, CASE WHEN $3='done' THEN 'completed' END, CASE WHEN $3='done' THEN '2026-11-05T10:00:00Z'::timestamptz END, '2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')")
+        .bind(key).bind(epic).bind(delivery).execute(pool).await.unwrap();
+}
+async fn promise_epic(pool: &sqlx::PgPool, key: &str) {
+    sqlx::query("INSERT INTO epics (key, title, created_at, updated_at) VALUES ($1,'E','2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')")
+        .bind(key).execute(pool).await.unwrap();
+}
+async fn put_promise(pool: &sqlx::PgPool, table: &str, key: &str, p: &Promise) {
+    sqlx::query(&format!("UPDATE {table} SET promised_on=$2, promised_by=$3, promised_at=$4, promised_to=$5 WHERE key=$1"))
+        .bind(key).bind(p.on()).bind(p.by()).bind(p.at()).bind(p.to()).execute(pool).await.unwrap();
+}
+
+#[tokio::test]
+async fn promise_set_and_clear_touch_only_the_promise_columns() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    promise_story(&pool, "ABC-2", Some("ABC-1"), "todo").await;
+    let p = mk_promise(pday(11, 20), "dan@example.com", Some("Acme"));
+    for (item, table, key) in [
+        (PromiseItem::Story, "stories", "ABC-2"),
+        (PromiseItem::Epic, "epics", "ABC-1"),
+    ] {
+        let q = format!("SELECT version, updated_at FROM {table} WHERE key='{key}'");
+        let before: (i64, chrono::DateTime<Utc>) =
+            sqlx::query_as(&q).fetch_one(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            !ports
+                .promises
+                .clear_promise(&mut tx, item, &pkey(key))
+                .await
+                .unwrap(),
+            "nothing to clear"
+        );
+        assert!(
+            ports
+                .promises
+                .set_promise(&mut tx, item, &pkey(key), &p)
+                .await
+                .unwrap()
+        );
+        let first = mk_promise(pday(12, 1), "ann@example.com", None);
+        assert!(
+            ports
+                .promises
+                .set_promise(&mut tx, item, &pkey(key), &first)
+                .await
+                .unwrap()
+        );
+        assert!(
+            ports
+                .promises
+                .set_promise(&mut tx, item, &pkey(key), &p)
+                .await
+                .unwrap()
+        );
+        let got = ports
+            .promises
+            .lock_for_promise(&mut tx, item, &pkey(key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            got.promise,
+            Some(p.clone()),
+            "the second set replaces the first"
+        );
+        tx.commit().await.unwrap();
+        assert_eq!(before, sqlx::query_as(&q).fetch_one(&pool).await.unwrap());
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            ports
+                .promises
+                .clear_promise(&mut tx, item, &pkey(key))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !ports
+                .promises
+                .clear_promise(&mut tx, item, &pkey(key))
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        assert_eq!(before, sqlx::query_as(&q).fetch_one(&pool).await.unwrap());
+    }
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        !ports
+            .promises
+            .set_promise(&mut tx, PromiseItem::Story, &pkey("ABC-99"), &p)
+            .await
+            .unwrap(),
+        "unknown key"
+    );
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn lock_for_promise_returns_delivery_and_the_current_promise() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    promise_story(&pool, "ABC-2", None, "done").await;
+    promise_story(&pool, "ABC-3", None, "todo").await;
+    let p = mk_promise(pday(11, 20), "dan@example.com", None);
+    put_promise(&pool, "stories", "ABC-2", &p).await;
+    let mut tx = pool.begin().await.unwrap();
+    let done = ports
+        .promises
+        .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-2"))
+        .await
+        .unwrap();
+    assert_eq!(
+        done,
+        Some(PromiseTarget {
+            item: Promisable::Story(DeliveryState::Done),
+            promise: Some(p)
+        })
+    );
+    let todo = ports
+        .promises
+        .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-3"))
+        .await
+        .unwrap();
+    assert_eq!(
+        todo,
+        Some(PromiseTarget {
+            item: Promisable::Story(DeliveryState::Todo),
+            promise: None
+        })
+    );
+    let epic = ports
+        .promises
+        .lock_for_promise(&mut tx, PromiseItem::Epic, &pkey("ABC-1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        epic,
+        Some(PromiseTarget {
+            item: Promisable::Epic,
+            promise: None
+        })
+    );
+    assert_eq!(
+        ports
+            .promises
+            .lock_for_promise(&mut tx, PromiseItem::Story, &pkey("ABC-1"))
+            .await
+            .unwrap(),
+        None,
+        "an epic key is no story"
+    );
+    assert_eq!(
+        ports
+            .promises
+            .lock_for_promise(&mut tx, PromiseItem::Epic, &pkey("ABC-77"))
+            .await
+            .unwrap(),
+        None
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The lock is real, and is a `FOR NO KEY UPDATE`: a second lock waits (55P03), a foreign-key insert does not.
+#[tokio::test]
+async fn lock_for_promise_holds_the_row_without_blocking_foreign_key_inserts() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    let mut tx1 = pool.begin().await.unwrap();
+    ports
+        .promises
+        .lock_for_promise(&mut tx1, PromiseItem::Epic, &pkey("ABC-1"))
+        .await
+        .unwrap();
+    let mut tx2 = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx2)
+        .await
+        .unwrap();
+    let e = ports
+        .promises
+        .lock_for_promise(&mut tx2, PromiseItem::Epic, &pkey("ABC-1"))
+        .await
+        .unwrap_err();
+    let code = match e {
+        RepoError::Db(sqlx::Error::Database(d)) => d.code().map(|c| c.to_string()),
+        _ => None,
+    };
+    assert_eq!(code.as_deref(), Some("55P03"));
+    drop(tx2);
+    let mut tx3 = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx3)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO stories (key, title, kind, epic_key, created_at, updated_at) VALUES ('ABC-2','T','story','ABC-1','2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')")
+        .execute(&mut *tx3)
+        .await
+        .expect("a story under the locked epic is not blocked");
+    tx3.rollback().await.unwrap();
+    tx1.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn promise_facts_in_returns_own_epic_and_done_at_for_the_listed_keys_only() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    promise_epic(&pool, "ABC-2").await;
+    promise_epic(&pool, "ABC-6").await;
+    put_promise(
+        &pool,
+        "epics",
+        "ABC-6",
+        &mk_promise(pday(11, 18), "ann@example.com", None),
+    )
+    .await;
+    promise_story(&pool, "ABC-3", Some("ABC-1"), "done").await;
+    promise_story(&pool, "ABC-4", Some("ABC-1"), "todo").await;
+    promise_story(&pool, "ABC-5", Some("ABC-2"), "todo").await;
+    let ep = mk_promise(pday(11, 15), "ann@example.com", Some("Acme"));
+    let s3 = mk_promise(pday(11, 9), "bob@example.com", None);
+    let s5 = mk_promise(pday(11, 30), "bob@example.com", None);
+    put_promise(&pool, "epics", "ABC-1", &ep).await;
+    put_promise(&pool, "stories", "ABC-3", &s3).await;
+    put_promise(&pool, "stories", "ABC-5", &s5).await;
+    let mut tx = pool.begin().await.unwrap();
+    let facts = ports
+        .reads
+        .promise_facts_in(
+            &mut tx,
+            &[pkey("ABC-3"), pkey("ABC-5")],
+            &[pkey("ABC-1"), pkey("ABC-9")],
+        )
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    let done_at = Utc.with_ymd_and_hms(2026, 11, 5, 10, 0, 0).unwrap();
+    let mut want = PromiseFacts::default();
+    want.stories.insert(
+        pkey("ABC-3"),
+        StoryPromiseRow {
+            own: Some(s3),
+            epic: Some((pkey("ABC-1"), ep.clone())),
+            done_at: Some(done_at),
+        },
+    );
+    want.stories.insert(
+        pkey("ABC-5"),
+        StoryPromiseRow {
+            own: Some(s5),
+            epic: None,
+            done_at: None,
+        },
+    );
+    want.epics.insert(pkey("ABC-1"), ep);
+    assert!(
+        !facts.epics.contains_key(&pkey("ABC-6")),
+        "ABC-6 was not asked for"
+    );
+    assert_eq!(facts, want);
+}
+
+#[tokio::test]
+async fn promise_facts_in_is_one_statement_whatever_the_key_count() {
+    let (_c, pool) = common::pg_counted().await;
+    let ports = make_planning_ports(pool.clone());
+    for e in 1..=3 {
+        promise_epic(&pool, &format!("ABC-{e}")).await;
+    }
+    let mut stories = vec![];
+    for n in 0..20 {
+        let key = format!("ABC-{}", 10 + n);
+        promise_story(&pool, &key, Some("ABC-1"), "todo").await;
+        stories.push(pkey(&key));
+    }
+    let epics: Vec<Key> = (1..=3).map(|e| pkey(&format!("ABC-{e}"))).collect();
+    let baseline = common::statements(&pool, || async {
+        let tx = pool.begin().await.unwrap();
+        tx.rollback().await.unwrap();
+    })
+    .await;
+    let measure = |s: Vec<Key>, e: Vec<Key>| {
+        let (pool, ports) = (pool.clone(), ports.clone());
+        async move {
+            common::statements(&pool.clone(), || async move {
+                let mut tx = pool.begin().await.unwrap();
+                ports.reads.promise_facts_in(&mut tx, &s, &e).await.unwrap();
+                tx.rollback().await.unwrap();
+            })
+            .await
+                - baseline
+        }
+    };
+    assert_eq!(measure(vec![], vec![]).await, 0);
+    assert_eq!(measure(stories[..1].to_vec(), vec![]).await, 1);
+    assert_eq!(measure(stories.clone(), epics).await, 1);
+}
+
+#[tokio::test]
+async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    promise_epic(&pool, "ABC-1").await;
+    put_promise(
+        &pool,
+        "epics",
+        "ABC-1",
+        &mk_promise(pday(11, 15), "a@b.c", None),
+    )
+    .await;
+    promise_epic(&pool, "ABC-20").await;
+    // Promised on 6 Nov, after ABC-21 was done on 5 Nov, so ABC-21 does not inherit it (R3).
+    put_promise(
+        &pool,
+        "epics",
+        "ABC-20",
+        &Promise::from_persisted(
+            pday(11, 15),
+            "a@b.c".into(),
+            Utc.with_ymd_and_hms(2026, 11, 6, 8, 0, 0).unwrap(),
+            None,
+        ),
+    )
+    .await;
+    for (key, epic, delivery, on) in [
+        ("ABC-2", None, "todo", Some(pday(11, 9))),
+        ("ABC-3", None, "todo", Some(pday(11, 10))),
+        ("ABC-4", None, "todo", Some(pday(11, 11))),
+        ("ABC-5", None, "todo", Some(pday(11, 24))),
+        ("ABC-6", Some("ABC-1"), "todo", None),
+        ("ABC-7", None, "todo", None),
+        ("ABC-8", None, "todo", Some(pday(11, 11))),
+        ("ABC-21", Some("ABC-20"), "done", Some(pday(11, 20))),
+        ("ABC-22", None, "done", Some(pday(11, 12))),
+        ("ABC-23", Some("ABC-1"), "todo", Some(pday(12, 3))),
+        // Its own date and its epic's are both in range: both branches find it, and it is listed once.
+        ("ABC-24", Some("ABC-1"), "todo", Some(pday(11, 20))),
+    ] {
+        promise_story(&pool, key, epic, delivery).await;
+        if let Some(on) = on {
+            put_promise(&pool, "stories", key, &mk_promise(on, "a@b.c", None)).await;
+        }
+    }
+    sqlx::query("UPDATE stories SET resolution = 'dropped' WHERE key = 'ABC-22'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let keys = |rows: &[PromisedStoryRow]| -> Vec<String> {
+        rows.iter().map(|r| r.key.to_string()).collect()
+    };
+    let mut tx = pool.begin().await.unwrap();
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, Some(pday(11, 10)), pday(11, 24))
+        .await
+        .unwrap();
+    // Ordered by key; ABC-4 and ABC-8 share a date. ABC-23's own date is out of range, its epic's is in. ABC-24 is
+    // found by its own date and by its epic's, and listed once.
+    assert_eq!(
+        keys(&got),
+        [
+            "ABC-4", "ABC-5", "ABC-6", "ABC-8", "ABC-21", "ABC-22", "ABC-23", "ABC-24"
+        ]
+    );
+    let both = got.iter().find(|r| r.key.to_string() == "ABC-24").unwrap();
+    assert_eq!(both.row.own.as_ref().unwrap().on(), pday(11, 20));
+    assert_eq!(both.row.epic.as_ref().unwrap().1.on(), pday(11, 15));
+    let by = |k: &str| got.iter().find(|r| r.key.to_string() == k).unwrap();
+    let inherited = by("ABC-6");
+    assert_eq!(inherited.title, "T ABC-6");
+    assert_eq!(inherited.delivery, DeliveryState::Todo);
+    assert_eq!(inherited.resolution, None);
+    assert_eq!(inherited.row.own, None);
+    assert_eq!(inherited.row.done_at, None);
+    assert_eq!(inherited.row.epic.as_ref().unwrap().0, pkey("ABC-1"));
+    let epic_only = by("ABC-23");
+    assert_eq!(epic_only.row.own.as_ref().unwrap().on(), pday(12, 3));
+    assert_eq!(epic_only.row.epic.as_ref().unwrap().1.on(), pday(11, 15));
+    let done_at = Utc.with_ymd_and_hms(2026, 11, 5, 10, 0, 0).unwrap();
+    let done = by("ABC-21");
+    assert_eq!(done.delivery, DeliveryState::Done);
+    assert_eq!(done.resolution, Some(Resolution::Completed));
+    assert_eq!(done.row.done_at, Some(done_at));
+    let dropped = by("ABC-22");
+    assert_eq!(dropped.delivery, DeliveryState::Done);
+    assert_eq!(dropped.resolution, Some(Resolution::Dropped));
+    assert_eq!(dropped.row.done_at, Some(done_at));
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, None, pday(11, 10))
+        .await
+        .unwrap();
+    assert_eq!(keys(&got), ["ABC-2", "ABC-3"]);
+    // The epic branch's bounds: ABC-6 has only its epic's date (15 Nov); `after` is exclusive, `upto` inclusive.
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, None, pday(11, 15))
+        .await
+        .unwrap();
+    assert!(keys(&got).contains(&"ABC-6".to_string()));
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, Some(pday(11, 15)), pday(11, 24))
+        .await
+        .unwrap();
+    assert!(!keys(&got).contains(&"ABC-6".to_string()));
+    // Done before its epic promised: not inheriting, but its own date is in the range (17 Nov, 1 Dec]; ABC-24 by its own.
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, Some(pday(11, 17)), pday(12, 1))
+        .await
+        .unwrap();
+    assert_eq!(keys(&got), ["ABC-5", "ABC-21", "ABC-24"]);
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn active_and_draft_in_reads_both_in_one_statement() {
+    let (_c, pool) = common::pg_counted().await;
+    let ports = make_planning_ports(pool.clone());
+    let ends = || async {
+        let mut tx = pool.begin().await.unwrap();
+        let r = ports.sprints.active_and_draft_in(&mut tx).await.unwrap();
+        tx.rollback().await.unwrap();
+        let end = |st: SprintState| r.iter().find(|s| s.state == st).map(|s| s.ends_on);
+        assert!(r.iter().all(|s| s.state != SprintState::Closed));
+        (end(SprintState::Active), end(SprintState::Draft))
+    };
+    assert_eq!(ends().await, (None, None));
+    let at = Utc.with_ymd_and_hms(2026, 11, 3, 8, 0, 0).unwrap();
+    sqlx::query("INSERT INTO sprints (state, starts_on, ends_on, opened_at, closed_at, created_at) VALUES ('closed','2026-10-01','2026-10-15',$1,$1,$1)")
+        .bind(at).execute(&pool).await.unwrap();
+    assert_eq!(ends().await, (None, None), "a closed sprint is ignored");
+    sqlx::query("INSERT INTO sprints (state, starts_on, ends_on, created_at) VALUES ('draft','2026-11-17','2026-12-01',$1)")
+        .bind(at).execute(&pool).await.unwrap();
+    assert_eq!(ends().await, (None, Some(pday(12, 1))));
+    sqlx::query("INSERT INTO sprints (state, starts_on, ends_on, opened_at, created_at) VALUES ('active','2026-11-03','2026-11-17',$1,$1)")
+        .bind(at).execute(&pool).await.unwrap();
+    assert_eq!(ends().await, (Some(pday(11, 17)), Some(pday(12, 1))));
+    sqlx::query("DELETE FROM sprints WHERE state='draft'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ends().await, (Some(pday(11, 17)), None));
+    let baseline = common::statements(&pool, || async {
+        let tx = pool.begin().await.unwrap();
+        tx.rollback().await.unwrap();
+    })
+    .await;
+    let one = common::statements(&pool, || async {
+        ends().await;
+    })
+    .await;
+    assert_eq!(one - baseline, 1);
 }
 
 #[tokio::test]

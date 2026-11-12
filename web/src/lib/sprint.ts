@@ -1,4 +1,5 @@
 import type { Confidence, GoalProgress, SprintCounts, SprintWarning, Story, Verdict } from '#lib/api/types.ts';
+import { dayLabel } from '#lib/format.ts';
 
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
 export const RULE = 'Counts the work completed in this sprint; work started but not finished shows as in flight.';
@@ -97,4 +98,21 @@ export function upkeepTextAt(
 	if (!atClose || (atClose.completed === now.completed && atClose.upkeep_completed === now.upkeep_completed))
 		return upkeepText(now, line);
 	return `${now.upkeep_completed} of ${now.completed} completed stories were upkeep (at close: ${atClose.upkeep_completed} of ${atClose.completed}) · team line ${line}%`;
+}
+
+/** The ISO day after `iso` (calendar arithmetic only, no clock). */
+function nextDay(iso: string): string {
+	const d = new Date(`${iso}T00:00:00Z`);
+	d.setUTCDate(d.getUTCDate() + 1);
+	return d.toISOString().slice(0, 10);
+}
+
+/** A closed sprint's promise list heading: "Promises due 11–24 Nov" (the day after the previous planned end to this
+ *  one's), "Promises due 28 Oct–10 Nov" across months, "Promises due up to 27 Oct" for the first sprint. */
+export function promisesHeading(previous: string | null, endsOn: string): string {
+	const end = dayLabel(endsOn);
+	if (previous == null) return `Promises due up to ${end}`;
+	const from = nextDay(previous);
+	const sameMonth = from.slice(0, 7) === endsOn.slice(0, 7);
+	return `Promises due ${sameMonth ? String(Number(from.slice(8, 10))) : dayLabel(from)}–${end}`;
 }

@@ -10,7 +10,7 @@
 // story dialog cannot be dismissed while its create is pending.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '#lib/me.svelte.ts';
 import { live as liveState } from '#lib/events.svelte.ts';
@@ -40,7 +40,7 @@ vi.mock('$app/state', async () => {
 type Patched = { version: number; title?: string; initiative?: string | null };
 
 const net = vi.hoisted(() => {
-	const fresh = (): Epic => ({ key: 'ABC-5', title: 'Login', brief: '', version: 3, initiative: 'ABC-1', discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] });
+	const fresh = (): Epic => ({ key: 'ABC-5', title: 'Login', brief: '', version: 3, initiative: 'ABC-1', discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [], promise: null });
 	// Built by hand: the fixtures cannot be imported into a hoisted block.
 	const ini = (key: string, title: string): Initiative => ({ key, title, brief: '', horizon: 'Now', version: 1, urgent_mark: null, urgent_sources: [] });
 	const freshInitiatives = () => [ini('ABC-1', 'Orion'), ini('ABC-2', 'Other')];
@@ -52,6 +52,13 @@ const net = vi.hoisted(() => {
 		patches: [] as Patched[],
 		urgentFail: false,
 		urgentWrites: [] as { method: string; path: string; body: unknown }[],
+		promiseWrites: [] as { method: string; body: unknown }[],
+		/** While set, `GET /sprints` answers only when the gate resolves; `sprintsFail` makes it fail. */
+		sprintsGate: null as null | Promise<void>,
+		sprintsFail: false,
+		/** `GET /sprints` answers given so far: a test waits on it instead of sleeping. */
+		sprintsAnswered: 0,
+		promiseFail: false,
 		stories: [] as StoryWithReadiness[],
 		decisions: [] as RequiredDecision[],
 		initiativeDecisions: [] as RequiredDecision[],
@@ -83,6 +90,26 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			const mark = method === 'POST' ? { at: '2026-11-09T08:00:00Z', by: 'dan@example.com', reason: (body as { reason: string | null }).reason, expires_at: '2099-01-01T00:00:00Z', active: true, done: false } : null;
 			s.epic = { ...s.epic, urgent_mark: mark, urgent_sources: mark ? [{ key: 'ABC-5', item: 'epic' }] : [] };
 			return s.epic;
+		}
+		if ((method === 'POST' || method === 'DELETE') && path === '/api/v1/epics/ABC-5/promise') {
+			s.promiseWrites.push({ method, body });
+			if (s.promiseFail) return failure('boom');
+			const on = (body as { on?: string } | null)?.on ?? '2026-11-24';
+			const fact = { on, to: 'Acme', by: 'dan@example.com', at: '2026-11-12T08:00:00Z' };
+			const cleared = method === 'DELETE' && s.epic.promise != null;
+			s.epic = { ...s.epic, promise: method === 'POST' ? { fact, due: 'this_sprint', past: false } : null };
+			return method === 'DELETE' ? { cleared, epic: s.epic } : s.epic;
+		}
+		if (method === 'GET' && path === '/api/v1/sprints') {
+			if (s.sprintsGate) await s.sprintsGate;
+			s.sprintsAnswered++;
+			if (s.sprintsFail) return failure('boom');
+			return {
+				active: { sprint: { id: 1, state: 'active', starts_on: '2026-11-10', ends_on: '2026-11-24', opened_at: '2026-11-10T08:00:00Z', closed_at: null, goals: [], warnings: [], version: 1 }, counts: { completed: 0, upkeep_completed: 0, goals: [] }, demo: [], upkeep_line: 20, promises: [] },
+				closed: [],
+				draft: null,
+				today: '2026-11-12'
+			};
 		}
 		if (method === 'GET' && path === '/api/v1/epics/ABC-5') return s.epic;
 		if (method === 'GET' && path === '/api/v1/epics/JIRA-55') return s.epic;
@@ -140,6 +167,11 @@ afterEach(() => {
 	net.initiatives = net.freshInitiatives();
 	net.patches.length = 0;
 	net.urgentWrites.length = 0;
+	net.promiseWrites.length = 0;
+	net.sprintsGate = null;
+	net.sprintsFail = false;
+	net.sprintsAnswered = 0;
+	net.promiseFail = false;
 	net.urgentFail = false;
 	net.stories = [];
 	net.decisions = [];
@@ -830,7 +862,7 @@ describe('epic page: urgent mark', () => {
 
 	it('always offers Mark urgent…, and Clear urgent mark only with a mark', async () => {
 		await open();
-		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…']);
+		expect((await menu()).map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Promise by…']);
 		unmount(app!);
 		app = null;
 		document.body.innerHTML = '';
@@ -1012,5 +1044,136 @@ describe('epic page: brief images', () => {
 		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
 		expect(net.patches[0]).toMatchObject({ attachments: ['img-b'] });
 		expect((net.patches[0] as unknown as { brief: string }).brief).toContain('![shot](/api/v1/attachments/img-b)');
+	});
+});
+
+describe('epic page: promise', () => {
+	const fact = { on: '2026-11-20', to: 'Acme', by: 'dan@example.com', at: '2026-11-01T08:00:00Z' };
+	const menu = async () => {
+		(document.body.querySelector('button[aria-label="Actions for ABC-5"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[role="menuitem"]')).not.toBeNull();
+		});
+		return [...document.body.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[];
+	};
+	const item = (items: HTMLButtonElement[], name: string) => items.find((b) => b.textContent?.trim() === name);
+	const shortcut = () => [...document.body.querySelectorAll('dialog button')].find((b) => b.textContent?.startsWith('End of'));
+
+	it('has no shortcuts and no min until the sprints answer, then promises by the shortcut', async () => {
+		let release = () => {};
+		net.sprintsGate = new Promise((r) => (release = r));
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		flushSync();
+		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Promise ABC-5 by…');
+		expect(shortcut()).toBeUndefined();
+		expect(document.body.querySelector('dialog input[type="date"]')!.hasAttribute('min')).toBe(false);
+		// Pending, not failed: the row is reserved and nothing says the shortcuts are unavailable.
+		expect(document.body.querySelector('[data-testid="promise-shortcuts"]')).not.toBeNull();
+		expect(document.body.querySelector('[data-testid="promise-shortcuts-unavailable"]')).toBeNull();
+		release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shortcut()?.textContent).toBe('End of this sprint (24 Nov)');
+		});
+		expect((document.body.querySelector('dialog input[type="date"]') as HTMLInputElement).min).toBe('2026-11-12');
+		(shortcut() as HTMLButtonElement).click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised by 24 Nov 2026 to Acme · set by dan');
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
+		});
+		expect(net.promiseWrites).toEqual([{ method: 'POST', body: { shortcut: 'this_sprint' } }]);
+	});
+
+	it('a failed sprints read collapses the shortcut row and says shortcuts are unavailable; the dialog stays usable', async () => {
+		net.sprintsFail = true;
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		flushSync();
+		// Failed, not pending: only a settled failure says so, and the reserved row is gone.
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="promise-shortcuts-unavailable"]')?.textContent).toBe('Sprint shortcuts are unavailable.');
+		});
+		expect(net.sprintsAnswered).toBe(1);
+		expect(document.body.querySelector('[data-testid="promise-shortcuts"]')).toBeNull();
+		expect(shortcut()).toBeUndefined();
+		expect(document.body.querySelector('dialog input[type="date"]')).not.toBeNull();
+	});
+
+	it('with a promise offers Change and Clear, shows the line, and clears with DELETE once confirmed', async () => {
+		net.epic = { ...net.epic, promise: { fact, due: 'later', past: false } };
+		await open();
+		expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised by 20 Nov 2026 to Acme · set by dan');
+		const items = await menu();
+		expect(items.map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Change promise…', 'Clear promise']);
+		const dialogButton = (label: string) =>
+			[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent?.trim() === label);
+		// Every epic clear asks first, saying why it cannot be put back as it was; Cancel sends nothing.
+		item(items, 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Clear the promise on ABC-5?');
+		expect(document.body.querySelector('dialog [data-testid="clear-promise-text"]')!.textContent!.replace(/\s+/g, ' ').trim()).toBe(
+			'Its stories lose this date. If ABC-5 is promised again later, its stories done by then do not get the new promise, so they leave the promise lists of the sprints already closed.'
+		);
+		expect(document.activeElement).toBe(dialogButton('Cancel'));
+		dialogButton('Cancel')!.click();
+		flushSync();
+		expect(document.body.querySelector('dialog')).toBeNull();
+		expect(net.promiseWrites).toEqual([]);
+
+		item(await menu(), 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		dialogButton('Clear promise')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(document.body.querySelector('[data-testid="promise-line"]')).toBeNull();
+			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
+		});
+		expect(net.promiseWrites).toEqual([{ method: 'DELETE', body: null }]);
+	});
+
+	it('shows a failed save in the dialog, not the page notice', async () => {
+		net.promiseFail = true;
+		await open();
+		item(await menu(), 'Promise by…')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shortcut()).toBeDefined();
+		});
+		(shortcut() as HTMLButtonElement).click();
+		flushSync();
+		(document.body.querySelector('dialog form') as HTMLFormElement).requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+		expect(document.body.querySelector('.notice')).toBeNull();
+		expect(document.body.querySelector('dialog')).not.toBeNull();
+	});
+
+	it('a story row carries its promise chip after the title, without " · via" the epic', async () => {
+		net.stories = [
+			withReadiness({
+				key: 'ABC-9',
+				epic: 'ABC-5',
+				promise: { own: null, epic: { key: 'ABC-5', fact }, on: '2026-11-20', holder: 'epic', state: 'open', due: 'later', days: null }
+			})
+		];
+		await open();
+		await vi.waitFor(() => {
+			flushSync();
+			// Every row is under this epic, so the chip does not name it again.
+			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised by 20 Nov');
+		});
+		expect(document.body.querySelector('#stories a.title')?.nextElementSibling?.classList.contains('promise-chip')).toBe(true);
 	});
 });

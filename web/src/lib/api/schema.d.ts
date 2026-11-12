@@ -352,6 +352,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/epics/{key}/promise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only
+         *     the recipient. Interactive only; takes no version.
+         */
+        post: operations["epics_key_promise_set_promise"];
+        /**
+         * Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+         *     cleared the epic's promise; the epic is read after the write.
+         */
+        delete: operations["epics_key_promise_clear_promise"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/epics/{key}/urgent": {
         parameters: {
             query?: never;
@@ -947,6 +971,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stories/{key}/promise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sets, changes or replaces the promise (kb/ADR-0025 R2): a date or a sprint shortcut, not both; neither changes only
+         *     the recipient. Interactive only; takes no version.
+         */
+        post: operations["stories_key_promise_set_promise"];
+        /**
+         * Clears the promise (R2); clearing none changes nothing. Interactive only. `cleared` says whether this request
+         *     cleared the story's own promise; the story is read after the write.
+         */
+        delete: operations["stories_key_promise_clear_promise"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stories/{key}/rank": {
         parameters: {
             query?: never;
@@ -1192,7 +1240,7 @@ export interface components {
             key: components["schemas"]["Key"];
             /** @description Servers always send it; JSON without it (an older server) reads as a story. */
             kind: components["schemas"]["Kind"];
-            /** @description The story's own window, by its goals. Servers always send it; JSON without it reads as `none`. */
+            /** @description The story's own window: the earlier of its goals' and its promise's (kb/ADR-0025 R7). Servers always send it; JSON without it reads as `none`. */
             needed_in: components["schemas"]["NeededIn"];
             /** @description Servers always send it; JSON without it reads as no owner. */
             owner: string | null;
@@ -1520,12 +1568,29 @@ export interface components {
             external_ref?: string | null;
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
+            promise: null | components["schemas"]["EpicPromiseDto"];
             title: string;
             urgent_mark: null | components["schemas"]["UrgentMarkDto"];
             /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
+        EpicPromiseCleared: {
+            cleared: boolean;
+            epic: components["schemas"]["EpicDto"];
+        };
+        /** @description An epic's own promise: no state (R4). `due` while the date is not past; `past` once it is. */
+        EpicPromiseDto: {
+            due?: null | components["schemas"]["PromiseDue"];
+            fact: components["schemas"]["PromiseFactDto"];
+            past: boolean;
+        };
+        /** @description The epic whose promise a story inherits, and that promise. */
+        EpicPromiseRefDto: {
+            fact: components["schemas"]["PromiseFactDto"];
+            key: components["schemas"]["Key"];
         };
         /** @enum {string} */
         ErrorCode: "not_found" | "conflict" | "forbidden" | "unauthenticated" | "validation" | "internal" | "rate_limited";
@@ -1786,11 +1851,16 @@ export interface components {
             version: number;
         };
         /**
-         * @description When an open, unsatisfied decision is needed, derived on read from goals and discovery (never stored, kb/ADR-0014 R6).
+         * @description When an open, unsatisfied decision is needed, derived on read from goals, discovery and the promises of the stories it
+         *     affects (never stored, kb/ADR-0014 R6, kb/ADR-0025 R7). The variant order is the order of urgency, earliest first:
+         *     the queue takes the earliest of several windows with `min`, so the variants must not be reordered.
          * @enum {string}
          */
         NeededIn: "this_sprint" | "next_sprint" | "beyond" | "none";
-        /** @description Why a decision is needed this sprint or next. */
+        /**
+         * @description Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason
+         *     this build does not know.
+         */
         NeededInReason: {
             /** Format: int64 */
             goal_id: number;
@@ -1802,6 +1872,17 @@ export interface components {
             /** @enum {string} */
             kind: "discovery";
             level: components["schemas"]["ItemType"];
+        } | {
+            key: components["schemas"]["Key"];
+            /** @enum {string} */
+            kind: "promise";
+            level: components["schemas"]["ItemType"];
+            /** Format: date */
+            on: string;
+            overdue: boolean;
+        } | {
+            /** @enum {string} */
+            kind: "unknown";
         };
         /** @description What an open, unsatisfied decision needs next. The first that holds wins, in declaration order. */
         NextStep: {
@@ -1907,6 +1988,42 @@ export interface components {
          * @enum {string}
          */
         PrStatus: "draft" | "open" | "merged" | "closed";
+        /**
+         * @description An open promise's due period against the sprints' planned ends, derived on read (R5).
+         * @enum {string}
+         */
+        PromiseDue: "this_sprint" | "next_sprint" | "later" | "unknown";
+        /** @description A stored promise (kb/ADR-0025 R1): the date, who set it, when, and an optional recipient. */
+        PromiseFactDto: {
+            /** Format: date-time */
+            at: string;
+            by: string;
+            /** Format: date */
+            on: string;
+            to?: string | null;
+        };
+        /**
+         * @description Whose promise sets a story's effective date: its own, or its epic's (R3; the story's own wins a tie).
+         * @enum {string}
+         */
+        PromiseHolder: "own" | "epic" | "unknown";
+        /**
+         * @description A sprint whose planned end a promise takes (R6): the active sprint or the draft (next) one.
+         * @enum {string}
+         */
+        PromiseShortcut: "this_sprint" | "next_sprint";
+        /**
+         * @description A story's promise state, derived on read (R4).
+         * @enum {string}
+         */
+        PromiseState: "open" | "overdue" | "kept" | "late" | "dropped" | "unknown";
+        /**
+         * @description The story list's `promised` filter (kb/ADR-0025 R5, kb/ADR-0021): `this_sprint` keeps overdue promises and open
+         *     ones due this sprint, `next_sprint` open ones due next sprint, `overdue` only overdue ones, `any` every open or
+         *     overdue promise. Kept, late and dropped promises never match.
+         * @enum {string}
+         */
+        PromisedFilter: "this_sprint" | "next_sprint" | "overdue" | "any";
         PullRequestDto: {
             /** Format: int64 */
             number: number;
@@ -2295,12 +2412,42 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
                 /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_EpicPromiseCleared: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
+            value: {
+                cleared: boolean;
+                epic: components["schemas"]["EpicDto"];
             };
         } | {
             /** @enum {string} */
@@ -2761,6 +2908,20 @@ export interface components {
             value: {
                 counts: components["schemas"]["SprintCountsDto"];
                 demo: components["schemas"]["DemoStoryDto"][];
+                /**
+                 * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
+                 *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`
+                 *     fills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list
+                 *     empty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.
+                 */
+                promises: components["schemas"]["SprintPromiseDto"][];
+                /**
+                 * Format: date
+                 * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
+                 *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for
+                 *     a draft, and for the active sprint in `GET /sprints`.
+                 */
+                promises_after: string | null;
                 sprint: components["schemas"]["SprintDto"];
                 /**
                  * Format: int32
@@ -2797,6 +2958,12 @@ export interface components {
                 active?: null | components["schemas"]["SprintViewDto"];
                 closed: components["schemas"]["SprintDto"][];
                 draft?: null | components["schemas"]["SprintDto"];
+                /**
+                 * Format: date
+                 * @description The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The
+                 *     server always fills it; it is optional only so that older JSON still parses.
+                 */
+                today: string | null;
             };
         } | {
             /** @enum {string} */
@@ -2878,6 +3045,7 @@ export interface components {
                 kind: components["schemas"]["Kind"];
                 labels: string[];
                 owner?: string | null;
+                promise: null | components["schemas"]["StoryPromiseDto"];
                 /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
                 prs: components["schemas"]["PullRequestDto"][];
                 /** Format: int32 */
@@ -2889,6 +3057,38 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_StoryPromiseCleared: {
+            /** @enum {string} */
+            outcome: "ok";
+            /**
+             * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
+             *     `cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).
+             */
+            value: {
+                cleared: boolean;
+                story: components["schemas"]["StoryDto"];
             };
         } | {
             /** @enum {string} */
@@ -3033,6 +3233,7 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
                 /** @description The active marks that make this item urgent: its own first, then key-number order. Empty: not urgent. */
@@ -3408,6 +3609,18 @@ export interface components {
             matched: string[];
             title: string;
         };
+        /**
+         * @description `POST /stories/{key}/promise`, `POST /epics/{key}/promise`. A date or a shortcut, not both; neither changes only
+         *     the recipient of the current promise. `to` left out keeps the recipient; an empty string clears it.
+         *     Any other field is refused rather than ignored.
+         */
+        SetPromise: {
+            /** Format: date */
+            on?: string | null;
+            shortcut?: null | components["schemas"]["PromiseShortcut"];
+            /** @description The recipient. Left out or `null`: keep the current one. `""` (or only spaces): clear it. */
+            to?: string | null;
+        };
         /** @description One story `GET /stories/similar` found: a possible duplicate of a title being written. Advice only. */
         SimilarStory: {
             delivery: components["schemas"]["DeliveryState"];
@@ -3446,6 +3659,33 @@ export interface components {
             /** @description Advice from the goal count, for a draft or the active sprint only; a closed sprint has none. */
             warnings: components["schemas"]["SprintWarning"][];
         };
+        /**
+         * @description One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned
+         *     end and up to this sprint's, derived on read. `to` is the recipient of the promise that sets the date.
+         */
+        SprintPromiseDto: {
+            /**
+             * Format: int32
+             * @description Days overdue or late, computed by the server.
+             */
+            days?: number | null;
+            /**
+             * Format: date
+             * @description The UTC day the story was done, when it was.
+             */
+            done_on?: string | null;
+            epic_key?: null | components["schemas"]["Key"];
+            holder: components["schemas"]["PromiseHolder"];
+            key: components["schemas"]["Key"];
+            /**
+             * Format: date
+             * @description The effective date (R3).
+             */
+            on: string;
+            state: components["schemas"]["PromiseState"];
+            title: string;
+            to?: string | null;
+        };
         /** @enum {string} */
         SprintState: "draft" | "active" | "closed";
         /**
@@ -3457,6 +3697,20 @@ export interface components {
         SprintViewDto: {
             counts: components["schemas"]["SprintCountsDto"];
             demo: components["schemas"]["DemoStoryDto"][];
+            /**
+             * @description The sprint's promises (kb/ADR-0025 R8), derived on read: the stories whose effective date is after the previous
+             *     sprint's planned end and up to this one's, by date then key. Never stored, at close or elsewhere. `GET /sprints/{id}`
+             *     fills it for active and closed sprints; always empty for a draft. `GET /sprints` leaves the active sprint's list
+             *     empty (and `promises_after` null) until a client renders it there: read it from `GET /sprints/{id}`.
+             */
+            promises: components["schemas"]["SprintPromiseDto"][];
+            /**
+             * Format: date
+             * @description The previous sprint's planned end, which `promises` start after (kb/ADR-0025 R8): the dates listed run from the
+             *     day after it to this sprint's `ends_on`. Null for the first sprint, which takes every date up to its end, for
+             *     a draft, and for the active sprint in `GET /sprints`.
+             */
+            promises_after: string | null;
             sprint: components["schemas"]["SprintDto"];
             /**
              * Format: int32
@@ -3474,6 +3728,12 @@ export interface components {
             active?: null | components["schemas"]["SprintViewDto"];
             closed: components["schemas"]["SprintDto"][];
             draft?: null | components["schemas"]["SprintDto"];
+            /**
+             * Format: date
+             * @description The server's UTC date for this request, so clients never read their own clock for promises (kb/ADR-0025). The
+             *     server always fills it; it is optional only so that older JSON still parses.
+             */
+            today: string | null;
         };
         /** @description `reeve story context`: everything an agent needs before starting a story. */
         StoryContextDto: {
@@ -3507,6 +3767,7 @@ export interface components {
             kind: components["schemas"]["Kind"];
             labels: string[];
             owner?: string | null;
+            promise: null | components["schemas"]["StoryPromiseDto"];
             /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
             prs: components["schemas"]["PullRequestDto"][];
             /** Format: int32 */
@@ -3518,6 +3779,29 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+        };
+        /**
+         * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
+         *     `cleared` is false when the story had no own promise; it may still inherit its epic's (`story.promise.epic`).
+         */
+        StoryPromiseCleared: {
+            cleared: boolean;
+            story: components["schemas"]["StoryDto"];
+        };
+        /** @description A story's promise as derived on read (R3–R5): both promises shown, `on` the effective date, `holder` whose it is. */
+        StoryPromiseDto: {
+            /**
+             * Format: int32
+             * @description Days overdue or late, computed by the server.
+             */
+            days?: number | null;
+            due?: null | components["schemas"]["PromiseDue"];
+            epic?: null | components["schemas"]["EpicPromiseRefDto"];
+            holder: components["schemas"]["PromiseHolder"];
+            /** Format: date */
+            on: string;
+            own?: null | components["schemas"]["PromiseFactDto"];
+            state?: null | components["schemas"]["PromiseState"];
         };
         /**
          * @description The story list's order: `rank` (the default: delivery state, rank, key number) or `relevance` (needs `q`: the
@@ -5465,6 +5749,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_Finding"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    epics_key_promise_set_promise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPromise"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_EpicDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    epics_key_promise_clear_promise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_EpicPromiseCleared"];
                 };
             };
             /** @description validation error */
@@ -7822,6 +8242,16 @@ export interface operations {
                 /** @description Only stories shown as urgent (non-empty `urgent_sources`). */
                 urgent?: boolean;
                 /**
+                 * @description Only stories whose promise (kb/ADR-0025 R5) is:
+                 *     - `this_sprint`: overdue, or open and due this sprint;
+                 *     - `next_sprint`: open and due next sprint;
+                 *     - `overdue`: overdue;
+                 *     - `any`: open or overdue.
+                 *
+                 *     Kept, late and dropped promises never match. Combines with every other filter.
+                 */
+                promised?: components["schemas"]["PromisedFilter"];
+                /**
                  * @description `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
                  *     reference equals `q` first, then title matches, then the rest, each in `rank` order.
                  */
@@ -8565,6 +8995,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_StoryDto"];
+                };
+            };
+        };
+    };
+    stories_key_promise_set_promise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPromise"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_StoryDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    stories_key_promise_clear_promise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_StoryPromiseCleared"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
                 };
             };
         };

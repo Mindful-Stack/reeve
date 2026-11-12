@@ -839,7 +839,7 @@ describe('StoryDrawer urgent mark', () => {
 		serve(storyDto({ ...story }));
 		const d = await open();
 		await openMenu(d);
-		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…']);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Promise by…']);
 		items()[0].click();
 		flushSync();
 		await tick();
@@ -882,7 +882,7 @@ describe('StoryDrawer urgent mark', () => {
 			expect(line.textContent).toContain('via epic RV-2 Migration findings');
 		});
 		await openMenu(d);
-		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Clear urgent mark']);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Clear urgent mark', 'Promise by…']);
 		items()[1].click();
 		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/urgent')).toBe(true));
 		await vi.waitFor(() => {
@@ -1010,5 +1010,213 @@ describe('StoryDrawer urgent mark', () => {
 			expect(d.textContent).toContain('boom');
 			expect(document.activeElement).toBe(d.querySelector('button[aria-label="Clear urgent mark on RV-5"]'));
 		});
+	});
+});
+
+describe('StoryDrawer promise', () => {
+	const fact = (on: string, to: string | null = 'Acme') => ({ on, to, by: 'dana@example.com', at: '2026-11-01T09:00:00Z' });
+	const own = (on: string, to: string | null = 'Acme'): NonNullable<Story['promise']> => ({
+		own: fact(on, to),
+		epic: null,
+		on,
+		holder: 'own',
+		state: on < '2026-11-12' ? 'overdue' : 'open',
+		due: on < '2026-11-12' ? null : 'later',
+		days: on < '2026-11-12' ? 7 : null
+	});
+	/** Serves `current` for the story and a sprint list with `today`; applies the promise POST and DELETE to it. */
+	function serve(current: Story, failPost = false, { failDelete = false, failSprints = false } = {}) {
+		net.answers.of = (url, method) => {
+			if (url.pathname === '/api/v1/stories/RV-5/promise') {
+				if (method === 'POST' && failPost) return failure('boom');
+				if (method === 'DELETE' && failDelete) return failure('no clearing');
+				const body = net.bodies.at(-1)?.body as { on?: string } | undefined;
+				const cleared = method === 'DELETE' && current.promise?.own != null;
+				current = { ...current, promise: method === 'POST' ? own(body?.on ?? '2026-11-24') : null };
+				return method === 'DELETE' ? { cleared, story: current } : current;
+			}
+			if (url.pathname === '/api/v1/sprints') {
+				if (failSprints) return failure('sprints are down');
+				return { active: sprintView(sprint({ ends_on: '2026-11-24' })), closed: [], draft: sprint({ id: 2, state: 'draft', ends_on: '2026-12-08' }), today: '2026-11-12' };
+			}
+			if (url.pathname === '/api/v1/stories/RV-5') return current;
+			return answer(url, method);
+		};
+	}
+	async function open(): Promise<HTMLElement> {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		return vi.waitFor(() => {
+			flushSync();
+			const el = document.body.querySelector<HTMLElement>('[data-testid="story-drawer"]');
+			expect(el?.querySelector('.title')).not.toBeNull();
+			return el!;
+		});
+	}
+	const items = () => [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+	async function openMenu(d: HTMLElement) {
+		d.querySelector<HTMLButtonElement>('button[aria-label="More actions for RV-5"]')!.click();
+		flushSync();
+		await tick();
+	}
+	const dialogButton = (label: string) =>
+		[...document.body.querySelectorAll<HTMLButtonElement>('dialog button')].find((b) => b.textContent?.trim() === label);
+
+	it('promises by a sprint shortcut from the server\'s ends and shows the line', async () => {
+		serve(storyDto({ ...story }));
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Promise by…')!.click();
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('dialog')?.textContent).toContain('Promise RV-5 by…');
+		dialogButton('End of this sprint (24 Nov)')!.click();
+		flushSync();
+		dialogButton('Promise')!.click();
+		await vi.waitFor(() => expect(net.bodies.at(-1)).toEqual({ path: '/api/v1/stories/RV-5/promise', body: { shortcut: 'this_sprint' } }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(d.querySelector('[data-testid="promise-line"]')?.textContent).toContain('Promised by 24 Nov 2026 to Acme · set by dana');
+			// The dialog is gone: the keyboard lands on the drawer's actions menu.
+			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
+		});
+	});
+
+	it('changes the recipient of an overdue promise without a date, and clears with DELETE', async () => {
+		serve(storyDto({ ...story, promise: own('2026-11-05') }));
+		const d = await open();
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Mark urgent…', 'Change promise…', 'Clear promise']);
+		items()[1].click();
+		flushSync();
+		await tick();
+		const to = document.body.querySelector<HTMLInputElement>('dialog input[name="to"]')!;
+		to.value = 'Beta';
+		to.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+		dialogButton('Save')!.click();
+		await vi.waitFor(() => expect(net.bodies.at(-1)).toEqual({ path: '/api/v1/stories/RV-5/promise', body: { to: 'Beta' } }));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+		});
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		await vi.waitFor(() => expect(net.sent.some((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/promise')).toBe(true));
+		await vi.waitFor(() => {
+			flushSync();
+			expect(d.querySelector('[data-testid="promise-line"]')).toBeNull();
+			expect(document.activeElement).toBe(d.querySelector('[data-control="story-actions"]'));
+		});
+	});
+
+	it('a done story offers only Clear promise', async () => {
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: { ...own('2026-11-20'), state: 'kept', due: null } }));
+		const d = await open();
+		await openMenu(d);
+		expect(items().map((b) => b.textContent)).toEqual(['Clear promise']);
+	});
+
+	it("asks before clearing a done story's promise: Cancel sends nothing, a failure stays in the question", async () => {
+		const deletes = () => net.sent.filter((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/promise').length;
+		const kept = { ...own('2026-11-20'), state: 'kept' as const, due: null };
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: kept }), false, { failDelete: true });
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		const dialog = () => document.body.querySelector('dialog');
+		expect(dialog()?.querySelector('h2')?.textContent).toBe('Clear the promise on RV-5?');
+		expect(dialog()?.textContent).toContain('cannot be set again');
+		// Focus starts on the safe choice.
+		expect(document.activeElement).toBe(dialogButton('Cancel'));
+		dialogButton('Cancel')!.click();
+		flushSync();
+		expect(dialog()).toBeNull();
+		expect(deletes()).toBe(0);
+
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		// The story has no epic promise: the text says its own promise goes and the story leaves the sprint's list.
+		const text = dialog()?.querySelector('[data-testid="clear-promise-text"]')?.textContent?.replace(/\s+/g, ' ').trim();
+		expect(text).toBe('RV-5 is done, so its own promise cannot be set again once cleared, and the story leaves the promise list of the sprint its date falls in.');
+		// A browser drops the focus of a button that becomes disabled; after the failure it lands on Cancel again.
+		const confirm = dialogButton('Clear promise')!;
+		confirm.focus();
+		confirm.click();
+		confirm.blur();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain('no clearing');
+			expect(document.activeElement).toBe(dialogButton('Cancel'));
+		});
+		expect(deletes()).toBe(1);
+		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+	});
+
+	it("asking before clearing a done story's own promise under a promised epic says it stays listed under the epic's date", async () => {
+		const both: NonNullable<Story['promise']> = {
+			...own('2026-11-20'),
+			epic: { key: 'RV-1', fact: fact('2026-11-24', 'Beta') },
+			state: 'kept',
+			due: null
+		};
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: both }));
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		const text = document.body.querySelector('dialog [data-testid="clear-promise-text"]')?.textContent?.replace(/\s+/g, ' ').trim();
+		expect(text).toBe("RV-5 is done, so its own promise cannot be set again once cleared. It stays listed under epic RV-1's date.");
+		expect(text).not.toContain('leaves');
+	});
+
+	it("clears a done story's promise once confirmed", async () => {
+		const kept = { ...own('2026-11-20'), state: 'kept' as const, due: null };
+		serve(storyDto({ ...story, delivery: 'done', resolution: 'completed', promise: kept }));
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Clear promise')!.click();
+		flushSync();
+		await tick();
+		dialogButton('Clear promise')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog')).toBeNull();
+			expect(d.querySelector('[data-testid="promise-line"]')).toBeNull();
+		});
+		expect(net.sent.filter((s) => s.method === 'DELETE' && s.path === '/api/v1/stories/RV-5/promise')).toHaveLength(1);
+	});
+
+	it('says sprint shortcuts are unavailable when the sprints could not be read', async () => {
+		serve(storyDto({ ...story }), false, { failSprints: true });
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Promise by…')!.click();
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('[data-testid="promise-shortcuts"]')).toBeNull();
+		expect(document.body.querySelector('[data-testid="promise-shortcuts-unavailable"]')?.textContent).toBe('Sprint shortcuts are unavailable.');
+	});
+
+	it('shows a failed save in the dialog, not the drawer notice', async () => {
+		serve(storyDto({ ...story }), true);
+		const d = await open();
+		await openMenu(d);
+		items().find((b) => b.textContent === 'Promise by…')!.click();
+		flushSync();
+		await tick();
+		dialogButton('End of next sprint (8 Dec)')!.click();
+		flushSync();
+		dialogButton('Promise')!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
+		});
+		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
 	});
 });

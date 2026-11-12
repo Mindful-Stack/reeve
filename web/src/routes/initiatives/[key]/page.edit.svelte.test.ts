@@ -121,7 +121,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 				const ok = await new Promise<boolean>((r) => s.createQueue.push(r));
 				if (!ok) return failure('boom');
 			}
-			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative, urgent_mark: null, urgent_sources: [] };
+			const e: Epic = { key: 'ABC-9', title: b.title, version: 1, brief: '', initiative: b.initiative, urgent_mark: null, urgent_sources: [], promise: null };
 			s.epics = [...s.epics, e];
 			return e;
 		}
@@ -1179,7 +1179,7 @@ describe('initiative page: urgent mark', () => {
 	});
 
 	it('shows a derived source as a link with its title', async () => {
-		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic];
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [], promise: null } as Epic];
 		net.stories = [withReadiness({ key: 'ABC-9', title: 'Fix it', epic: 'ABC-5' })];
 		net.ini = { ...net.ini, urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] };
 		await open();
@@ -1232,8 +1232,8 @@ describe('initiative page: urgent mark', () => {
 
 	it('puts the Urgent chip on an epic card that is urgent', async () => {
 		net.epics = [
-			{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }] } as Epic,
-			{ key: 'ABC-6', title: 'Quiet', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [] } as Epic
+			{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [{ key: 'ABC-9', item: 'story' }], promise: null } as Epic,
+			{ key: 'ABC-6', title: 'Quiet', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: null, urgent_sources: [], promise: null } as Epic
 		];
 		await open();
 		await vi.waitFor(() => {
@@ -1247,7 +1247,7 @@ describe('initiative page: urgent mark', () => {
 
 	it('says Urgent mark expired on an epic card whose own mark ran out', async () => {
 		const m = { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: null, expires_at: '2026-11-02T00:00:00Z', active: false, done: false };
-		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: m, urgent_sources: [] } as Epic];
+		net.epics = [{ key: 'ABC-5', title: 'Login', brief: '', version: 1, initiative: 'ABC-1', urgent_mark: m, urgent_sources: [], promise: null } as Epic];
 		await open();
 		await vi.waitFor(() => {
 			flushSync();

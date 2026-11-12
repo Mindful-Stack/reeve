@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { age, errorMessage, month, short } from './format.ts';
+import { age, dateLabel, dayLabel, errorMessage, month, short } from './format.ts';
+import words from './promise.fixture.json';
 
 const now = Date.parse('2026-10-26T12:00:00Z');
 const ago = (days: number) => new Date(now - days * 86_400_000).toISOString();
@@ -39,6 +40,22 @@ describe('month', () => {
 	});
 });
 
+describe('dayLabel', () => {
+	// Built from the string's parts, so no time zone can shift the day.
+	it('formats a date as day and month', () => expect(dayLabel('2026-11-20')).toBe('20 Nov'));
+	it('drops the leading zero', () => expect(dayLabel('2026-01-01')).toBe('1 Jan'));
+	it('returns anything else unchanged', () => {
+		expect(dayLabel('2026-13-01')).toBe('2026-13-01');
+		expect(dayLabel('2026-11')).toBe('2026-11');
+		expect(dayLabel('soon')).toBe('soon');
+	});
+});
+
+describe('dateLabel', () => {
+	it('adds the year to the day label', () => expect(dateLabel('2026-01-01')).toBe('1 Jan 2026'));
+	it('returns anything else unchanged', () => expect(dateLabel('2026-13-01')).toBe('2026-13-01'));
+});
+
 describe('short', () => {
 	it('takes the local part', () => expect(short('dan@example.com')).toBe('dan'));
 	it('leaves a non-address unchanged', () => expect(short('dan')).toBe('dan'));
@@ -53,11 +70,24 @@ describe('errorMessage', () => {
 });
 
 describe('actionLabel', () => {
-	it('names the file of an attachment entry and spaces every other action', async () => {
+	it('names the file of an attachment entry', async () => {
 		const { actionLabel } = await import('./format.ts');
 		expect(actionLabel('attachment_added', { attachment_id: 'x', filename: 'shot.png' })).toBe('added attachment shot.png');
 		expect(actionLabel('attachment_removed', { filename: 'shot.png' })).toBe('deleted attachment shot.png');
 		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
-		expect(actionLabel('goal_linked', null)).toBe('goal linked');
+	});
+
+	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file). The
+	// rows live in promise.fixture.json, which the TUI ticker's tests (crates/reeve/src/promise.rs) read too.
+	const activityRows = words.activity as { label: string; action: string; payload: unknown; plain: string; keyed: string }[];
+	it.each<[string, string, unknown, string, string]>(activityRows.map((r) => [r.label, r.action, r.payload, r.plain, r.keyed]))('%s', async (_, action, payload, plain, keyed) => {
+		const { actionLabel } = await import('./format.ts');
+		expect(actionLabel(action, payload)).toBe(plain);
+		expect(actionLabel(action, payload, 'ABC-12')).toBe(keyed);
+	});
+	it('has no words for any other action, which reads as plainAction', async () => {
+		const { actionLabel, plainAction } = await import('./format.ts');
+		for (const a of ['moved', 'goal_linked', 'override']) expect(actionLabel(a, null, 'ABC-12')).toBeNull();
+		expect(plainAction('goal_linked')).toBe('goal linked');
 	});
 });

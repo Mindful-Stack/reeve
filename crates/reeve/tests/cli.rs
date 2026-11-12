@@ -2461,22 +2461,44 @@ fn goal_arguments_reach_the_wire() {
     assert_eq!(v, serde_json::json!({"items":["TST-1","SCRUM-4"]}));
 }
 
-/// The active sprint's `--json` view has neither `at_close` nor `changed_since_close`, and reads no activity.
+/// The active sprint's `--json` view has neither `at_close` nor `changed_since_close`, and reads no activity. It is read
+/// again by its id, because `GET /sprints` leaves the active sprint's promises out (kb/ADR-0025 R8).
 #[test]
 fn an_active_sprint_shows_no_counts_at_close() {
-    let (url, server) = serve(vec![(
-        "GET /api/v1/sprints",
-        200,
-        ok(
-            serde_json::json!({"active":view_json("active", counts_json([(12, 1), (13, 0)])),"draft":null,"closed":[]}),
-        ),
-    )]);
+    let mut by_id = view_json("active", counts_json([(12, 1), (13, 0)]));
+    by_id["promises"] = serde_json::json!([{"key":"ABC-12","title":"Export","on":"2026-11-10","to":"Acme",
+        "holder":"own","epic_key":null,"state":"open","done_on":null,"days":null}]);
+    by_id["promises_after"] = "2026-11-02".into();
+    let answers = || {
+        vec![
+            (
+                "GET /api/v1/sprints",
+                200,
+                ok(
+                    serde_json::json!({"active":view_json("active", counts_json([(12, 1), (13, 0)])),"draft":null,"closed":[]}),
+                ),
+            ),
+            ("GET /api/v1/sprints/4", 200, ok(by_id.clone())),
+        ]
+    };
+    let (url, server) = serve(answers());
     let out = reeve_at(&url, &["--json", "sprint", "show"]);
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v["value"].get("at_close").is_none(), "{v}");
     assert!(v["value"].get("changed_since_close").is_none(), "{v}");
+    assert_eq!(v["value"]["promises"][0]["key"], "ABC-12", "{v}");
+
+    let (url, server) = serve(answers());
+    let out = reeve_at(&url, &["sprint", "show"]);
+    server.join().unwrap();
+    let text = out_text(&out);
+    assert!(text.contains("Promises due 3–17 Nov:"), "{text}");
+    assert!(
+        text.contains("ABC-12 Export · to Acme · Promised by 10 Nov"),
+        "{text}"
+    );
 }
 
 /// A `closed` entry without counts is a clear error, not a view without its counts at close.
@@ -2569,6 +2591,7 @@ fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::Sto
         goals: vec![],
         urgent_mark: None,
         urgent_sources: sources,
+        promise: None,
     }
 }
 
@@ -2647,6 +2670,7 @@ fn epic_show_prints_the_urgent_line_after_the_first_line() {
             key: "ABC-3".parse().unwrap(),
             item: reeve_protocol::ItemType::Initiative,
         }],
+        promise: None,
     };
     let (url, server) = serve(vec![
         (
@@ -2806,6 +2830,7 @@ fn epic_urgent_with_a_blank_reason_posts_null() {
             key: "ABC-40".parse().unwrap(),
             item: reeve_protocol::ItemType::Epic,
         }],
+        promise: None,
     };
     let (url, server) = serve(vec![(
         "POST /api/v1/epics/ABC-40/urgent",
@@ -3299,4 +3324,463 @@ fn war_room_clear_101_rows_are_all_posted_and_the_server_refusal_printed() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("at most 100 items"));
     assert_eq!(out_text(&out), "");
+}
+
+/// A story as the promise routes answer it: ABC-12, promised on `on` by its own promise to `to`, open and due this
+/// sprint (the server's derivation, never the CLI's).
+fn promised_story(on: &str, to: Option<&str>) -> serde_json::Value {
+    let mut s = urgent_story(vec![]);
+    s.key = "ABC-12".parse().unwrap();
+    s.promise = Some(reeve_protocol::StoryPromiseDto {
+        own: Some(reeve_protocol::PromiseFactDto {
+            on: on.parse().unwrap(),
+            by: "dana@example.com".into(),
+            at: "2026-11-12T09:00:00Z".parse().unwrap(),
+            to: to.map(Into::into),
+        }),
+        epic: None,
+        on: on.parse().unwrap(),
+        holder: reeve_protocol::PromiseHolder::Own,
+        state: Some(reeve_protocol::PromiseState::Open),
+        due: Some(reeve_protocol::PromiseDue::ThisSprint),
+        days: None,
+    });
+    serde_json::to_value(s).unwrap()
+}
+
+/// ABC-12 with its own promise (30 Nov, to Beta) and its epic ABC-7's (18 Nov, to Acme): the epic's earlier date counts,
+/// due this sprint.
+fn story_with_both_promises() -> serde_json::Value {
+    let mut s = promised_story("2026-11-30", Some("Beta"));
+    s["promise"]["epic"] = serde_json::json!({"key":"ABC-7","fact":{
+        "on":"2026-11-18","by":"dana@example.com","at":"2026-11-12T09:00:00Z","to":"Acme"}});
+    s["promise"]["on"] = "2026-11-18".into();
+    s["promise"]["holder"] = "epic".into();
+    s
+}
+
+/// ABC-12 promised only through its epic ABC-7 (18 Nov), due this sprint.
+fn story_promised_via_epic() -> serde_json::Value {
+    let mut s = story_with_both_promises();
+    s["promise"]["own"] = serde_json::Value::Null;
+    s
+}
+
+/// `story promise` sends a shortcut, a date, or only a recipient, and nothing it was not given (the server refuses
+/// unknown fields, and a missing `to` keeps the recipient while `""` clears it).
+#[test]
+fn story_promise_sends_a_shortcut_a_date_or_only_a_recipient() {
+    let cases: [(&[&str], serde_json::Value); 4] = [
+        (
+            &["--on", "this-sprint", "--to", "Acme"],
+            serde_json::json!({"shortcut":"this_sprint","to":"Acme"}),
+        ),
+        (
+            &["--on", "2026-11-20"],
+            serde_json::json!({"on":"2026-11-20"}),
+        ),
+        (&["--to", "Beta"], serde_json::json!({"to":"Beta"})),
+        (&["--to", ""], serde_json::json!({"to":""})),
+    ];
+    for (args, want) in cases {
+        let (url, server) = serve(vec![(
+            "POST /api/v1/stories/ABC-12/promise",
+            200,
+            ok(promised_story("2026-11-24", Some("Acme"))),
+        )]);
+        let mut all = vec!["--json", "story", "promise", "ABC-12"];
+        all.extend_from_slice(args);
+        let out = reeve_at(&url, &all);
+        let bodies = server.join().unwrap();
+        let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+        assert_eq!(sent, want, "{args:?}");
+        // The body is one the server's own type accepts (it refuses unknown fields).
+        serde_json::from_value::<reeve_protocol::SetPromise>(sent).unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        let env: serde_json::Value = serde_json::from_str(out_text(&out).trim()).unwrap();
+        assert_eq!(env["outcome"], "ok");
+        assert_eq!(env["value"]["promise"]["on"], "2026-11-24", "{env}");
+    }
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/ABC-12/promise",
+        200,
+        ok(promised_story("2026-11-24", Some("Acme"))),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "story",
+            "promise",
+            "ABC-12",
+            "--on",
+            "this-sprint",
+            "--to",
+            "Acme",
+        ],
+    );
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} · Promised by 24 Nov · this sprint · to Acme\n",
+            glyph(reeve::glyphs::Level::Story, "ABC-12")
+        )
+    );
+}
+
+/// The answer confirms what was written. `--to ''` clears the recipient, so none is named. When the epic's earlier
+/// date counts, the chip names the epic and the drawer line follows with both promises and the story's own recipient.
+#[test]
+fn story_promise_answers_with_what_was_written() {
+    let story = glyph(reeve::glyphs::Level::Story, "ABC-12");
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/ABC-12/promise",
+        200,
+        ok(promised_story("2026-11-24", None)),
+    )]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--to", ""]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!("{story} · Promised by 24 Nov · this sprint\n")
+    );
+
+    let (url, server) = serve(vec![(
+        "POST /api/v1/stories/ABC-12/promise",
+        200,
+        ok(story_with_both_promises()),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "story",
+            "promise",
+            "ABC-12",
+            "--on",
+            "2026-11-30",
+            "--to",
+            "Beta",
+        ],
+    );
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{story} · Promised by 18 Nov · this sprint · via ABC-7\n  Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts.\n"
+        )
+    );
+}
+
+/// `--clear` makes one DELETE and words its answer from it alone: whether it cleared, and the story after. A cleared
+/// promise; an own promise cleared while the epic's still applies; no own promise while the epic's applies; nothing.
+#[test]
+fn story_promise_clear_prints_what_was_cleared() {
+    let mut cleared = urgent_story(vec![]);
+    cleared.key = "ABC-12".parse().unwrap();
+    let cleared = serde_json::to_value(cleared).unwrap();
+    let story = glyph(reeve::glyphs::Level::Story, "ABC-12");
+    let answer = |cleared: bool, story: serde_json::Value| {
+        ok(serde_json::json!({"cleared": cleared, "story": story}))
+    };
+    let rows: [(serde_json::Value, String); 4] = [
+        (
+            answer(true, cleared.clone()),
+            format!("{story} · promise cleared\n"),
+        ),
+        (
+            answer(true, story_promised_via_epic()),
+            format!("{story} · own promise cleared; still promised by 18 Nov via ABC-7\n"),
+        ),
+        (
+            answer(false, story_promised_via_epic()),
+            format!("{story} · no own promise to clear; promised by 18 Nov via ABC-7\n"),
+        ),
+        (
+            answer(false, cleared.clone()),
+            format!("{story} · no promise to clear\n"),
+        ),
+    ];
+    for (body, want) in rows {
+        let (url, server) = serve(vec![("DELETE /api/v1/stories/ABC-12/promise", 200, body)]);
+        let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+        let bodies = server.join().unwrap();
+        assert_eq!(bodies, vec![String::new()], "one bodiless DELETE, no read");
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(out_text(&out), want);
+    }
+
+    // `--json` prints the DELETE's envelope.
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/stories/ABC-12/promise",
+        200,
+        answer(true, story_promised_via_epic()),
+    )]);
+    let out = reeve_at(&url, &["--json", "story", "promise", "ABC-12", "--clear"]);
+    server.join().unwrap();
+    let env: serde_json::Value = serde_json::from_str(&out_text(&out)).unwrap();
+    assert_eq!(env["value"]["cleared"], true, "{env}");
+    assert_eq!(env["value"]["story"]["promise"]["holder"], "epic", "{env}");
+
+    // A DELETE that fails says so.
+    let missing =
+        serde_json::json!({"outcome":"error","code":"not_found","message":"no story ABC-12"});
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/stories/ABC-12/promise",
+        404,
+        missing,
+    )]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_ne!(out.status.code(), Some(0));
+}
+
+/// Usage errors exit 1 (2 is kept for refusals) and never reach the server; each is clap's own message for its cause.
+#[test]
+fn story_promise_usage_errors_exit_1() {
+    let rows: [(&[&str], &str); 9] = [
+        (
+            &[
+                "story",
+                "promise",
+                "ABC-12",
+                "--on",
+                "2026-11-20",
+                "--clear",
+            ],
+            "cannot be used with",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--to", "Acme", "--clear"],
+            "cannot be used with",
+        ),
+        (
+            &["epic", "promise", "ABC-7", "--on", "this-sprint", "--clear"],
+            "cannot be used with",
+        ),
+        (
+            &["story", "promise", "ABC-12"],
+            "required arguments were not provided",
+        ),
+        (
+            &["epic", "promise", "ABC-7"],
+            "required arguments were not provided",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "2026-13-01"],
+            "invalid value",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "someday"],
+            "invalid value",
+        ),
+        (
+            &["story", "promise", "ABC-12", "--on", "2026-1-5"],
+            "invalid value",
+        ),
+        (
+            &["epic", "promise", "ABC-7", "--on", "2026-11-5"],
+            "invalid value",
+        ),
+    ];
+    for (args, want) in rows {
+        let out = reeve_at("http://127.0.0.1:9", args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(want), "{args:?}: {err}");
+    }
+}
+
+/// A refusal (`interactive_only`) exits 2 with the reason; a validation answer is an error, exit 1, with the server's
+/// message.
+#[test]
+fn a_refused_promise_exits_2_and_prints_the_server_text() {
+    let refusal = serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false});
+    let (url, server) = serve(vec![("POST /api/v1/stories/ABC-12/promise", 422, refusal)]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--on", "2026-11-20"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("only an interactive user may do this"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let invalid = serde_json::json!({"outcome":"error","code":"validation","message":"the date is in the past"});
+    let (url, server) = serve(vec![("POST /api/v1/stories/ABC-12/promise", 400, invalid)]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--on", "2026-11-20"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("the date is in the past"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn promised_epic(past: bool) -> serde_json::Value {
+    serde_json::to_value(reeve_protocol::EpicDto {
+        key: "ABC-7".parse().unwrap(),
+        title: "Hosting".into(),
+        initiative: None,
+        brief: String::new(),
+        discovery_complete: None,
+        external_ref: None,
+        version: 1,
+        urgent_mark: None,
+        urgent_sources: vec![],
+        promise: Some(reeve_protocol::EpicPromiseDto {
+            fact: reeve_protocol::PromiseFactDto {
+                on: "2026-11-27".parse().unwrap(),
+                by: "dana@example.com".into(),
+                at: "2026-11-12T09:00:00Z".parse().unwrap(),
+                to: Some("Acme".into()),
+            },
+            due: if past {
+                None
+            } else {
+                Some(reeve_protocol::PromiseDue::NextSprint)
+            },
+            past,
+        }),
+    })
+    .unwrap()
+}
+
+#[test]
+fn epic_promise_works_the_same() {
+    let (url, server) = serve(vec![(
+        "POST /api/v1/epics/ABC-7/promise",
+        200,
+        ok(promised_epic(false)),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "epic",
+            "promise",
+            "ABC-7",
+            "--on",
+            "next-sprint",
+            "--to",
+            "Acme",
+        ],
+    );
+    let bodies = server.join().unwrap();
+    let sent: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+    assert_eq!(
+        sent,
+        serde_json::json!({"shortcut":"next_sprint","to":"Acme"})
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        out_text(&out),
+        format!(
+            "{} · Promised by 27 Nov · next sprint · to Acme\n",
+            glyph(reeve::glyphs::Level::Epic, "ABC-7")
+        )
+    );
+
+    let mut cleared = promised_epic(false);
+    cleared["promise"] = serde_json::Value::Null;
+    let epic = glyph(reeve::glyphs::Level::Epic, "ABC-7");
+    for (was, want) in [
+        (true, format!("{epic} · promise cleared\n")),
+        (false, format!("{epic} · no promise to clear\n")),
+    ] {
+        let (url, server) = serve(vec![(
+            "DELETE /api/v1/epics/ABC-7/promise",
+            200,
+            ok(serde_json::json!({"cleared": was, "epic": cleared.clone()})),
+        )]);
+        let out = reeve_at(&url, &["epic", "promise", "ABC-7", "--clear"]);
+        assert_eq!(server.join().unwrap(), vec![String::new()]);
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(out_text(&out), want);
+    }
+
+    let refusal = serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false});
+    let (url, server) = serve(vec![("POST /api/v1/epics/ABC-7/promise", 422, refusal)]);
+    let out = reeve_at(&url, &["epic", "promise", "ABC-7", "--to", "Beta"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+/// `--promised this-sprint` reaches the wire as `promised=this_sprint`, and each row shows its chip.
+#[test]
+fn story_ls_promised_sends_the_parameter_and_shows_the_date() {
+    let (line, _) = capture(&["story", "ls", "--promised", "this-sprint"]);
+    assert!(line.contains("promised=this_sprint"), "{line}");
+    let (line, _) = capture(&["story", "ls", "--promised", "any"]);
+    assert!(line.contains("promised=any"), "{line}");
+
+    let rows = serde_json::json!([{
+        "story": promised_story("2026-11-24", Some("Acme")),
+        "readiness": {"ready": true, "reasons": []},
+    }]);
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories?promised=this_sprint",
+        200,
+        ok(rows),
+    )]);
+    let out = reeve_at(&url, &["story", "ls", "--promised", "this-sprint"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = out_text(&out);
+    assert!(
+        text.trim_end()
+            .ends_with("Match · Promised by 24 Nov · this sprint"),
+        "{text}"
+    );
+}
+
+/// `story show` and `epic show` give the promise line right after the first line, and the first line ends with the
+/// chip.
+#[test]
+fn show_prints_the_promise_chip_and_line() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories/ABC-12",
+        200,
+        ok(promised_story("2026-11-24", Some("Acme"))),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "ABC-12"]);
+    server.join().unwrap();
+    let text = out_text(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].ends_with("[todo] Match · Promised by 24 Nov · this sprint"),
+        "{text}"
+    );
+    assert_eq!(
+        lines[1], "  Promised by 24 Nov 2026 to Acme · set by dana",
+        "{text}"
+    );
+
+    let (url, server) = serve(vec![
+        ("GET /api/v1/epics/ABC-7", 200, ok(promised_epic(true))),
+        (
+            "GET /api/v1/epics/ABC-7/findings",
+            200,
+            ok(serde_json::json!([])),
+        ),
+        (
+            "GET /api/v1/items/ABC-7/comments",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(&url, &["epic", "show", "ABC-7"]);
+    server.join().unwrap();
+    let text = out_text(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].contains(" Hosting · Past 27 Nov (version: 1)"),
+        "{text}"
+    );
+    assert_eq!(
+        lines[1], "  Promised by 27 Nov 2026 to Acme · set by dana · past",
+        "{text}"
+    );
 }

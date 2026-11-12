@@ -51,7 +51,8 @@ fn story_dto_carries_every_field() {
             "key": "ABC-3", "title": "T", "kind": "bug", "epic": "ABC-2", "description": "D",
             "criteria": [{"text": "c", "done": true}], "owner": "o@x", "labels": ["l"], "rank": 4,
             "blocked_by": [], "delivery": "done", "resolution": "dropped", "external_ref": "SCRUM-9",
-            "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": []
+            "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": [],
+            "promise": null
         })
     );
 }
@@ -103,7 +104,8 @@ fn epic_dto_carries_every_field() {
         json!({
             "key": "ABC-2", "title": "Title", "initiative": "ABC-1", "brief": "Brief",
             "discovery_complete": {"at": "2026-11-09T07:00:00Z", "by": "disc@x"},
-            "external_ref": "SCRUM-2", "version": 6, "urgent_mark": null, "urgent_sources": []
+            "external_ref": "SCRUM-2", "version": 6, "urgent_mark": null, "urgent_sources": [],
+            "promise": null
         })
     );
 }
@@ -362,6 +364,8 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
         &[goal(42, 5)],
         &[link(42, "ABC-9")],
         Some(&summary()),
+        &[],
+        Some("2026-11-02".parse().unwrap()),
         20
     ));
     assert_eq!(
@@ -382,7 +386,9 @@ fn sprint_view_dto_of_an_active_sprint_carries_counts_and_demo() {
                 {"key": "ABC-103", "title": "title ABC-103"},
                 {"key": "ABC-104", "title": "title ABC-104"},
                 {"key": "ABC-102", "title": "title ABC-102"},
-            ]
+            ],
+            "promises": [],
+            "promises_after": "2026-11-02"
         })
     );
 }
@@ -394,6 +400,8 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
         &[],
         &[],
         None,
+        &[],
+        None,
         17
     ));
     assert_eq!(
@@ -402,6 +410,8 @@ fn sprint_view_dto_of_a_draft_has_zero_counts_and_no_demo() {
     );
     assert_eq!(got["demo"], json!([]));
     assert_eq!(got["upkeep_line"], json!(17));
+    assert_eq!(got["promises"], json!([]));
+    assert_eq!(got["promises_after"], json!(null));
     assert_eq!(got["sprint"]["warnings"], json!(["no_goals"]));
 }
 
@@ -614,5 +624,298 @@ fn war_room_entry_dto_carries_every_field() {
             "item": {"key": "ABC-5", "item": "epic"}, "title": "Epic title", "initiative": null,
             "mark": mark_json()
         })
+    );
+}
+
+fn kept_promise(on: NaiveDate, by: &str, at: chrono::DateTime<Utc>, to: Option<&str>) -> Promise {
+    Promise::from_persisted(on, by.into(), at, to.map(str::to_string))
+}
+
+fn promise_clock(today: NaiveDate) -> PromiseClock {
+    PromiseClock {
+        today,
+        active_ends: Some(ymd(2026, 11, 24)),
+        draft_ends: Some(ymd(2026, 12, 8)),
+    }
+}
+
+/// Both promises, the effective date and its holder, the state, the due period and the days: every field distinct, so
+/// a renamed or dropped field shows. The epic's earlier date holds; on 21 Nov it is three days overdue.
+#[test]
+fn story_promise_dto_carries_every_field() {
+    let own = kept_promise(ymd(2026, 11, 20), "pm@x", t(5), Some("Acme"));
+    let epic = kept_promise(ymd(2026, 11, 18), "lead@x", t(4), None);
+    let epic_key = k("ABC-7");
+    let facts = StoryFacts {
+        delivery: DeliveryState::Todo,
+        resolution: None,
+        done_at: None,
+        own: Some(&own),
+        epic: Some((&epic_key, &epic)),
+    };
+    let sp = story_promise(&facts, &promise_clock(ymd(2026, 11, 21)));
+    assert_eq!(
+        v!(story_promise_field(sp.as_ref())),
+        json!({
+            "own": {"on": "2026-11-20", "by": "pm@x", "at": "2026-11-09T05:00:00Z", "to": "Acme"},
+            "epic": {"key": "ABC-7", "fact": {
+                "on": "2026-11-18", "by": "lead@x", "at": "2026-11-09T04:00:00Z", "to": null
+            }},
+            "on": "2026-11-18", "holder": "epic", "state": "overdue", "due": null, "days": 3
+        })
+    );
+    assert_eq!(story_promise_field(None), None);
+}
+
+/// An epic's own promise has no state: its due period while not past, `past` once its date is behind today.
+#[test]
+fn epic_promise_dto_carries_every_field() {
+    let p = kept_promise(ymd(2026, 12, 1), "lead@x", t(6), Some("Beta"));
+    let fact =
+        json!({"on": "2026-12-01", "by": "lead@x", "at": "2026-11-09T06:00:00Z", "to": "Beta"});
+    assert_eq!(
+        v!(epic_promise_field(
+            Some(&p),
+            &promise_clock(ymd(2026, 11, 21))
+        )),
+        json!({"fact": fact, "due": "next_sprint", "past": false})
+    );
+    assert_eq!(
+        v!(epic_promise_field(
+            Some(&p),
+            &promise_clock(ymd(2026, 12, 2))
+        )),
+        json!({"fact": fact, "due": null, "past": true})
+    );
+    assert_eq!(
+        epic_promise_field(None, &promise_clock(ymd(2026, 11, 21))),
+        None
+    );
+}
+
+/// A sprint's promise row: the epic's earlier date holds, so `to` is the epic's recipient (not the story's own), the
+/// epic's key is named, and the story, done two days after it, is late with its done day. Beside a later epic promise,
+/// the story's own date holds: its own recipient, and no epic named although the story inherits one. Every field
+/// distinct.
+#[test]
+fn sprint_promise_dto_carries_every_field() {
+    let own = kept_promise(ymd(2026, 11, 22), "pm@x", t(5), Some("Acme"));
+    let epic = kept_promise(ymd(2026, 11, 18), "lead@x", t(4), Some("Beta"));
+    let later_epic = kept_promise(ymd(2026, 11, 25), "lead@x", t(4), Some("Beta"));
+    let epic_key = k("ABC-7");
+    let facts = StoryFacts {
+        delivery: DeliveryState::Done,
+        resolution: Some(Resolution::Completed),
+        done_at: Some(Utc.with_ymd_and_hms(2026, 11, 20, 23, 30, 0).unwrap()),
+        own: Some(&own),
+        epic: Some((&epic_key, &epic)),
+    };
+    let row = |f: &StoryFacts<'_>| {
+        let sp = story_promise(f, &promise_clock(ymd(2026, 11, 25))).unwrap();
+        SprintPromise::listed(
+            k("ABC-9"),
+            "Ship it".into(),
+            sp,
+            Some(ymd(2026, 11, 10)),
+            ymd(2026, 11, 24),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        v!(sprint_promise_dto(&row(&facts))),
+        json!({
+            "key": "ABC-9", "title": "Ship it", "on": "2026-11-18", "to": "Beta", "holder": "epic",
+            "epic_key": "ABC-7", "state": "late", "done_on": "2026-11-20", "days": 2
+        })
+    );
+    let own_holds = StoryFacts {
+        epic: Some((&epic_key, &later_epic)),
+        ..facts
+    };
+    assert_eq!(
+        v!(sprint_promise_dto(&row(&own_holds))),
+        json!({
+            "key": "ABC-9", "title": "Ship it", "on": "2026-11-22", "to": "Acme", "holder": "own",
+            "epic_key": null, "state": "kept", "done_on": "2026-11-20", "days": null
+        })
+    );
+}
+
+/// An older server's sprint view (no `promises`) still reads, as none.
+#[test]
+fn old_sprint_view_json_without_promises_parses() {
+    let view = json!({
+        "sprint": {
+            "id": 5, "state": "active", "starts_on": "2026-11-02", "ends_on": "2026-11-16",
+            "opened_at": "2026-11-09T03:00:00Z", "closed_at": null, "version": 3, "warnings": [], "goals": []
+        },
+        "counts": {"goals": [], "completed": 0, "upkeep_completed": 0},
+        "upkeep_line": 20,
+        "demo": []
+    });
+    let v: SprintViewDto = serde_json::from_value(view).unwrap();
+    assert_eq!(v.promises, vec![]);
+    assert_eq!(v.promises_after, None);
+}
+
+/// An older server's story and epic (no `promise`) still read, as no promise.
+#[test]
+fn old_story_and_epic_json_without_promise_parse() {
+    let story = json!({
+        "key": "ABC-3", "title": "T", "kind": "bug", "epic": null, "description": "D", "criteria": [],
+        "owner": null, "labels": [], "rank": 4, "blocked_by": [], "delivery": "todo", "resolution": null,
+        "external_ref": null, "version": 7, "prs": [], "goals": [], "urgent_mark": null, "urgent_sources": []
+    });
+    let s: StoryDto = serde_json::from_value(story).unwrap();
+    assert_eq!(s.promise, None);
+    let epic = json!({
+        "key": "ABC-2", "title": "Title", "initiative": null, "brief": "Brief", "discovery_complete": null,
+        "external_ref": null, "version": 6, "urgent_mark": null, "urgent_sources": []
+    });
+    let e: EpicDto = serde_json::from_value(epic).unwrap();
+    assert_eq!(e.promise, None);
+}
+
+/// `today` is on the wire under that name; an older server's sprints (without it) still read.
+#[test]
+fn sprints_dto_carries_today() {
+    let dto = SprintsDto {
+        active: None,
+        draft: None,
+        closed: vec![],
+        today: Some(ymd(2026, 11, 12)),
+    };
+    assert_eq!(
+        v!(&dto),
+        json!({"active": null, "draft": null, "closed": [], "today": "2026-11-12"})
+    );
+    let old: SprintsDto =
+        serde_json::from_value(json!({"active": null, "draft": null, "closed": []})).unwrap();
+    assert_eq!(old.today, None);
+}
+
+/// An open promise the story holds itself: no epic, its own date due this sprint, no days.
+#[test]
+fn story_promise_dto_of_an_open_own_promise() {
+    let own = kept_promise(ymd(2026, 11, 20), "pm@x", t(5), None);
+    let facts = StoryFacts {
+        delivery: DeliveryState::InProgress,
+        resolution: None,
+        done_at: None,
+        own: Some(&own),
+        epic: None,
+    };
+    let sp = story_promise(&facts, &promise_clock(ymd(2026, 11, 12)));
+    assert_eq!(
+        v!(story_promise_field(sp.as_ref())),
+        json!({
+            "own": {"on": "2026-11-20", "by": "pm@x", "at": "2026-11-09T05:00:00Z", "to": null},
+            "epic": null, "on": "2026-11-20", "holder": "own", "state": "open", "due": "this_sprint",
+            "days": null
+        })
+    );
+}
+
+/// `SetPromise` takes a date, a shortcut, a recipient, any of them or none (the domain, not the parser, refuses an empty
+/// request); an unknown field is refused.
+#[test]
+fn set_promise_body_parses() {
+    let parse = |v: Value| serde_json::from_value::<SetPromise>(v).unwrap();
+    let body = |on, shortcut, to: Option<&str>| SetPromise {
+        on,
+        shortcut,
+        to: to.map(str::to_string),
+    };
+    assert_eq!(
+        parse(json!({"on": "2026-11-20"})),
+        body(Some(ymd(2026, 11, 20)), None, None)
+    );
+    assert_eq!(
+        parse(json!({"shortcut": "this_sprint"})),
+        body(None, Some(PromiseShortcut::ThisSprint), None)
+    );
+    assert_eq!(
+        parse(json!({"shortcut": "next_sprint"})),
+        body(None, Some(PromiseShortcut::NextSprint), None)
+    );
+    assert_eq!(
+        parse(json!({"on": "2026-11-20", "to": "Acme"})),
+        body(Some(ymd(2026, 11, 20)), None, Some("Acme"))
+    );
+    assert_eq!(parse(json!({"to": ""})), body(None, None, Some("")));
+    assert_eq!(parse(json!({})), body(None, None, None));
+    assert_eq!(
+        parse(json!({"to": null})),
+        body(None, None, None),
+        "null keeps, as absent does"
+    );
+    assert!(
+        serde_json::from_value::<SetPromise>(json!({"date": "2026-11-20"})).is_err(),
+        "an unknown field is refused"
+    );
+}
+
+/// The promise reason carries the holder's key and level, the effective date and `overdue`, and round-trips; JSON
+/// without `overdue` reads as false.
+#[test]
+fn needed_in_reason_promise_carries_every_field() {
+    let r = NeededInReason::Promise {
+        key: k("ABC-5"),
+        level: ItemType::Epic,
+        on: ymd(2026, 11, 10),
+        overdue: true,
+    };
+    let want = json!({"kind": "promise", "key": "ABC-5", "level": "epic", "on": "2026-11-10", "overdue": true});
+    assert_eq!(v!(&r), want);
+    assert_eq!(serde_json::from_value::<NeededInReason>(want).unwrap(), r);
+    assert_eq!(
+        serde_json::from_value::<NeededInReason>(
+            json!({"kind": "promise", "key": "ABC-5", "level": "story", "on": "2026-11-10"})
+        )
+        .unwrap(),
+        NeededInReason::Promise {
+            key: k("ABC-5"),
+            level: ItemType::Story,
+            on: ymd(2026, 11, 10),
+            overdue: false,
+        }
+    );
+}
+
+/// A reason kind this build does not know decodes to `Unknown` rather than failing the whole queue.
+#[test]
+fn an_unknown_needed_in_reason_decodes_to_unknown() {
+    assert_eq!(
+        serde_json::from_value::<NeededInReason>(json!({"kind": "future_thing", "x": 1})).unwrap(),
+        NeededInReason::Unknown
+    );
+}
+
+/// A promise state, due period or holder this build does not know decodes to `Unknown` rather than failing every story
+/// list an older client reads; the known values still decode as themselves.
+#[test]
+fn unknown_promise_values_decode_to_unknown() {
+    let d = |v: Value| serde_json::from_value::<PromiseState>(v).unwrap();
+    assert_eq!(d(json!("promised_twice")), PromiseState::Unknown);
+    assert_eq!(d(json!("overdue")), PromiseState::Overdue);
+    let d = |v: Value| serde_json::from_value::<PromiseDue>(v).unwrap();
+    assert_eq!(d(json!("in_a_month")), PromiseDue::Unknown);
+    assert_eq!(d(json!("later")), PromiseDue::Later);
+    let d = |v: Value| serde_json::from_value::<PromiseHolder>(v).unwrap();
+    assert_eq!(d(json!("initiative")), PromiseHolder::Unknown);
+    assert_eq!(d(json!("epic")), PromiseHolder::Epic);
+    // A whole story promise from a newer server still reads.
+    let p: StoryPromiseDto = serde_json::from_value(json!({
+        "own": null, "epic": null, "on": "2026-11-20", "holder": "team", "state": "paused", "due": "someday",
+        "days": null
+    }))
+    .unwrap();
+    assert_eq!(
+        (p.holder, p.state, p.due),
+        (
+            PromiseHolder::Unknown,
+            Some(PromiseState::Unknown),
+            Some(PromiseDue::Unknown)
+        )
     );
 }

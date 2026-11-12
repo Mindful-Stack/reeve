@@ -20,7 +20,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch } = await import('#lib/test/net.ts');
 	installFetch(async ({ method, path }) => {
 		if (method === 'GET' && (path === '/api/v1/epics/ABC-5' || path === '/api/v1/epics/ABC-6'))
-			return { key: path.slice(-5), title: 'Login', brief: '', version: 3, initiative: null, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [] } satisfies Epic;
+			return { key: path.slice(-5), title: 'Login', brief: '', version: 3, initiative: null, discovery_complete: null, external_ref: null, urgent_mark: null, urgent_sources: [], promise: null } satisfies Epic;
 		if (method === 'GET' && (path === '/api/v1/initiatives' || path === '/api/v1/stories' || path === '/api/v1/activity')) return [];
 		if (method === 'GET' && path === '/api/v1/decisions') return net.decisions;
 		throw new Error(`unexpected ${method} ${path}`);
