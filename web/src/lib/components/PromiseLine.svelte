@@ -2,11 +2,11 @@
      story has its own and its epic's, and the state, all as text. The epic's key links to the epic. -->
 <script lang="ts">
 	import type { EpicPromise, StoryPromise } from '#lib/api/types.ts';
-	import { epicLineText, isEpic, lineParts, type LinePart } from '#lib/promise.ts';
+	import { lineParts } from '#lib/promise.ts';
 
 	let { promise }: { promise: StoryPromise | EpicPromise } = $props();
 
-	const parts = $derived<LinePart[]>(isEpic(promise) ? [{ text: epicLineText(promise) }] : lineParts(promise));
+	const parts = $derived(lineParts(promise));
 </script>
 
 <p class="promise-line" data-testid="promise-line">

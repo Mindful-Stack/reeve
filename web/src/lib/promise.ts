@@ -1,15 +1,18 @@
 // The words, tone and icon of a promise (kb/ADR-0025). Every value comes from the server: state, due period and days are
-// derived on read there, so nothing here reads a clock or computes a date. The CLI uses the same words.
-import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, StoryPromise } from '#lib/api/types.ts';
-import { dayLabel, short } from './format.ts';
+// derived on read there, so nothing here reads a clock or computes a date. The CLI uses the same words: the rows of
+// promise.fixture.json pin both.
+import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, SprintPromise, StoryPromise } from '#lib/api/types.ts';
+import { dateLabel, dayLabel, short } from './format.ts';
 
 export type PromiseTone = 'warn' | 'ready' | 'muted' | 'neutral';
 export type PromiseIcon = 'clock' | 'check' | 'calendar' | null;
+
+/** A piece of promise words: text, or an epic key the host shows apart (linked in a line, kept on one line in a chip). */
+export type PromisePart = { text: string } | { epic: string };
+
 export type ChipLook = {
-	/** The chip's words, without the epic it is via. */
-	text: string;
-	/** The epic key the chip names (" · via ABC-7"), or null. */
-	via: string | null;
+	/** The chip's words; an epic it is via comes last, as its own part. */
+	parts: PromisePart[];
 	tone: PromiseTone;
 	icon: PromiseIcon;
 };
@@ -22,11 +25,11 @@ function period(due: PromiseDue | null | undefined): string {
 /** " 3 d", or "" when the server sent no count. */
 const daysText = (days: number | null | undefined) => (days == null ? '' : ` ${days} d`);
 
-/** States with words; `unknown` (a state added after this build) is shown neutrally, like open: "Promised 20 Nov". */
+/** States with words; `unknown` (a state added after this build) is shown neutrally, like open: "Promised by 20 Nov". */
 type Settled = Exclude<PromiseState, 'open' | 'unknown'>;
 
 /** The one table of state words, lower case; every surface formats from it (the CLI copies it). */
-export const STATE_WORDS: Record<Settled, (days: number | null | undefined) => string> = {
+const STATE_WORDS: Record<Settled, (days: number | null | undefined) => string> = {
 	overdue: (days) => `overdue${daysText(days)}`,
 	kept: () => 'kept',
 	late: (days) => `done${daysText(days)} late`,
@@ -34,7 +37,7 @@ export const STATE_WORDS: Record<Settled, (days: number | null | undefined) => s
 };
 
 /** The state's words, or null for open, an unknown state and no state. */
-function stateWords(p: Pick<StoryPromise, 'state' | 'days'>): string | null {
+function stateWords(p: { state?: PromiseState | null; days?: number | null }): string | null {
 	const st = p.state ?? null;
 	return st == null || st === 'open' || st === 'unknown' ? null : STATE_WORDS[st](p.days);
 }
@@ -52,92 +55,77 @@ export type ChipOptions = {
 	via?: boolean;
 };
 
-/** A story chip's words without the epic: "Overdue 3 d · 20 Nov", "Promised 20 Nov · this sprint", … */
-function storyChipBase(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days'>): string {
+/** A story chip's words without the epic: "Overdue 3 d · 20 Nov", "Promised by 20 Nov · this sprint", … */
+function storyChipBase(p: { on: string; state?: PromiseState | null; due?: PromiseDue | null; days?: number | null }): string {
 	const d = dayLabel(p.on);
 	const w = stateWords(p);
-	return w != null ? `${capital(w)} · ${d}` : `Promised ${d}${p.state === 'open' ? period(p.due) : ''}`;
+	return w != null ? `${capital(w)} · ${d}` : `Promised by ${d}${p.state === 'open' ? period(p.due) : ''}`;
 }
 
-/** The epic key a story chip names, or null. */
-function viaKey(p: Pick<StoryPromise, 'holder' | 'epic'>, { via = true }: ChipOptions): string | null {
-	return via && p.holder === 'epic' && p.epic != null ? p.epic.key : null;
-}
-
-/** A story chip's text, from the server's effective date, state, period and days. */
-export function chipText(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' | 'holder' | 'epic'>, opts: ChipOptions = {}): string {
-	const key = viaKey(p, opts);
-	return `${storyChipBase(p)}${key != null ? ` · via ${key}` : ''}`;
-}
-
-/** An epic chip's text: an epic has no state of its own (R4), only a period while the date is not past. */
-export function epicChipText(p: EpicPromise): string {
-	const d = dayLabel(p.fact.on);
-	return p.past ? `Past ${d}` : `Promised ${d}${period(p.due)}`;
-}
-
-/** The tone and icon of a state; `past` is an epic's date gone by. The text always carries the state too. */
-export function look(state: PromiseState | 'past' | null | undefined): { tone: PromiseTone; icon: PromiseIcon } {
-	if (state === 'overdue') return { tone: 'warn', icon: 'clock' };
+/** The tone and icon of a state; `past` is an epic's date gone by, which warns like an overdue story. The text always
+ *  carries the state too. */
+function look(state: PromiseState | 'past' | null | undefined): { tone: PromiseTone; icon: PromiseIcon } {
+	if (state === 'overdue' || state === 'past') return { tone: 'warn', icon: 'clock' };
 	if (state === 'kept') return { tone: 'ready', icon: 'check' };
-	if (state === 'late' || state === 'dropped' || state === 'past') return { tone: 'muted', icon: null };
+	if (state === 'late' || state === 'dropped') return { tone: 'muted', icon: null };
 	return { tone: 'neutral', icon: 'calendar' };
 }
 
-/** Whether a promise is an epic's own (`EpicPromiseDto`) rather than a story's. */
-export const isEpic = (p: StoryPromise | EpicPromise): p is EpicPromise => 'fact' in p;
+/** Whether a promise is an epic's own (`EpicPromiseDto`). */
+const isEpic = (p: StoryPromise | EpicPromise | SprintPromise): p is EpicPromise => 'fact' in p;
+/** Whether a promise is a row of a sprint's promise list (`SprintPromiseDto`). */
+const isSprintRow = (p: StoryPromise | SprintPromise): p is SprintPromise => 'title' in p;
 
-/** Everything a chip shows, for a story's or an epic's promise: the words and, apart, the epic key it is via. */
-export function chip(p: StoryPromise | EpicPromise, opts: ChipOptions = {}): ChipLook {
-	return isEpic(p)
-		? { text: epicChipText(p), via: null, ...look(p.past ? 'past' : null) }
-		: { text: storyChipBase(p), via: viaKey(p, opts), ...look(p.state) };
+/** The words, tone and icon of a promise's chip: a story's or an epic's, or a sprint's promise row. A sprint row has no
+ *  period: the row is about the sprint the date falls in. This is the only place a chip's words are built. */
+export function chip(p: StoryPromise | EpicPromise | SprintPromise, { via = true }: ChipOptions = {}): ChipLook {
+	if (isEpic(p)) {
+		const d = dayLabel(p.fact.on);
+		return { parts: [{ text: p.past ? `Past ${d}` : `Promised by ${d}${period(p.due)}` }], ...look(p.past ? 'past' : null) };
+	}
+	const row = isSprintRow(p);
+	const base = storyChipBase(row ? { ...p, due: null } : p);
+	const key = !via || p.holder !== 'epic' ? null : row ? (p.epic_key ?? null) : (p.epic?.key ?? null);
+	return { parts: key == null ? [{ text: base }] : [{ text: base }, { text: ' · via ' }, { epic: key }], ...look(p.state) };
+}
+
+/** A row of a sprint's promise list after the story's title: the recipient, then the chip's words. */
+export function sprintRowParts(p: SprintPromise): PromisePart[] {
+	const parts = chip(p).parts;
+	return p.to ? [{ text: `to ${p.to} · ` }, ...parts] : parts;
 }
 
 const to = (f: PromiseFact) => (f.to ? ` to ${f.to}` : '');
 const setBy = (f: PromiseFact) => ` · set by ${short(f.by)}`;
 
-/** A piece of a promise line: text, or an epic key the line links. */
-export type LinePart = { text: string } | { epic: string };
-
-/** The drawer's promise line, in parts so the host can link the epic's key. */
-export function lineParts(p: StoryPromise): LinePart[] {
+/** The promise line on the story drawer and the epic page, in parts so the host can link the epic's key. A line gives
+ *  the full date, year included: a kept promise stays on a done story for good. */
+export function lineParts(p: StoryPromise | EpicPromise): PromisePart[] {
+	if (isEpic(p)) return [{ text: `Promised by ${dateLabel(p.fact.on)}${to(p.fact)}${setBy(p.fact)}${p.past ? ' · past' : ''}` }];
 	const own = p.own ?? null;
 	const epic = p.epic ?? null;
-	let parts: LinePart[];
+	let parts: PromisePart[];
 	const w = stateWords(p);
 	let suffix = stateSuffix(w);
 	if (own && epic) {
 		suffix = stateSentence(w);
 		parts = [
-			{ text: `Promised ${dayLabel(own.on)}${to(own)}. Epic ` },
+			{ text: `Promised by ${dateLabel(own.on)}${to(own)}. Epic ` },
 			{ epic: epic.key },
-			{ text: ` is promised ${dayLabel(epic.fact.on)}${p.holder === 'epic' ? '; the earlier date counts.' : '.'}` }
+			{ text: ` is promised by ${dateLabel(epic.fact.on)}${to(epic.fact)}${p.holder === 'epic' ? '; the earlier date counts.' : '.'}` }
 		];
 	} else if (epic) {
 		parts = [
-			{ text: `Promised ${dayLabel(epic.fact.on)} via epic ` },
+			{ text: `Promised by ${dateLabel(epic.fact.on)} via epic ` },
 			{ epic: epic.key },
 			{ text: `${to(epic.fact)}${setBy(epic.fact)}` }
 		];
 	} else if (own) {
-		parts = [{ text: `Promised ${dayLabel(own.on)}${to(own)}${setBy(own)}` }];
+		parts = [{ text: `Promised by ${dateLabel(own.on)}${to(own)}${setBy(own)}` }];
 	} else {
-		parts = [{ text: `Promised ${dayLabel(p.on)}` }];
+		parts = [{ text: `Promised by ${dateLabel(p.on)}` }];
 	}
 	return suffix ? [...parts, { text: suffix }] : parts;
-}
-
-/** The drawer's promise line as plain text. */
-export function lineText(p: StoryPromise): string {
-	return lineParts(p)
-		.map((x) => ('text' in x ? x.text : x.epic))
-		.join('');
-}
-
-/** The epic page's promise line. */
-export function epicLineText(p: EpicPromise): string {
-	return `Promised ${dayLabel(p.fact.on)}${to(p.fact)}${setBy(p.fact)}${p.past ? ' · past' : ''}`;
 }
 
 /** The epic promise a story inherits, as the promise dialog takes it, or null. */
@@ -147,28 +135,29 @@ export function inheritedEpic(p: StoryPromise | null | undefined): { key: string
 }
 
 /** The dialog's note about the inherited epic promise, against the date chosen so far. ISO dates compare as strings; the
- *  story's own date wins a tie (R3). */
+ *  story's own date wins a tie (R3). A UX affordance: the server derives which date counts on every read. */
 export function epicNote(epic: { key: string; on: string }, chosen: string): string {
-	const d = dayLabel(epic.on);
+	const d = dateLabel(epic.on);
 	return chosen !== '' && epic.on < chosen
-		? `Epic ${epic.key} is promised ${d}; the earlier date counts.`
-		: `Epic ${epic.key} is promised ${d}.`;
+		? `Epic ${epic.key} is promised by ${d}; the earlier date counts.`
+		: `Epic ${epic.key} is promised by ${d}.`;
 }
 
-export const PROMISE_BY = 'Promise by…';
-export const CHANGE_PROMISE = 'Change promise…';
-export const CLEAR_PROMISE = 'Clear promise';
+/** What a promise item of an actions menu does: open the dialog (to promise or change), or clear the own promise. */
+export type PromiseActionKind = 'set' | 'clear';
+export type PromiseAction = { label: string; kind: PromiseActionKind };
 
 /** The promise items of an actions menu. A done story cannot be promised (R2), but its own promise can be cleared; an
  *  epic passes `done = false`. */
-export function promiseActions(hasOwn: boolean, done: boolean): string[] {
-	if (hasOwn) return done ? [CLEAR_PROMISE] : [CHANGE_PROMISE, CLEAR_PROMISE];
-	return done ? [] : [PROMISE_BY];
+export function promiseActions(hasOwn: boolean, done: boolean): PromiseAction[] {
+	const clear: PromiseAction = { label: 'Clear promise', kind: 'clear' };
+	if (hasOwn) return done ? [clear] : [{ label: 'Change promise…', kind: 'set' }, clear];
+	return done ? [] : [{ label: 'Promise by…', kind: 'set' }];
 }
 
 /** The story list's `promised` filter over the server's `state` and `due`, as the server applies it (the Rust
- *  `Filter::matches`): this sprint keeps overdue and open-this-sprint, next sprint open-next-sprint, overdue only
- *  overdue, any every open or overdue promise. */
+ *  `Filter::matches`; the fixture's `filter` rows pin both): this sprint keeps overdue and open-this-sprint, next sprint
+ *  open-next-sprint, overdue only overdue, any every open or overdue promise. */
 export function promisedMatches(
 	f: PromisedFilter,
 	p: { state?: PromiseState | null; due?: PromiseDue | null }
@@ -205,10 +194,4 @@ export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }
 /** Whether a URL value is one of the `promised` filter's values (as `isKind` is for kinds). */
 export function isPromisedFilter(s: string | null | undefined): s is PromisedFilter {
 	return PROMISED_OPTIONS.some((o) => o.value === s);
-}
-
-/** A row of a sprint's promise list: the chip's words without a period or an epic ("Kept · 20 Nov"), since the row is
- *  about the sprint the date falls in. */
-export function sprintPromiseText(p: Pick<StoryPromise, 'on' | 'state' | 'days'>): string {
-	return storyChipBase({ ...p, due: null });
 }

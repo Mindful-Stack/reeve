@@ -1068,6 +1068,9 @@ describe('epic page: promise', () => {
 		expect(document.body.querySelector('dialog h2')!.textContent).toBe('Promise ABC-5 by…');
 		expect(shortcut()).toBeUndefined();
 		expect(document.body.querySelector('dialog input[type="date"]')!.hasAttribute('min')).toBe(false);
+		// Pending, not failed: the row is reserved and nothing says the shortcuts are unavailable.
+		expect(document.body.querySelector('[data-testid="promise-shortcuts"]')).not.toBeNull();
+		expect(document.body.querySelector('[data-testid="promise-shortcuts-unavailable"]')).toBeNull();
 		release();
 		await vi.waitFor(() => {
 			flushSync();
@@ -1080,21 +1083,24 @@ describe('epic page: promise', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			expect(document.body.querySelector('dialog')).toBeNull();
-			expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised 24 Nov to Acme · set by dan');
+			expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised by 24 Nov 2026 to Acme · set by dan');
 			expect(document.activeElement).toBe(document.body.querySelector('button[aria-label="Actions for ABC-5"]'));
 		});
 		expect(net.promiseWrites).toEqual([{ method: 'POST', body: { shortcut: 'this_sprint' } }]);
 	});
 
-	it('a failed sprints read leaves the dialog usable without shortcuts', async () => {
+	it('a failed sprints read collapses the shortcut row and says shortcuts are unavailable; the dialog stays usable', async () => {
 		net.sprintsFail = true;
 		await open();
 		item(await menu(), 'Promise by…')!.click();
 		flushSync();
-		await vi.waitFor(() => expect(net.sprintsAnswered).toBe(1));
-		// Let the failed read's rejection run its handler before looking.
-		await tick();
-		flushSync();
+		// Failed, not pending: only a settled failure says so, and the reserved row is gone.
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="promise-shortcuts-unavailable"]')?.textContent).toBe('Sprint shortcuts are unavailable.');
+		});
+		expect(net.sprintsAnswered).toBe(1);
+		expect(document.body.querySelector('[data-testid="promise-shortcuts"]')).toBeNull();
 		expect(shortcut()).toBeUndefined();
 		expect(document.body.querySelector('dialog input[type="date"]')).not.toBeNull();
 	});
@@ -1102,7 +1108,7 @@ describe('epic page: promise', () => {
 	it('with a promise offers Change and Clear, shows the line, and clears with DELETE', async () => {
 		net.epic = { ...net.epic, promise: { fact, due: 'later', past: false } };
 		await open();
-		expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised 20 Nov to Acme · set by dan');
+		expect(document.body.querySelector('[data-testid="promise-line"]')!.textContent).toContain('Promised by 20 Nov 2026 to Acme · set by dan');
 		const items = await menu();
 		expect(items.map((b) => b.textContent?.trim())).toEqual(['Edit brief', 'Mark urgent…', 'Change promise…', 'Clear promise']);
 		item(items, 'Clear promise')!.click();
@@ -1145,7 +1151,7 @@ describe('epic page: promise', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			// Every row is under this epic, so the chip does not name it again.
-			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised 20 Nov');
+			expect(document.body.querySelector('#stories .promise-chip')?.textContent).toBe('Promised by 20 Nov');
 		});
 		expect(document.body.querySelector('#stories a.title')?.nextElementSibling?.classList.contains('promise-chip')).toBe(true);
 	});

@@ -3401,7 +3401,7 @@ fn story_promise_sends_a_shortcut_a_date_or_only_a_recipient() {
     assert_eq!(
         out_text(&out),
         format!(
-            "{} · Promised 24 Nov · this sprint · to Acme\n",
+            "{} · Promised by 24 Nov · this sprint · to Acme\n",
             glyph(reeve::glyphs::Level::Story, "ABC-12")
         )
     );
@@ -3422,7 +3422,7 @@ fn story_promise_answers_with_what_was_written() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         out_text(&out),
-        format!("{story} · Promised 24 Nov · this sprint\n")
+        format!("{story} · Promised by 24 Nov · this sprint\n")
     );
 
     let (url, server) = serve(vec![(
@@ -3447,7 +3447,7 @@ fn story_promise_answers_with_what_was_written() {
     assert_eq!(
         out_text(&out),
         format!(
-            "{story} · Promised 18 Nov · this sprint · via ABC-7\n  Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts.\n"
+            "{story} · Promised by 18 Nov · this sprint · via ABC-7\n  Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts.\n"
         )
     );
 }
@@ -3485,7 +3485,7 @@ fn story_promise_clear_prints_what_was_cleared() {
     assert_eq!(
         out_text(&out),
         format!(
-            "{} · promise cleared · Promised 18 Nov · this sprint · via ABC-7\n",
+            "{} · promise cleared · Promised by 18 Nov · this sprint · via ABC-7\n",
             glyph(reeve::glyphs::Level::Story, "ABC-12")
         )
     );
@@ -3632,7 +3632,7 @@ fn epic_promise_works_the_same() {
     assert_eq!(
         out_text(&out),
         format!(
-            "{} · Promised 27 Nov · next sprint · to Acme\n",
+            "{} · Promised by 27 Nov · next sprint · to Acme\n",
             glyph(reeve::glyphs::Level::Epic, "ABC-7")
         )
     );
@@ -3685,7 +3685,7 @@ fn story_ls_promised_sends_the_parameter_and_shows_the_date() {
     let text = out_text(&out);
     assert!(
         text.trim_end()
-            .ends_with("Match · Promised 24 Nov · this sprint"),
+            .ends_with("Match · Promised by 24 Nov · this sprint"),
         "{text}"
     );
 }
@@ -3704,11 +3704,11 @@ fn show_prints_the_promise_chip_and_line() {
     let text = out_text(&out);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
-        lines[0].ends_with("[todo] Match · Promised 24 Nov · this sprint"),
+        lines[0].ends_with("[todo] Match · Promised by 24 Nov · this sprint"),
         "{text}"
     );
     assert_eq!(
-        lines[1], "  Promised 24 Nov to Acme · set by dana",
+        lines[1], "  Promised by 24 Nov 2026 to Acme · set by dana",
         "{text}"
     );
 
@@ -3734,7 +3734,7 @@ fn show_prints_the_promise_chip_and_line() {
         "{text}"
     );
     assert_eq!(
-        lines[1], "  Promised 27 Nov to Acme · set by dana · past",
+        lines[1], "  Promised by 27 Nov 2026 to Acme · set by dana · past",
         "{text}"
     );
 }

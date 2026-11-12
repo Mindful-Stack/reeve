@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { ActivityEntry } from '#lib/api/types.ts';
-	import { actionLabel, age, errorMessage, short } from '#lib/format.ts';
+	import { actionLabel, age, errorMessage, plainAction, short } from '#lib/format.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
@@ -68,7 +68,7 @@
 
 	/** The entry's action in words: `actionLabel`'s, without the key, which the row shows beside it. */
 	function label(e: ActivityEntry): string {
-		return actionLabel(e.action, e.payload);
+		return actionLabel(e.action, e.payload) ?? plainAction(e.action);
 	}
 </script>
 

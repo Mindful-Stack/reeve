@@ -749,7 +749,7 @@ mod tests {
         let (_, y) = at(&rows, "Title of ABC-1");
         assert!(
             rows[y as usize + 1].contains(
-                "Promised 30 Nov to Beta. Epic ABC-100 is promised 7 Nov; the earlier date counts. Overdue 3 d."
+                "Promised by 30 Nov 2026 to Beta. Epic ABC-100 is promised by 7 Nov 2026 to Acme; the earlier date counts. Overdue 3 d."
             ),
             "{rows:#?}"
         );

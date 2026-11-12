@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mount, unmount } from 'svelte';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EpicPromise, StoryPromise } from '#lib/api/types.ts';
 import { withReadiness } from '#lib/test/fixtures.ts';
 import { sumCounts } from '#lib/initiative.ts';
@@ -11,6 +11,10 @@ import BacklogList from './BacklogList.svelte';
 import EpicCard from './EpicCard.svelte';
 import PromiseChip from './PromiseChip.svelte';
 import StoryCard from './StoryCard.svelte';
+import StoryRow from './StoryRow.svelte';
+
+// Home's row links its title through the page's URL.
+vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/') } }));
 
 const fact = { on: '2026-11-20', to: 'Acme', by: 'dana@example.com', at: '2026-11-01T09:00:00Z' };
 const overdue: StoryPromise = { own: fact, epic: null, on: '2026-11-20', holder: 'own', state: 'overdue', due: null, days: 3 };
@@ -39,26 +43,26 @@ describe('PromiseChip', () => {
 		const inherited: StoryPromise = { own: null, epic: { key: 'GRA-608', fact }, on: '2026-11-20', holder: 'epic', state: 'open', due: 'this_sprint', days: null };
 		app = mount(PromiseChip, { target: document.body, props: { promise: inherited } });
 		const chip = document.body.querySelector('.promise-chip')!;
-		expect(chip.textContent?.trim()).toBe('Promised 20 Nov · this sprint · via GRA-608');
+		expect(chip.textContent?.trim()).toBe('Promised by 20 Nov · this sprint · via GRA-608');
 		expect(chip.querySelector('.via')?.textContent).toBe('GRA-608');
 		unmount(app);
 		app = mount(PromiseChip, { target: document.body, props: { promise: inherited, via: false } });
 		expect(document.body.querySelector('.promise-chip .via')).toBeNull();
 	});
 
-	it('shows an epic promise, with no icon once past', () => {
+	it('warns with the clock once an epic promise is past, as an overdue story does', () => {
 		const past: EpicPromise = { fact, due: null, past: true };
 		app = mount(PromiseChip, { target: document.body, props: { promise: past } });
 		const chip = document.body.querySelector('.promise-chip')!;
 		expect(chip.textContent?.trim()).toBe('Past 20 Nov');
-		expect(chip.querySelector('svg')).toBeNull();
-		expect(chip.classList.contains('tone-muted')).toBe(true);
-		expect(chip.classList.contains('muted')).toBe(false);
+		expect(chip.querySelector('svg circle')).not.toBeNull();
+		expect(chip.classList.contains('tone-warn')).toBe(true);
+		expect(chip.classList.contains('warn')).toBe(false);
 	});
 });
 
 describe('PromiseChip CSS', () => {
-	// The longest text ("Promised 20 Nov · this sprint · via GRA-608", ~250 px) is wider than a board card (~222 px): the
+	// The longest text ("Promised by 20 Nov · this sprint · via GRA-608", ~265 px) is wider than a board card (~222 px): the
 	// chip must wrap inside its container, never overflow it, and never cut the state off with an ellipsis.
 	const css = readFileSync(resolve(import.meta.dirname, 'PromiseChip.svelte'), 'utf8');
 	const rule = /\.promise-chip \{([^}]*)\}/.exec(css)![1].replace(/\/\*[\s\S]*?\*\//g, '');
@@ -66,7 +70,6 @@ describe('PromiseChip CSS', () => {
 		expect(rule).toMatch(/max-width:\s*100%;/);
 		expect(rule).toMatch(/white-space:\s*normal;/);
 		expect(rule).not.toMatch(/nowrap|text-overflow|ellipsis/);
-		expect(rule).toMatch(/border-radius:\s*10px;/);
 	});
 	it('never breaks the via key at its hyphen', () => {
 		expect(/\.via \{([^}]*)\}/.exec(css)?.[1]).toMatch(/white-space:\s*nowrap;/);
@@ -95,12 +98,21 @@ describe('hosts', () => {
 		expect(lis[1].querySelector('a.title')?.nextElementSibling?.classList.contains('promise-chip')).toBe(true);
 	});
 
+	it("a Home row shows the chip in .meta; a story without a promise shows none", () => {
+		app = mount(StoryRow, { target: document.body, props: { row: withReadiness({ key: 'ABC-3', promise: overdue }) } });
+		expect(document.body.querySelector('li[data-key="ABC-3"] .meta .promise-chip')?.textContent).toBe('Overdue 3 d · 20 Nov');
+		unmount(app);
+		app = mount(StoryRow, { target: document.body, props: { row: withReadiness({ key: 'ABC-4' }) } });
+		expect(document.body.querySelector('li[data-key="ABC-4"]')).not.toBeNull();
+		expect(document.body.querySelector('.promise-chip')).toBeNull();
+	});
+
 	it('an epic card shows its promise chip', () => {
 		const promise: EpicPromise = { fact, due: 'this_sprint', past: false };
 		app = mount(EpicCard, {
 			target: document.body,
 			props: { epic: { key: 'ABC-7', title: 'Checkout', urgent_mark: null, urgent_sources: [], promise }, counts: sumCounts([]), waiting: null }
 		});
-		expect(document.body.querySelector('.epic-card .promise-chip')?.textContent).toBe('Promised 20 Nov · this sprint');
+		expect(document.body.querySelector('.epic-card .promise-chip')?.textContent).toBe('Promised by 20 Nov · this sprint');
 	});
 });

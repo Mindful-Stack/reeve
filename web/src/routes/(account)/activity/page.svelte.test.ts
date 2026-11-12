@@ -44,7 +44,7 @@ describe('account activity', () => {
 			expect(document.body.querySelectorAll('.action')).toHaveLength(2);
 		});
 		expect([...document.body.querySelectorAll('.action')].map((e) => e.textContent)).toEqual([
-			'promised by 20 Nov to Acme',
+			'promised by 20 Nov 2026 to Acme',
 			'added attachment shot.png'
 		]);
 	});

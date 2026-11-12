@@ -1365,8 +1365,10 @@ async fn flow() {
     );
     let answer = String::from_utf8(promised.stdout).unwrap();
     assert!(
-        answer.contains(&format!("{zebra_bug} · Promised {} ", on.format("%-d %b")))
-            && answer.trim_end().ends_with(" · to Acme"),
+        answer.contains(&format!(
+            "{zebra_bug} · Promised by {} ",
+            on.format("%-d %b")
+        )) && answer.trim_end().ends_with(" · to Acme"),
         "{answer}"
     );
     assert_eq!(

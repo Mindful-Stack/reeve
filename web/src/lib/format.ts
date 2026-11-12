@@ -33,6 +33,13 @@ export function dayLabel(iso: string): string {
 	return m && i >= 0 && i < 12 && d >= 1 && d <= 31 ? `${d} ${MONTHS[i]}` : iso;
 }
 
+/** "2026-11-20" → "20 Nov 2026": `dayLabel` with the year, for words that stay on a done item long after the day.
+ *  Anything else is returned unchanged. */
+export function dateLabel(iso: string): string {
+	const d = dayLabel(iso);
+	return d === iso ? iso : `${d} ${iso.slice(0, 4)}`;
+}
+
 /** The local part of an email address. */
 export function short(email: string): string {
 	const at = email.indexOf('@');
@@ -42,11 +49,6 @@ export function short(email: string): string {
 /** The text to show for anything thrown: an Error's message (an `ApiError` carries the server's), or the value itself. */
 export function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
-}
-
-/** The actions `actionLabel` words from their payload; every other one reads as its action with spaces. */
-export function hasOwnWords(action: string): boolean {
-	return action.startsWith('attachment_') || action === 'promised' || action === 'promise_cleared';
 }
 
 const payloadField = (o: unknown, name: string): unknown => (o && typeof o === 'object' && name in o ? (o as Record<string, unknown>)[name] : undefined);
@@ -61,12 +63,12 @@ function promisedWords(payload: unknown, key: string | undefined): string {
 	const prev = payloadField(payload, 'previous');
 	const promise = key == null ? 'the promise' : `the promise on ${key}`;
 	const recipient = key == null ? "the promise's recipient" : `the recipient of the promise on ${key}`;
-	const fresh = `promised ${key == null ? '' : `${key} `}by ${dayLabel(on)}${to == null ? '' : ` to ${to}`}`;
+	const fresh = `promised ${key == null ? '' : `${key} `}by ${dateLabel(on)}${to == null ? '' : ` to ${to}`}`;
 	if (prev == null || typeof prev !== 'object') return fresh;
 	const prevOn = nonEmpty(payloadField(prev, 'on'));
 	const prevTo = nonEmpty(payloadField(prev, 'to'));
 	if (on !== prevOn) {
-		const change = `changed ${promise} to ${dayLabel(on)}`;
+		const change = `changed ${promise} to ${dateLabel(on)}`;
 		if (to === prevTo) return change;
 		return to == null ? `${change} and removed its recipient` : `${change} and its recipient to ${to}`;
 	}
@@ -74,16 +76,21 @@ function promisedWords(payload: unknown, key: string | undefined): string {
 	return to == null ? `removed ${recipient}` : `changed ${recipient} to ${to}`;
 }
 
-/** An activity entry's action as people read it: an attachment's names its file, a promise's its date and recipient
- *  (from the payload); any other is its action with spaces. `key` names the item in a promise's words, where the note is
- *  not already about one item (`freshNote`). */
-export function actionLabel(action: string, payload: unknown, key?: string): string {
+/** An activity entry's action in its own words: an attachment's names its file, a promise's its date and recipient (from
+ *  the payload); null for every other action, which reads as `plainAction`. The one place an action is worded. `key`
+ *  names the item in a promise's words, where the note is not already about one item (`freshNote`). */
+export function actionLabel(action: string, payload: unknown, key?: string): string | null {
 	if (action === 'attachment_added' || action === 'attachment_removed') {
 		const name = nonEmpty(payloadField(payload, 'filename'));
 		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name == null ? '' : ` ${name}`}`;
 	}
 	if (action === 'promised') return promisedWords(payload, key);
 	if (action === 'promise_cleared') return key == null ? 'cleared the promise' : `cleared the promise on ${key}`;
+	return null;
+}
+
+/** An action `actionLabel` has no words for, as people read it: the action with spaces ("goal linked"). */
+export function plainAction(action: string): string {
 	return action.replaceAll('_', ' ');
 }
 

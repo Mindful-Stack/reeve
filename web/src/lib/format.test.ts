@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { age, dayLabel, errorMessage, month, short } from './format.ts';
+import { age, dateLabel, dayLabel, errorMessage, month, short } from './format.ts';
 
 const now = Date.parse('2026-10-26T12:00:00Z');
 const ago = (days: number) => new Date(now - days * 86_400_000).toISOString();
@@ -50,6 +50,11 @@ describe('dayLabel', () => {
 	});
 });
 
+describe('dateLabel', () => {
+	it('adds the year to the day label', () => expect(dateLabel('2026-01-01')).toBe('1 Jan 2026'));
+	it('returns anything else unchanged', () => expect(dateLabel('2026-13-01')).toBe('2026-13-01'));
+});
+
 describe('short', () => {
 	it('takes the local part', () => expect(short('dan@example.com')).toBe('dan'));
 	it('leaves a non-address unchanged', () => expect(short('dan')).toBe('dan'));
@@ -64,39 +69,38 @@ describe('errorMessage', () => {
 });
 
 describe('actionLabel', () => {
-	it('names the file of an attachment entry and spaces every other action', async () => {
+	it('names the file of an attachment entry', async () => {
 		const { actionLabel } = await import('./format.ts');
 		expect(actionLabel('attachment_added', { attachment_id: 'x', filename: 'shot.png' })).toBe('added attachment shot.png');
 		expect(actionLabel('attachment_removed', { filename: 'shot.png' })).toBe('deleted attachment shot.png');
 		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
-		expect(actionLabel('goal_linked', null)).toBe('goal linked');
 	});
 
 	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file).
 	const promised = (on: string, to: string | null, previous: { on: string; to: string | null } | null) => ({ item_type: 'story', on, to, previous });
 	it.each<[string, string, unknown, string, string]>([
-		['a new promise', 'promised', promised('2026-11-20', 'Acme', null), 'promised by 20 Nov to Acme', 'promised ABC-12 by 20 Nov to Acme'],
-		['a new promise, no recipient', 'promised', promised('2026-11-20', null, null), 'promised by 20 Nov', 'promised ABC-12 by 20 Nov'],
+		['a new promise', 'promised', promised('2026-11-20', 'Acme', null), 'promised by 20 Nov 2026 to Acme', 'promised ABC-12 by 20 Nov 2026 to Acme'],
+		['a new promise, no recipient', 'promised', promised('2026-11-20', null, null), 'promised by 20 Nov 2026', 'promised ABC-12 by 20 Nov 2026'],
 		[
 			'a new date',
 			'promised',
 			promised('2026-11-27', 'Acme', { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov',
-			'changed the promise on ABC-12 to 27 Nov'
+			'changed the promise to 27 Nov 2026',
+			'changed the promise on ABC-12 to 27 Nov 2026'
 		],
 		[
 			'a new date and recipient',
 			'promised',
 			promised('2026-11-27', 'Beta', { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov and its recipient to Beta',
-			'changed the promise on ABC-12 to 27 Nov and its recipient to Beta'
+			'changed the promise to 27 Nov 2026 and its recipient to Beta',
+			'changed the promise on ABC-12 to 27 Nov 2026 and its recipient to Beta'
 		],
 		[
 			'a new date, recipient removed',
 			'promised',
 			promised('2026-11-27', null, { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov and removed its recipient',
-			'changed the promise on ABC-12 to 27 Nov and removed its recipient'
+			'changed the promise to 27 Nov 2026 and removed its recipient',
+			'changed the promise on ABC-12 to 27 Nov 2026 and removed its recipient'
 		],
 		[
 			'a new recipient',
@@ -123,8 +127,8 @@ describe('actionLabel', () => {
 			'nothing changed',
 			'promised',
 			promised('2026-11-20', 'Acme', { on: '2026-11-20', to: 'Acme' }),
-			'promised by 20 Nov to Acme',
-			'promised ABC-12 by 20 Nov to Acme'
+			'promised by 20 Nov 2026 to Acme',
+			'promised ABC-12 by 20 Nov 2026 to Acme'
 		],
 		['cleared', 'promise_cleared', { item_type: 'story', previous: { on: '2026-11-20', to: 'Acme' } }, 'cleared the promise', 'cleared the promise on ABC-12'],
 		['an unreadable promise', 'promised', null, 'promised', 'promised ABC-12'],
@@ -134,9 +138,9 @@ describe('actionLabel', () => {
 		expect(actionLabel(action, payload)).toBe(plain);
 		expect(actionLabel(action, payload, 'ABC-12')).toBe(keyed);
 	});
-	it('names its own words for attachments and promises only', async () => {
-		const { hasOwnWords } = await import('./format.ts');
-		expect(['attachment_added', 'attachment_removed', 'promised', 'promise_cleared'].every(hasOwnWords)).toBe(true);
-		expect(['moved', 'goal_linked', 'override'].some(hasOwnWords)).toBe(false);
+	it('has no words for any other action, which reads as plainAction', async () => {
+		const { actionLabel, plainAction } = await import('./format.ts');
+		for (const a of ['moved', 'goal_linked', 'override']) expect(actionLabel(a, null, 'ABC-12')).toBeNull();
+		expect(plainAction('goal_linked')).toBe('goal linked');
 	});
 });

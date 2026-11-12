@@ -4,8 +4,9 @@
 # they need, so a path nobody has classified runs them, and so does an empty list: a failed listing never skips them.
 #
 # Cannot see: web/** except the three files the Rust tests read (crates/reeve/src/tui/words.rs includes
-# web/src/lib/board.ts, crates/reeve/tests/glyphs_snapshot.rs reads web/src/lib/glyphs.json, crates/reeve/src/promise.rs's
-# tests include web/src/lib/promise.fixture.json), docs/**, lore/** and top-level markdown.
+# web/src/lib/board.ts, crates/reeve/tests/glyphs_snapshot.rs reads web/src/lib/glyphs.json, the tests of
+# crates/reeve/src/promise.rs and crates/reeve-planning/src/domain/promise.rs include web/src/lib/promise.fixture.json),
+# docs/**, lore/** and top-level markdown.
 # The web client is still checked by ci.yml's web and smoke jobs, which always run.
 set -euo pipefail
 rust=false

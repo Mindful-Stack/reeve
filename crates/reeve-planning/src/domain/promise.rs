@@ -1569,63 +1569,48 @@ mod tests {
         }
     }
 
+    /// The filter's truth table is `web/src/lib/promise.fixture.json`'s `filter` rows, which the web's
+    /// `promisedMatches` reads too (the board filters on the client, the backlog asks the server), so the two cannot
+    /// drift. States and periods are spelled as on the wire.
     #[test]
-    fn matches_each_filter() {
-        use Filter::{Any, NextSprint, Overdue, ThisSprint};
-        // (label, state, due, [this, next, overdue, any])
-        let rows = [
-            (
-                "open this sprint",
-                Some(State::Open),
-                Some(Due::ThisSprint),
-                [true, false, false, true],
-            ),
-            (
-                "open next sprint",
-                Some(State::Open),
-                Some(Due::NextSprint),
-                [false, true, false, true],
-            ),
-            (
-                "open later",
-                Some(State::Open),
-                Some(Due::Later),
-                [false, false, false, true],
-            ),
-            (
-                "overdue",
-                Some(State::Overdue),
-                None,
-                [true, false, true, true],
-            ),
-            (
-                "kept",
-                Some(State::Kept),
-                None,
-                [false, false, false, false],
-            ),
-            (
-                "late",
-                Some(State::Late),
-                None,
-                [false, false, false, false],
-            ),
-            (
-                "dropped",
-                Some(State::Dropped),
-                None,
-                [false, false, false, false],
-            ),
-            ("no state", None, None, [false, false, false, false]),
-        ];
-        for (label, st, dd, want) in rows {
-            for (f, name, w) in [
-                (ThisSprint, "this_sprint", want[0]),
-                (NextSprint, "next_sprint", want[1]),
-                (Overdue, "overdue", want[2]),
-                (Any, "any", want[3]),
+    fn matches_the_fixture_filter_rows() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../web/src/lib/promise.fixture.json"))
+                .unwrap();
+        let rows = fixture["filter"].as_array().unwrap();
+        assert!(!rows.is_empty());
+        let state = |s: &str| match s {
+            "open" => State::Open,
+            "overdue" => State::Overdue,
+            "kept" => State::Kept,
+            "late" => State::Late,
+            "dropped" => State::Dropped,
+            other => panic!("unknown state {other}"),
+        };
+        let due = |s: &str| match s {
+            "this_sprint" => Due::ThisSprint,
+            "next_sprint" => Due::NextSprint,
+            "later" => Due::Later,
+            other => panic!("unknown due {other}"),
+        };
+        for r in rows {
+            let label = r["label"].as_str().unwrap();
+            let p = sp(r["state"].as_str().map(state), r["due"].as_str().map(due));
+            let matches = r["matches"].as_object().unwrap();
+            let mut names: Vec<&str> = matches.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            assert_eq!(
+                names,
+                ["any", "next_sprint", "overdue", "this_sprint"],
+                "{label}: one column per filter"
+            );
+            for (f, name) in [
+                (Filter::ThisSprint, "this_sprint"),
+                (Filter::NextSprint, "next_sprint"),
+                (Filter::Overdue, "overdue"),
+                (Filter::Any, "any"),
             ] {
-                assert_eq!(f.matches(&sp(st, dd)), w, "{label} / {name}");
+                assert_eq!(f.matches(&p), matches[name], "{label} / {name}");
             }
         }
     }

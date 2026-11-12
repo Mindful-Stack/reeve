@@ -4,7 +4,7 @@
 	import { levelOfKind } from '#lib/glyphs.ts';
 	import { page } from '$app/state';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import type { ItemRef, ActivityEntry, EditItem, Epic, Initiative, RequiredDecision, SetPromise, Sprints, Story, StoryWithReadiness, Finding, Comment } from '#lib/api/types.ts';
+	import type { ItemRef, ActivityEntry, EditItem, Epic, Initiative, RequiredDecision, Story, StoryWithReadiness, Finding, Comment } from '#lib/api/types.ts';
 	import Findings from '#lib/components/Findings.svelte';
 	import Comments from '#lib/components/Comments.svelte';
 	import { COLUMN_LABEL, fullLabel, storyStatus } from '#lib/board.ts';
@@ -23,7 +23,7 @@
 	import PromiseChip from '#lib/components/PromiseChip.svelte';
 	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
 	import PromiseLine from '#lib/components/PromiseLine.svelte';
-	import { CLEAR_PROMISE, promiseActions } from '#lib/promise.ts';
+	import { PromiseControl } from '#lib/promiseControl.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import StatusStrip from '#lib/ui/StatusStrip.svelte';
@@ -135,63 +135,29 @@
 			criteriaAnchor: '#stories'
 		})
 	);
+	/** The promise dialog, with the sprints it offers shortcuts from (fetched each time it opens; until they answer the
+	 *  dialog has no shortcuts and no `min`, and says so if they fail). The writes go through `write`. */
+	const promise = new PromiseControl({
+		path: 'epics',
+		key: () => epic?.key,
+		write: (action) => write(action),
+		takeNotice: () => {
+			const n = notice;
+			notice = null;
+			return n;
+		},
+		refocus: () => refocusActions(),
+		fetchSprints: true
+	});
+
 	const menuItems = $derived<MenuItem[]>([
 		{ label: 'Edit brief', onselect: startEdit, disabled: editing },
 		...(epic?.discovery_complete ? [{ label: 'Clear discovery', onselect: () => void discovery(false), disabled: busy }] : []),
 		{ label: 'Mark urgent…', onselect: openMark, disabled: busy },
 		...(epic?.urgent_mark ? [{ label: 'Clear urgent mark', onselect: () => void clearUrgent(), disabled: busy }] : []),
 		// An epic has no done state: the promise items depend only on whether it has a promise.
-		...promiseActions(epic?.promise != null, false).map((label) => ({
-			label,
-			onselect: label === CLEAR_PROMISE ? () => void clearPromise() : openPromise,
-			disabled: busy
-		}))
+		...promise.items(epic?.promise != null, false, busy)
 	]);
-
-	/** Whether the promise dialog is open, the reason a failed save left in it, and the sprints it offers shortcuts from. */
-	let promising = $state(false);
-	let promiseError = $state<string | null>(null);
-	/** Fetched each time the dialog opens; until it answers (or if it fails) the dialog has no shortcuts and no `min`. */
-	let promiseSprints = $state<Sprints | null>(null);
-	let sprintsLatest = 0;
-
-	function openPromise() {
-		promiseError = null;
-		promiseSprints = null;
-		promising = true;
-		const seq = ++sprintsLatest;
-		unwrap(api.GET('/api/v1/sprints')).then(
-			(sp) => {
-				if (seq === sprintsLatest && promising) promiseSprints = sp;
-			},
-			() => {}
-		);
-	}
-
-	function closePromise() {
-		if (busy) return;
-		promising = false;
-		sprintsLatest++; // a sprints read in flight is now stale
-	}
-
-	async function savePromise(body: SetPromise) {
-		const k = epic?.key;
-		if (!k) return;
-		if (await write(() => unwrap(api.POST('/api/v1/epics/{key}/promise', { params: { path: { key: k } }, body })))) {
-			promising = false;
-			sprintsLatest++;
-			await refocusActions();
-		} else {
-			promiseError = notice;
-			notice = null;
-		}
-	}
-
-	async function clearPromise() {
-		const k = epic?.key;
-		if (!k) return;
-		if (await write(() => unwrap(api.DELETE('/api/v1/epics/{key}/promise', { params: { path: { key: k } } })))) await refocusActions();
-	}
 
 	/** When the page last loaded: the urgent line's "N d ago" counts from it. */
 	let loadedAt = $state(new Date());
@@ -306,8 +272,7 @@
 		creatingStory = null;
 		addingDecision = null;
 		decisionError = null;
-		promising = false;
-		sprintsLatest++;
+		promise.reset();
 		discussion = 'comments';
 		openStories.clear();
 		mountedStories.clear();
@@ -845,17 +810,18 @@
 		/>
 	{/if}
 
-	{#if promising}
+	{#if promise.open}
 		<PromiseDialog
 			key={ep.key}
-			activeEnds={promiseSprints?.active?.sprint.ends_on ?? null}
-			draftEnds={promiseSprints?.draft?.ends_on ?? null}
-			today={promiseSprints?.today ?? null}
+			activeEnds={promise.sprints?.active?.sprint.ends_on ?? null}
+			draftEnds={promise.sprints?.draft?.ends_on ?? null}
+			today={promise.sprints?.today ?? null}
+			sprintsFailed={promise.sprintsFailed}
 			current={ep.promise?.fact ?? null}
 			{busy}
-			error={promiseError}
-			onsave={savePromise}
-			onclose={closePromise}
+			error={promise.error}
+			onsave={(body) => void promise.save(body)}
+			onclose={() => promise.close(busy)}
 		/>
 	{/if}
 

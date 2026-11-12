@@ -17,6 +17,7 @@ type Props = {
 	activeEnds?: string | null;
 	draftEnds?: string | null;
 	today?: string | null;
+	sprintsFailed?: boolean;
 	current?: PromiseFact | null;
 	epic?: { key: string; on: string } | null;
 	busy?: boolean;
@@ -56,22 +57,25 @@ function type(el: HTMLInputElement, v: string) {
 	el.dispatchEvent(new Event('input', { bubbles: true }));
 	flushSync();
 }
+const submitButton = () => q<HTMLButtonElement>('button[type="submit"]')!;
 function submit() {
-	button('Promise')!.click();
+	submitButton().click();
 	flushSync();
 }
 
 const fact = (on: string, to: string | null = 'Acme'): PromiseFact => ({ on, to, by: 'dana@example.com', at: '2026-11-01T09:00:00Z' });
 
 describe('PromiseDialog', () => {
-	it('titles a new promise and a change', () => {
+	it('titles a new promise and a change, and its submit says Promise or Save', () => {
 		open();
 		expect(q('dialog')?.textContent).toContain('Promise ABC-12 by…');
+		expect(submitButton().textContent).toBe('Promise');
 		unmount(app!);
 		app = null;
 		document.body.innerHTML = '';
 		open({ current: fact('2026-11-30') });
 		expect(q('dialog')?.textContent).toContain('Change the promise on ABC-12');
+		expect(submitButton().textContent).toBe('Save');
 	});
 
 	it('shows both shortcuts with their dates, and min is today', () => {
@@ -166,23 +170,94 @@ describe('PromiseDialog', () => {
 	it('the epic note follows the chosen date', () => {
 		open({ epic: { key: 'ABC-7', on: '2026-11-18' } });
 		const note = () => q('.note')?.textContent;
-		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+		expect(note()).toBe('Epic ABC-7 is promised by 18 Nov 2026.');
 		type(dateInput(), '2026-11-30');
-		expect(note()).toBe('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
+		expect(note()).toBe('Epic ABC-7 is promised by 18 Nov 2026; the earlier date counts.');
 		type(dateInput(), '2026-11-18');
-		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+		expect(note()).toBe('Epic ABC-7 is promised by 18 Nov 2026.');
 		type(dateInput(), '2026-11-14');
-		expect(note()).toBe('Epic ABC-7 is promised 18 Nov.');
+		expect(note()).toBe('Epic ABC-7 is promised by 18 Nov 2026.');
 	});
 
 	it('the epic note starts from the current date on a change', () => {
 		open({ current: fact('2026-11-30'), epic: { key: 'ABC-7', on: '2026-11-18' } });
-		expect(q('.note')?.textContent).toBe('Epic ABC-7 is promised 18 Nov; the earlier date counts.');
+		expect(q('.note')?.textContent).toBe('Epic ABC-7 is promised by 18 Nov 2026; the earlier date counts.');
 	});
 
 	it('shows no note without an inherited epic promise', () => {
 		open();
 		expect(q('.note')).toBeNull();
+		expect(dateInput().hasAttribute('aria-describedby')).toBe(false);
+	});
+
+	it('the epic note describes the date and is announced as it changes', () => {
+		open({ epic: { key: 'ABC-7', on: '2026-11-18' } });
+		const note = q<HTMLElement>('.note')!;
+		expect(note.id).not.toBe('');
+		expect(dateInput().getAttribute('aria-describedby')).toBe(note.id);
+		expect(note.getAttribute('aria-live')).toBe('polite');
+	});
+
+	it('collapses the shortcut row and says so when the sprints could not be read', () => {
+		open({ today: null, activeEnds: null, draftEnds: null, sprintsFailed: true });
+		expect(q('[data-testid="promise-shortcuts"]')).toBeNull();
+		expect(q('[data-testid="promise-shortcuts-unavailable"]')?.textContent).toBe('Sprint shortcuts are unavailable.');
+		unmount(app!);
+		app = null;
+		// Still loading: the row is reserved and nothing is said.
+		open({ today: null, activeEnds: null, draftEnds: null });
+		expect(q('[data-testid="promise-shortcuts"]')).not.toBeNull();
+		expect(q('[data-testid="promise-shortcuts-unavailable"]')).toBeNull();
+	});
+
+	it("sends the date in the field when the shortcut's end moved after the pick", () => {
+		const props = $state({ activeEnds: '2026-11-24' as string | null });
+		const saved: SetPromise[] = [];
+		app = mount(PromiseDialog, {
+			target: document.body,
+			props: {
+				key: 'ABC-12',
+				today: '2026-11-12',
+				get activeEnds() {
+					return props.activeEnds;
+				},
+				onsave: (b: SetPromise) => saved.push(b),
+				onclose: () => {}
+			}
+		});
+		flushSync();
+		button('End of this sprint (24 Nov)')!.click();
+		flushSync();
+		// A live refetch moves the sprint's end under the open dialog: the field still says 24 Nov.
+		props.activeEnds = '2026-11-26';
+		flushSync();
+		expect(dateInput().value).toBe('2026-11-24');
+		expect(button('End of this sprint (26 Nov)')!.getAttribute('aria-pressed')).toBe('false');
+		submit();
+		expect(saved).toEqual([{ on: '2026-11-24' }]);
+		// The sprint closes: no shortcut is offered any more, and the date is still what is sent.
+		props.activeEnds = null;
+		flushSync();
+		submit();
+		expect(saved[1]).toEqual({ on: '2026-11-24' });
+	});
+
+	it('counts the recipient in code points, as the server does: 200 supplementary characters pass, 201 do not', () => {
+		const { saved } = open();
+		type(dateInput(), '2026-11-20');
+		const emoji = '\u{1F600}';
+		type(toInput(), emoji.repeat(201));
+		expect(toInput().value).toHaveLength(402);
+		expect(toInput().validationMessage).toBe('the recipient is longer than 200 characters');
+		submit();
+		expect(saved).toEqual([]);
+		type(toInput(), emoji.repeat(200));
+		expect(toInput().validationMessage).toBe('');
+		submit();
+		expect(saved).toEqual([{ on: '2026-11-20', to: emoji.repeat(200) }]);
+		// Surrounding spaces are not counted: the server trims first.
+		type(toInput(), ` ${emoji.repeat(200)} `);
+		expect(toInput().validationMessage).toBe('');
 	});
 
 	it('a shortcut with a typed recipient sends {shortcut, to}', () => {
@@ -196,13 +271,13 @@ describe('PromiseDialog', () => {
 
 	it('an untouched change cannot be submitted; any edit enables it', () => {
 		open({ current: fact('2026-11-30') });
-		expect(button('Promise')!.disabled).toBe(true);
+		expect(button('Save')!.disabled).toBe(true);
 		type(toInput(), 'Beta');
-		expect(button('Promise')!.disabled).toBe(false);
+		expect(button('Save')!.disabled).toBe(false);
 		type(toInput(), 'Acme');
-		expect(button('Promise')!.disabled).toBe(true);
+		expect(button('Save')!.disabled).toBe(true);
 		type(dateInput(), '2026-11-28');
-		expect(button('Promise')!.disabled).toBe(false);
+		expect(button('Save')!.disabled).toBe(false);
 	});
 
 	it('keeps its title when the current promise changes under it', () => {

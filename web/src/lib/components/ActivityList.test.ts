@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe('ActivityList', () => {
-	it('words promises and attachments from their payloads and leaves other actions as they are', () => {
+	it('words promises and attachments from their payloads and spaces every other action', () => {
 		app = mount(ActivityList, {
 			target: document.body,
 			props: {
@@ -21,7 +21,7 @@ describe('ActivityList', () => {
 					activity({ id: 1, action: 'promised', payload: { item_type: 'story', on: '2026-11-20', to: 'Acme', previous: null } }),
 					activity({ id: 2, action: 'promised', payload: { item_type: 'story', on: '2026-11-20', to: null, previous: { on: '2026-11-20', to: 'Acme' } } }),
 					activity({ id: 3, action: 'promise_cleared', payload: { item_type: 'story', previous: { on: '2026-11-20', to: null } } }),
-					activity({ id: 4, action: 'moved' }),
+					activity({ id: 4, action: 'goal_linked' }),
 					activity({ id: 5, action: 'attachment_added', payload: { attachment_id: 'x', filename: 'shot.png' } })
 				]
 			}
@@ -29,10 +29,10 @@ describe('ActivityList', () => {
 		flushSync();
 		expect([...document.body.querySelectorAll('.action')].map((e) => e.textContent)).toEqual([
 			'added attachment shot.png',
-			'moved',
+			'goal linked',
 			'cleared the promise',
 			"removed the promise's recipient",
-			'promised by 20 Nov to Acme'
+			'promised by 20 Nov 2026 to Acme'
 		]);
 	});
 });

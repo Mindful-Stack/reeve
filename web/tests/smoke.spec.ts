@@ -946,7 +946,7 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 		await page.goto(`/board?story=${story.key}&notready=1`);
 		const drawer = page.getByRole('complementary');
 		const line = drawer.getByTestId('promise-line');
-		await expect(line).toContainText(`Promised ${day(next!.ends_on)} via epic ${epic.key}`);
+		await expect(line).toContainText(`Promised by ${day(next!.ends_on)} ${next!.ends_on.slice(0, 4)} via epic ${epic.key}`);
 
 		await drawer.getByRole('button', { name: `More actions for ${story.key}` }).click();
 		await page.getByRole('menuitem', { name: 'Promise by…' }).click();
@@ -957,17 +957,17 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 
 		const chip = page.getByTestId(`card-${story.key}`).locator('.promise-chip');
 		await expect(chip).toBeVisible();
-		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
+		await expect(chip).toHaveText(`Promised by ${day(sprint.ends_on)} · this sprint`);
 
 		await page.reload();
 		await expect(page.locator('details.not-ready')).toHaveAttribute('open', '');
 		await expect(chip).toBeVisible();
-		await expect(chip).toHaveText(`Promised ${day(sprint.ends_on)} · this sprint`);
+		await expect(chip).toHaveText(`Promised by ${day(sprint.ends_on)} · this sprint`);
 
 		await page.getByRole('complementary').getByRole('button', { name: `More actions for ${story.key}` }).click();
 		await page.getByRole('menuitem', { name: 'Clear promise' }).click();
 		await expect(chip).toBeVisible();
-		await expect(chip).toHaveText(`Promised ${day(next!.ends_on)} · next sprint · via ${epic.key}`);
+		await expect(chip).toHaveText(`Promised by ${day(next!.ends_on)} · next sprint · via ${epic.key}`);
 		await expect(page.getByRole('complementary').getByTestId('promise-line')).toContainText(`via epic ${epic.key}`);
 	} finally {
 		await post(page, `/api/v1/sprints/${sprint.id}/close`, {

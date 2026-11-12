@@ -6,7 +6,7 @@
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { ActivityEntry, GoalProgress, Sprint, SprintCounts, SprintView } from '#lib/api/types.ts';
 	import { errorMessage } from '#lib/format.ts';
-	import { sprintPromiseText } from '#lib/promise.ts';
+	import { sprintRowParts } from '#lib/promise.ts';
 	import { blockedText, confidenceLabel, countsDiffer, nowThen, promisesHeading, RULE, upkeepTextAt, verdictLabel } from '#lib/sprint.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 
@@ -132,8 +132,8 @@
 					<ul>
 						{#each d.view.promises as x (x.key)}
 							<li>
-								<a href="?story={x.key}"><span class="key">{x.key}</span> {x.title}</a>{x.to ? ` · to ${x.to}` : ''}
-								· {sprintPromiseText(x)}{x.holder === 'epic' && x.epic_key != null ? ` · via ${x.epic_key}` : ''}
+								<a href="?story={x.key}"><span class="key">{x.key}</span> {x.title}</a>
+								· {#each sprintRowParts(x) as part, i (i)}{'epic' in part ? part.epic : part.text}{/each}
 							</li>
 						{/each}
 					</ul>

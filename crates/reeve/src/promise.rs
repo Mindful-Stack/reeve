@@ -11,6 +11,11 @@ pub fn day_label(d: NaiveDate) -> String {
     d.format("%-d %b").to_string()
 }
 
+/// "2026-11-20" → "20 Nov 2026": a line's date, with the year (a kept promise stays on a done story for good).
+pub fn date_label(d: NaiveDate) -> String {
+    d.format("%-d %b %Y").to_string()
+}
+
 /// The local part of an email address.
 fn short(email: &str) -> &str {
     match email.find('@') {
@@ -34,7 +39,7 @@ fn days_text(days: Option<u32>) -> String {
 }
 
 /// The one table of state words, lower case (the web's `STATE_WORDS`); `None` for open and for a state this build does
-/// not know (shown neutrally, "Promised 20 Nov").
+/// not know (shown neutrally, "Promised by 20 Nov").
 pub fn state_words(state: PromiseState, days: Option<u32>) -> Option<String> {
     match state {
         PromiseState::Open | PromiseState::Unknown => None,
@@ -58,13 +63,13 @@ fn story_state_words(p: &StoryPromiseDto) -> Option<String> {
     p.state.and_then(|s| state_words(s, p.days))
 }
 
-/// A story chip's words without the epic: "Overdue 3 d · 20 Nov", "Promised 20 Nov · this sprint", …
+/// A story chip's words without the epic: "Overdue 3 d · 20 Nov", "Promised by 20 Nov · this sprint", …
 fn story_chip_base(p: &StoryPromiseDto) -> String {
     let d = day_label(p.on);
     match story_state_words(p) {
         Some(w) => format!("{} · {d}", capital(&w)),
-        None if p.state == Some(PromiseState::Open) => format!("Promised {d}{}", period(p.due)),
-        None => format!("Promised {d}"),
+        None if p.state == Some(PromiseState::Open) => format!("Promised by {d}{}", period(p.due)),
+        None => format!("Promised by {d}"),
     }
 }
 
@@ -84,7 +89,7 @@ pub fn epic_chip_text(p: &EpicPromiseDto) -> String {
     if p.past {
         format!("Past {d}")
     } else {
-        format!("Promised {d}{}", period(p.due))
+        format!("Promised by {d}{}", period(p.due))
     }
 }
 
@@ -99,8 +104,8 @@ fn set_by(f: &PromiseFactDto) -> String {
     format!(" · set by {}", short(&f.by))
 }
 
-/// The drawer's promise line: who promised what to whom, both promises when the story has its own and its epic's, then
-/// the state (a sentence of its own after two promises).
+/// The drawer's promise line: who promised what by which date (with its year) to whom, both promises when the story
+/// has its own and its epic's, then the state (a sentence of its own after two promises).
 pub fn line_text(p: &StoryPromiseDto) -> String {
     let w = story_state_words(p);
     match (&p.own, &p.epic) {
@@ -112,24 +117,27 @@ pub fn line_text(p: &StoryPromiseDto) -> String {
             };
             let state = w.map(|w| format!(" {}.", capital(&w))).unwrap_or_default();
             format!(
-                "Promised {}{}. Epic {} is promised {}{counts}{state}",
-                day_label(own.on),
+                "Promised by {}{}. Epic {} is promised by {}{}{counts}{state}",
+                date_label(own.on),
                 to(own),
                 epic.key,
-                day_label(epic.fact.on)
+                date_label(epic.fact.on),
+                to(&epic.fact)
             )
         }
         (own, epic) => {
             let lead = match (own, epic) {
                 (_, Some(e)) => format!(
-                    "Promised {} via epic {}{}{}",
-                    day_label(e.fact.on),
+                    "Promised by {} via epic {}{}{}",
+                    date_label(e.fact.on),
                     e.key,
                     to(&e.fact),
                     set_by(&e.fact)
                 ),
-                (Some(o), None) => format!("Promised {}{}{}", day_label(o.on), to(o), set_by(o)),
-                (None, None) => format!("Promised {}", day_label(p.on)),
+                (Some(o), None) => {
+                    format!("Promised by {}{}{}", date_label(o.on), to(o), set_by(o))
+                }
+                (None, None) => format!("Promised by {}", date_label(p.on)),
             };
             match w {
                 Some(w) => format!("{lead} · {w}"),
@@ -142,8 +150,8 @@ pub fn line_text(p: &StoryPromiseDto) -> String {
 /// The epic page's promise line.
 pub fn epic_line_text(p: &EpicPromiseDto) -> String {
     format!(
-        "Promised {}{}{}{}",
-        day_label(p.fact.on),
+        "Promised by {}{}{}{}",
+        date_label(p.fact.on),
         to(&p.fact),
         set_by(&p.fact),
         if p.past { " · past" } else { "" }
@@ -254,5 +262,6 @@ mod tests {
         let date = |s: &str| s.parse::<NaiveDate>().unwrap();
         assert_eq!(day_label(date("2026-11-02")), "2 Nov");
         assert_eq!(day_label(date("2026-01-20")), "20 Jan");
+        assert_eq!(date_label(date("2026-01-02")), "2 Jan 2026");
     }
 }

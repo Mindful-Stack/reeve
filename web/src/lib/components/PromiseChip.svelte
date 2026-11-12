@@ -23,7 +23,7 @@
 			><path d="M4 12l5 5L20 6" /></svg
 		>{:else if c.icon === 'calendar'}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"
 			><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg
-		>{/if}{c.text}{#if c.via}{' · via '}<span class="via">{c.via}</span>{/if}</span
+		>{/if}{#each c.parts as part, i (i)}{#if 'epic' in part}<span class="via">{part.epic}</span>{:else}{part.text}{/if}{/each}</span
 >
 
 <style>

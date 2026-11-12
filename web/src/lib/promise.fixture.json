@@ -1,5 +1,5 @@
 {
-	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift.",
+	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift; crates/reeve-planning/src/domain/promise.rs reads the filter rows, so the board's filter and the server's cannot either.",
 	"chip": [
 		{
 			"label": "open, this sprint",
@@ -17,7 +17,7 @@
 				"due": "this_sprint",
 				"days": null
 			},
-			"text": "Promised 20 Nov · this sprint"
+			"text": "Promised by 20 Nov · this sprint"
 		},
 		{
 			"label": "open, next sprint",
@@ -35,7 +35,7 @@
 				"due": "next_sprint",
 				"days": null
 			},
-			"text": "Promised 20 Nov · next sprint"
+			"text": "Promised by 20 Nov · next sprint"
 		},
 		{
 			"label": "open, later",
@@ -53,7 +53,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 20 Nov"
+			"text": "Promised by 20 Nov"
 		},
 		{
 			"label": "overdue",
@@ -179,7 +179,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 20 Nov"
+			"text": "Promised by 20 Nov"
 		},
 		{
 			"label": "the epic holds the date",
@@ -200,7 +200,7 @@
 				"due": "this_sprint",
 				"days": null
 			},
-			"text": "Promised 20 Nov · this sprint · via ABC-7"
+			"text": "Promised by 20 Nov · this sprint · via ABC-7"
 		},
 		{
 			"label": "the epic holds the date, via asked for",
@@ -222,7 +222,7 @@
 				"days": null
 			},
 			"via": true,
-			"text": "Promised 20 Nov · this sprint · via ABC-7"
+			"text": "Promised by 20 Nov · this sprint · via ABC-7"
 		},
 		{
 			"label": "the epic holds the date, on the epic's own page",
@@ -244,7 +244,25 @@
 				"days": null
 			},
 			"via": false,
-			"text": "Promised 20 Nov · this sprint"
+			"text": "Promised by 20 Nov · this sprint"
+		},
+		{
+			"label": "a state this build does not know",
+			"promise": {
+				"own": {
+					"on": "2026-11-20",
+					"by": "Dana",
+					"at": "2026-11-01T09:00:00Z",
+					"to": "Acme"
+				},
+				"epic": null,
+				"on": "2026-11-20",
+				"holder": "own",
+				"state": "unknown",
+				"due": "this_sprint",
+				"days": null
+			},
+			"text": "Promised by 20 Nov"
 		}
 	],
 	"epicChip": [
@@ -260,7 +278,7 @@
 				"due": "this_sprint",
 				"past": false
 			},
-			"text": "Promised 20 Nov · this sprint"
+			"text": "Promised by 20 Nov · this sprint"
 		},
 		{
 			"label": "next sprint",
@@ -274,7 +292,7 @@
 				"due": "next_sprint",
 				"past": false
 			},
-			"text": "Promised 20 Nov · next sprint"
+			"text": "Promised by 20 Nov · next sprint"
 		},
 		{
 			"label": "later",
@@ -288,7 +306,7 @@
 				"due": "later",
 				"past": false
 			},
-			"text": "Promised 20 Nov"
+			"text": "Promised by 20 Nov"
 		},
 		{
 			"label": "past",
@@ -322,7 +340,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana"
 		},
 		{
 			"label": "own only, no recipient",
@@ -340,7 +358,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 20 Nov · set by Dana"
+			"text": "Promised by 20 Nov 2026 · set by Dana"
 		},
 		{
 			"label": "epic only",
@@ -361,7 +379,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 20 Nov via epic ABC-7 to Acme · set by Dana"
+			"text": "Promised by 20 Nov 2026 via epic ABC-7 to Acme · set by Dana"
 		},
 		{
 			"label": "both, epic earlier",
@@ -387,7 +405,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts."
 		},
 		{
 			"label": "both, own earlier",
@@ -413,7 +431,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 18 Nov to Beta. Epic ABC-7 is promised 30 Nov."
+			"text": "Promised by 18 Nov 2026 to Beta. Epic ABC-7 is promised by 30 Nov 2026 to Acme."
 		},
 		{
 			"label": "overdue",
@@ -431,7 +449,7 @@
 				"due": null,
 				"days": 3
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · overdue 3 d"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · overdue 3 d"
 		},
 		{
 			"label": "kept",
@@ -449,7 +467,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · kept"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · kept"
 		},
 		{
 			"label": "late",
@@ -467,7 +485,7 @@
 				"due": null,
 				"days": 3
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · done 3 d late"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · done 3 d late"
 		},
 		{
 			"label": "dropped",
@@ -485,7 +503,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · dropped"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · dropped"
 		},
 		{
 			"label": "overdue, no days",
@@ -503,7 +521,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · overdue"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · overdue"
 		},
 		{
 			"label": "late, no days",
@@ -521,7 +539,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · done late"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · done late"
 		},
 		{
 			"label": "both promises, overdue",
@@ -547,7 +565,7 @@
 				"due": null,
 				"days": 3
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Overdue 3 d."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Overdue 3 d."
 		},
 		{
 			"label": "both promises, overdue, no days",
@@ -573,7 +591,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Overdue."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Overdue."
 		},
 		{
 			"label": "both promises, kept",
@@ -599,7 +617,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Kept."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Kept."
 		},
 		{
 			"label": "both promises, late",
@@ -625,7 +643,7 @@
 				"due": null,
 				"days": 3
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Done 3 d late."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Done 3 d late."
 		},
 		{
 			"label": "both promises, late, no days",
@@ -651,7 +669,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Done late."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Done late."
 		},
 		{
 			"label": "both promises, dropped",
@@ -677,7 +695,7 @@
 				"due": null,
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts. Dropped."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts. Dropped."
 		},
 		{
 			"label": "both promises, open",
@@ -703,7 +721,7 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 30 Nov to Beta. Epic ABC-7 is promised 18 Nov; the earlier date counts."
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026 to Acme; the earlier date counts."
 		},
 		{
 			"label": "an email shortens to its local part",
@@ -721,7 +739,51 @@
 				"due": "later",
 				"days": null
 			},
-			"text": "Promised 20 Nov to Acme · set by dana"
+			"text": "Promised by 20 Nov 2026 to Acme · set by dana"
+		},
+		{
+			"label": "both, the epic's without a recipient",
+			"promise": {
+				"own": {
+					"on": "2026-11-30",
+					"by": "Dana",
+					"at": "2026-11-01T09:00:00Z",
+					"to": "Beta"
+				},
+				"epic": {
+					"key": "ABC-7",
+					"fact": {
+						"on": "2026-11-18",
+						"by": "Dana",
+						"at": "2026-11-01T09:00:00Z",
+						"to": null
+					}
+				},
+				"on": "2026-11-18",
+				"holder": "epic",
+				"state": "open",
+				"due": "later",
+				"days": null
+			},
+			"text": "Promised by 30 Nov 2026 to Beta. Epic ABC-7 is promised by 18 Nov 2026; the earlier date counts."
+		},
+		{
+			"label": "a state this build does not know",
+			"promise": {
+				"own": {
+					"on": "2026-11-20",
+					"by": "Dana",
+					"at": "2026-11-01T09:00:00Z",
+					"to": "Acme"
+				},
+				"epic": null,
+				"on": "2026-11-20",
+				"holder": "own",
+				"state": "unknown",
+				"due": null,
+				"days": null
+			},
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana"
 		}
 	],
 	"epicLine": [
@@ -737,7 +799,7 @@
 				"due": "later",
 				"past": false
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana"
 		},
 		{
 			"label": "past",
@@ -751,7 +813,7 @@
 				"due": null,
 				"past": true
 			},
-			"text": "Promised 20 Nov to Acme · set by Dana · past"
+			"text": "Promised by 20 Nov 2026 to Acme · set by Dana · past"
 		}
 	],
 	"stateWords": {
@@ -771,5 +833,225 @@
 			"dropped",
 			"dropped"
 		]
-	}
+	},
+	"sprintRow": [
+		{
+			"label": "kept, to a recipient",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "kept",
+				"days": null,
+				"holder": "own",
+				"epic_key": null,
+				"to": "Acme"
+			},
+			"text": "to Acme · Kept · 20 Nov"
+		},
+		{
+			"label": "late, no recipient",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "late",
+				"days": 2,
+				"holder": "own",
+				"epic_key": null,
+				"to": null
+			},
+			"text": "Done 2 d late · 20 Nov"
+		},
+		{
+			"label": "overdue",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "overdue",
+				"days": 3,
+				"holder": "own",
+				"epic_key": null,
+				"to": "Acme"
+			},
+			"text": "to Acme · Overdue 3 d · 20 Nov"
+		},
+		{
+			"label": "dropped",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "dropped",
+				"days": null,
+				"holder": "own",
+				"epic_key": null,
+				"to": null
+			},
+			"text": "Dropped · 20 Nov"
+		},
+		{
+			"label": "open: no period on a sprint row",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "open",
+				"days": null,
+				"holder": "own",
+				"epic_key": null,
+				"to": null
+			},
+			"text": "Promised by 20 Nov"
+		},
+		{
+			"label": "the epic holds the date",
+			"promise": {
+				"key": "ABC-12",
+				"title": "Export",
+				"on": "2026-11-20",
+				"done_on": null,
+				"state": "kept",
+				"days": null,
+				"holder": "epic",
+				"epic_key": "ABC-7",
+				"to": "Acme"
+			},
+			"text": "to Acme · Kept · 20 Nov · via ABC-7"
+		}
+	],
+	"epicNote": [
+		{
+			"label": "the story's date is later: the epic's counts",
+			"epic": {
+				"key": "ABC-7",
+				"on": "2026-11-18"
+			},
+			"chosen": "2026-11-30",
+			"text": "Epic ABC-7 is promised by 18 Nov 2026; the earlier date counts."
+		},
+		{
+			"label": "the same date: the story's own counts (R3)",
+			"epic": {
+				"key": "ABC-7",
+				"on": "2026-11-18"
+			},
+			"chosen": "2026-11-18",
+			"text": "Epic ABC-7 is promised by 18 Nov 2026."
+		},
+		{
+			"label": "the story's date is earlier",
+			"epic": {
+				"key": "ABC-7",
+				"on": "2026-11-18"
+			},
+			"chosen": "2026-11-12",
+			"text": "Epic ABC-7 is promised by 18 Nov 2026."
+		},
+		{
+			"label": "no date chosen yet",
+			"epic": {
+				"key": "ABC-7",
+				"on": "2026-11-18"
+			},
+			"chosen": "",
+			"text": "Epic ABC-7 is promised by 18 Nov 2026."
+		}
+	],
+	"filter": [
+		{
+			"label": "open this sprint",
+			"state": "open",
+			"due": "this_sprint",
+			"matches": {
+				"this_sprint": true,
+				"next_sprint": false,
+				"overdue": false,
+				"any": true
+			}
+		},
+		{
+			"label": "open next sprint",
+			"state": "open",
+			"due": "next_sprint",
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": true,
+				"overdue": false,
+				"any": true
+			}
+		},
+		{
+			"label": "open later",
+			"state": "open",
+			"due": "later",
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": false,
+				"overdue": false,
+				"any": true
+			}
+		},
+		{
+			"label": "overdue",
+			"state": "overdue",
+			"due": null,
+			"matches": {
+				"this_sprint": true,
+				"next_sprint": false,
+				"overdue": true,
+				"any": true
+			}
+		},
+		{
+			"label": "kept",
+			"state": "kept",
+			"due": null,
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": false,
+				"overdue": false,
+				"any": false
+			}
+		},
+		{
+			"label": "late",
+			"state": "late",
+			"due": null,
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": false,
+				"overdue": false,
+				"any": false
+			}
+		},
+		{
+			"label": "dropped",
+			"state": "dropped",
+			"due": null,
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": false,
+				"overdue": false,
+				"any": false
+			}
+		},
+		{
+			"label": "no state",
+			"state": null,
+			"due": null,
+			"matches": {
+				"this_sprint": false,
+				"next_sprint": false,
+				"overdue": false,
+				"any": false
+			}
+		}
+	]
 }
