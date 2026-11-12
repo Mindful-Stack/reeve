@@ -678,6 +678,48 @@ for (const width of [320, 1280]) {
 	});
 }
 
+// A decision's inline edit form (GRA-636): Title takes the form's width, no field is cut or spills, and the page does
+// not scroll sideways at a phone width, even with an empty list.
+for (const width of [320, 1280]) {
+	test(`a decision's edit form fits its row at ${width}px`, async ({ page }) => {
+		const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Edit form smoke ${crypto.randomUUID().slice(0, 8)}`,
+			horizon: 'Now'
+		});
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto(`/initiatives/${ini.key}`);
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll with no decisions').toBe(true);
+		const title = 'Portal ADR (one-way): the org profile carries the fields and drives a hidden watch';
+		await post(page, '/api/v1/decisions', {
+			idempotency_key: crypto.randomUUID(),
+			on: ini.key,
+			title,
+			decider: 'daniel.thyselius@grantigo.com'
+		});
+		await page.goto(`/initiatives/${ini.key}`);
+		const row = page.getByRole('listitem').filter({ hasText: title });
+		await row.getByRole('button', { name: /^Actions for Portal ADR/ }).click();
+		await page.getByRole('menuitem', { name: 'Edit' }).click();
+		const form = row.getByRole('form', { name: /^Edit decision / });
+		await expect(form).toBeVisible();
+		const box = (await form.boundingBox())!;
+		for (const field of ['title', 'decider', 'due', 'reversibility']) {
+			const b = (await form.locator(`[data-field="${field}"]`).boundingBox())!;
+			expect(b.x + b.width, `${field} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+			expect(b.x, `${field} left edge`).toBeGreaterThanOrEqual(box.x - 0.5);
+			if (field === 'title') expect(b.width, 'title width').toBeGreaterThanOrEqual(box.width * 0.6);
+		}
+		for (const field of ['title', 'decider']) {
+			const el = form.locator(`[data-field="${field}"]`);
+			const [wide, shown] = await el.evaluate((e: HTMLInputElement) => [e.scrollWidth, e.clientWidth]);
+			// The title is longer than a phone's line: only the wide layout shows all of it.
+			if (width >= 1280) expect(wide, `${field} shows its full value`).toBeLessThanOrEqual(shown + 1);
+		}
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll').toBe(true);
+	});
+}
+
 test('the header goal picker links an initiative and, after navigating by click, one of its epics', async ({ page }) => {
 	const outcome = `Picker smoke ${crypto.randomUUID().slice(0, 8)}`;
 	await page.goto('/planning');

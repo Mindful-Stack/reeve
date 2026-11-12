@@ -741,21 +741,23 @@
 				{#if !d.closed && edits[d.id] && !edits[d.id].inline}
 					{@const ed = edits[d.id]}
 					<form class="edit" bind:this={editForms[d.id]} aria-label="Edit decision {d.title}" onsubmit={(e) => saveEdit(e, d)}>
-						<label>
+						<label class="field wide">
 							Title
 							<input name="title" data-field="title" value={ed.draft.title} disabled={busy === d.id} oninput={(e) => setEdit(d.id, 'title', e.currentTarget.value)} />
 						</label>
-						<label>
+						<label class="field">
 							Decider
 							<input name="decider" data-field="decider" required value={ed.draft.decider} disabled={busy === d.id} oninput={(e) => setEdit(d.id, 'decider', e.currentTarget.value)} />
 						</label>
-						<label>
-							Due
-							<input name="due" data-field="due" type="date" value={ed.draft.due} disabled={busy === d.id} oninput={(e) => setEdit(d.id, 'due', e.currentTarget.value)} />
-						</label>
-						<DueShortcuts bind:value={() => ed.draft.due, (on) => setEdit(d.id, 'due', on)} disabled={busy === d.id} />
-						<button type="button" data-field="clear-due" disabled={busy === d.id || !ed.draft.due} onclick={() => setEdit(d.id, 'due', '')}>Clear due date</button>
-						<label>
+						<div class="due">
+							<label class="field">
+								Due
+								<input name="due" data-field="due" type="date" value={ed.draft.due} disabled={busy === d.id} oninput={(e) => setEdit(d.id, 'due', e.currentTarget.value)} />
+							</label>
+							<DueShortcuts bind:value={() => ed.draft.due, (on) => setEdit(d.id, 'due', on)} disabled={busy === d.id} />
+							<button type="button" data-field="clear-due" disabled={busy === d.id || !ed.draft.due} onclick={() => setEdit(d.id, 'due', '')}>Clear due date</button>
+						</div>
+						<label class="field">
 							Reversibility
 							<select
 								name="reversibility"
@@ -769,9 +771,11 @@
 								<option value="two_way">Two-way</option>
 							</select>
 						</label>
-						{#if editErrors[d.id]}<p class="error" role="alert">{editErrors[d.id]}</p>{/if}
-						<button type="button" data-field="cancel" onclick={() => closeEdit(d.id)}>Cancel</button>
-						<button type="submit" data-field="save" disabled={busy !== null}>Save</button>
+						{#if editErrors[d.id]}<p class="error wide" role="alert">{editErrors[d.id]}</p>{/if}
+						<div class="buttons wide">
+							<button type="button" data-field="cancel" onclick={() => closeEdit(d.id)}>Cancel</button>
+							<button type="submit" data-field="save" disabled={busy !== null}>Save</button>
+						</div>
 					</form>
 				{/if}
 
@@ -888,7 +892,7 @@
 	.decision-list {
 		container-type: inline-size;
 		display: grid;
-		grid-template-columns: minmax(16rem, 1fr) repeat(7, auto);
+		grid-template-columns: minmax(0, 1fr) repeat(7, auto);
 		gap: var(--decision-list-row-gap, 10px) 12px;
 		min-width: 0;
 	}
@@ -1070,11 +1074,33 @@
 		gap: 0.5rem;
 		align-items: flex-start;
 	}
+	/* Labelled fields in columns that wrap to the width (never wider than the form); Title and the buttons take a row. */
 	.edit {
-		flex-wrap: wrap;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+		gap: 0.5rem 0.75rem;
 	}
-	.edit .error {
-		flex-basis: 100%;
+	.edit .wide {
+		grid-column: 1 / -1;
+	}
+	.edit .field,
+	.due {
+		min-width: 0;
+	}
+	.edit input,
+	.edit select {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+	}
+	.due {
+		display: grid;
+		gap: 6px;
+		justify-items: start;
+	}
+	.buttons {
+		display: flex;
+		gap: 0.5rem;
 	}
 	.close {
 		flex-wrap: wrap;
