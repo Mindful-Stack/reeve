@@ -11,6 +11,7 @@
 	let {
 		view,
 		draft,
+		leaveOut,
 		onchanged,
 		ondone
 	}: {
@@ -18,6 +19,9 @@
 		view: SprintView;
 		/** The draft to open once this sprint is closed (the page's current one), or null. */
 		draft: Sprint | null;
+		/** Draft goals unticked on the page: they stay in the next draft (kb/ADR-0026). Chosen before Close…, since the
+		 *  dialog is modal. */
+		leaveOut: number[];
 		/** A write landed or the sprint changed: the page reloads. */
 		onchanged: () => Promise<void> | void;
 		/** The step is over (the next sprint opened). */
@@ -43,6 +47,9 @@
 	let closed = $state(false);
 	/** The next sprint opened with advice: the step stays to show it until Done. */
 	let warnings = $state<SprintWarning[] | null>(null);
+
+	const goingIn = $derived((draft?.goals.length ?? 0) - leaveOut.length);
+	const goalsWord = (n: number) => `${n} ${n === 1 ? 'goal' : 'goals'}`;
 
 	const complete = $derived(goals.every((g) => (verdicts[g.id] ?? null) !== null));
 
@@ -100,14 +107,14 @@
 		error = null;
 		try {
 			const opened = await unwrap(
-				api.POST('/api/v1/sprints/{id}/open', { params: { path: { id: draft.id } }, body: { version: draft.version } })
+				api.POST('/api/v1/sprints/{id}/open', { params: { path: { id: draft.id } }, body: { version: draft.version, leave_out: leaveOut } })
 			);
 			await onchanged();
 			if (opened.warnings.length === 0) ondone();
 			else warnings = opened.warnings;
 		} catch (e) {
 			error = explain(e);
-			if (e instanceof Conflict) await onchanged();
+			await onchanged();
 		} finally {
 			busy = false;
 		}
@@ -141,14 +148,15 @@
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		<button type="button" class="primary" disabled={busy || !complete} onclick={close}>Close sprint</button>
 	{:else if warnings}
-		<p role="status">The next sprint is open.</p>
+		<p role="status">The new sprint is open.</p>
 		<p class="warn">Warning: {warnings.map((w) => warningText(w)).join('; ')}</p>
 		<button type="button" onclick={ondone}>Done</button>
 	{:else}
 		<p role="status">The sprint is closed.</p>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		{#if draft}
-			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint</button>
+			{#if leaveOut.length}<p class="muted">{goalsWord(leaveOut.length)} {leaveOut.length === 1 ? 'stays' : 'stay'} in Next sprint.</p>{/if}
+			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {goalsWord(goingIn)}</button>
 		{:else}
 			<p class="muted">There is no draft to open: add a goal to start one.</p>
 		{/if}
