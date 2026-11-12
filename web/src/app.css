@@ -231,8 +231,9 @@ html {
 header.top-bar {
 	position: sticky;
 	top: 0;
-	/* Above the drawers (10). The account menu lives inside this bar's own stacking context; page menus
-	   (ActionsMenu, z 30) still paint over the bar, so they close when their trigger scrolls behind it. */
+	/* Above the drawers (10). Menus whose trigger is inside the bar (the account menu) are exempt from ActionsMenu's
+	   close-behind-the-bar rule and its clamp; page menus (ActionsMenu, z 30) paint over the bar and close when
+	   their trigger scrolls behind it. */
 	z-index: 20;
 	background: var(--background);
 	display: flex;

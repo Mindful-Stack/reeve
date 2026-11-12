@@ -29,15 +29,17 @@
 	let open = $state(false);
 	let button: HTMLButtonElement;
 	let menu: HTMLDivElement | undefined = $state();
-	let pos = $state({ top: 0, left: 0 });
+	let pos = $state<{ top: number; left: number; maxHeight: number | null }>({ top: 0, left: 0, maxHeight: null });
 
 	const enabled = () => [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
 
 	function place() {
 		if (!button) return;
 		const r = button.getBoundingClientRect();
-		// The sticky top bar publishes its height; a trigger scrolled behind it is out of sight.
-		const barBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-bar-height')) || 0;
+		// The sticky top bar publishes its height. A page menu's trigger scrolled behind the bar is out of sight, and its
+		// menu stays below the bar. A menu whose trigger is in the bar (the account menu) is exempt from both.
+		const inBar = !!button.closest('header.top-bar');
+		const barBottom = inBar ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-bar-height')) || 0;
 		if (open && (r.bottom < barBottom || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth)) {
 			open = false;
 			button.focus({ preventScroll: true });
@@ -45,12 +47,18 @@
 		}
 		const m = menu?.getBoundingClientRect();
 		const w = m?.width || 200;
-		const h = m?.height || 0;
-		const below = r.bottom + 4;
-		const top = below + h > window.innerHeight - 8 ? r.top - 4 - h : below;
+		// The natural height, not the capped one, so a menu that grows back is measured again.
+		const h = menu && menu.scrollHeight ? menu.scrollHeight + (menu.offsetHeight - menu.clientHeight) : m?.height || 0;
+		const minTop = barBottom + 8;
+		const spaceBelow = window.innerHeight - 8 - (r.bottom + 4);
+		const spaceAbove = r.top - 4 - minTop;
+		const below = h <= spaceBelow || (h > spaceAbove && spaceBelow >= spaceAbove);
+		const space = below ? spaceBelow : spaceAbove;
+		const used = Math.min(h, Math.max(space, 0));
 		pos = {
-			top: Math.max(barBottom + 8, Math.min(top, window.innerHeight - h - 8)),
-			left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8))
+			top: below ? r.bottom + 4 : r.top - 4 - used,
+			left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)),
+			maxHeight: h > space ? Math.max(space, 0) : null
 		};
 	}
 
@@ -127,7 +135,7 @@
 	{#if trigger}{@render trigger()}{:else}<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>{/if}
 </button>
 {#if open}
-	<div bind:this={menu} {id} class="menu" role="menu" aria-label={label} tabindex="-1" style="top: {pos.top}px; left: {pos.left}px" onkeydown={keydown}>
+	<div bind:this={menu} {id} class="menu" role="menu" aria-label={label} tabindex="-1" style="top: {pos.top}px; left: {pos.left}px;{pos.maxHeight === null ? '' : ` max-height: ${pos.maxHeight}px;`}" onkeydown={keydown}>
 		{#each items as item, i (i)}
 			<button type="button" role="menuitem" tabindex="-1" disabled={item.disabled} onclick={() => choose(item)}>{item.label}</button>
 		{/each}

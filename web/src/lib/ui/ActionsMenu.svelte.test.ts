@@ -43,6 +43,48 @@ describe('ActionsMenu under the top bar', () => {
 		expect(trigger.getAttribute('aria-expanded')).toBe('false');
 		spy.mockRestore();
 	});
+
+	it('stays open for a trigger inside the top bar, whose bottom is always above the bar bottom', async () => {
+		document.documentElement.style.setProperty('--top-bar-height', '60px');
+		const header = document.createElement('header');
+		header.className = 'top-bar';
+		document.body.append(header);
+		const at = rect(10, 40); // inside the bar
+		const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+			return this.matches('button[aria-haspopup="menu"]') ? at : rect(0, 0);
+		});
+		app = mount(ActionsMenu, { target: header, props: { label: 'Account', items: [{ label: 'Sign out', onselect: vi.fn() }], control: 'menu' } });
+		flushSync();
+		(header.querySelector('button[aria-haspopup="menu"]') as HTMLButtonElement).click();
+		flushSync();
+		await tick();
+		window.dispatchEvent(new Event('scroll'));
+		flushSync();
+		await tick();
+		expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+		spy.mockRestore();
+	});
+
+	it('keeps a page menu below the bar, within the viewport, and off its own trigger', async () => {
+		document.documentElement.style.setProperty('--top-bar-height', '60px');
+		const innerHeight = window.innerHeight; // jsdom: 768
+		// A trigger near the bottom with a tall menu: it flips up, and there is only room down to the bar.
+		let at = rect(innerHeight - 40, innerHeight - 10);
+		const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+			if (this.matches('button[aria-haspopup="menu"]')) return at;
+			if (this.matches('[role="menu"]')) return rect(0, 900); // taller than the viewport
+			return rect(0, 0);
+		});
+		const trigger = await open([{ label: 'Move up', onselect: vi.fn() }]);
+		const menu = document.body.querySelector('[role="menu"]') as HTMLElement;
+		const top = parseFloat(menu.style.top);
+		const maxH = parseFloat(menu.style.maxHeight);
+		expect(top).toBeGreaterThanOrEqual(60 + 8);
+		expect(top + maxH).toBeLessThanOrEqual(at.top - 4 + 0.5); // ends above the trigger
+		expect(top + maxH).toBeLessThanOrEqual(innerHeight - 8);
+		expect(trigger.isConnected).toBe(true);
+		spy.mockRestore();
+	});
 });
 
 describe('ActionsMenu', () => {
