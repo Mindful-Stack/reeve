@@ -3,7 +3,7 @@ id: kb/ADR-0025
 title: "ADR-0025: A promise is a dated, display-only commitment on a story or epic, classified against sprints on read"
 description: "We decided that a person can promise a story or epic by a calendar date, stored on that item only and classified against the sprints' planned ends on read, because a commitment to someone outside the team must stay visible when missed without becoming a sprint field or a gate."
 tags: [adr, reeve, planning, promises]
-status: proposed
+status: accepted
 date: 2026-11-11
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -15,7 +15,7 @@ scope: ["reeve:crates/reeve-planning/**", "reeve:crates/reeve-protocol/**", "ree
 supersedes: []
 superseded_by:
 depends_on: [kb/ADR-0002, kb/ADR-0010, kb/ADR-0014, kb/ADR-0021]
-related: [kb/ADR-0004, kb/ADR-0015, kb/ADR-0018]
+related: [kb/ADR-0004, kb/ADR-0015, kb/ADR-0018, kb/ADR-0024]
 implements: []
 rfc:
 ---
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-11.
+Accepted 2026-11-12 by Daniel Thyselius.
 
 ## Context
 The team tells people outside it when work will be done: a customer bug "this sprint", an epic "next sprint". The
