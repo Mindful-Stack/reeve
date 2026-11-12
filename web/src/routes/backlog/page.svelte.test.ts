@@ -654,7 +654,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		await open('Title S-1');
 		const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Promise'))!.querySelector('select')!;
 		expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
-			['', 'any'],
+			['', 'all stories'],
 			['any', 'Promised (open or overdue)'],
 			['this_sprint', 'Due this sprint, incl. overdue'],
 			['next_sprint', 'Due next sprint'],
@@ -663,6 +663,16 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		select.value = 'overdue';
 		select.dispatchEvent(new Event('change', { bubbles: true }));
 		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog?promised=overdue'));
+	});
+
+	it('the Promise select\'s empty option clears the filter and the state=todo it needed', async () => {
+		go('?promised=overdue&state=todo');
+		data.stories = [row('S-1', 1, 'E-1')];
+		await open('Filters (1)');
+		const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Promise'))!.querySelector('select')!;
+		select.value = '';
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+		await vi.waitFor(() => expect(String(page.url)).toBe('http://localhost/backlog'));
 	});
 
 	it('an answer for an earlier query that lands after the current one leaves the current rows', async () => {

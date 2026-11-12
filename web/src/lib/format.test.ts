@@ -88,8 +88,8 @@ describe('actionLabel', () => {
 			'a new date and recipient',
 			'promised',
 			promised('2026-11-27', 'Beta', { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov to Beta',
-			'changed the promise on ABC-12 to 27 Nov to Beta'
+			'changed the promise to 27 Nov and its recipient to Beta',
+			'changed the promise on ABC-12 to 27 Nov and its recipient to Beta'
 		],
 		[
 			'a new date, recipient removed',

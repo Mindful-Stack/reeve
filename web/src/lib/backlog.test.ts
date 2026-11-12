@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Reason, Story } from '#lib/api/types.ts';
 import { epic as epicDto, initiative, withReadiness } from '#lib/test/fixtures.ts';
-import { activeFilterCount, backlogFilters, backlogState, backlogView, FILTER_PARAMS, groupBacklog, stateParam, toStoryQuery, withoutFilters } from './backlog.ts';
+import { activeFilterCount, backlogFilters, backlogState, backlogView, FILTER_PARAMS, groupBacklog, stateParam, toStoryQuery, withoutFilters, withPromised } from './backlog.ts';
 
 const ini = (key: string, horizon: string, title = key) => initiative({ key, title, horizon });
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: `Epic ${key}`, initiative });
@@ -172,6 +172,14 @@ describe('the promised filter', () => {
 		expect(backlogState(at('?promised=any&state=todo'))).toBe('todo');
 		expect(toStoryQuery(at('?promised=any&state=todo'), me)).toEqual({ delivery: 'todo', promised: 'any' });
 		expect(toStoryQuery(at('?promised=any&state=all'), me)).toEqual({ done: 'all', promised: 'any' });
+	});
+	it('clearing it (Clear filters, or the select\'s empty option) also drops state=todo, which only the filter needed', () => {
+		expect(withoutFilters(at('?promised=any&state=todo&q=a')).search).toBe('?q=a');
+		expect(withoutFilters(at('?promised=any&state=open')).search).toBe('?state=open');
+		expect(withPromised(at('?promised=any&state=todo&kind=bug'), null).search).toBe('?kind=bug');
+		expect(withPromised(at('?promised=any&state=all'), null).search).toBe('?state=all');
+		expect(withPromised(at('?state=todo'), 'overdue').search).toBe('?state=todo&promised=overdue');
+		expect(withPromised(at(''), 'overdue').search).toBe('?promised=overdue');
 	});
 	it('the State control names Todo explicitly while the filter would otherwise answer open', () => {
 		expect(stateParam('todo', at('?promised=any'))).toBe('todo');

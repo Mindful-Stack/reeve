@@ -629,10 +629,11 @@ describe('the history', () => {
 			expect(items.map(text)).toEqual([
 				'ABC-12 Title ABC-12 · to Acme · Kept · 20 Nov',
 				'ABC-14 Title ABC-14 · Done 2 d late · 21 Nov',
-				'ABC-15 Title ABC-15 · Overdue 3 d · 24 Nov'
+				'ABC-15 Title ABC-15 · Overdue 3 d · 24 Nov · via ABC-7'
 			]);
+			// The key and the title are the link, as in the demo list.
 			expect(q('a', items[0])!.getAttribute('href')).toBe('?story=ABC-12');
-			expect(text(q('a', items[0]))).toBe('ABC-12');
+			expect(text(q('a', items[0]))).toBe('ABC-12 Title ABC-12');
 			expect(text(section)).toContain('A promise is to a date: work done after it counts as late, even inside the sprint.');
 		});
 
@@ -646,11 +647,14 @@ describe('the history', () => {
 			expect(text(q('[data-testid="history-6"] [data-testid="promises"] h4'))).toBe('Promises due up to 27 Oct');
 		});
 
-		it('shows no section without promises', async () => {
+		it('says there are none, with no list and no note, without promises', async () => {
 			net.sprints!.closed = [dated(7, '2026-11-11', '2026-11-24')];
 			net.views[7] = sprintView(dated(7, '2026-11-11', '2026-11-24'));
 			const row = await expand(7);
 			expect(q('[data-testid="promises"]', row)).toBeNull();
+			const none = q('[data-testid="no-promises"]', row)!;
+			expect(text(none)).toBe('No promises due in this sprint.');
+			expect(none.classList.contains('muted')).toBe(true);
 			expect(text(row)).not.toContain('A promise is to a date');
 		});
 	});

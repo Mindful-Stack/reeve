@@ -2,7 +2,7 @@
 // The backlog's "by epic" view: epic-less stories (all untriaged, one rank run) first, then every epic under its initiative in planning
 // order, then epics with no initiative. Readiness is the server's (kb/ADR-0018 R1). Below it, the backlog URL's mapping to
 // the story list's query (kb/ADR-0021 R1: the server filters, the client never filters a full list).
-import type { Epic, Initiative, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
+import type { Epic, Initiative, PromisedFilter, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
 import { isKind, isUntriaged } from '#lib/board.ts';
 import { groupEpics } from '#lib/planning.ts';
 import { isPromisedFilter } from '#lib/promise.ts';
@@ -124,6 +124,24 @@ export function activeFilterCount(url: BacklogUrl, me: string | null | undefined
 export function withoutFilters(url: BacklogUrl): URL {
 	const next = new URL(url.href);
 	for (const name of FILTER_PARAMS) next.searchParams.delete(name);
+	dropTodo(next);
+	return next;
+}
+
+/** `state=todo` is only ever needed against the Promise filter (`stateParam`): without it, it is the default. */
+function dropTodo(url: URL): void {
+	if (url.searchParams.get('state') === 'todo') url.searchParams.delete('state');
+}
+
+/** The Promise select: the URL with `promised` set to `value`, or without it (and without the `state=todo` it needed)
+ *  when `value` is null. */
+export function withPromised(url: BacklogUrl, value: PromisedFilter | null): URL {
+	const next = new URL(url.href);
+	if (value != null) next.searchParams.set('promised', value);
+	else {
+		next.searchParams.delete('promised');
+		dropTodo(next);
+	}
 	return next;
 }
 

@@ -132,13 +132,15 @@
 					<ul>
 						{#each d.view.promises as x (x.key)}
 							<li>
-								<a href="?story={x.key}" class="key">{x.key}</a>
-								{x.title}{x.to ? ` · to ${x.to}` : ''} · {sprintPromiseText(x)}
+								<a href="?story={x.key}"><span class="key">{x.key}</span> {x.title}</a>{x.to ? ` · to ${x.to}` : ''}
+								· {sprintPromiseText(x)}{x.holder === 'epic' && x.epic != null ? ` · via ${x.epic}` : ''}
 							</li>
 						{/each}
 					</ul>
 					<p class="rule">A promise is to a date: work done after it counts as late, even inside the sprint.</p>
 				</section>
+			{:else}
+				<p class="muted" data-testid="no-promises">No promises due in this sprint.</p>
 			{/if}
 		</div>
 	{/if}

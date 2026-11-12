@@ -49,26 +49,26 @@ export function hasOwnWords(action: string): boolean {
 	return action.startsWith('attachment_') || action === 'promised' || action === 'unpromised';
 }
 
-const field = (o: unknown, name: string): unknown => (o && typeof o === 'object' && name in o ? (o as Record<string, unknown>)[name] : undefined);
-const text = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+const payloadField = (o: unknown, name: string): unknown => (o && typeof o === 'object' && name in o ? (o as Record<string, unknown>)[name] : undefined);
+const nonEmpty = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 
 /** A `promised` entry's words, chosen by comparing `on` and `to` with `previous` (null for a new promise). `key` names
  *  the item, for a note that is not already about it. */
 function promisedWords(payload: unknown, key: string | undefined): string {
-	const on = text(field(payload, 'on'));
+	const on = nonEmpty(payloadField(payload, 'on'));
 	if (on == null) return key == null ? 'promised' : `promised ${key}`;
-	const to = text(field(payload, 'to'));
-	const prev = field(payload, 'previous');
+	const to = nonEmpty(payloadField(payload, 'to'));
+	const prev = payloadField(payload, 'previous');
 	const promise = key == null ? 'the promise' : `the promise on ${key}`;
 	const recipient = key == null ? "the promise's recipient" : `the recipient of the promise on ${key}`;
 	const fresh = `promised ${key == null ? '' : `${key} `}by ${dayLabel(on)}${to == null ? '' : ` to ${to}`}`;
 	if (prev == null || typeof prev !== 'object') return fresh;
-	const prevOn = text(field(prev, 'on'));
-	const prevTo = text(field(prev, 'to'));
+	const prevOn = nonEmpty(payloadField(prev, 'on'));
+	const prevTo = nonEmpty(payloadField(prev, 'to'));
 	if (on !== prevOn) {
 		const change = `changed ${promise} to ${dayLabel(on)}`;
 		if (to === prevTo) return change;
-		return to == null ? `${change} and removed its recipient` : `${change} to ${to}`;
+		return to == null ? `${change} and removed its recipient` : `${change} and its recipient to ${to}`;
 	}
 	if (to === prevTo) return fresh;
 	return to == null ? `removed ${recipient}` : `changed ${recipient} to ${to}`;
@@ -79,7 +79,7 @@ function promisedWords(payload: unknown, key: string | undefined): string {
  *  not already about one item (`freshNote`). */
 export function actionLabel(action: string, payload: unknown, key?: string): string {
 	if (action === 'attachment_added' || action === 'attachment_removed') {
-		const name = text(field(payload, 'filename'));
+		const name = nonEmpty(payloadField(payload, 'filename'));
 		return `${action === 'attachment_added' ? 'added' : 'deleted'} attachment${name == null ? '' : ` ${name}`}`;
 	}
 	if (action === 'promised') return promisedWords(payload, key);

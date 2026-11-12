@@ -185,13 +185,21 @@ export function promisedMatches(
 	}
 }
 
-/** The Promise filter's options on the board and the backlog, after the empty "any" (no filter). */
-export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }[] = [
-	{ value: 'any', label: 'Promised (open or overdue)' },
-	{ value: 'this_sprint', label: 'Due this sprint, incl. overdue' },
-	{ value: 'next_sprint', label: 'Due next sprint' },
-	{ value: 'overdue', label: 'Overdue' }
-];
+/** The Promise filter's labels: a Record, so a value the server adds fails `npm run check` until it is named here. */
+const PROMISED_LABELS: Record<PromisedFilter, string> = {
+	any: 'Promised (open or overdue)',
+	this_sprint: 'Due this sprint, incl. overdue',
+	next_sprint: 'Due next sprint',
+	overdue: 'Overdue'
+};
+
+/** The Promise select's empty option (no filter). The other selects say "any"; here that word is one of the values. */
+export const PROMISED_NONE = 'all stories';
+
+/** The Promise filter's options on the board and the backlog, after the empty `PROMISED_NONE`, in the labels' order. */
+export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }[] = (Object.keys(PROMISED_LABELS) as PromisedFilter[]).map(
+	(value) => ({ value, label: PROMISED_LABELS[value] })
+);
 
 /** Whether a URL value is one of the `promised` filter's values (as `isKind` is for kinds). */
 export function isPromisedFilter(s: string | null | undefined): s is PromisedFilter {
