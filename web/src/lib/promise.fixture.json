@@ -1,5 +1,5 @@
 {
-	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift; the activity rows are the web's actionLabel (format.test.ts) and the TUI ticker's words; crates/reeve-planning/src/domain/promise.rs reads the filter rows, so the board's filter and the server's cannot either.",
+	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift; the activity rows are the web's actionLabel (format.test.ts) and the TUI ticker's words; the promisesHeading rows are the web's promisesHeading (sprint.test.ts) and the CLI's sprint view heading; crates/reeve-planning/src/domain/promise.rs reads the filter rows, so the board's filter and the server's cannot either.",
 	"chip": [
 		{
 			"label": "open, this sprint",
@@ -1210,6 +1210,38 @@
 			"payload": null,
 			"plain": "cleared the promise",
 			"keyed": "cleared the promise on ABC-12"
+		}
+	],
+	"promisesHeading": [
+		{
+			"label": "the same month",
+			"after": "2026-11-10",
+			"ends_on": "2026-11-24",
+			"text": "Promises due 11–24 Nov"
+		},
+		{
+			"label": "across months",
+			"after": "2026-10-27",
+			"ends_on": "2026-11-10",
+			"text": "Promises due 28 Oct–10 Nov"
+		},
+		{
+			"label": "from the first of the end's month",
+			"after": "2026-10-31",
+			"ends_on": "2026-11-13",
+			"text": "Promises due 1–13 Nov"
+		},
+		{
+			"label": "across years",
+			"after": "2026-12-31",
+			"ends_on": "2027-01-13",
+			"text": "Promises due 1–13 Jan"
+		},
+		{
+			"label": "the first sprint: no previous end",
+			"after": null,
+			"ends_on": "2026-10-27",
+			"text": "Promises due up to 27 Oct"
 		}
 	]
 }

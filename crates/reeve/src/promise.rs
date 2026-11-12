@@ -290,6 +290,14 @@ mod tests {
     }
 
     #[derive(Deserialize)]
+    struct HeadingRow {
+        label: String,
+        after: Option<NaiveDate>,
+        ends_on: NaiveDate,
+        text: String,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Words {
         chip: Vec<Row<StoryPromiseDto>>,
@@ -299,6 +307,7 @@ mod tests {
         state_words: BTreeMap<String, [String; 2]>,
         sprint_row: Vec<Row<SprintPromiseDto>>,
         activity: Vec<ActivityRow>,
+        promises_heading: Vec<HeadingRow>,
     }
 
     fn words() -> Words {
@@ -383,22 +392,13 @@ mod tests {
         }
     }
 
-    /// The web's `promisesHeading` cases (`web/src/lib/sprint.test.ts`).
+    /// The fixture's `promisesHeading` rows, which the web's `sprint.test.ts` reads too.
     #[test]
     fn promises_heading_runs_from_the_day_after_the_previous_end() {
-        let d = |s: &str| s.parse::<NaiveDate>().unwrap();
-        for (after, end, want) in [
-            (Some("2026-11-10"), "2026-11-24", "Promises due 11–24 Nov"),
-            (
-                Some("2026-10-27"),
-                "2026-11-10",
-                "Promises due 28 Oct–10 Nov",
-            ),
-            (Some("2026-10-31"), "2026-11-13", "Promises due 1–13 Nov"),
-            (Some("2026-12-31"), "2027-01-13", "Promises due 1–13 Jan"),
-            (None, "2026-10-27", "Promises due up to 27 Oct"),
-        ] {
-            assert_eq!(promises_heading(after.map(d), d(end)), want);
+        let rows = words().promises_heading;
+        assert!(!rows.is_empty());
+        for r in rows {
+            assert_eq!(promises_heading(r.after, r.ends_on), r.text, "{}", r.label);
         }
     }
 

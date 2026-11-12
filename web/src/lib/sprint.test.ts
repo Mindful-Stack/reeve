@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalProgress, SprintCounts } from '#lib/api/types.ts';
+import words from './promise.fixture.json';
 import {
 	promisesHeading,
 	blockedText,
@@ -183,12 +184,13 @@ describe('upkeepTextAt', () => {
 	});
 });
 
+// The heading rows live in promise.fixture.json, which the CLI's sprint view heading (crates/reeve/src/promise.rs)
+// reads too.
+const headingRows = words.promisesHeading as { label: string; after: string | null; ends_on: string; text: string }[];
+
 describe('a closed sprint\'s promise dates', () => {
-	it('promisesHeading: the day after the previous end to this end, the month once when shared', () => {
-		expect(promisesHeading('2026-11-10', '2026-11-24')).toBe('Promises due 11–24 Nov');
-		expect(promisesHeading('2026-10-27', '2026-11-10')).toBe('Promises due 28 Oct–10 Nov');
-		expect(promisesHeading('2026-10-31', '2026-11-13')).toBe('Promises due 1–13 Nov');
-		expect(promisesHeading('2026-12-31', '2027-01-13')).toBe('Promises due 1–13 Jan');
-		expect(promisesHeading(null, '2026-10-27')).toBe('Promises due up to 27 Oct');
-	});
+	it('has heading rows', () => expect(headingRows.length).toBeGreaterThan(0));
+	it.each(headingRows.map((r) => [r.label, r] as const))('promisesHeading: %s', (_, r) =>
+		expect(promisesHeading(r.after, r.ends_on)).toBe(r.text)
+	);
 });
