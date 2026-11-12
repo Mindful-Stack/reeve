@@ -1343,6 +1343,52 @@ async fn flow() {
         ls(&["--text", "zebra", "--urgent"]),
         vec![zebra_story.clone()]
     );
+    // A promise (kb/ADR-0025): set by a date with a recipient, listed by `--promised any`, then cleared. The text
+    // answer is the server's chip; nothing about the promise is computed by the CLI.
+    let on = chrono::Utc::now().date_naive() + chrono::Days::new(40);
+    let promised = plain(&human)
+        .args([
+            "story",
+            "promise",
+            &zebra_bug,
+            "--on",
+            &on.to_string(),
+            "--to",
+            "Acme",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        promised.status.success(),
+        "{}",
+        String::from_utf8_lossy(&promised.stderr)
+    );
+    let answer = String::from_utf8(promised.stdout).unwrap();
+    assert!(
+        answer.contains(&format!("{zebra_bug} · Promised {} ", on.format("%-d %b")))
+            && answer.trim_end().ends_with(" · to Acme"),
+        "{answer}"
+    );
+    assert_eq!(
+        ls(&["--text", "zebra", "--promised", "any"]),
+        vec![zebra_bug.clone()]
+    );
+    let cleared = plain(&human)
+        .args(["story", "promise", &zebra_bug, "--clear"])
+        .output()
+        .unwrap();
+    assert!(
+        cleared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cleared.stderr)
+    );
+    assert!(
+        String::from_utf8(cleared.stdout)
+            .unwrap()
+            .trim_end()
+            .ends_with(&format!("{zebra_bug} · promise cleared"))
+    );
+    assert!(ls(&["--text", "zebra", "--promised", "any"]).is_empty());
     assert_eq!(
         ls(&["--text", "zoo-7"]),
         vec![mentions_ref.clone(), exact_ref.clone(), started_ref.clone()],

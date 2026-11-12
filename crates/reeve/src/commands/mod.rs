@@ -14,7 +14,7 @@ pub mod war_room;
 use crate::client::{Client, Outcome};
 use crate::glyphs::Level;
 use clap::Subcommand;
-use reeve_protocol::{ErrorCode, ItemRefDto, Key, MarkUrgent, UrgentMarkDto};
+use reeve_protocol::{ErrorCode, ItemRefDto, Key, MarkUrgent, PromiseShortcut, UrgentMarkDto};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -190,6 +190,82 @@ pub async fn urgent<T: Serialize + DeserializeOwned>(
         let u = view(v);
         crate::render::urgent_answer(u.level, u.key, u.own, u.sources, now)
     }))
+}
+
+/// `--on`: a sprint shortcut (`this-sprint`, `next-sprint`) or a calendar date (`YYYY-MM-DD`). Anything else is a usage
+/// error, so it never reaches the server.
+#[derive(Clone, Copy, Debug)]
+pub enum PromiseOn {
+    Shortcut(PromiseShortcut),
+    Date(chrono::NaiveDate),
+}
+
+/// The arguments of `story promise` and `epic promise`: one of `--on`, `--to` or `--clear` at least, and `--clear`
+/// alone.
+#[derive(clap::Args)]
+#[group(required = true, multiple = true)]
+pub struct PromiseArgs {
+    /// The date: `this-sprint` or `next-sprint` (the sprint's planned end, kept as it is when saved) or YYYY-MM-DD.
+    /// Left out, only the recipient of the current promise changes.
+    #[arg(long, value_parser = parse_promise_on, value_name = "this-sprint|next-sprint|YYYY-MM-DD")]
+    pub on: Option<PromiseOn>,
+    /// Who it is promised to; left out, the current recipient is kept; --to '' clears it.
+    #[arg(long)]
+    pub to: Option<String>,
+    /// Remove the promise (clearing none changes nothing).
+    #[arg(long, conflicts_with_all = ["on", "to"])]
+    pub clear: bool,
+}
+
+/// Clap's parser for `--on`.
+pub fn parse_promise_on(s: &str) -> Result<PromiseOn, String> {
+    match s {
+        "this-sprint" => Ok(PromiseOn::Shortcut(PromiseShortcut::ThisSprint)),
+        "next-sprint" => Ok(PromiseOn::Shortcut(PromiseShortcut::NextSprint)),
+        _ => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map(PromiseOn::Date)
+            .map_err(|_| {
+                format!("`{s}` is neither this-sprint, next-sprint nor a date (YYYY-MM-DD)")
+            }),
+    }
+}
+
+/// `promise` for stories and epics, on the item at `item` (`/{epics|stories}/{key}`): `--clear` is a bodiless DELETE
+/// of its `/promise` route and prints `<key> · promise cleared`; otherwise a POST of only the fields given (a missing
+/// `to` keeps the recipient, `""` clears it; the server refuses unknown fields) prints `answer`. No version is sent,
+/// and nothing about the promise is computed here: the answer shows the server's values.
+pub async fn promise<T: Serialize + DeserializeOwned>(
+    c: &Client,
+    item: String,
+    PromiseArgs { on, to, clear }: PromiseArgs,
+    json: bool,
+    key: impl Fn(&T) -> String,
+    answer: impl Fn(&T) -> String,
+) -> anyhow::Result<i32> {
+    let path = format!("{item}/promise");
+    if clear {
+        return Ok(finish(c.delete::<T>(&path).await?, json, |v| {
+            format!("{} · promise cleared", key(v))
+        }));
+    }
+    let mut body = serde_json::Map::new();
+    match on {
+        Some(PromiseOn::Shortcut(s)) => {
+            body.insert("shortcut".into(), serde_json::to_value(s)?);
+        }
+        Some(PromiseOn::Date(d)) => {
+            body.insert("on".into(), serde_json::to_value(d)?);
+        }
+        None => {}
+    }
+    if let Some(t) = to {
+        body.insert("to".into(), t.into());
+    }
+    Ok(finish(
+        c.post::<T>(&path, serde_json::Value::Object(body)).await?,
+        json,
+        answer,
+    ))
 }
 
 /// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.

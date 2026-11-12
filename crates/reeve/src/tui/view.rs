@@ -732,6 +732,29 @@ mod tests {
         assert!(head.trim_end().ends_with('…'), "{rows:#?}");
     }
 
+    /// The card shows the chip and the drawer the promise line, both from the server's fields (kb/ADR-0011 R9).
+    #[test]
+    fn a_promised_card_shows_the_chip_and_the_drawer_the_line() {
+        let chip = "Overdue 3 d · 7 Nov · via ABC-100";
+        let s = || promised(owned(story("ABC-1", Todo, 1), "dan@example.com"));
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s()]);
+        // Columns, wide enough for the whole status line; and the grouped list.
+        let (rows, _) = sim.render(260, 30);
+        assert!(has(&rows, chip), "{rows:#?}");
+        let (rows, _) = sim.render(100, 30);
+        assert!(has(&rows, chip), "{rows:#?}");
+        let mut sim = Sim::loaded(TokenKind::Interactive, vec![s()]);
+        sim.press(KeyCode::Enter, KeyModifiers::NONE);
+        let (rows, _) = sim.render(200, 30);
+        let (_, y) = at(&rows, "Title of ABC-1");
+        assert!(
+            rows[y as usize + 1].contains(
+                "Promised 30 Nov to Beta. Epic ABC-100 is promised 7 Nov; the earlier date counts."
+            ),
+            "{rows:#?}"
+        );
+    }
+
     #[test]
     fn the_drawer_says_why_a_story_is_urgent_right_under_its_title() {
         let mut s = urgent(owned(story("ABC-1", Todo, 1), "dan@example.com"));

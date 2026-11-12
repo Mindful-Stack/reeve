@@ -1,5 +1,6 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
+use crate::promise;
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -93,12 +94,60 @@ pub fn with_urgency(text: String, lines: Vec<String>) -> String {
     }
 }
 
-/// `story` for `story show` and `story context`: with the urgent lines after the first line.
+/// " · <chip>" for a story's promise, or nothing.
+fn story_chip(s: &StoryDto) -> String {
+    s.promise
+        .as_ref()
+        .map(|p| format!(" · {}", promise::chip_text(p, true)))
+        .unwrap_or_default()
+}
+
+/// " · <chip>" for an epic's own promise, or nothing.
+fn epic_chip(e: &EpicDto) -> String {
+    e.promise
+        .as_ref()
+        .map(|p| format!(" · {}", promise::epic_chip_text(p)))
+        .unwrap_or_default()
+}
+
+/// `story` for `story show` and `story context`: with the urgent lines, then the promise line, after the first line.
 pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
-    with_urgency(
-        story(s),
-        urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now),
-    )
+    let mut lines = urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now);
+    lines.extend(s.promise.as_ref().map(promise::line_text));
+    with_urgency(story(s), lines)
+}
+
+/// The answer to promising a story: `<key> · <chip>[ · to <recipient>]`, the recipient being that of the promise that
+/// sets the date.
+pub fn story_promise_answer(s: &StoryDto) -> String {
+    let key = mark(Level::of_kind(s.kind), &s.key);
+    match &s.promise {
+        Some(p) => {
+            let to = promise::holder_to(p)
+                .map(|t| format!(" · to {t}"))
+                .unwrap_or_default();
+            format!("{key} · {}{to}", promise::chip_text(p, true))
+        }
+        None => format!("{key} · no promise"),
+    }
+}
+
+/// The answer to promising an epic: `<key> · <chip>[ · to <recipient>]`.
+pub fn epic_promise_answer(e: &EpicDto) -> String {
+    let key = mark(Level::Epic, &e.key);
+    match &e.promise {
+        Some(p) => {
+            let to = p
+                .fact
+                .to
+                .as_deref()
+                .filter(|t| !t.is_empty())
+                .map(|t| format!(" · to {t}"))
+                .unwrap_or_default();
+            format!("{key} · {}{to}", promise::epic_chip_text(p))
+        }
+        None => format!("{key} · no promise"),
+    }
 }
 
 /// `initiative` for `initiative show`: with the urgent lines after the first line.
@@ -109,12 +158,11 @@ pub fn initiative_show(i: &InitiativeDto, now: DateTime<Utc>) -> String {
     )
 }
 
-/// `epic` for `epic show`: with the urgent lines after the first line.
+/// `epic` for `epic show`: with the urgent lines, then the promise line, after the first line.
 pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
-    with_urgency(
-        epic(e),
-        urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now),
-    )
+    let mut lines = urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now);
+    lines.extend(e.promise.as_ref().map(promise::epic_line_text));
+    with_urgency(epic(e), lines)
 }
 
 /// The answer to marking an item urgent: its mark line (`!` after the key once the server counts it urgent), then
@@ -166,11 +214,12 @@ pub fn war_room_rows<'a>(
 
 pub fn story(s: &StoryDto) -> String {
     let mut out = format!(
-        "{}{} [{}] {}\n  kind: {:?}  version: {}",
+        "{}{} [{}] {}{}\n  kind: {:?}  version: {}",
         mark(Level::of_kind(s.kind), &s.key),
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         s.title,
+        story_chip(s),
         s.kind,
         s.version
     );
@@ -228,12 +277,13 @@ pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
             .unwrap_or_else(|| "not ready".into())
     };
     format!(
-        "{}{}\t{}\t{}\t{}",
+        "{}{}\t{}\t{}\t{}{}",
         mark(Level::of_kind(s.kind), &s.key),
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         ready_word,
-        s.title
+        s.title,
+        story_chip(s)
     )
 }
 
@@ -392,6 +442,7 @@ pub fn epic(e: &EpicDto) -> String {
             "open"
         }
     );
+    out.push_str(&epic_chip(e));
     out
 }
 

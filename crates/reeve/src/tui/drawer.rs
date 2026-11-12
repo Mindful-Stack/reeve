@@ -21,6 +21,7 @@ pub fn lines(board: &State, e: &Entry, wall: DateTime<Utc>) -> Vec<String> {
         &s.key,
         wall,
     ));
+    out.extend(s.promise.as_ref().map(crate::promise::line_text));
     out.push(format!(
         "owner {} · epic {} · {}",
         s.owner.as_deref().map(words::local_part).unwrap_or("none"),

@@ -79,11 +79,15 @@ fn readiness_style(s: &State, e: &Entry) -> Style {
     }
 }
 
-/// The tags after a card's status line, in both layouts: epic, then PR, then goal. `fit` cuts a too-narrow line from the
-/// end, so these tags go before the status, and the goal tag, last, goes first.
+/// The tags after a card's status line, in both layouts: the promise chip, epic, then PR, then goal. `fit` cuts a
+/// too-narrow line from the end, so these tags go before the status, and the goal tag, last, goes first; the chip, a
+/// commitment to someone outside the team, is cut last. Its words are the server's values (`crate::promise`).
 fn meta(e: &Entry) -> String {
     let story = &e.item.story;
     let mut m = String::new();
+    if let Some(p) = &story.promise {
+        m.push_str(&format!(" · {}", crate::promise::chip_text(p, true)));
+    }
     if let Some(ep) = &story.epic {
         m.push_str(&format!(" · epic {ep}"));
     }
