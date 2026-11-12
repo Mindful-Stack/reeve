@@ -90,7 +90,7 @@ describe('applyFilters', () => {
 		sw('ABC-5', { epic: null, kind: 'chore' }, [{ reason: 'untriaged' }]),
 		// The client must not re-derive it: no epic but no untriaged reason from the server, so not untriaged.
 		sw('ABC-6', { epic: null }),
-		// Done items leave the filter even if they carry the reason (kb/ADR-0018 R4: epic-less and not done).
+		// Done items leave the filter even if they carry the reason (kb/ADR-0027 R4: epic-less and not done).
 		sw('ABC-8', { epic: null, delivery: 'done' }, [{ reason: 'untriaged' }])
 	];
 	const keys = (f: Parameters<typeof applyFilters>[1]) => applyFilters(all, f).map((s) => s.story.key);

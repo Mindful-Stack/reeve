@@ -17,7 +17,7 @@ pub fn key(s: &str) -> Key {
 }
 
 /// A ready story of kind story, unowned, in epic ABC-100 with one criterion (a ready story of kind story always has
-/// an epic and criteria, kb/ADR-0018 R4), in `state`, at `version`. Tests that need it not ready say so with `not_ready`.
+/// an epic and criteria, kb/ADR-0027 R4), in `state`, at `version`. Tests that need it not ready say so with `not_ready`.
 pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness {
     StoryWithReadiness {
         story: StoryDto {

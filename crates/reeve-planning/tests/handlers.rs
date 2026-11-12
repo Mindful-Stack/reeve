@@ -4017,9 +4017,9 @@ async fn list_stories_with_an_absurd_done_window_lists_everything() {
     assert_eq!(all.len(), 2);
 }
 
-/// kb/ADR-0018 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
+/// kb/ADR-0027 R3: only an admin's check stores `accepted`. A member's is refused before the row is read (so it says
 /// nothing about versions, closure or existence) and writes nothing; a member's other results are stored; an admin's
-/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0018 R2).
+/// automation token stores `accepted` (storing a result is not an override, kb/ADR-0027 R2).
 #[tokio::test]
 async fn only_an_admins_check_stores_accepted() {
     let (_c, pool) = common::pg().await;
@@ -5811,7 +5811,7 @@ async fn decision_queue_costs_the_same_with_goals() {
     assert_eq!(few, many);
 }
 
-/// The queue reads only unfinished stories (kb/ADR-0018 R5): done stories under a decision's epic are neither held
+/// The queue reads only unfinished stories (kb/ADR-0027 R5): done stories under a decision's epic are neither held
 /// nor under way, and adding them changes no row the queue reads. The domain drops done stories too, so the queue's
 /// answer is the same either way: only this rows-read comparison catches a regression to `DoneWindow::All` (every done
 /// story in the history fetched, then thrown away). A future queue read whose rows legitimately grow with done

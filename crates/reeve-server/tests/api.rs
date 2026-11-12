@@ -130,9 +130,9 @@ async fn auth_envelope_gate_and_automation_rule() {
     assert_eq!(call(&h.app, None, "GET", "/health", None).await.0, 200);
 }
 
-/// An item of any kind without an epic is untriaged (proposed kb/ADR-0018). The override rule: automation never gets
-/// past a refusal (kb/ADR-0015 R7, kb/ADR-0018 R2) and a refusal writes nothing; only an interactive caller's
-/// override moves it, logged once with its reason (kb/ADR-0018 R2).
+/// An item of any kind without an epic is untriaged (kb/ADR-0027 R4). The override rule: automation never gets
+/// past a refusal (kb/ADR-0015 R7, kb/ADR-0027 R2) and a refusal writes nothing; only an interactive caller's
+/// override moves it, logged once with its reason (kb/ADR-0027 R2).
 #[tokio::test]
 async fn an_untriaged_bug_moves_only_by_a_logged_interactive_override() {
     let h = harness().await;
@@ -1160,7 +1160,7 @@ async fn list_filters_tolerate_unknown_references_and_remaining_inputs_resolve()
     assert_eq!((st, v["code"].as_str()), (404, Some("not_found")));
 }
 
-/// Only an admin's check stores `accepted`, the one result that satisfies a decision (kb/ADR-0018 R3), whatever the token
+/// Only an admin's check stores `accepted`, the one result that satisfies a decision (kb/ADR-0027 R3), whatever the token
 /// kind; every other result is stored from any caller; readiness follows the stored results only.
 #[tokio::test]
 async fn only_an_admin_stores_an_accepted_check() {

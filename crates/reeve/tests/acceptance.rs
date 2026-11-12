@@ -865,7 +865,7 @@ async fn flow() {
     );
 
     // 9. A member links a record that is accepted on the default branch. The link succeeds and its immediate check runs
-    // (kb/ADR-0004 R3), but only an admin's check stores accepted (kb/ADR-0018 R3): it is held, exit 0, and the story
+    // (kb/ADR-0004 R3), but only an admin's check stores accepted (kb/ADR-0027 R3): it is held, exit 0, and the story
     // waits for the scheduled run, which uses an admin's automation token. The scheduled script tells the two apart
     // through `auth status`; pin the field it reads.
     let status_of = |t: &str| {

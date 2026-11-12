@@ -61,7 +61,7 @@ fn dan() -> Ctx {
 }
 
 /// A chore under a discovery-complete epic of its own, so its readiness turns on its own facts only: an item without
-/// an epic is untriaged (kb/ADR-0018 R4). The epic is set up through a second handler with its own sink, so the
+/// an epic is untriaged (kb/ADR-0027 R4). The epic is set up through a second handler with its own sink, so the
 /// test's sink holds only the chore's entries. `criteria` empty makes it not ready.
 async fn chore(h: &Handlers, idem: &str, criteria: &[&str], owner: Option<&str>) -> Story {
     let (setup, _) = mk(h.pool.clone());

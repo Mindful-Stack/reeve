@@ -15,7 +15,7 @@ import StoryDrawer from './StoryDrawer.svelte';
 vi.mock('$app/state', async () => ({
 	page: (await import('#lib/test/net.ts')).fakePage({ url: '/board?story=SCRUM-11' }).page
 }));
-// A person at the keyboard: a refusal the server marks overridable raises the override prompt (kb/ADR-0018 R2).
+// A person at the keyboard: a refusal the server marks overridable raises the override prompt (kb/ADR-0027 R2).
 vi.mock('#lib/me.svelte.ts', async (orig) => ({
 	...(await orig<typeof import('#lib/me.svelte.ts')>()),
 	isInteractive: () => true
