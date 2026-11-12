@@ -3533,8 +3533,8 @@ async fn list_stories_reads_one_snapshot() {
     );
 }
 
-/// The context reads one snapshot: commits made while it waits are invisible to its readiness, blockers, pull requests
-/// and comments alike.
+/// The context reads one snapshot: commits made while it waits are invisible to its readiness, blockers, pull requests,
+/// comments and attachments alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn story_context_reads_one_snapshot() {
     let (_c, pool) = common::pg().await;
@@ -3542,6 +3542,20 @@ async fn story_context_reads_one_snapshot() {
     let (s, b, t) = snapshot_fixture(&h).await;
     let comment = h
         .comment_story(&ctx("dan@example.com", false), &s, "C", None)
+        .await
+        .unwrap();
+    // An attachment claimed through a second comment; the pause deletes it.
+    let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+    let dan = ctx("dan@example.com", false);
+    let att = h
+        .upload_attachment(&dan, "shot.png", None, bytes::Bytes::from(png.into_inner()))
+        .await
+        .unwrap()
+        .id();
+    let with_att = h
+        .comment_story_attaching(&dan, &s, "see", None, &[att])
         .await
         .unwrap();
 
@@ -3557,6 +3571,10 @@ async fn story_context_reads_one_snapshot() {
     });
     wait_until_blocked(&pool).await;
     commit_during_the_pause(&pool, &s, &b, &t, Some(comment)).await;
+    tokio::time::timeout(PAUSE, h.delete_attachment(&dan, att))
+        .await
+        .expect("the delete waited: it touched a table the lock covers")
+        .unwrap();
     lock.rollback().await.unwrap();
     let got = tokio::time::timeout(PAUSE, call)
         .await
@@ -3571,7 +3589,11 @@ async fn story_context_reads_one_snapshot() {
     assert!(got.story.prs.is_empty());
     assert_eq!(
         got.comments.iter().map(|c| c.id).collect::<Vec<_>>(),
-        [comment]
+        [comment, with_att]
+    );
+    assert_eq!(
+        got.attachments.iter().map(|a| a.id).collect::<Vec<_>>(),
+        [att]
     );
     assert_eq!(got.blockers.len(), 1);
     assert_eq!(got.blockers[0].key, b);
@@ -3580,7 +3602,11 @@ async fn story_context_reads_one_snapshot() {
     let after = h.story_context(&s, Utc::now()).await.unwrap();
     assert!(after.readiness.ready);
     assert_eq!(after.story.prs.len(), 1);
-    assert!(after.comments.is_empty());
+    assert_eq!(
+        after.comments.iter().map(|c| c.id).collect::<Vec<_>>(),
+        [with_att]
+    );
+    assert!(after.attachments.is_empty());
     assert_eq!(after.blockers[0].delivery, DeliveryState::Done);
 }
 
