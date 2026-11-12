@@ -93,6 +93,19 @@ describe('PromiseDialog', () => {
 		expect(dateInput().hasAttribute('min')).toBe(false);
 	});
 
+	it('reserves the shortcut row until the sprints are known, and collapses it when none can be offered', () => {
+		open({ today: null });
+		expect(q('[data-testid="promise-shortcuts"]')).not.toBeNull();
+		unmount(app!);
+		app = null;
+		open({ activeEnds: '2026-11-11', draftEnds: null });
+		expect(q('[data-testid="promise-shortcuts"]')).toBeNull();
+		unmount(app!);
+		app = null;
+		open();
+		expect(q('[data-testid="promise-shortcuts"]')?.querySelectorAll('button')).toHaveLength(2);
+	});
+
 	it('shows a shortcut ending today', () => {
 		open({ activeEnds: '2026-11-12' });
 		expect(button('End of this sprint (12 Nov)')).toBeDefined();

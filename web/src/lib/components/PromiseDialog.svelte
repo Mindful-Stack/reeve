@@ -114,13 +114,16 @@
 				oninput={() => (shortcut = null)}
 			/></label
 		>
-		<!-- Below the date, in a row that is always reserved: shortcuts that arrive with a late sprints read (the epic page
-		     fetches them on open) never move the field being used. -->
-		<div class="shortcuts">
-			{#each shortcuts as sc (sc.s)}
-				<button type="button" aria-pressed={shortcut === sc.s} disabled={busy} onclick={() => pick(sc.s, sc.ends)}>{sc.label}</button>
-			{/each}
-		</div>
+		<!-- Below the date, in a row reserved while the sprints are unknown (`today` null): shortcuts that arrive with a late
+		     read (the epic page fetches them on open) never move the field being used. Once known with none to offer, the
+		     row collapses. -->
+		{#if today == null || shortcuts.length > 0}
+			<div class="shortcuts" data-testid="promise-shortcuts">
+				{#each shortcuts as sc (sc.s)}
+					<button type="button" aria-pressed={shortcut === sc.s} disabled={busy} onclick={() => pick(sc.s, sc.ends)}>{sc.label}</button>
+				{/each}
+			</div>
+		{/if}
 		<label class="field">To whom (optional) <input name="to" bind:value={to} maxlength="200" disabled={busy} /></label>
 		{#if note}<p class="note">{note}</p>{/if}
 		{#if error}<p class="error" role="alert">{error}</p>{/if}

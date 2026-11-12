@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EpicPromise, PromiseDue, PromiseFact, PromiseState, PromisedFilter, StoryPromise } from '#lib/api/types.ts';
-import { chip, chipText, epicChipText, epicLineText, epicNote, inheritedEpic, isEpic, lineText, look, promiseActions, promisedMatches } from './promise.ts';
+import { STATE_WORDS, chip, chipText, epicChipText, epicLineText, epicNote, inheritedEpic, isEpic, lineText, look, promiseActions, promisedMatches } from './promise.ts';
 
 const fact = (on: string, to: string | null = 'Acme', by = 'Dana'): PromiseFact => ({ on, to, by, at: '2026-11-01T09:00:00Z' });
 
@@ -31,7 +31,7 @@ describe('chipText', () => {
 	it('drops the epic on request (the epic\'s own page)', () => {
 		const p = sp({ own: null, epic: { key: 'ABC-7', fact: fact('2026-11-20') }, holder: 'epic', due: 'this_sprint' });
 		expect(chipText(p, { via: false })).toBe('Promised 20 Nov · this sprint');
-		expect(chip(p, { via: false }).text).toBe('Promised 20 Nov · this sprint');
+		expect(chip(p, { via: false })).toMatchObject({ text: 'Promised 20 Nov · this sprint', via: null });
 	});
 });
 
@@ -57,9 +57,13 @@ describe('tone and icon', () => {
 	])('%s is %s with %s', (state, tone, icon) => expect(look(state)).toEqual({ tone, icon }));
 
 	it('an epic chip is past or neutral', () => {
-		expect(chip({ fact: fact('2026-11-20'), due: null, past: true })).toEqual({ text: 'Past 20 Nov', tone: 'muted', icon: null });
+		expect(chip({ fact: fact('2026-11-20'), due: null, past: true })).toEqual({ text: 'Past 20 Nov', via: null, tone: 'muted', icon: null });
 		expect(chip({ fact: fact('2026-11-20'), due: 'later', past: false }).tone).toBe('neutral');
-		expect(chip(sp({ state: 'overdue', due: null, days: 3 }))).toEqual({ text: 'Overdue 3 d · 20 Nov', tone: 'warn', icon: 'clock' });
+		expect(chip(sp({ state: 'overdue', due: null, days: 3 }))).toEqual({ text: 'Overdue 3 d · 20 Nov', via: null, tone: 'warn', icon: 'clock' });
+		// The epic key comes apart from the words, so the chip can keep it on one line.
+		const inherited = sp({ own: null, epic: { key: 'ABC-7', fact: fact('2026-11-20') }, holder: 'epic', due: 'later' });
+		expect(chip(inherited)).toEqual({ text: 'Promised 20 Nov', via: 'ABC-7', tone: 'neutral', icon: 'calendar' });
+		expect(chip(inherited, { via: false }).via).toBeNull();
 	});
 });
 
@@ -166,4 +170,15 @@ describe('promisedMatches', () => {
 		'%s / %s',
 		(_, f, state, due, want) => expect(promisedMatches(f, { state, due })).toBe(want)
 	);
+});
+
+describe('STATE_WORDS', () => {
+	it('is the one table every surface formats from', () => {
+		expect(Object.fromEntries(Object.entries(STATE_WORDS).map(([k, f]) => [k, [f(3), f(null)]]))).toEqual({
+			overdue: ['overdue 3 d', 'overdue'],
+			kept: ['kept', 'kept'],
+			late: ['done 3 d late', 'done late'],
+			dropped: ['dropped', 'dropped']
+		});
+	});
 });

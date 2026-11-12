@@ -35,6 +35,17 @@ describe('PromiseChip', () => {
 		expect(document.body.querySelectorAll('[title]')).toHaveLength(0);
 	});
 
+	it('keeps the via key on one line', () => {
+		const inherited: StoryPromise = { own: null, epic: { key: 'GRA-608', fact }, on: '2026-11-20', holder: 'epic', state: 'open', due: 'this_sprint', days: null };
+		app = mount(PromiseChip, { target: document.body, props: { promise: inherited } });
+		const chip = document.body.querySelector('.promise-chip')!;
+		expect(chip.textContent?.trim()).toBe('Promised 20 Nov · this sprint · via GRA-608');
+		expect(chip.querySelector('.via')?.textContent).toBe('GRA-608');
+		unmount(app);
+		app = mount(PromiseChip, { target: document.body, props: { promise: inherited, via: false } });
+		expect(document.body.querySelector('.promise-chip .via')).toBeNull();
+	});
+
 	it('shows an epic promise, with no icon once past', () => {
 		const past: EpicPromise = { fact, due: null, past: true };
 		app = mount(PromiseChip, { target: document.body, props: { promise: past } });
@@ -56,6 +67,9 @@ describe('PromiseChip CSS', () => {
 		expect(rule).toMatch(/white-space:\s*normal;/);
 		expect(rule).not.toMatch(/nowrap|text-overflow|ellipsis/);
 		expect(rule).toMatch(/border-radius:\s*10px;/);
+	});
+	it('never breaks the via key at its hyphen', () => {
+		expect(/\.via \{([^}]*)\}/.exec(css)?.[1]).toMatch(/white-space:\s*nowrap;/);
 	});
 });
 

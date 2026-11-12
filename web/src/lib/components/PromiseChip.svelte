@@ -23,7 +23,7 @@
 			><path d="M4 12l5 5L20 6" /></svg
 		>{:else if c.icon === 'calendar'}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"
 			><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg
-		>{/if}{c.text}</span
+		>{/if}{c.text}{#if c.via}{' · via '}<span class="via">{c.via}</span>{/if}</span
 >
 
 <style>
@@ -42,6 +42,10 @@
 	}
 	.promise-chip svg {
 		flex-shrink: 0;
+	}
+	/* The key never breaks at its hyphen ("GRA-" / "608"). */
+	.via {
+		white-space: nowrap;
 	}
 	/* Each pair (--foreground on the background) is pinned at AA in tokens.contrast.test.ts. */
 	.tone-warn {

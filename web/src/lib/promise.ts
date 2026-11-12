@@ -5,15 +5,45 @@ import { dayLabel, short } from './format.ts';
 
 export type PromiseTone = 'warn' | 'ready' | 'muted' | 'neutral';
 export type PromiseIcon = 'clock' | 'check' | 'calendar' | null;
-export type ChipLook = { text: string; tone: PromiseTone; icon: PromiseIcon };
+export type ChipLook = {
+	/** The chip's words, without the epic it is via. */
+	text: string;
+	/** The epic key the chip names (" · via ABC-7"), or null. */
+	via: string | null;
+	tone: PromiseTone;
+	icon: PromiseIcon;
+};
 
 /** " · this sprint", " · next sprint", or nothing (later, or no period). */
 function period(due: PromiseDue | null | undefined): string {
 	return due === 'this_sprint' ? ' · this sprint' : due === 'next_sprint' ? ' · next sprint' : '';
 }
 
-/** "3 d", or "" when the server sent no count. */
+/** " 3 d", or "" when the server sent no count. */
 const daysText = (days: number | null | undefined) => (days == null ? '' : ` ${days} d`);
+
+type Settled = Exclude<PromiseState, 'open'>;
+
+/** The one table of state words, lower case; every surface formats from it (the CLI copies it). */
+export const STATE_WORDS: Record<Settled, (days: number | null | undefined) => string> = {
+	overdue: (days) => `overdue${daysText(days)}`,
+	kept: () => 'kept',
+	late: (days) => `done${daysText(days)} late`,
+	dropped: () => 'dropped'
+};
+
+/** The state's words, or null for open and no state. */
+function stateWords(p: Pick<StoryPromise, 'state' | 'days'>): string | null {
+	const st = p.state ?? null;
+	return st == null || st === 'open' ? null : STATE_WORDS[st](p.days);
+}
+
+const capital = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+
+/** The state at the end of a one-promise line: " · overdue 3 d", " · kept", … */
+const stateSuffix = (w: string | null) => (w == null ? '' : ` · ${w}`);
+/** The state as its own sentence, after a line that names two promises: " Overdue 3 d.", " Kept.", … */
+const stateSentence = (w: string | null) => (w == null ? '' : ` ${capital(w)}.`);
 
 export type ChipOptions = {
 	/** Name the epic (" · via ABC-7") when its promise sets the date. False on the epic's own page, where every row is
@@ -21,24 +51,22 @@ export type ChipOptions = {
 	via?: boolean;
 };
 
-/** A story chip's text, from the server's effective date, state, period and days. */
-export function chipText(
-	p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' | 'holder' | 'epic'>,
-	{ via = true }: ChipOptions = {}
-): string {
+/** A story chip's words without the epic: "Overdue 3 d · 20 Nov", "Promised 20 Nov · this sprint", … */
+function storyChipBase(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days'>): string {
 	const d = dayLabel(p.on);
-	const state = p.state ?? null;
-	const text =
-		state === 'overdue'
-			? `Overdue${daysText(p.days)} · ${d}`
-			: state === 'kept'
-				? `Kept · ${d}`
-				: state === 'late'
-					? `Done${daysText(p.days)} late · ${d}`
-					: state === 'dropped'
-						? `Dropped · ${d}`
-						: `Promised ${d}${state === 'open' ? period(p.due) : ''}`;
-	return via && p.holder === 'epic' && p.epic != null ? `${text} · via ${p.epic.key}` : text;
+	const w = stateWords(p);
+	return w != null ? `${capital(w)} · ${d}` : `Promised ${d}${p.state === 'open' ? period(p.due) : ''}`;
+}
+
+/** The epic key a story chip names, or null. */
+function viaKey(p: Pick<StoryPromise, 'holder' | 'epic'>, { via = true }: ChipOptions): string | null {
+	return via && p.holder === 'epic' && p.epic != null ? p.epic.key : null;
+}
+
+/** A story chip's text, from the server's effective date, state, period and days. */
+export function chipText(p: Pick<StoryPromise, 'on' | 'state' | 'due' | 'days' | 'holder' | 'epic'>, opts: ChipOptions = {}): string {
+	const key = viaKey(p, opts);
+	return `${storyChipBase(p)}${key != null ? ` · via ${key}` : ''}`;
 }
 
 /** An epic chip's text: an epic has no state of its own (R4), only a period while the date is not past. */
@@ -58,46 +86,15 @@ export function look(state: PromiseState | 'past' | null | undefined): { tone: P
 /** Whether a promise is an epic's own (`EpicPromiseDto`) rather than a story's. */
 export const isEpic = (p: StoryPromise | EpicPromise): p is EpicPromise => 'fact' in p;
 
-/** Everything a chip shows, for a story's or an epic's promise. */
+/** Everything a chip shows, for a story's or an epic's promise: the words and, apart, the epic key it is via. */
 export function chip(p: StoryPromise | EpicPromise, opts: ChipOptions = {}): ChipLook {
 	return isEpic(p)
-		? { text: epicChipText(p), ...look(p.past ? 'past' : null) }
-		: { text: chipText(p, opts), ...look(p.state) };
+		? { text: epicChipText(p), via: null, ...look(p.past ? 'past' : null) }
+		: { text: storyChipBase(p), via: viaKey(p, opts), ...look(p.state) };
 }
 
 const to = (f: PromiseFact) => (f.to ? ` to ${f.to}` : '');
 const setBy = (f: PromiseFact) => ` · set by ${short(f.by)}`;
-
-/** The state as its own sentence, after a line that names two promises: " Overdue 3 d.", " Kept.", … */
-function stateSentence(p: Pick<StoryPromise, 'state' | 'days'>): string {
-	switch (p.state ?? null) {
-		case 'overdue':
-			return ` Overdue${daysText(p.days)}.`;
-		case 'kept':
-			return ' Kept.';
-		case 'late':
-			return ` Done${daysText(p.days)} late.`;
-		case 'dropped':
-			return ' Dropped.';
-		default:
-			return '';
-	}
-}
-
-function stateSuffix(p: Pick<StoryPromise, 'state' | 'days'>): string {
-	switch (p.state ?? null) {
-		case 'overdue':
-			return ` · overdue${daysText(p.days)}`;
-		case 'kept':
-			return ' · kept';
-		case 'late':
-			return ` · done${daysText(p.days)} late`;
-		case 'dropped':
-			return ' · dropped';
-		default:
-			return '';
-	}
-}
 
 /** A piece of a promise line: text, or an epic key the line links. */
 export type LinePart = { text: string } | { epic: string };
@@ -107,9 +104,10 @@ export function lineParts(p: StoryPromise): LinePart[] {
 	const own = p.own ?? null;
 	const epic = p.epic ?? null;
 	let parts: LinePart[];
-	let suffix = stateSuffix(p);
+	const w = stateWords(p);
+	let suffix = stateSuffix(w);
 	if (own && epic) {
-		suffix = stateSentence(p);
+		suffix = stateSentence(w);
 		parts = [
 			{ text: `Promised ${dayLabel(own.on)}${to(own)}. Epic ` },
 			{ epic: epic.key },
