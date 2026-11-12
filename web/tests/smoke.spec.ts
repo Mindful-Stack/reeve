@@ -1244,3 +1244,82 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 		});
 	}
 });
+
+test('triage from the keyboard: the count, place with criteria, undo, a phone, and drop', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	// a: no epic (untriaged), with a long description for the phone check.
+	const a = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Triage smoke export blank ${suffix}`,
+		kind: 'bug',
+		epic: null,
+		criteria: [],
+		labels: [],
+		description: 'Long description. '.repeat(200)
+	});
+	const b = await chore(page, `Triage smoke search accents ${suffix}`, null);
+	await page.goto('/board');
+	const count = page.getByRole('banner').getByRole('link', { name: /untriaged$/ });
+	await expect(count).toBeVisible();
+	const before = Number((await count.textContent())!.split(' ')[0]);
+	await count.click();
+	await expect(page).toHaveURL(/\/triage$/);
+	const list = page.getByRole('listbox', { name: 'Untriaged' });
+	const option = (key: string) => list.getByRole('option', { name: new RegExp(`^${key}\\b`) });
+	const status = page.getByTestId('triage-status');
+	await expect(list).toBeFocused();
+	// Go to item a (other untriaged items may exist from earlier tests): click its option, then use only the keyboard.
+	await option(a.key).click();
+	await page.keyboard.press('e');
+	await page.keyboard.type(EPIC); // typed over the Picker's selected label
+	await page.keyboard.press('Enter'); // picks; focus moves on to Criteria
+	await expect(page.locator('textarea.criteria')).toBeFocused();
+	await page.keyboard.type('The PDF shows the page');
+	await page.keyboard.press('Control+Enter');
+	await expect(status).toHaveText(`Placed ${a.key} under ${EPIC}.`);
+	await expect(option(a.key)).toHaveCount(0);
+	await expect(count).toHaveText(`${before - 1} untriaged`, { timeout: 10_000 });
+	// Undo brings it back, unplaced, with the typed criterion.
+	await page.keyboard.press('u');
+	await expect(option(a.key)).toHaveCount(1);
+	await expect(page.locator('textarea.criteria')).toHaveValue('The PDF shows the page');
+	// A phone, on a known item with a long description: no horizontal scroll, and Tab from Criteria reaches the buttons.
+	await page.setViewportSize({ width: 360, height: 740 });
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.locator('textarea.criteria').focus();
+	for (const name of [/^Place/, /^Drop/, /^Skip/]) {
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name })).toBeFocused();
+		await expect(page.getByRole('button', { name })).toBeInViewport();
+	}
+	// Armed, Drop's longer words grow the button in place, so the second tap lands where the first did.
+	const dropButton = page.getByRole('button', { name: /^Drop/ });
+	const at = (await dropButton.boundingBox())!;
+	await dropButton.click();
+	await expect(status).toHaveText(`Drop ${a.key}? Press d or click again.`);
+	const armedAt = (await dropButton.boundingBox())!;
+	expect([armedAt.x, armedAt.y]).toEqual([at.x, at.y]);
+	await page.keyboard.press('Escape'); // cancels the drop
+	await expect(status).toHaveText('Drop cancelled.');
+	await page.setViewportSize({ width: 1280, height: 720 });
+	// Place it again.
+	await page.keyboard.press('e');
+	await page.keyboard.type(EPIC);
+	await page.keyboard.press('Enter');
+	await page.keyboard.press('Control+Enter');
+	await expect(status).toHaveText(`Placed ${a.key} under ${EPIC}.`);
+	// Drop b with d d.
+	await option(b.key).click();
+	await page.keyboard.press('d');
+	await expect(status).toHaveText(`Drop ${b.key}? Press d or click again.`);
+	await page.keyboard.press('d');
+	await expect(status).toHaveText(`Dropped ${b.key}.`);
+	const dropped = await page.request.get(`/api/v1/stories/${b.key}`);
+	expect((await dropped.json()).value).toMatchObject({ delivery: 'done', resolution: 'dropped' });
+	// Undo the drop: back in the queue, todo again.
+	await list.focus();
+	await page.keyboard.press('u');
+	await expect(option(b.key)).toHaveCount(1);
+	const back = await page.request.get(`/api/v1/stories/${b.key}`);
+	expect((await back.json()).value).toMatchObject({ delivery: 'todo' });
+});
