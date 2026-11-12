@@ -17,8 +17,8 @@ pub enum Outcome<T> {
         envelope: bool,
         /// Seconds to wait before retrying, when a rate limit (`rate_limited`) came with a Retry-After.
         retry_after: Option<u64>,
-        /// The envelope's `current`, as the server sent it: on a `conflict`, the row's version now (`-1` when the
-        /// server gave up on a concurrent update); `None` when the envelope has none.
+        /// The envelope's `current`, as the server sent it: on a `conflict`, the row's version now (`-1` for a concurrent
+        /// update with no version to give: re-read and retry); `None` when the envelope has none.
         current: Option<i64>,
     },
 }

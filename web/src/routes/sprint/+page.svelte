@@ -2,6 +2,7 @@
      and demo list (Check Tuesday: record confidence; Plan Tuesday: Close…); the next sprint's goals and links; the
      history, where a closed sprint shows its counts at close beside the derived ones when they differ (kb/ADR-0014 R6). -->
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
 	import { api, Refused, unwrap } from '#lib/api/client.ts';
 	import type { Confidence, Goal, Sprints, SprintView, SprintWarning } from '#lib/api/types.ts';
 	import { fullLabel } from '#lib/board.ts';
@@ -9,7 +10,7 @@
 	import GoalForm from '#lib/components/GoalForm.svelte';
 	import SprintHistoryEntry from '#lib/components/SprintHistoryEntry.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { errorMessage } from '#lib/format.ts';
+	import { errorMessage, plural } from '#lib/format.ts';
 	import { blockedText, confidenceLabel, RULE, upkeepText, warningText } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -34,6 +35,8 @@
 		try {
 			const s = await unwrap(api.GET('/api/v1/sprints'));
 			if (seq !== latest) return;
+			// A new draft (an opening happened): nothing is unticked in it.
+			if (s.draft?.id !== sprints?.draft?.id) leftOut.clear();
 			sprints = s;
 			loadError = null;
 			staleNotice = null;
@@ -69,8 +72,8 @@
 			notice = explain(e);
 			return false;
 		} finally {
-			busy = false;
 			await reload();
+			busy = false;
 		}
 	}
 
@@ -104,10 +107,14 @@
 	}
 
 	// --- The draft (Monday prep) -----------------------------------------------------------------------------------
-	/** The warnings of the last goal added; the draft's own (from the server) show beside them. */
-	let addWarnings = $state<SprintWarning[]>([]);
-	const draftWarning = $derived(
-		[...new Set([...addWarnings, ...(draft?.warnings ?? [])])].filter((w) => w === 'more_than_three_goals')
+	/** Draft goals the person unticked: they stay in the next draft at the opening (kb/ADR-0026). */
+	const leftOut = new SvelteSet<number>();
+	/** What an opening sends: unticked ids still in the draft, so a removed goal is never sent and a new one is ticked. */
+	const leaveOut = $derived((draft?.goals ?? []).filter((g) => leftOut.has(g.id)).map((g) => g.id));
+	const goingIn = $derived((draft?.goals.length ?? 0) - leaveOut.length);
+	/** Advice before the opening, from the goals that go in (the server warns again after it). */
+	const draftWarning = $derived<SprintWarning[]>(
+		goingIn > 3 ? ['more_than_three_goals'] : draft?.goals.length && goingIn === 0 ? ['no_goals'] : []
 	);
 	let linkKeys = $state<Record<number, string>>({});
 
@@ -141,7 +148,9 @@
 		const d = draft;
 		if (!d) return;
 		await act(async () => {
-			const opened = await unwrap(api.POST('/api/v1/sprints/{id}/open', { params: { path: { id: d.id } }, body: { version: d.version } }));
+			const opened = await unwrap(
+				api.POST('/api/v1/sprints/{id}/open', { params: { path: { id: d.id } }, body: { version: d.version, leave_out: leaveOut } })
+			);
 			openWarnings = opened.warnings;
 		});
 	}
@@ -271,9 +280,10 @@
 		<div class="panel-head">
 			<h2 id="next-title">Next sprint {#if draft}<span class="dates">{draft.starts_on} – {draft.ends_on}</span>{/if}</h2>
 			{#if draft && !active}
-				<button type="button" disabled={busy} onclick={openDraft}>Open sprint</button>
+				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
 			{/if}
 		</div>
+		{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
 		{#if openWarnings.length && active}
 			<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
 		{/if}
@@ -283,6 +293,15 @@
 		{#each draft?.goals ?? [] as g (g.id)}
 			<article class="goal" data-testid="goal-{g.id}">
 				<h3>{g.outcome}</h3>
+				<label class="goes-in"
+					><input
+						type="checkbox"
+						aria-label="Goes in at open: {g.outcome}"
+						checked={!leftOut.has(g.id)}
+						disabled={busy}
+						onchange={(e) => (e.currentTarget.checked ? leftOut.delete(g.id) : leftOut.add(g.id))}
+					/> Goes in at open</label
+				>
 				<p>We'll know when: {g.check}</p>
 				<p class="muted">Owner: {g.owner}</p>
 				{#if g.notes}<p class="notes">{g.notes}</p>{/if}
@@ -294,13 +313,7 @@
 			</article>
 		{/each}
 		{#key draft?.id}
-			<GoalForm
-				endsOn={draft?.ends_on ?? null}
-				oncreated={async (c) => {
-					addWarnings = c.warnings;
-					await reload();
-				}}
-			/>
+			<GoalForm endsOn={draft?.ends_on ?? null} oncreated={() => reload()} />
 		{/key}
 	</section>
 
@@ -316,11 +329,17 @@
 
 {#if closing}
 	<Dialog title="Close the sprint" onclose={() => (closing = null)}>
-		<CloseSprint view={closing} {draft} onchanged={reload} ondone={() => (closing = null)} />
+		<CloseSprint view={closing} {draft} {leaveOut} onchanged={reload} ondone={() => (closing = null)} />
 	</Dialog>
 {/if}
 
 <style>
+	.goes-in {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		font-size: 13px;
+	}
 	.panel {
 		display: grid;
 		gap: 10px;

@@ -1906,10 +1906,14 @@ export interface components {
             /** @enum {string} */
             kind: "await_check";
         };
-        /** @description Opens the draft; the end defaults to one `[sprints] length_days` after today. */
+        /**
+         * @description Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay
+         *     in the next draft (kb/ADR-0026); empty or absent opens every goal.
+         */
         OpenSprint: {
             /** Format: date */
             ends_on?: string | null;
+            leave_out?: number[];
             /** Format: int64 */
             version: number;
         };
@@ -2228,7 +2232,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2267,7 +2272,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2296,7 +2302,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2328,7 +2335,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2369,7 +2377,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2395,7 +2404,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2433,7 +2443,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2462,7 +2473,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2514,7 +2526,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2564,7 +2577,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2598,7 +2612,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2642,7 +2657,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2680,7 +2696,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2709,7 +2726,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2739,7 +2757,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2772,7 +2791,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2800,7 +2820,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2846,7 +2867,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2888,7 +2910,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2942,7 +2965,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -2978,7 +3002,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3017,7 +3042,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3071,7 +3097,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3103,7 +3130,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3139,7 +3167,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3178,7 +3207,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3216,7 +3246,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3254,7 +3285,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3295,7 +3327,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3339,7 +3372,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3385,7 +3419,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3421,7 +3456,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3453,7 +3489,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3481,7 +3518,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3517,7 +3555,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3549,7 +3588,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;
@@ -3579,7 +3619,8 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /**
              * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
              */
             current?: number | null;
             message: string;

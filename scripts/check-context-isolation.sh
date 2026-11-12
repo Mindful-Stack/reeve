@@ -42,6 +42,7 @@ if [ -d "$planning/handler" ]; then
   lb='(^|[^A-Za-z0-9_])'   # left boundary: a path or call, not the tail of a longer name
   bad=""
   moves="$planning/handler/moves.rs"
+  sprints="$planning/handler/sprints.rs"
   p="$planning/handler/prs.rs"
   # The rules below name these two files; renaming either away must not switch its rules off silently.
   if [ -f "$planning/handler/mod.rs" ]; then
@@ -61,6 +62,11 @@ if [ -d "$planning/handler" ]; then
       # The delivery rule (Story::move_to) runs only inside move_story's transaction.
       x=$(flat "$f" | g -oE "${lb}move_to\b")
       if [ -n "$x" ]; then bad+="$f: move_to outside handler/moves.rs"$'\n'; fi
+    fi
+    # kb/ADR-0026 R2: only open_sprint_leaving (handler/sprints.rs) moves goals between sprints, port call or repo fn.
+    if [ "$f" != "$sprints" ]; then
+      x=$(flat "$f" | g -oE "${lb}move_goals\b")
+      if [ -n "$x" ]; then bad+="$f: move_goals outside handler/sprints.rs"$'\n'; fi
     fi
   done <<< "$files"
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7: moving a story never reads sprints, goals, urgency or the decision

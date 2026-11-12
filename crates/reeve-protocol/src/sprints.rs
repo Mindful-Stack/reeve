@@ -176,12 +176,15 @@ pub struct CreatedGoalDto {
     pub warnings: Vec<SprintWarning>,
 }
 
-/// Opens the draft; the end defaults to one `[sprints] length_days` after today.
+/// Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay
+/// in the next draft (kb/ADR-0026); empty or absent opens every goal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OpenSprint {
     pub version: i64,
     #[serde(default)]
     pub ends_on: Option<NaiveDate>,
+    #[serde(default)]
+    pub leave_out: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

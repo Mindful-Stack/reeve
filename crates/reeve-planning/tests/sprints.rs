@@ -1323,6 +1323,81 @@ mod lifecycle {
         ));
     }
 
+    /// Leaving C out: A and B open with the sprint, C moves with its link to the next draft at an unchanged version, a
+    /// repeated id counts once, and the `opened` entry names C. Catches a move that drops links, moves the wrong rows,
+    /// bumps versions, or mishandles duplicates (kb/ADR-0026 R1).
+    #[tokio::test]
+    async fn opening_leaves_chosen_goals_in_the_next_draft() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, sink) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let a = goal(&h, &c, "ga").await;
+        let b = goal(&h, &c, "gb").await;
+        let gc = goal(&h, &c, "gc").await;
+        let s = story(&h, &c, "s").await;
+        h.link_goal(&c, gc.id, std::slice::from_ref(s.key()))
+            .await
+            .unwrap();
+        let gc = goal_now(&h, gc.id).await;
+        let d = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let opened = h
+            .open_sprint_leaving(&c, d.id, d.version, None, &[gc.id, gc.id])
+            .await
+            .unwrap();
+        let v = h.sprints(at(1, 0)).await.unwrap();
+        let next = v.draft.unwrap();
+        assert_ne!(next.id, d.id);
+        let in_sprint = |sid: i64| {
+            let mut ids: Vec<i64> = v
+                .goals
+                .iter()
+                .filter(|g| g.sprint_id == sid)
+                .map(|g| g.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut ab = vec![a.id, b.id];
+        ab.sort();
+        assert_eq!(in_sprint(opened.id), ab);
+        assert_eq!(in_sprint(next.id), vec![gc.id]);
+        let moved = v.goals.iter().find(|g| g.id == gc.id).unwrap();
+        assert_eq!(moved.version, gc.version);
+        let linked: Vec<_> = v
+            .links
+            .iter()
+            .filter(|l| l.goal_id == gc.id)
+            .map(|l| l.item_key.clone())
+            .collect();
+        assert_eq!(linked, vec![s.key().clone()]);
+        let entries = sink.0.lock().unwrap();
+        let open = entries.iter().find(|e| e.action == "opened").unwrap();
+        assert_eq!(open.payload["left_out"], serde_json::json!([gc.id]));
+        assert_eq!(open.payload["next_draft"], serde_json::json!(next.id));
+    }
+
+    /// An id that is not the draft's goal refuses the whole opening: nothing moves, the draft stays a draft and no second
+    /// draft appears. Catches a partial write (a check after the state change, outside the transaction).
+    #[tokio::test]
+    async fn opening_refuses_leaving_out_a_goal_it_does_not_hold() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, sink) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let a = goal(&h, &c, "ga").await;
+        let d = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let bogus = a.id + 1000;
+        // A valid id beside an unknown one still refuses everything and moves nothing.
+        let r = h
+            .open_sprint_leaving(&c, d.id, d.version, None, &[a.id, bogus])
+            .await;
+        assert!(matches!(r, Err(HandlerError::Validation(_))), "{r:?}");
+        assert!(sink.0.lock().unwrap().iter().all(|e| e.action != "opened"));
+        let v = h.sprints(at(1, 0)).await.unwrap();
+        assert!(v.active.is_none());
+        assert_eq!(v.draft.unwrap().id, d.id);
+        assert_eq!(goal_now(&h, a.id).await.sprint_id, d.id);
+    }
+
     #[tokio::test]
     async fn two_concurrent_opens_leave_one_active_and_one_draft() {
         let (_c, pool) = super::common::pg().await;
@@ -1463,6 +1538,125 @@ mod lifecycle {
             .await
             .unwrap();
         assert_eq!(goals, 1);
+    }
+
+    /// An opening as another transaction runs it, held uncommitted: draft `d` is locked and active, the next draft is
+    /// inserted, and goal `g` has moved to it. Returns the open transaction and the new draft's id.
+    async fn opening_moved(
+        pool: &sqlx::PgPool,
+        d: i64,
+        g: i64,
+    ) -> (sqlx::Transaction<'static, sqlx::Postgres>, i64) {
+        let mut opener = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM sprints WHERE id = $1 FOR UPDATE")
+            .bind(d)
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE sprints SET state = 'active', opened_at = $2 WHERE id = $1")
+            .bind(d)
+            .bind(at(3, 18))
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        let d2: i64 = sqlx::query_scalar(
+            "INSERT INTO sprints (state, starts_on, ends_on, created_at) VALUES ('draft', '2026-12-01', '2026-12-15', $1) RETURNING id",
+        )
+        .bind(at(3, 18))
+        .fetch_one(&mut *opener)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE goals SET sprint_id = $2 WHERE id = $1")
+            .bind(g)
+            .bind(d2)
+            .execute(&mut *opener)
+            .await
+            .unwrap();
+        (opener, d2)
+    }
+
+    /// Deterministic: a confidence on a draft goal waits on the draft's row while an opening makes the draft active and
+    /// moves the goal to the next draft. Goes red if `goal_locked` trusts its unlocked read of the goal's sprint: it
+    /// would see the old sprint active, pass `allow(Active, Confidence)` and record a confidence on a goal that sits in
+    /// a draft (kb/ADR-0026 R2).
+    #[tokio::test]
+    async fn a_confidence_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, id) = (h.clone(), c.clone(), g.id);
+            async move {
+                h.record_confidence(&c, id, reeve_protocol::Confidence::OnTrack, None)
+                    .await
+            }
+        });
+        until_waiting_on_a_lock(&pool, "record_confidence").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
+        let now = goal_now(&h, g.id).await;
+        assert_eq!((now.sprint_id, now.confidence), (d2, None));
+    }
+
+    /// The same shape for removal: the goal is removable in its new draft, so a refusal would be wrong. Goes red if
+    /// `goal_locked` applies the old sprint's state before comparing sprints (`sprint_not_draft`).
+    #[tokio::test]
+    async fn a_removal_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, id, v) = (h.clone(), c.clone(), g.id, g.version);
+            async move { h.remove_goal(&c, id, v).await }
+        });
+        until_waiting_on_a_lock(&pool, "remove_goal").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
+        assert_eq!(goal_now(&h, g.id).await.sprint_id, d2);
+    }
+
+    /// The same shape for unlink: the link stays, and the answer is the retry conflict.
+    /// Goes red if `unlink_goal` skips `goal_locked`: it would delete the link under the old, now active sprint.
+    #[tokio::test]
+    async fn an_unlink_conflicts_when_an_opening_moved_its_goal_meanwhile() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let c = ctx(Via::Interactive, 3);
+        let g = goal(&h, &c, "g1").await;
+        let s = story(&h, &c, "s").await;
+        h.link_goal(&c, g.id, std::slice::from_ref(s.key()))
+            .await
+            .unwrap();
+        let (opener, d2) = opening_moved(&pool, g.sprint_id, g.id).await;
+        let write = tokio::spawn({
+            let (h, c, k) = (h.clone(), c.clone(), s.key().clone());
+            async move { h.unlink_goal(&c, g.id, &k).await }
+        });
+        until_waiting_on_a_lock(&pool, "unlink_goal").await;
+        opener.commit().await.unwrap();
+        let r = write.await.unwrap();
+        assert!(
+            matches!(r, Err(HandlerError::Conflict { current: -1 })),
+            "{r:?}"
+        );
+        let links: i64 = sqlx::query_scalar("SELECT count(*) FROM goal_links WHERE goal_id = $1")
+            .bind(g.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((goal_now(&h, g.id).await.sprint_id, links), (d2, 1));
     }
 
     /// A write that holds the sprint and goal row locks takes no second connection (ports.rs): run on a pool of one,

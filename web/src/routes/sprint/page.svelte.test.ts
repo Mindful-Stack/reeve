@@ -243,9 +243,8 @@ describe('recording confidence', () => {
 describe('the next sprint (draft)', () => {
 	const draft = (goals: Goal[] = []): Sprint => sprint({ id: 2, state: 'draft', starts_on: '2026-11-16', ends_on: '2026-11-27', opened_at: null, goals, version: 5 });
 
-	it('adds a goal with a fresh idempotency key, and warns past three goals', async () => {
+	it('adds a goal with a fresh idempotency key', async () => {
 		net.sprints!.draft = draft();
-		net.answer = (w) => (w.path === '/api/v1/goals' ? { goal: goal({ id: 9, sprint_id: 2 }), warnings: ['more_than_three_goals'] } : {});
 		await open();
 		const form = q<HTMLFormElement>('form[aria-label="New goal"]')!;
 		const outcome = q<HTMLInputElement>('input[name="outcome"]', form)!;
@@ -261,7 +260,6 @@ describe('the next sprint (draft)', () => {
 		expect(body).toMatchObject({ outcome: 'By Friday, Ana can book a room', check: 'one real booking', owner: 'ana@example.com', notes: 'pairs' });
 		expect(body.idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
 		expect(body.active).toBeUndefined();
-		await settle(() => expect(text(q('[data-testid="next-sprint"]'))).toContain('more than three goals thins focus'));
 
 		// The next goal is another goal, so it carries another key.
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'another');
@@ -272,16 +270,18 @@ describe('the next sprint (draft)', () => {
 		expect((writes('/api/v1/goals')[1].body as Record<string, unknown>).idempotency_key).not.toBe(body.idempotency_key);
 	});
 
-	it('shows no warning when the answer has none', async () => {
-		net.sprints!.draft = draft();
+	it('warns past three goals that go in, not past three goals in the draft', async () => {
+		net.sprints!.draft = draft([1, 2, 3, 4].map((id) => goal({ id, sprint_id: 2, outcome: `G${id}` })));
 		await open();
-		const form = q<HTMLFormElement>('form[aria-label="New goal"]')!;
-		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'x');
-		type(q<HTMLInputElement>('input[name="check"]', form)!, 'y');
+		const panel = q('[data-testid="next-sprint"]')!;
+		expect(text(panel)).toContain('more than three goals thins focus');
+		const box = q<HTMLInputElement>('input[aria-label="Goes in at open: G4"]', panel)!;
+		box.click();
 		flushSync();
-		button('Add goal', form)!.click();
-		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
-		expect(text(q('[data-testid="next-sprint"]'))).not.toContain('thins focus');
+		expect(text(panel)).not.toContain('thins focus');
+		for (const id of [1, 2, 3]) q<HTMLInputElement>(`input[aria-label="Goes in at open: G${id}"]`, panel)!.click();
+		flushSync();
+		expect(text(panel)).toContain('the sprint has no goals');
 	});
 
 	it('removes a goal at its version, and links and unlinks an epic or initiative by key', async () => {
@@ -310,6 +310,29 @@ describe('the next sprint (draft)', () => {
 		await open();
 		button('Remove', q('[data-testid="goal-5"]')!)!.click();
 		await settle(() => expect(text(document.body)).toContain("only a draft sprint's goals can be removed"));
+	});
+
+	it('opens with the ticked goals, names what stays, and ticks every goal of the new draft', async () => {
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, outcome: 'Five' }), goal({ id: 6, sprint_id: 2, outcome: 'Six' })]);
+		await open();
+		const panel = q('[data-testid="next-sprint"]')!;
+		expect(button('Open sprint with 2 goals', panel)).toBeDefined();
+		q<HTMLInputElement>('input[aria-label="Goes in at open: Six"]', panel)!.click();
+		flushSync();
+		expect(button('Open sprint with 1 goal', panel)).toBeDefined();
+		expect(text(panel)).toContain('1 goal stays in Next sprint when it opens.');
+		// The open's answer: the new draft (id 3) holds the goal left out.
+		net.answer = (w) => {
+			if (w.path.endsWith('/open')) {
+				net.sprints = { active: activeWith([goal({ id: 5, sprint_id: 2, outcome: 'Five' })]), draft: sprint({ id: 3, state: 'draft', opened_at: null, goals: [goal({ id: 6, sprint_id: 3, outcome: 'Six' })], version: 1 }), closed: [], today: '2026-11-12' };
+				return sprint();
+			}
+			return {};
+		};
+		button('Open sprint with 1 goal', panel)!.click();
+		await settle(() => expect(writes('/api/v1/sprints/2/open')).toHaveLength(1));
+		expect(writes('/api/v1/sprints/2/open')[0].body).toEqual({ version: 5, leave_out: [6] });
+		await settle(() => expect(q<HTMLInputElement>('input[aria-label="Goes in at open: Six"]')!.checked).toBe(true));
 	});
 });
 
@@ -390,8 +413,10 @@ describe('the close step', () => {
 	];
 	async function openClose() {
 		net.sprints!.active = activeWith(goals(), { counts: counts([progress(1, { completed: 3 }), progress(2, { completed: 0 })], 3) });
-		net.sprints!.draft = sprint({ id: 2, state: 'draft', opened_at: null, version: 8 });
+		net.sprints!.draft = sprint({ id: 2, state: 'draft', opened_at: null, version: 8, goals: [goal({ id: 7, sprint_id: 2, outcome: 'Seven' }), goal({ id: 8, sprint_id: 2, outcome: 'Eight' })] });
 		await open();
+		q<HTMLInputElement>('input[aria-label="Goes in at open: Eight"]')!.click();
+		flushSync();
 		button('Close…')!.click();
 		flushSync();
 		return q<HTMLElement>('[data-testid="close-sprint"]')!;
@@ -469,15 +494,42 @@ describe('the close step', () => {
 		});
 	});
 
-	it('ends with "Open next sprint", which opens the draft', async () => {
+	it('ends with "Open next sprint" carrying the goals unticked on the panel', async () => {
 		const step = await openClose();
 		verdict(step, 1, 'met');
 		verdict(step, 2, 'missed');
 		button('Close sprint', step)!.click();
-		await settle(() => expect(button('Open next sprint', step)).toBeDefined());
-		button('Open next sprint', step)!.click();
+		await settle(() => expect(button(/^Open next sprint/, step)).toBeDefined());
+		expect(text(button(/^Open next sprint/, step))).toBe('Open next sprint with 1 goal');
+		expect(text(step)).toContain('1 goal stays in Next sprint.');
+		button(/^Open next sprint/, step)!.click();
 		await settle(() => expect(writes('/api/v1/sprints/2/open')).toHaveLength(1));
-		expect(writes('/api/v1/sprints/2/open')[0].body).toEqual({ version: 8 });
+		expect(writes('/api/v1/sprints/2/open')[0].body).toEqual({ version: 8, leave_out: [8] });
+	});
+
+	it('reloads when the opening is refused as a validation error, dropping the unticked id the draft no longer has', async () => {
+		const step = await openClose();
+		verdict(step, 1, 'met');
+		verdict(step, 2, 'missed');
+		button('Close sprint', step)!.click();
+		await settle(() => expect(button(/^Open next sprint/, step)).toBeDefined());
+		expect(text(step)).toContain('1 goal stays in Next sprint.');
+		net.answer = (w) => {
+			if (w.path.endsWith('/open')) {
+				// Goal 8 was removed meanwhile: the server refuses the stale id, and the draft now lacks it.
+				net.sprints!.draft = sprint({ id: 2, state: 'draft', opened_at: null, version: 8, goals: [goal({ id: 7, sprint_id: 2, outcome: 'Seven' })] });
+				return new Response(JSON.stringify({ outcome: 'error', code: 'validation', message: 'goal 8 is not in this draft' }), { status: 200 });
+			}
+			return {};
+		};
+		button(/^Open next sprint/, step)!.click();
+		await settle(() => expect(text(step)).toContain('goal 8 is not in this draft'));
+		await settle(() => expect(text(button(/^Open next sprint/, step))).toBe('Open next sprint with 1 goal'));
+		expect(text(step)).not.toContain('stays in Next sprint');
+		net.answer = null;
+		button(/^Open next sprint/, step)!.click();
+		await settle(() => expect(writes('/api/v1/sprints/2/open')).toHaveLength(2));
+		expect(writes('/api/v1/sprints/2/open')[1].body).toEqual({ version: 8, leave_out: [] });
 	});
 });
 
