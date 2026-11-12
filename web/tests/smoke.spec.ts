@@ -989,8 +989,14 @@ for (const width of [320, 720, 1280]) {
 		await expect(page.getByRole('button', { name: /^Remove the text filter/ })).toBeVisible();
 		await expect(page.locator('ol.rows li[data-key]').first()).toBeVisible();
 		const panel = page.getByRole('group', { name: 'Filters' });
-		await expect(panel.getByRole('combobox', { name: 'Epic' }).locator('option', { hasText: title })).toHaveCount(1);
-		await expect(panel.getByRole('combobox', { name: 'Label' }).locator('option', { hasText: 'smoke-a-label-long-enough' })).toHaveCount(1);
+		await panel.getByRole('combobox', { name: 'Label' }).click();
+		await page.keyboard.type('smoke-a-label');
+		await expect(panel.getByRole('option', { name: 'smoke-a-label-long-enough' })).toHaveCount(1);
+		await page.keyboard.press('Escape');
+		// The open epic list, with the widest option, stays open while the measurement runs.
+		await panel.getByRole('combobox', { name: 'Epic' }).click();
+		await page.keyboard.type(title.slice(0, 40));
+		await expect(panel.getByRole('option', { name: title })).toHaveCount(1);
 		const m = await page.evaluate(() => ({
 			scroll: document.documentElement.scrollWidth,
 			client: document.documentElement.clientWidth,

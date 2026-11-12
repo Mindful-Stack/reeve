@@ -4,6 +4,8 @@
      URL in place (#lib/backlog.ts reads it); the server filters (kb/ADR-0021 R1). -->
 <script module lang="ts">
 	import { tick } from 'svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 
 	/** After a control that removed itself (the chip's ×, Clear filters here or in the page's empty state): focus the
@@ -125,26 +127,21 @@
 	</label>
 	<label class="field inline">
 		Epic
-		<select value={epic} onchange={(e) => set('epic', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each epicOptions as e (e.key)}<option value={e.key}>{e.key} {e.title}</option>{/each}
-			{#if epic && !epics.some((e) => e.key === epic)}<option value={epic}>{epic}</option>{/if}
-		</select>
+		<Picker label="Epic" options={keyed(epicOptions)} value={epic} empty="any" onchange={(v) => set('epic', v || null)} />
 	</label>
 	<label class="field inline">
 		Initiative
-		<select value={initiative} onchange={(e) => set('initiative', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each initiatives as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-			{#if initiative && !initiatives.some((i) => i.key === initiative)}<option value={initiative}>{initiative}</option>{/if}
-		</select>
+		<Picker label="Initiative" options={keyed(initiatives)} value={initiative} empty="any" onchange={(v) => set('initiative', v || null)} />
 	</label>
 	<label class="field inline">
 		Label
-		<select value={p.get('label') ?? ''} onchange={(e) => set('label', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each labels as l (l)}<option value={l}>{l}</option>{/each}
-		</select>
+		<Picker
+			label="Label"
+			options={labels.map((l) => ({ value: l, label: l }))}
+			value={p.get('label') ?? ''}
+			empty="any"
+			onchange={(v) => set('label', v || null)}
+		/>
 	</label>
 	<label class="field inline">
 		Promise
@@ -223,6 +220,9 @@
 		gap: 6px;
 		min-width: 0;
 		max-width: 100%;
+	}
+	.panel :global(.picker) {
+		flex: 1 1 12rem;
 	}
 	select {
 		flex: 0 1 auto;

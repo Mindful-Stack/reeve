@@ -774,8 +774,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		go('?state=all&label=gone');
 		await vi.waitFor(() => {
 			flushSync();
-			const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Label'))!.querySelector('select')!;
-			expect([...select.options].map((o) => o.value)).toEqual(['', 'gone', 'old', 'ux']);
+			expect(offered(document.body, 'Label')).toEqual(['any', 'gone', 'old', 'ux']);
 		});
 	});
 
@@ -1200,22 +1199,43 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.body.querySelector('.footer')).toBeNull();
 	});
 
-	it('the Epic select lists only the chosen initiative\'s epics, and the chosen epic', async () => {
+	it('the Epic filter lists only the chosen initiative\'s epics, and the chosen epic', async () => {
 		data.initiatives = [initiative({ key: 'I-1', title: 'Hosting', horizon: 'Now' })];
 		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Move', initiative: 'I-1' })];
 		go('?initiative=I-1');
 		await open('No stories match');
-		const epicSelect = () => [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Epic'))!.querySelector('select')!;
-		expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-2']);
+		const epicOptions = () => offered(document.body, 'Epic');
+		expect(epicOptions()).toEqual(['any', 'E-2 Move']);
 		go('?initiative=I-1&epic=E-1');
 		await vi.waitFor(() => {
 			flushSync();
-			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
+			expect(epicOptions()).toEqual(['any', 'E-1 Loose epic', 'E-2 Move']);
 		});
 		go('');
 		await vi.waitFor(() => {
 			flushSync();
-			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
+			expect(epicOptions()).toEqual(['any', 'E-1 Loose epic', 'E-2 Move']);
+		});
+	});
+
+	it('choosing an epic in the filter navigates with epic=<key>, so the server filters', async () => {
+		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
+		await open('Loose epic');
+		pickOption(document.body, 'Epic', 'E-2');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalled());
+		const [url] = vi.mocked(goto).mock.calls.at(-1)!;
+		expect(new URL(String(url)).searchParams.get('epic')).toBe('E-2');
+		await vi.waitFor(() => expect(page.url.searchParams.get('epic')).toBe('E-2')); // the fake navigates a tick later: let it land before the next test
+	});
+
+	it('a URL change shows in the closed epic filter', async () => {
+		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
+		await open('Loose epic');
+		expect(picker(document.body, 'Epic').value).toBe('any');
+		go('?epic=E-2');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(picker(document.body, 'Epic').value).toBe('E-2 Other epic');
 		});
 	});
 });
