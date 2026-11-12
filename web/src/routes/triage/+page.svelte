@@ -6,19 +6,37 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
-	import type { Epic, Story } from '#lib/api/types.ts';
+	import type { EditItem, Epic, Story } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, KINDS } from '#lib/board.ts';
 	import TriageItem from '#lib/components/TriageItem.svelte';
 	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 		import { errorMessage, plural } from '#lib/format.ts';
-	import { byKey, draftOf, FIELD_LABEL, followDraft, nextKey, placeEdit, rebaseAfterConflict, whereNow, type Draft } from '#lib/triage.ts';
+	import { postMove } from '#lib/moves.ts';
+	import {
+		ARM_MS,
+		armedFor,
+		byKey,
+		draftOf,
+		FIELD_LABEL,
+		followDraft,
+		nextKey,
+		placeEdit,
+		rebaseAfterConflict,
+		undoEdit,
+		whereNow,
+		type Arm,
+		type Draft
+	} from '#lib/triage.ts';
 	import { command, type Command } from '#lib/triageKeys.ts';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
 	/** The one line of news: the outcome of the last action, with a link to the item it names. The next message replaces
 	 *  it. `error`: a failure or a conflict, which a background announcement never covers. */
 	type Notice = { text: string; open?: string; error?: boolean };
+
+	/** What Undo reverts: the action, the item it writes to, and the write. */
+	type Undo = { action: 'place' | 'drop'; key: string; run: () => Promise<void> };
 
 	let queue = $state.raw<Story[]>([]);
 	let epics = $state.raw<Epic[]>([]);
@@ -38,6 +56,16 @@
 	const position = $derived(queue.findIndex((s) => s.key === currentKey));
 	/** The one write in flight (its item's key), or null. Every write waits for it. */
 	let writing = $state<string | null>(null);
+	/** The last Place's or Drop's Undo, apart from the notice so that no other message ends it: it lasts until it is
+	 *  used or the next Place or Drop replaces it. */
+	let undoable = $state.raw<Undo | null>(null);
+	let arm = $state<Arm | null>(null);
+	let armTimer: ReturnType<typeof setTimeout> | undefined;
+	const armed = $derived(
+		arm && current && arm.key === current.key && arm.version === drafts[current.key]?.base.version
+			? armText(current, drafts[current.key].duplicate)
+			: null
+	);
 
 	// The current option stays in sight in a scrolled queue (jsdom has no scrollIntoView, hence the optional call).
 	$effect(() => {
@@ -148,6 +176,15 @@
 		return (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) && !el.disabled;
 	}
 
+	function armText(s: Story, dup: string | null): string {
+		const stop = s.delivery === 'todo' ? '' : ' and stop active work (Undo returns it as todo)';
+		return `Drop ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}${stop}? Press d or click again.`;
+	}
+	function disarm(): void {
+		clearTimeout(armTimer);
+		arm = null;
+	}
+
 	function run(c: Command): void {
 		switch (c.kind) {
 			case 'next':
@@ -158,6 +195,10 @@
 				return skip();
 			case 'place':
 				return void place();
+			case 'drop':
+				return void drop();
+			case 'undo':
+				return void undo();
 			case 'epic':
 				return void area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
 			case 'criteria':
@@ -173,6 +214,10 @@
 				return;
 			case 'escape':
 				if (typingIn(document.activeElement)) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
+				if (arm) {
+					disarm();
+					void say({ text: 'Drop cancelled.' });
+				}
 				return;
 			case 'help':
 				help = !help;
@@ -189,12 +234,21 @@
 	}
 
 	/** An action finished for `key`: it leaves the queue, and the selection moves on only if the user is still on it. */
-	function finished(key: string, order: string[], n: Notice): void {
+	function finished(key: string, order: string[], n: Notice, u: Undo): void {
 		loads++; // a reload in flight read the queue before this write: drop it; the write's own live refetch follows
 		queue = queue.filter((s) => s.key !== key);
 		delete drafts[key];
 		if (currentKey === key) select(nextKey(order, key));
+		undoable = u;
 		void say(n);
+	}
+
+	/** Undo brought `s` back: it rejoins the queue here, as `finished()` took it out, and becomes current. */
+	function returned(s: Story): void {
+		loads++; // a reload in flight read the queue without it; the write's own live refetch follows
+
+		queue = byKey([...queue.filter((x) => x.key !== s.key), s]);
+		select(s.key);
 	}
 
 	async function place(): Promise<void> {
@@ -211,7 +265,7 @@
 		writing = s.key;
 		try {
 			const placed = await unwrap(api.PATCH('/api/v1/stories/{key}', { params: { path: { key: s.key } }, body: edit.body }));
-			finished(s.key, order, { text: `Placed ${s.key} under ${placed.epic}.`, open: s.key });
+			finished(s.key, order, { text: `Placed ${s.key} under ${placed.epic}.`, open: s.key }, placeUndo(placed, d, edit.body));
 		} catch (e) {
 			if (e instanceof Conflict) await conflicted(s.key, d, 'place');
 			else void say({ text: `${s.key} was not placed: ${errorMessage(e)}`, error: true });
@@ -242,8 +296,92 @@
 		}
 	}
 
+	async function drop(): Promise<void> {
+		const s = current;
+		if (!s || left || writing) return;
+		const d = drafts[s.key];
+		const version = d.base.version;
+		const dup = d.duplicate;
+		if (!armedFor(arm, s.key, version, Date.now())) {
+			disarm();
+			const prompt = armText(s, dup);
+			arm = { key: s.key, version, at: Date.now() };
+			armTimer = setTimeout(() => {
+				arm = null;
+				if (notice?.text === prompt) void say({ text: 'Drop cancelled.' });
+			}, ARM_MS);
+			void say({ text: prompt });
+			return;
+		}
+		disarm();
+		const order = queue.map((x) => x.key);
+		const failed = dup ? 'Comment saved; drop failed: ' : '';
+		writing = s.key;
+		try {
+			const out = await postMove({ key: s.key, version }, 'done', { resolution: 'dropped' });
+			if (out.kind !== 'moved') {
+				void say({ text: `${failed || `${s.key} was not dropped: `}${out.kind === 'notice' ? out.notice : 'refused'}`, error: true });
+				return;
+			}
+			finished(s.key, order, { text: `Dropped ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}.`, open: s.key }, dropUndo(out.story, !!dup));
+		} catch (e) {
+			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', failed);
+			else void say({ text: `${failed || `${s.key} was not dropped: `}${errorMessage(e)}`, error: true });
+		} finally {
+			writing = null;
+			focusBack();
+		}
+	}
+
+	function placeUndo(placed: Story, d: Draft, sent: EditItem): Undo {
+		return {
+			action: 'place',
+			key: placed.key,
+			run: async () => {
+				const back = await unwrap(api.PATCH('/api/v1/stories/{key}', { params: { path: { key: placed.key } }, body: undoEdit(placed, d, sent) }));
+				const restored = draftOf(back);
+				restored.fields = { ...d.fields, epic: '' };
+				drafts[back.key] = restored; // before select(), which keeps an existing draft: the typed fields come back
+				returned(back);
+				void say({ text: `Undone: ${back.key} is back in the queue.` });
+			}
+		};
+	}
+
+	/** Undo of a Drop always moves the item to todo, whatever it was: todo is not active work, so no readiness gate
+	 *  applies (kb/ADR-0018 R2) and Undo never needs an override. */
+	function dropUndo(dropped: Story, duplicate: boolean): Undo {
+		return {
+			action: 'drop',
+			key: dropped.key,
+			run: async () => {
+				const out = await postMove({ key: dropped.key, version: dropped.version }, 'todo');
+				if (out.kind !== 'moved') throw new Error(`${dropped.key} could not be moved back to todo`);
+				returned(out.story);
+				void say({ text: `Undone: ${dropped.key} is back in todo.${duplicate ? ' The duplicate comment stays.' : ''}` });
+			}
+		};
+	}
+
+	async function undo(): Promise<void> {
+		const u = undoable;
+		if (!u || writing) return;
+		undoable = null; // one Undo per action
+		writing = u.key;
+		try {
+			await u.run();
+		} catch (e) {
+			const text = e instanceof Conflict ? `${u.key} changed since; undo it in the drawer.` : `Undo failed: ${errorMessage(e)}`;
+			void say({ text, open: u.key, error: true });
+		} finally {
+			writing = null;
+			focusBack();
+		}
+	}
+
 	onMount(() => {
 		void reload();
+		return () => clearTimeout(armTimer);
 	});
 	onLive(reload);
 </script>
@@ -255,6 +393,7 @@
 	<div class="notice">
 		<p role="status" aria-live="polite" data-testid="triage-status">{notice?.text ?? ''}</p>
 		{#if notice?.open}<a href={storyHref(page.url, notice.open)} data-sveltekit-reset="false">Open {notice.open}</a>{/if}
+		{#if undoable}<button type="button" onclick={undo}>Undo {undoable.action} {undoable.key} <kbd>u</kbd></button>{/if}
 	</div>
 	{#if loadError}<p role="alert" class="error">Couldn't load the queue: {loadError}</p>{/if}
 	{#if loaded && !queue.length && !left && currentKey === null}
@@ -309,7 +448,8 @@
 					gone={left ? whereNow(left) : null}
 					open={storyHref(page.url, current.key)}
 					onplace={place}
-					ondrop={() => {}}
+					{armed}
+					ondrop={drop}
 					onskip={skip}
 				/>
 			{/if}

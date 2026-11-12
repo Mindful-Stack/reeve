@@ -546,3 +546,124 @@ describe('place', () => {
 	});
 });
 
+describe('drop', () => {
+	it('d then a separate d drops with the reviewed version; a held d (repeat) never does', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'd', { repeat: true });
+		await vi.waitFor(() => expect(t.status()).toBe('Drop GRA-9? Press d or click again.'));
+		expect(net.s.writes).toEqual([]);
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes).toEqual([{ method: 'POST', path: '/api/v1/stories/GRA-9/move', body: { version: 1, to: 'done', resolution: 'dropped' } }]);
+		await vi.waitFor(() => expect(t.status()).toBe('Dropped GRA-9.'));
+	});
+	it('Escape and 3 seconds end the arm, and say so', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'Escape');
+		await settle();
+		flushSync();
+		expect(t.status()).toBe('Drop cancelled.');
+		press(t.list(), 'd'); // arms again, does not drop
+		await settle(); // the prompt is on the line
+		vi.advanceTimersByTime(3000);
+		await settle();
+		flushSync();
+		expect(t.status()).toBe('Drop cancelled.');
+		press(t.list(), 'd'); // the arm expired: this arms again
+		await settle();
+		expect(net.s.writes).toEqual([]);
+	});
+	it('a live change to the armed item makes the second d arm again instead of dropping', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Search ignores accents!', version: 2 };
+		await live.fns[0]();
+		await vi.waitFor(() => expect(t.pane().textContent).toContain('Search ignores accents!'));
+		press(t.list(), 'd');
+		await settle();
+		expect(net.s.writes).toEqual([]);
+		press(t.list(), 'd'); // the arm now names version 2
+		await vi.waitFor(() => expect(net.s.writes).toEqual([{ method: 'POST', path: '/api/v1/stories/GRA-9/move', body: { version: 2, to: 'done', resolution: 'dropped' } }]));
+	});
+	it('the Drop button works from the keyboard: Enter twice; work in progress says it stops work', async () => {
+		const t = await open();
+		press(t.list(), 'j');
+		press(t.list(), 'j'); // GRA-30, in progress
+		const button = [...t.pane().querySelectorAll('button')].find((b) => b.textContent!.startsWith('Drop'))!;
+		const enter = () => {
+			button.focus();
+			const e = press(button, 'Enter'); // the keydown reaches the area first, as in a browser
+			expect(e.defaultPrevented).toBe(false); // so the browser goes on to activate the button:
+			button.click();
+			flushSync();
+		};
+		enter();
+		expect(button.textContent).toContain('Drop GRA-30 and stop active work (Undo returns it as todo)? Press d or click again.');
+		expect(net.s.writes).toEqual([]);
+		enter();
+		await vi.waitFor(() => expect(net.s.writes).toHaveLength(1));
+	});
+	it('u undoes a drop of work in progress: back to todo, and current again', async () => {
+		const t = await open();
+		press(t.list(), 'j');
+		press(t.list(), 'j'); // GRA-30, in progress
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.options()).toEqual(['GRA-9', 'GRA-12']));
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-30'));
+		expect(net.s.writes.at(-1)).toEqual({ method: 'POST', path: '/api/v1/stories/GRA-30/move', body: { version: 2, to: 'todo' } });
+		expect(net.s.stories[2].delivery).toBe('todo');
+		await vi.waitFor(() => expect(t.status()).toBe('Undone: GRA-30 is back in todo.'));
+	});
+	it('u undoes a place, also after a Skip: every sent field back, the draft restored, announced once', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		type(criteria(), 'Finds café\nFinds naïve');
+		press(criteria(), 'Enter', { ctrlKey: true });
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		press(t.list(), 's'); // another message: the Undo stays, and still names its item
+		await vi.waitFor(() => expect(t.status()).toBe('Skipped GRA-12.'));
+		expect(document.querySelector('.notice button')!.textContent).toContain('Undo place GRA-9');
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-9'));
+		expect(net.s.writes.at(-1)!.body).toEqual({ version: 2, epic: null, criteria: [{ text: 'Finds café', done: true }] });
+		expect(criteria().value).toBe('Finds café\nFinds naïve');
+		await vi.waitFor(() => expect(t.status()).toBe('Undone: GRA-9 is back in the queue.'));
+		await live.fns[0](); // the write's own live refetch: the item is back already, not new
+		await settle();
+		expect(t.status()).toBe('Undone: GRA-9 is back in the queue.');
+	});
+	it('undo after someone changed the item writes nothing and says so', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		net.s.stories[1] = { ...net.s.stories[1], version: 9 };
+		const before = net.s.writes.length;
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 changed since; undo it in the drawer.'));
+		expect(net.s.writes.length).toBe(before + 1); // the one refused move, nothing after it
+	});
+	it('a reload that was in flight when Undo landed does not take the restored item out again', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		net.s.hold.add('/api/v1/stories');
+		const reloading = live.fns[0](); // its list read waits
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		press(t.list(), 'u');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-9'));
+		net.s.stories[1] = { ...net.s.stories[1], epic: 'GRA-7' }; // the stale read now answers without GRA-9
+		net.s.hold.clear();
+		net.s.held.splice(0).forEach((r) => r());
+		await reloading;
+		await settle();
+		flushSync();
+		expect(t.options()).toContain('GRA-9');
+	});
+});
