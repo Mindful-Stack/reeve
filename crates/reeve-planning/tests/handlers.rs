@@ -1945,7 +1945,7 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .reasons
         .into_iter()
         .filter_map(|r| match r {
-            Reason::BlockedBy { story } => Some(story.to_string()),
+            Reason::BlockedBy { story, .. } => Some(story.to_string()),
             _ => None,
         })
         .collect();
@@ -3326,7 +3326,11 @@ async fn list_pairs_each_story_with_its_own_readiness() {
     let s_row = find(&list, &s);
     assert_eq!(
         s_row.readiness.reasons,
-        vec![Reason::BlockedBy { story: b.clone() }]
+        vec![Reason::BlockedBy {
+            story: b.clone(),
+            delivery: DeliveryState::Todo,
+            owner: None,
+        }]
     );
     assert_eq!(s_row.story.blocked_by, vec![b.clone()]);
     assert!(find(&list, &a).readiness.ready);
@@ -3505,7 +3509,11 @@ async fn list_stories_reads_one_snapshot() {
     let row = |k: &reeve_protocol::Key| list.iter().find(|x| &x.story.key == k).unwrap();
     assert_eq!(
         row(&s).readiness.reasons,
-        vec![Reason::BlockedBy { story: b.clone() }]
+        vec![Reason::BlockedBy {
+            story: b.clone(),
+            delivery: DeliveryState::Todo,
+            owner: None,
+        }]
     );
     assert!(row(&s).story.prs.is_empty());
     // B's row is read by the first statement, before the pause: a consistency check, not part of the proof. The
@@ -3533,7 +3541,11 @@ async fn list_stories_reads_one_snapshot() {
     assert_eq!(row(&t).story.blocked_by, vec![s.clone()]);
     assert_eq!(
         row(&t).readiness.reasons,
-        vec![Reason::BlockedBy { story: s.clone() }]
+        vec![Reason::BlockedBy {
+            story: s.clone(),
+            delivery: DeliveryState::Todo,
+            owner: None,
+        }]
     );
 }
 
@@ -3588,7 +3600,11 @@ async fn story_context_reads_one_snapshot() {
 
     assert_eq!(
         got.readiness.reasons,
-        vec![Reason::BlockedBy { story: b.clone() }]
+        vec![Reason::BlockedBy {
+            story: b.clone(),
+            delivery: DeliveryState::Todo,
+            owner: None,
+        }]
     );
     assert!(got.story.prs.is_empty());
     assert_eq!(
@@ -4518,7 +4534,9 @@ async fn remove_block_deletes_one_edge_and_logs_unblocked_last() {
     assert_eq!(
         h.readiness(s.key()).await.unwrap().reasons,
         vec![Reason::BlockedBy {
-            story: c.key().clone()
+            story: c.key().clone(),
+            delivery: DeliveryState::Todo,
+            owner: None
         }],
         "readiness is recomputed from the facts left"
     );

@@ -45,13 +45,16 @@ pub fn blocks(blocker: &BlockerFact, dependent_owner: Option<&str>) -> bool {
 /// Everything readiness needs, loaded by the repo in one query batch.
 #[derive(Debug, Clone)]
 pub struct ReadinessInput {
-    /// Readiness deliberately ignores the kind: any kind without an epic is untriaged (kb/ADR-0018 R4).
+    /// Readiness deliberately ignores the kind: any kind without an epic is untriaged (kb/ADR-0027 R4).
     pub kind: Kind,
     pub has_epic: bool,
     pub criteria_count: usize,
     pub ancestors: Vec<AncestorFact>,
     pub own_decisions: Vec<DecisionFact>,
-    pub open_blockers: Vec<Key>,
+    /// The story's own owner, or the mover's when the gate judges an unowned story for a move (kb/ADR-0027 R6).
+    pub owner: Option<String>,
+    /// Every story that blocks this one, whatever its state; `blocks` decides which count. In key-number order.
+    pub blockers: Vec<BlockerFact>,
 }
 
 fn decision_reason(d: &DecisionFact) -> Option<Reason> {
@@ -95,15 +98,15 @@ fn decision_reason(d: &DecisionFact) -> Option<Reason> {
     })
 }
 
-/// The one check result that satisfies a required decision (kb/ADR-0018 R3). The check endpoint lets only an admin
+/// The one check result that satisfies a required decision (kb/ADR-0027 R3). The check endpoint lets only an admin
 /// store it; a test pins it against `decision_reason`, so the two cannot drift.
 pub(crate) fn satisfies(check: &CheckResult) -> bool {
     matches!(check, CheckResult::Accepted { .. })
 }
 
-/// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0018 R4); then ancestors
+/// Reasons are ordered: untriaged (any kind without an epic, kb/ADR-0027 R4); then ancestors
 /// in the order given (nearest first, each with its discovery reason then its decisions);
-/// then own decisions; then no-criteria; then blockers. Duplicates are not removed, so the
+/// then own decisions; then no-criteria; then blockers that are unfinished for this story's owner (kb/ADR-0027 R5). Duplicates are not removed, so the
 /// repo must supply unique ancestors and blockers.
 pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
     let mut reasons = Vec::new();
@@ -123,9 +126,14 @@ pub fn compute_readiness(i: &ReadinessInput) -> Readiness {
         reasons.push(Reason::NoCriteria);
     }
     reasons.extend(
-        i.open_blockers
+        i.blockers
             .iter()
-            .map(|k| Reason::BlockedBy { story: k.clone() }),
+            .filter(|b| blocks(b, i.owner.as_deref()))
+            .map(|b| Reason::BlockedBy {
+                story: b.key.clone(),
+                delivery: b.delivery,
+                owner: b.owner.clone(),
+            }),
     );
     Readiness {
         ready: reasons.is_empty(),
@@ -170,7 +178,8 @@ mod tests {
                 },
             ],
             own_decisions: vec![],
-            open_blockers: vec![],
+            owner: Some("dan@example.com".into()),
+            blockers: vec![],
         }
     }
     #[test]
@@ -290,15 +299,42 @@ mod tests {
             Reason::DecisionNoRecord { decision_id: 9, .. }
         ));
     }
+    fn blocker(k: &str, delivery: DeliveryState, owner: Option<&str>) -> BlockerFact {
+        BlockerFact {
+            key: key(k),
+            delivery,
+            owner: owner.map(str::to_string),
+        }
+    }
     #[test]
-    fn unfinished_blockers_block() {
-        let mut i = base();
-        i.open_blockers = vec![key("ABC-8")];
+    fn only_blockers_unfinished_for_this_owner_are_reasons() {
+        let mut i = base(); // owned by dan
+        i.blockers = vec![
+            blocker("ABC-5", DeliveryState::InReview, Some("dan@example.com")),
+            blocker("ABC-6", DeliveryState::InReview, Some("mia@example.com")),
+            blocker("ABC-7", DeliveryState::Testing, Some("mia@example.com")),
+            blocker("ABC-8", DeliveryState::Todo, None),
+        ];
         assert_eq!(
             compute_readiness(&i).reasons,
-            vec![Reason::BlockedBy {
-                story: key("ABC-8")
-            }]
+            vec![
+                Reason::BlockedBy {
+                    story: key("ABC-6"),
+                    delivery: DeliveryState::InReview,
+                    owner: Some("mia@example.com".into())
+                },
+                Reason::BlockedBy {
+                    story: key("ABC-8"),
+                    delivery: DeliveryState::Todo,
+                    owner: None
+                },
+            ]
+        );
+        i.owner = None;
+        assert_eq!(
+            compute_readiness(&i).reasons.len(),
+            3,
+            "an unowned dependent is blocked by every started blocker; testing still blocks nobody"
         );
     }
 

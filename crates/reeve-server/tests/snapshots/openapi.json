@@ -3235,7 +3235,17 @@
             "type": "object"
           },
           {
+            "description": "A blocking story that is unfinished for this story (kb/ADR-0027 R5), with what decides when it unblocks: its\ndelivery (merged, it blocks nobody) and its owner (who can build on it, or whom to ask).",
             "properties": {
+              "delivery": {
+                "$ref": "#/components/schemas/DeliveryState"
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "reason": {
                 "enum": [
                   "blocked_by"
@@ -3248,6 +3258,7 @@
             },
             "required": [
               "story",
+              "delivery",
               "reason"
             ],
             "type": "object"

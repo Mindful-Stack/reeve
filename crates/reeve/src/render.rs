@@ -47,7 +47,7 @@ pub fn reason(r: &Reason) -> String {
             }
             None => format!("decision #{decision_id} \"{title}\" is {status}"),
         },
-        Reason::BlockedBy { story } => format!("blocked by {}", mark(Level::Story, story)),
+        Reason::BlockedBy { story, .. } => format!("blocked by {}", mark(Level::Story, story)),
         Reason::ResolutionRequired => "a resolution is required to move to done".into(),
         Reason::CompletedNeedsActiveOrigin => {
             "completed needs the story to have been in active work".into()
@@ -1120,7 +1120,9 @@ mod tests {
         );
         assert_eq!(
             reason(&Reason::BlockedBy {
-                story: "ABC-4".parse().unwrap()
+                story: "ABC-4".parse().unwrap(),
+                delivery: DeliveryState::Todo,
+                owner: None
             }),
             "blocked by ● ABC-4"
         );

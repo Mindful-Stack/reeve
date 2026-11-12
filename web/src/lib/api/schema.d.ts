@@ -2115,6 +2115,8 @@ export interface components {
             superseded_by?: string | null;
             title: string;
         } | {
+            delivery: components["schemas"]["DeliveryState"];
+            owner?: string | null;
             /** @enum {string} */
             reason: "blocked_by";
             story: components["schemas"]["Key"];

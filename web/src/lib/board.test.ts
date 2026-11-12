@@ -32,7 +32,7 @@ describe('reason labels', () => {
 		expect(shortLabel(proposed)).toBe('decision: proposed (PR linked)');
 		expect(fullLabel(proposed)).toBe('decision "Use Postgres" is proposed; its PR is linked');
 
-		expect(shortLabel({ reason: 'blocked_by', story: 'ABC-9' })).toBe('blocked by ABC-9');
+		expect(shortLabel({ reason: 'blocked_by', story: 'ABC-9', delivery: 'todo', owner: null })).toBe('blocked by ABC-9');
 	});
 
 	it('shortReason says ready, or renders only the first reason', () => {
@@ -40,7 +40,7 @@ describe('reason labels', () => {
 		expect(
 			shortReason({
 				ready: false,
-				reasons: [{ reason: 'no_criteria' }, { reason: 'blocked_by', story: 'ABC-9' }]
+				reasons: [{ reason: 'no_criteria' }, { reason: 'blocked_by', story: 'ABC-9', delivery: 'todo', owner: null }]
 			})
 		).toBe('no criteria');
 	});
@@ -304,7 +304,7 @@ describe('storyStatus', () => {
 		expect(storyStatus(statusItem('todo'))).toEqual({ word: 'ready', tone: 'ready' });
 	});
 	it('names the first of several distinct reasons, in its exact short label', () => {
-		const item = sw('S1', {}, [{ reason: 'blocked_by', story: 'ABC-9' }, { reason: 'no_criteria' }, { reason: 'untriaged' }]);
+		const item = sw('S1', {}, [{ reason: 'blocked_by', story: 'ABC-9', delivery: 'todo', owner: null }, { reason: 'no_criteria' }, { reason: 'untriaged' }]);
 		expect(storyStatus(item)).toEqual({ word: 'blocked by ABC-9', tone: 'warn' });
 		const other = sw('S2', {}, [{ reason: 'no_criteria' }, { reason: 'untriaged' }]);
 		expect(storyStatus(other)).toEqual({ word: 'no criteria', tone: 'warn' });

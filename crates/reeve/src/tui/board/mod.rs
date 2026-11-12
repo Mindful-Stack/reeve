@@ -803,6 +803,8 @@ mod tests {
             story("ABC-2", Todo, 1),
             vec![Reason::BlockedBy {
                 story: key("ABC-1"),
+                delivery: Testing,
+                owner: None,
             }],
         );
         let mut b = loaded(vec![story("ABC-1", Testing, 1), blocked.clone()], 1);
@@ -828,7 +830,9 @@ mod tests {
         assert_eq!(
             b.get(&key("ABC-2")).unwrap().item.readiness.reasons,
             vec![Reason::BlockedBy {
-                story: key("ABC-1")
+                story: key("ABC-1"),
+                delivery: Testing,
+                owner: None
             }],
             "the stale load's readiness was not applied"
         );

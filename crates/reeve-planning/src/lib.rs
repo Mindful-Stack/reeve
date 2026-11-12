@@ -22,7 +22,7 @@ pub use domain::{
     },
     pull_request::{PrChange, PullRequest},
     queue::{LineageItem, QueueEntry, QueueStory, QueueSummary},
-    readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
+    readiness::{AncestorFact, BlockerFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
         DemoStory, Goal, GoalLink, GoalProgress, Sprint, SprintCounts, StoryTimes, Summary,
         summarise,

@@ -69,13 +69,21 @@ impl PlanningReads for PgPlanningRepo {
                 .or_default()
                 .push(fact);
         }
-        let blocker_rows: Vec<(String, String)> = sqlx::query_as("SELECT b.story_key, b.blocker_key FROM story_blocks b JOIN stories x ON x.key = b.blocker_key WHERE b.story_key = ANY($1) AND x.delivery <> 'done' ORDER BY b.story_key, length(b.blocker_key), b.blocker_key")
+        // Facts only: every edge with its blocker's delivery and owner. Which ones block is domain policy (`blocks`).
+        let blocker_rows = sqlx::query("SELECT b.story_key, b.blocker_key, x.delivery, x.owner FROM story_blocks b JOIN stories x ON x.key = b.blocker_key WHERE b.story_key = ANY($1) ORDER BY b.story_key, length(b.blocker_key), b.blocker_key")
             .bind(stories.iter().map(|s| s.key().to_string()).collect::<Vec<_>>())
             .fetch_all(&mut **tx)
             .await?;
-        let mut blockers: HashMap<Key, Vec<Key>> = HashMap::new();
-        for (s, b) in blocker_rows {
-            blockers.entry(key(&s)).or_default().push(key(&b));
+        let mut blockers: HashMap<Key, Vec<BlockerFact>> = HashMap::new();
+        for r in &blocker_rows {
+            blockers
+                .entry(key(r.get::<&str, _>("story_key")))
+                .or_default()
+                .push(BlockerFact {
+                    key: key(r.get::<&str, _>("blocker_key")),
+                    delivery: delivery_of(r.get("delivery"))?,
+                    owner: r.get("owner"),
+                });
         }
         let mut out = HashMap::new();
         for s in &stories {
@@ -108,7 +116,8 @@ impl PlanningReads for PgPlanningRepo {
                     criteria_count: s.criteria().len(),
                     ancestors,
                     own_decisions: facts.get(s.key()).cloned().unwrap_or_default(),
-                    open_blockers: blockers.remove(s.key()).unwrap_or_default(),
+                    owner: s.owner().map(str::to_string),
+                    blockers: blockers.remove(s.key()).unwrap_or_default(),
                 },
             );
         }
