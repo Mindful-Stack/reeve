@@ -502,10 +502,12 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	const active = page.getByTestId('active-sprint');
 	await expect(active.getByRole('heading', { name: outcome })).toBeVisible();
 	await expect(active.getByRole('heading', { name: later })).toBeHidden();
+	await expect(next.getByRole('heading', { name: outcome })).toBeHidden();
+	await expect(next).not.toContainText('stays in Next sprint');
 	await expect(next.getByRole('heading', { name: later })).toBeVisible();
 	await expect(next.getByRole('checkbox', { name: `Goes in at open: ${later}` })).toBeChecked();
-	// Leave the draft as later tests expect it: without this goal.
-	await next.getByTestId(/^goal-/).filter({ hasText: later }).getByRole('button', { name: 'Remove' }).click();
+	// Remove the left-out goal: later tests expect a draft without goals (the new draft stays, empty).
+	await next.getByTestId(/^goal-/).filter({ hasText: later }).getByRole('button', { name: 'Remove', exact: true }).click();
 	await expect(next.getByRole('heading', { name: later })).toBeHidden();
 
 	// On the board, the card's own move control starts the chore; the nudge links it to the goal.

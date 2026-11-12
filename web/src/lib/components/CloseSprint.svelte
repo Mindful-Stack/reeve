@@ -154,7 +154,7 @@
 		<p role="status">The sprint is closed.</p>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 		{#if draft}
-			<p class="muted" role="status">{#if leaveOut.length}{staysText(leaveOut.length)} in Next sprint.{/if}</p>
+			{#if leaveOut.length}<p class="muted">{staysText(leaveOut.length)} in Next sprint.</p>{/if}
 			<button type="button" class="primary" disabled={busy} onclick={openNext}>Open next sprint with {goalsText(goingIn)}</button>
 		{:else}
 			<p class="muted">There is no draft to open: add a goal to start one.</p>
@@ -163,9 +163,6 @@
 </div>
 
 <style>
-	p[role='status']:empty {
-		position: absolute;
-	}
 	.close-step {
 		display: grid;
 		gap: 12px;
