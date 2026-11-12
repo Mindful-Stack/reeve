@@ -234,6 +234,34 @@ test('the drawer removes a block', async ({ page }) => {
 	expect(after.value.blocked_by).toEqual([]);
 });
 
+test('the drawer epic picker: typing replaces the label, the active option stays in sight, Enter picks then saves', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	// Twelve matches overflow the 16rem list.
+	for (let i = 0; i < 12; i++) {
+		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Smoke picker ${suffix} ${String(i).padStart(2, '0')}` });
+	}
+	const s = await chore(page, `Smoke picker story ${suffix}`); // under EPIC: the closed picker shows EPIC's label
+	await page.goto(`/board?story=${s.key}`);
+	const drawer = page.getByRole('complementary');
+	await drawer.getByRole('button', { name: 'Edit epic' }).click();
+	await expect(drawer.getByRole('combobox', { name: 'Epic' })).toBeFocused(); // focused by script, not by a click
+	await page.keyboard.type(`picker ${suffix}`); // keys, not fill(): they must replace the selected label
+	const list = drawer.getByRole('listbox', { name: 'Epic' });
+	await expect(list.getByRole('option')).toHaveCount(12);
+	for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowDown');
+	await expect(list.getByRole('option', { name: new RegExp(`${suffix} 11$`) })).toBeInViewport();
+	await page.keyboard.press('Enter'); // picks; the list closes
+	await expect(list).toBeHidden();
+	await page.keyboard.press('Enter'); // closed, Enter is the form's: it saves
+	await expect(drawer.getByRole('link', { name: new RegExp(`picker ${suffix} 11`) })).toBeVisible();
+	// Cancel sits beside the open list: the press blurs the input and closes the list, which moves nothing, so the click lands.
+	await drawer.getByRole('button', { name: 'Edit epic' }).click();
+	await page.keyboard.press('ArrowDown');
+	await expect(list).toBeVisible();
+	await drawer.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(drawer.getByRole('combobox', { name: 'Epic' })).toBeHidden();
+});
+
 test('a decision is edited in place: its decider changes', async ({ page }) => {
 	const s = await chore(page, 'Smoke chore with a decision');
 	const d = await post<{ id: number; version: number }>(page, '/api/v1/decisions', {

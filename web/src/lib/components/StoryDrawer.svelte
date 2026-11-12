@@ -40,6 +40,8 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
 	import PromiseLine from '#lib/components/PromiseLine.svelte';
 	import ClearPromiseDialog from '#lib/components/ClearPromiseDialog.svelte';
@@ -827,17 +829,9 @@
 
 			<div class="field">
 				{#if editing.has('epic')}
-					<label for="drawer-epic" class="name">Epic</label>
+					<span class="name" aria-hidden="true">Epic</span>
 					<form id="drawer-epic-form" onsubmit={saveEpic} onkeydown={cancelOnEscape('epic')}>
-						<select id="drawer-epic" bind:value={epic} disabled={locked('epic')}>
-							<option value="">none</option>
-							{#each epics as ep (ep.key)}
-								<option value={ep.key}>{ep.key} {ep.title}</option>
-							{/each}
-							{#if s.epic && !epics.some((ep) => ep.key === s.epic)}
-								<option value={s.epic}>{s.epic}</option>
-							{/if}
-						</select>
+						<Picker label="Epic" options={keyed(epics)} bind:value={epic} empty="No epic" disabled={locked('epic')} />
 						<button type="button" disabled={locked('epic')} onclick={() => cancel('epic')}>Cancel</button>
 						<button type="submit" disabled={busy}>Save</button>
 					</form>
