@@ -734,6 +734,73 @@ async fn flow() {
     let out = text.args(["story", "context", &key]).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("knowledge/adrs/0001-queue.md"));
 
+    // 7b. A screenshot on the story reaches the agent: listed in the context, downloaded byte for byte, privately.
+    let png = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/one.png"
+    ))
+    .unwrap();
+    let http = reqwest::Client::new();
+    let up: serde_json::Value = http
+        .post(format!("{base}/api/v1/attachments?filename=one.png"))
+        .bearer_auth(&bot)
+        .header("content-type", "application/octet-stream")
+        .body(png.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = up["value"]["id"].as_str().unwrap().to_string();
+    let claim = http
+        .post(format!("{base}/api/v1/stories/{key}/comments"))
+        .bearer_auth(&bot)
+        .json(&serde_json::json!({"body": format!("![one](/api/v1/attachments/{id})"), "attachments": [id]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(claim.status(), 200);
+    let ctx = ok(reeve(&bot)
+        .args(["story", "context", &key])
+        .output()
+        .unwrap());
+    assert_eq!(ctx["value"]["attachments"][0]["id"], id.as_str());
+    assert_eq!(ctx["value"]["attachments"][0]["owner"]["item"], "story");
+    let dir = tempfile::tempdir().unwrap();
+    let got = ok(reeve(&bot)
+        .args([
+            "attachment",
+            "get",
+            &id,
+            "--dir",
+            dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap());
+    let path = dir.path().join(format!("{id}.png"));
+    assert_eq!(got["value"]["path"], path.to_str().unwrap());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        png,
+        "a clean PNG comes back unchanged"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let missing = reeve(&bot)
+        .args(["attachment", "get", "00000000-0000-4000-8000-000000000000"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    let v: serde_json::Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(v["code"], "not_found");
+
     // 8. A configured repository with no clone in the household: the checker posts nothing, reports the decision
     // unreadable and exits 1, so a misconfigured host never records "not found".
     let d2 = ok(reeve(&human)

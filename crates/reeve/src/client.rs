@@ -182,6 +182,38 @@ impl Client {
         self.send(reqwest::Method::GET, path, &[], None, Some(timeout))
             .await
     }
+    /// GET an image route: on 200 its content type and bytes; any other answer is the server's outcome. An image is at
+    /// most the 10 MiB upload cap (kb/ADR-0023), so it is held in memory.
+    pub async fn get_image(
+        &self,
+        path: &str,
+    ) -> anyhow::Result<Result<(String, Vec<u8>), Outcome<()>>> {
+        let res = self
+            .http
+            .get(format!("{}/api/v1{}", self.base, path))
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+        let status = res.status().as_u16();
+        let header = |n| {
+            res.headers()
+                .get(n)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        };
+        let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_default();
+        let retry_after = header(reqwest::header::RETRY_AFTER);
+        let body = res.bytes().await?;
+        if status == 200 {
+            return Ok(Ok((content_type, body.to_vec())));
+        }
+        Ok(Err(outcome_of::<()>(
+            status,
+            retry_after.as_deref(),
+            &body,
+            chrono::Utc::now(),
+        )?))
+    }
     /// GET with query parameters, encoded by reqwest.
     pub async fn get_query<T: DeserializeOwned>(
         &self,
