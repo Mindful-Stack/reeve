@@ -79,8 +79,6 @@ export function blockingByItem(decisions: RequiredDecision[]): Map<string, OpenD
 	return openDecisionsByItem(blocking(decisions));
 }
 
-export type EpicGroup = { key: string | null; title: string; initiative: Initiative | null; epics: Epic[] };
-
 /** A group of `groupByInitiative`: an initiative (or an unlisted key, or none) and its items. */
 export type InitiativeGroup<T> = { key: string | null; title: string; initiative: Initiative | null; items: T[] };
 
@@ -116,12 +114,4 @@ export function groupByInitiative<T>(
 		g.items.push(item);
 	}
 	return [...ordered.map((i) => groups.get(i.key)!), ...unlisted, ...(none.items.length ? [none] : [])];
-}
-
-/** The epics index: `groupByInitiative` over the epics by their parent, "No initiative" for the rest. */
-export function groupEpics(buckets: string[], initiatives: Initiative[], epics: Epic[]): EpicGroup[] {
-	return groupByInitiative(buckets, initiatives, epics, (e) => e.initiative ?? null, 'No initiative').map(({ items, ...g }) => ({
-		...g,
-		epics: items
-	}));
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decision, epic as epicDto, initiative } from '#lib/test/fixtures.ts';
-import { bucketise, groupByInitiative, groupEpics, horizonLayout, openDecisionsByItem, OTHER } from './planning.ts';
+import { bucketise, groupByInitiative, horizonLayout, openDecisionsByItem, OTHER } from './planning.ts';
 
 const ini = (key: string, horizon: string, title = key, target_month: string | null = null) =>
 	initiative({ key, title, horizon, target_month });
@@ -71,24 +71,24 @@ describe('openDecisionsByItem', () => {
 
 const epic = (key: string, initiative: string | null) => epicDto({ key, title: key, initiative });
 
-describe('groupEpics', () => {
+describe('groupByInitiative over epics', () => {
 	const inis = [ini('R-1', 'Later'), ini('R-2', 'Now', 'B', '2026-12'), ini('R-3', 'Now', 'A', '2026-11'), ini('R-4', 'Now')];
 	const epics = [
 		epic('R-12', 'R-2'), epic('R-11', null), epic('R-9', 'R-2'), epic('R-13', 'R-99'), epic('R-10', 'R-2'),
 		epic('R-15', 'R-100'), epic('R-14', 'R-1')
 	];
-	const groups = groupEpics(['Now', 'Next', 'Later'], inis, epics);
+	const groups = groupByInitiative(['Now', 'Next', 'Later'], inis, epics, (e) => e.initiative ?? null, 'No initiative');
 	it('lists initiatives in the planning order, then unlisted parents as first seen, then No initiative', () => {
 		expect(groups.map((g) => g.key)).toEqual(['R-3', 'R-2', 'R-4', 'R-1', 'R-99', 'R-100', null]);
 		expect(groups.at(-3)).toMatchObject({ initiative: null, title: 'R-99' });
 		expect(groups.at(-1)).toMatchObject({ initiative: null, title: 'No initiative' });
 	});
 	it('keeps the server order inside a group and empty initiatives with no epics', () => {
-		expect(groups[1].epics.map((e) => e.key)).toEqual(['R-12', 'R-9', 'R-10']);
-		expect(groups[2].epics).toEqual([]);
+		expect(groups[1].items.map((e) => e.key)).toEqual(['R-12', 'R-9', 'R-10']);
+		expect(groups[2].items).toEqual([]);
 	});
 	it('leaves out No initiative when every epic has one', () => {
-		expect(groupEpics(['Now'], [ini('R-1', 'Now')], [epic('R-2', 'R-1')]).map((g) => g.key)).toEqual(['R-1']);
+		expect(groupByInitiative(['Now'], [ini('R-1', 'Now')], [epic('R-2', 'R-1')], (e) => e.initiative ?? null, 'No initiative').map((g) => g.key)).toEqual(['R-1']);
 	});
 });
 

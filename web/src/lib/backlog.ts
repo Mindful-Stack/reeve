@@ -4,7 +4,7 @@
 // the story list's query (kb/ADR-0021 R1: the server filters, the client never filters a full list).
 import type { Epic, Initiative, PromisedFilter, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
 import { isKind, isUntriaged } from '#lib/board.ts';
-import { groupEpics } from '#lib/planning.ts';
+import { groupByInitiative } from '#lib/planning.ts';
 import { isPromisedFilter } from '#lib/promise.ts';
 
 export type Tone = 'ready' | 'warn' | 'muted';
@@ -40,12 +40,12 @@ export function groupBacklog(
 	}
 	const known = new Set(epics.map((e) => e.key));
 	const orphans = rows.filter((s) => s.story.epic && !known.has(s.story.epic));
-	const sections = groupEpics(buckets, initiatives, epics)
+	const sections = groupByInitiative(buckets, initiatives, epics, (e) => e.initiative ?? null, 'No initiative')
 		.map((g) => ({
 			key: g.key,
 			title: g.title,
 			initiative: g.initiative,
-			epics: g.epics
+			epics: g.items
 				.map((epic) => {
 					const rows = byEpic.get(epic.key) ?? [];
 					const ready = rows.filter((s) => s.readiness.ready).length;

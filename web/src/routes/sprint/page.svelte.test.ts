@@ -717,8 +717,9 @@ describe('the history', () => {
 
 describe('planning by goal', () => {
 	it("shows each goal's gates: discovery by level, decisions by what they need, and the counts line", async () => {
-		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] })]);
+		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] }), goal({ id: 2, links: ['ABC-2'] })]);
 		net.gates = [
+			goalGates({ goal_id: 2, initiatives: ['ABC-1'], decisions_total: 2 }),
 			goalGates({
 				goal_id: 1,
 				initiatives: ['ABC-1'],
@@ -732,22 +733,17 @@ describe('planning by goal', () => {
 		const block = q('[data-testid="goal-1"] [data-testid="gates"]')!;
 		expect(text(q('h5', block))).toBe('Waits on');
 		expect(q<HTMLAnchorElement>('[data-testid="discovery-ABC-1"] a', block)!.getAttribute('href')).toBe('/initiatives/ABC-1');
-		expect(text(q('[data-testid="discovery-ABC-1"]', block))).toBe('ABC-1 Bookings initiative discovery');
+		expect(text(q('[data-testid="discovery-ABC-1"]', block))).toBe('ABC-1 Bookings initiative in discovery');
 		const row = q('[data-testid="decision-7"]', block)!;
 		const link = q<HTMLAnchorElement>('a', row)!;
 		expect(link.getAttribute('href')).toBe('/sprint?decision=7');
 		expect(link.getAttribute('data-sveltekit-reset')).toBe('false');
 		expect(text(link)).toBe('#7 Which calendar');
-		expect(text(row)).toBe('#7 Which calendar · decision: no record · on ABC-2');
+		expect(text(row)).toBe('#7 Which calendar · no record · on ABC-2');
 		expect(text(q('[data-testid="gate-counts"]', block))).toBe('Discovery 1 of 2 marked · decisions 2 of 3 decided');
 		expect(text(q('[data-testid="goal-1"]'))).not.toContain('blocked by');
-	});
-
-	it('words the counts line with decisions only when the goal has no discovery items', async () => {
-		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] })]);
-		net.gates = [goalGates({ goal_id: 1, initiatives: ['ABC-1'], decisions_total: 2 })];
-		await open();
-		expect(text(q('[data-testid="goal-1"] [data-testid="gate-counts"]'))).toBe('Decisions 2 of 2 decided');
+		// A goal with no discovery items words the line with decisions only.
+		expect(text(q('[data-testid="goal-2"] [data-testid="gate-counts"]'))).toBe('Decisions 2 of 2 decided');
 	});
 
 	it('says "Nothing waits" with its counts and "No linked items yet", and groups goals under their first initiative, upkeep last', async () => {
@@ -848,10 +844,9 @@ describe('planning by goal', () => {
 		button('+ goal', row)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form', row)!;
-		// The form is named by its heading (aria-labelledby), as GoalForm does when titled.
-		const heading = q('h3', form)!;
-		expect(text(heading)).toBe('New goal for next sprint · linked to ABC-7');
-		expect(form.getAttribute('aria-labelledby')).toBe(heading.id);
+		// The form is named by its title (aria-label), which also heads it.
+		expect(form.getAttribute('aria-label')).toBe('New goal for next sprint · linked to ABC-7');
+		expect(text(q('h3', form))).toBe('New goal for next sprint · linked to ABC-7');
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'By 27 Nov, Ana can book');
 		type(q<HTMLInputElement>('input[name="check"]', form)!, 'one booking');
 		flushSync();
@@ -859,6 +854,25 @@ describe('planning by goal', () => {
 		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
 		expect(writes('/api/v1/goals')[0].body).toMatchObject({ outcome: 'By 27 Nov, Ana can book', check: 'one booking', links: ['ABC-7'] });
 		await settle(() => expect(q('form', row)).toBeNull());
+	});
+
+	it('focuses the new goal\'s card after "+ goal" adds it, as its row unmounts', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form', row)!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'By 27 Nov, Ana can book');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'one booking');
+		flushSync();
+		// What the reload after the add brings.
+		net.sprints!.draft = draft([goal({ id: 99, sprint_id: 2, links: ['ABC-7'] })]);
+		net.gates = [goalGates({ goal_id: 99, initiatives: ['ABC-7'] })];
+		button('Add goal', form)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('[data-testid="goal-99"]')));
 	});
 
 	it('focuses the outcome input on "+ goal" and returns focus to the button on cancel', async () => {

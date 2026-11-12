@@ -1,6 +1,6 @@
 <!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates
     the first draft; given `links`, the add also links those items in the same write (`POST /goals` `links`), and
-    `title` heads and names the add form; both add only, ignored when editing), or, given `goal`, edits that goal
+    `title` heads and names the form; `links` adds only, ignored when editing), or, given `goal`, edits that goal
     (`PATCH /goals/{id}` at its version). Mount a new form under `{#key}` of the draft so a half-typed goal never
     moves to another sprint. -->
 <script lang="ts">
@@ -21,7 +21,7 @@
 	}: {
 		/** The draft's last day, for the outcome's shape; null before the first draft exists. */
 		endsOn?: string | null;
-		/** Add only, ignored when editing: heads the add form and names it (default "New goal"). */
+		/** Heads the form and names it (default "New goal", or "Edit goal" when editing). */
 		title?: string;
 		/** Add only, ignored when editing: items the new goal links in its create; none by default. */
 		links?: string[];
@@ -40,9 +40,6 @@
 	// The fields start from the goal being edited, once: a reload under an open form leaves the typing alone.
 	// svelte-ignore state_referenced_locally
 	const start = goal;
-	/** The visible heading, only on an add; it names the form. */
-	const heading = $derived(start ? undefined : title);
-	const headingId = $props.id();
 	let outcome = $state(start?.outcome ?? '');
 	let check = $state(start?.check ?? '');
 	let owner = $state(start?.owner ?? '');
@@ -59,7 +56,7 @@
 			check: check.trim(),
 			owner: owner.trim() || null, // the server defaults the owner to the caller
 			notes: notes.trim() || null,
-			...(links.length ? { links } : {})
+			links
 		};
 		const out = await cycle.send(JSON.stringify(body), (idempotency_key) =>
 			unwrap(api.POST('/api/v1/goals', { body: { ...body, idempotency_key } }))
@@ -108,11 +105,10 @@
 
 <form
 	class="goal-form"
-	aria-label={heading ? undefined : start ? 'Edit goal' : 'New goal'}
-	aria-labelledby={heading ? headingId : undefined}
+	aria-label={title ?? (start ? 'Edit goal' : 'New goal')}
 	onsubmit={submit}
 >
-	{#if heading}<h3 class="title" id={headingId}>{heading}</h3>{/if}
+	{#if title}<h3 class="title">{title}</h3>{/if}
 	<label class="field"
 		>Outcome <input name="outcome" bind:value={outcome} required disabled={busy} placeholder="By {endsOn ?? '<ends_on>'}, <who> can <outcome>" /></label
 	>

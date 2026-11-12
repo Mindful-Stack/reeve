@@ -245,7 +245,6 @@
 	{/if}
 {/snippet}
 
-<!-- A group header: the initiative's key and title, or the upkeep title. -->
 {#snippet groupHead(key: string | null, title: string)}
 	<h3 class="group-head">{#if key}<span class="key">{key}</span>{title === key ? '' : ` ${title}`}{:else}{title}{/if}</h3>
 {/snippet}
@@ -369,7 +368,7 @@
 				{@render groupHead(grp.key, grp.title)}
 				{#each grp.items as g (g.id)}
 					{@const gg = gates.get(g.id)}
-					<article class="goal draft" data-testid="goal-{g.id}">
+					<article class="goal draft" data-testid="goal-{g.id}" data-goal={g.id} tabindex="-1">
 						<h4>{g.outcome}</h4>
 						<p class="muted">Waiting since {waitingSince(g.created_at)}</p>
 						<label class="goes-in"
@@ -415,9 +414,11 @@
 							title="New goal for next sprint · linked to {i.key}"
 							links={[i.key]}
 							endsOn={draft?.ends_on ?? null}
-							oncreated={async () => {
+							oncreated={async ({ goal }) => {
 								goalFor = null;
 								await reload();
+								await tick(); // the row has unmounted: focus the new goal's card, as GoalPicker does after an add
+								document.querySelector<HTMLElement>(`[data-goal="${goal.id}"]`)?.focus();
 							}}
 							oncancel={() => closeGoal(i.key)}
 						/>

@@ -4,7 +4,7 @@
      are not sprint-membership counts, so the panel's rule line (kb/ADR-0014 R2) is not repeated here. -->
 <script lang="ts">
 	import { page } from '$app/state';
-	import type { GoalGates, Reason } from '#lib/api/types.ts';
+	import type { GoalGates } from '#lib/api/types.ts';
 	import { shortLabel } from '#lib/board.ts';
 	import { decisionHref } from '#lib/drawer.ts';
 	import { itemRoute } from '#lib/urgency.ts';
@@ -18,17 +18,7 @@
 		linked: boolean;
 	} = $props();
 
-	/** The decision a gate's reason names: every decision gate carries a `decision_*` reason. */
-	const decisionOf = (r: Reason): { id: number; title: string } | null =>
-		'decision_id' in r ? { id: r.decision_id, title: r.title } : null;
-	/** The decision gates that name a decision, with it; the server always names one, so a gate without is left out. */
-	const decisions = $derived(
-		gates.decisions.flatMap((g) => {
-			const ref = decisionOf(g.reason);
-			return ref ? [{ g, ref }] : [];
-		})
-	);
-	const waiting = $derived(gates.discoveries.length + decisions.length > 0);
+	const waiting = $derived(gates.discoveries.length + gates.decisions.length > 0);
 	/** "Discovery m of n marked · decisions d of n decided"; a half whose n is 0 is left out. */
 	const line = $derived.by(() => {
 		const parts: string[] = [];
@@ -51,16 +41,19 @@
 				{#each gates.discoveries as d (d.key)}
 					<li data-testid="discovery-{d.key}">
 						<a href={itemRoute(d, page.url)}><span class="key">{d.key}</span> {d.title}</a>
-						<span class="muted">{d.item} discovery</span>
+						<span class="muted">{d.item} in discovery</span>
 					</li>
 				{/each}
-				{#each decisions as { g, ref } (ref.id)}
-					<!-- One link for the id and title, as DecisionList links a decision's title; the parts apart by "·". -->
-					<li data-testid="decision-{ref.id}">
-						<a data-sveltekit-reset="false" href={decisionHref(page.url, ref.id)}>#{ref.id} {ref.title}</a> ·
-						<span class="small">{shortLabel(g.reason)}</span> ·
-						<span class="muted">on {g.on}</span>
-					</li>
+				{#each gates.decisions as g (('decision_id' in g.reason ? g.reason.decision_id : 0) + g.on)}
+					{@const r = g.reason}
+					<!-- Every decision gate carries a `decision_*` reason; the server always names the decision. -->
+					{#if 'decision_id' in r}
+						<li data-testid="decision-{r.decision_id}">
+							<a data-sveltekit-reset="false" href={decisionHref(page.url, r.decision_id)}>#{r.decision_id} {r.title}</a> ·
+							<span class="small">{shortLabel(r).replace(/^decision:? /, '')}</span> ·
+							<span class="muted">on {g.on}</span>
+						</li>
+					{/if}
 				{/each}
 			</ul>
 		{:else}
