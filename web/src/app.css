@@ -224,6 +224,11 @@ dialog::backdrop {
 	background: var(--scrim);
 }
 
+/* An open Picker list floats out of its dialog instead of being clipped by it (lib/ui/Picker.svelte). */
+dialog:has([role='combobox'][aria-expanded='true']) {
+	overflow: visible;
+}
+
 /* Page shell */
 html {
 	scroll-padding-top: var(--top-bar-height, 0px);
