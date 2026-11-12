@@ -208,7 +208,7 @@ fn goal_json(id: i64, sprint_id: i64, links: Value) -> Value {
         "confidence": "at_risk", "confidence_note": "c-note", "confidence_at": "2026-11-09T01:00:00Z",
         "suggested_confidence": "off_track", "suggested_note": "s-note", "suggested_at": "2026-11-09T02:00:00Z",
         "suggested_by": "agent@x",
-        "verdict": "partly_met", "verdict_note": "v-note", "version": 8, "links": links
+        "verdict": "partly_met", "verdict_note": "v-note", "version": 8, "created_at": "2026-11-09T04:00:00Z", "links": links
     })
 }
 fn link(goal_id: i64, key: &str) -> GoalLink {
@@ -918,5 +918,36 @@ fn unknown_promise_values_decode_to_unknown() {
             Some(PromiseState::Unknown),
             Some(PromiseDue::Unknown)
         )
+    );
+}
+
+#[test]
+fn goal_gates_dto_carries_every_field() {
+    let g = GoalGates {
+        goal_id: 3,
+        initiatives: vec![k("ABC-1"), k("ABC-7")],
+        discoveries: vec![DiscoveryGate {
+            key: k("ABC-2"),
+            item: ItemType::Epic,
+            title: "E".into(),
+        }],
+        decisions: vec![DecisionGate {
+            on: k("ABC-4"),
+            reason: Reason::DecisionUnchecked {
+                decision_id: 9,
+                title: "D".into(),
+            },
+        }],
+        discovery_total: 4,
+        decisions_total: 5,
+    };
+    assert_eq!(
+        v!(GoalGatesDto::from(&g)),
+        json!({
+            "goal_id": 3, "initiatives": ["ABC-1", "ABC-7"],
+            "discoveries": [{"key": "ABC-2", "item": "epic", "title": "E"}],
+            "decisions": [{"on": "ABC-4", "reason": {"reason": "decision_unchecked", "decision_id": 9, "title": "D"}}],
+            "discovery_total": 4, "decisions_total": 5
+        })
     );
 }

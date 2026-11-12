@@ -1,6 +1,8 @@
 //! Sprint and goal wire types (kb/ADR-0014): enums, counts, views and requests.
+use crate::enums::ItemType;
 use crate::ids::{Key, KeyRef};
 use crate::promise::SprintPromiseDto;
+use crate::readiness::Reason;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -96,6 +98,8 @@ pub struct GoalDto {
     pub verdict: Option<Verdict>,
     pub verdict_note: Option<String>,
     pub version: i64,
+    /// When the goal was created; the sprint page's "Waiting since" on a draft goal.
+    pub created_at: DateTime<Utc>,
     /// The items linked to this goal, in key-number order; an epic or initiative link covers their stories.
     pub links: Vec<Key>,
 }
@@ -176,6 +180,39 @@ pub struct CreatedGoalDto {
     pub warnings: Vec<SprintWarning>,
 }
 
+/// What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
+/// kb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GoalGatesDto {
+    pub goal_id: i64,
+    /// Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by key
+    /// number); the sprint page groups the goal under the first.
+    pub initiatives: Vec<Key>,
+    /// Initiatives first, then epics, each by key number.
+    pub discoveries: Vec<DiscoveryGateDto>,
+    /// By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.
+    pub decisions: Vec<DecisionGateDto>,
+    /// All the goal's initiatives and epics; marked = total - discoveries.len().
+    pub discovery_total: u32,
+    /// All the goal's decisions (withdrawn excluded); decided = total - decisions.len().
+    pub decisions_total: u32,
+}
+
+/// Shaped like `ItemRefDto` plus a title, so the client links it with `itemRoute`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiscoveryGateDto {
+    pub key: Key,
+    pub item: ItemType,
+    pub title: String,
+}
+
+/// An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DecisionGateDto {
+    pub on: Key,
+    pub reason: Reason,
+}
+
 /// Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay
 /// in the next draft (kb/ADR-0026); empty or absent opens every goal.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -214,6 +251,10 @@ pub struct CreateGoal {
     pub notes: Option<String>,
     #[serde(default)]
     pub active: bool,
+    /// Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.
+    /// A replay of the idempotency key returns the first goal unchanged, whatever `links` it sends.
+    #[serde(default)]
+    pub links: Vec<Key>,
 }
 
 /// Each field is optional; an absent one is left as it is.

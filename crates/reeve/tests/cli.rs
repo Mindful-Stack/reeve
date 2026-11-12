@@ -2274,7 +2274,7 @@ fn decision_ls_renders_reversibility_and_closure() {
 fn goal_json(id: i64, sprint_id: i64) -> serde_json::Value {
     serde_json::json!({"id":id,"sprint_id":sprint_id,"outcome":"Bookings work","check":"a customer books","owner":"dan@example.com",
         "notes":"","confidence":null,"confidence_note":null,"confidence_at":null,"suggested_confidence":null,"suggested_note":null,
-        "suggested_at":null,"suggested_by":null,"verdict":null,"verdict_note":null,"version":1,"links":[]})
+        "suggested_at":null,"suggested_by":null,"verdict":null,"verdict_note":null,"version":1,"created_at":"2026-11-03T09:00:00Z","links":[]})
 }
 
 fn sprint_json(id: i64, state: &str, version: i64) -> serde_json::Value {

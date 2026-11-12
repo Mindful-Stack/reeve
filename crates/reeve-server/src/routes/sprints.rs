@@ -115,7 +115,19 @@ async fn close(
     Ok(ok(sprint_now(&s.handlers, id).await?))
 }
 
-/// Adds a goal to the draft, or to the active sprint with `active` (interactive only).
+/// Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how
+/// many of each are done, derived on read. Any signed-in caller; no parameters.
+#[utoipa::path(get, path = "/sprints/planning", responses((status = 200, body = Response<Vec<GoalGatesDto>>)))]
+async fn planning(
+    State(s): State<AppState>,
+    _c: Caller,
+) -> Result<Json<Response<Vec<GoalGatesDto>>>, AppError> {
+    let gates = s.handlers.sprint_planning().await?;
+    Ok(ok(gates.iter().map(GoalGatesDto::from).collect()))
+}
+
+/// Adds a goal to the draft, or to the active sprint with `active` (interactive only), linked to `links` in the same
+/// write; an unknown key is 404 and creates nothing.
 #[utoipa::path(post, path = "/goals", request_body = CreateGoal, responses((status = 200, body = Response<CreatedGoalDto>)))]
 async fn create_goal(
     State(s): State<AppState>,
@@ -132,7 +144,7 @@ async fn create_goal(
             b.owner,
             b.notes.as_deref().unwrap_or(""),
             b.active,
-            &[],
+            &b.links,
         )
         .await?;
     Ok(ok(CreatedGoalDto {
@@ -242,6 +254,7 @@ async fn unlink(
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
+        .routes(routes!(planning))
         .routes(routes!(get))
         .routes(routes!(open))
         .routes(routes!(close))

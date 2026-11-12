@@ -176,6 +176,7 @@ export function goal(over: Partial<Goal> = {}): Goal {
 		verdict: null,
 		verdict_note: null,
 		version: 1,
+		created_at: '2026-11-03T12:00:00Z',
 		...over
 	};
 }

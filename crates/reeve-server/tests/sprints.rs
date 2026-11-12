@@ -375,3 +375,48 @@ async fn sprints_carry_the_request_utc_date() {
     let today: chrono::NaiveDate = b["value"]["today"].as_str().unwrap().parse().unwrap();
     assert!(today == before || today == after, "{today}");
 }
+
+/// `GET /sprints/planning` answers each active and draft goal's gates; `POST /goals` with `links` creates the goal
+/// linked, and an unknown key creates nothing (404).
+#[tokio::test]
+async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
+    let h = harness().await;
+    let (st, e) = req(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/api/v1/epics",
+        Some(json!({"idempotency_key": "e", "title": "Unmarked"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{e}");
+    let epic = e["value"]["key"].as_str().unwrap().to_string();
+    let (st, b) = req(
+        &h,
+        &h.admin_token,
+        "POST",
+        "/api/v1/goals",
+        // The harness's key prefix is TST: a well-formed key that names no item.
+        Some(json!({"idempotency_key": "bad", "outcome": "o", "check": "c", "links": ["TST-999"]})),
+    )
+    .await;
+    assert_eq!(st, 404, "{b}");
+    let g = ok_value(
+        &h,
+        "POST",
+        "/api/v1/goals",
+        Some(json!({"idempotency_key": "g", "outcome": "o", "check": "c", "links": [epic]})),
+    )
+    .await;
+    assert_eq!(g["goal"]["links"], json!([epic]));
+    assert!(g["goal"]["created_at"].is_string(), "{g}");
+    let gid = g["goal"]["id"].as_i64().unwrap();
+    assert_eq!(
+        ok_value(&h, "GET", "/api/v1/sprints/planning", None).await,
+        json!([{
+            "goal_id": gid, "initiatives": [],
+            "discoveries": [{"key": epic, "item": "epic", "title": "Unmarked"}],
+            "decisions": [], "discovery_total": 1, "decisions_total": 0
+        }])
+    );
+}
