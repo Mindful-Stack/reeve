@@ -580,5 +580,8 @@ describe('top bar', () => {
 		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 101 }); // wrapped to two rows
 		notify!();
 		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('101px');
+		unmount(app!); // the effect's own cleanup removes the property
+		app = null;
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('');
 	});
 });
