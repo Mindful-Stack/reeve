@@ -401,6 +401,24 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
     )
     .await;
     assert_eq!(st, 404, "{b}");
+    // One goal in the active sprint, one in the draft: the route answers both.
+    let a = ok_value(
+        &h,
+        "POST",
+        "/api/v1/goals",
+        Some(json!({"idempotency_key": "a", "outcome": "a", "check": "c", "links": [epic]})),
+    )
+    .await;
+    let aid = a["goal"]["id"].as_i64().unwrap();
+    let draft = ok_value(&h, "GET", "/api/v1/sprints", None).await["draft"].clone();
+    let sid = draft["id"].as_i64().unwrap();
+    ok_value(
+        &h,
+        "POST",
+        &format!("/api/v1/sprints/{sid}/open"),
+        Some(json!({"version": draft["version"]})),
+    )
+    .await;
     let g = ok_value(
         &h,
         "POST",
@@ -413,10 +431,17 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
     let gid = g["goal"]["id"].as_i64().unwrap();
     assert_eq!(
         ok_value(&h, "GET", "/api/v1/sprints/planning", None).await,
-        json!([{
-            "goal_id": gid, "initiatives": [],
-            "discoveries": [{"key": epic, "item": "epic", "title": "Unmarked"}],
-            "decisions": [], "discovery_total": 1, "decisions_total": 0
-        }])
+        json!([
+            {
+                "goal_id": aid, "initiatives": [],
+                "discoveries": [{"key": epic, "item": "epic", "title": "Unmarked"}],
+                "decisions": [], "discovery_total": 1, "decisions_total": 0
+            },
+            {
+                "goal_id": gid, "initiatives": [],
+                "discoveries": [{"key": epic, "item": "epic", "title": "Unmarked"}],
+                "decisions": [], "discovery_total": 1, "decisions_total": 0
+            }
+        ])
     );
 }

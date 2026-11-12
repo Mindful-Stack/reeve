@@ -1676,7 +1676,7 @@
             ]
           },
           "created_at": {
-            "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal.",
+            "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal. Servers always send it; JSON\nwithout it (an older server) reads as the Unix epoch.",
             "format": "date-time",
             "type": "string"
           },
@@ -4803,7 +4803,7 @@
                     ]
                   },
                   "created_at": {
-                    "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal.",
+                    "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal. Servers always send it; JSON\nwithout it (an older server) reads as the Unix epoch.",
                     "format": "date-time",
                     "type": "string"
                   },

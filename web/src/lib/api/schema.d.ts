@@ -1700,7 +1700,8 @@ export interface components {
             confidence_note?: string | null;
             /**
              * Format: date-time
-             * @description When the goal was created; the sprint page's "Waiting since" on a draft goal.
+             * @description When the goal was created; the sprint page's "Waiting since" on a draft goal. Servers always send it; JSON
+             *     without it (an older server) reads as the Unix epoch.
              */
             created_at: string;
             /** Format: int64 */
@@ -2618,7 +2619,8 @@ export interface components {
                 confidence_note?: string | null;
                 /**
                  * Format: date-time
-                 * @description When the goal was created; the sprint page's "Waiting since" on a draft goal.
+                 * @description When the goal was created; the sprint page's "Waiting since" on a draft goal. Servers always send it; JSON
+                 *     without it (an older server) reads as the Unix epoch.
                  */
                 created_at: string;
                 /** Format: int64 */

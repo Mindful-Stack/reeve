@@ -951,3 +951,12 @@ fn goal_gates_dto_carries_every_field() {
         })
     );
 }
+
+/// An older server's goal (no `created_at`) still reads, as the Unix epoch.
+#[test]
+fn old_goal_json_without_created_at_parses() {
+    let mut g = goal_json(1, 5, json!([]));
+    g.as_object_mut().unwrap().remove("created_at");
+    let g: GoalDto = serde_json::from_value(g).unwrap();
+    assert_eq!(g.created_at, chrono::DateTime::UNIX_EPOCH);
+}

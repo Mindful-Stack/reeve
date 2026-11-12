@@ -98,10 +98,17 @@ pub struct GoalDto {
     pub verdict: Option<Verdict>,
     pub verdict_note: Option<String>,
     pub version: i64,
-    /// When the goal was created; the sprint page's "Waiting since" on a draft goal.
+    /// When the goal was created; the sprint page's "Waiting since" on a draft goal. Servers always send it; JSON
+    /// without it (an older server) reads as the Unix epoch.
+    #[serde(default = "epoch")]
+    #[schema(required = true)]
     pub created_at: DateTime<Utc>,
     /// The items linked to this goal, in key-number order; an epic or initiative link covers their stories.
     pub links: Vec<Key>,
+}
+
+fn epoch() -> DateTime<Utc> {
+    DateTime::UNIX_EPOCH
 }
 
 /// A goal the story serves, for story context: the goal, its sprint's dates and through which item.
