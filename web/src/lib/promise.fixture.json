@@ -1,5 +1,5 @@
 {
-	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift; crates/reeve-planning/src/domain/promise.rs reads the filter rows, so the board's filter and the server's cannot either.",
+	"$comment": "The words of a promise, row for row: web/src/lib/promise.test.ts and crates/reeve/src/promise.rs both read this file, so the web and the CLI cannot drift; the activity rows are the web's actionLabel (format.test.ts) and the TUI ticker's words; crates/reeve-planning/src/domain/promise.rs reads the filter rows, so the board's filter and the server's cannot either.",
 	"chip": [
 		{
 			"label": "open, this sprint",
@@ -1052,6 +1052,164 @@
 				"overdue": false,
 				"any": false
 			}
+		}
+	],
+	"activity": [
+		{
+			"label": "a new promise",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": "Acme",
+				"previous": null
+			},
+			"plain": "promised by 20 Nov 2026 to Acme",
+			"keyed": "promised ABC-12 by 20 Nov 2026 to Acme"
+		},
+		{
+			"label": "a new promise, no recipient",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": null,
+				"previous": null
+			},
+			"plain": "promised by 20 Nov 2026",
+			"keyed": "promised ABC-12 by 20 Nov 2026"
+		},
+		{
+			"label": "a new date",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-27",
+				"to": "Acme",
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "changed the promise to 27 Nov 2026",
+			"keyed": "changed the promise on ABC-12 to 27 Nov 2026"
+		},
+		{
+			"label": "a new date and recipient",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-27",
+				"to": "Beta",
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "changed the promise to 27 Nov 2026 and its recipient to Beta",
+			"keyed": "changed the promise on ABC-12 to 27 Nov 2026 and its recipient to Beta"
+		},
+		{
+			"label": "a new date, recipient removed",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-27",
+				"to": null,
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "changed the promise to 27 Nov 2026 and removed its recipient",
+			"keyed": "changed the promise on ABC-12 to 27 Nov 2026 and removed its recipient"
+		},
+		{
+			"label": "a new recipient",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": "Beta",
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "changed the promise's recipient to Beta",
+			"keyed": "changed the recipient of the promise on ABC-12 to Beta"
+		},
+		{
+			"label": "a first recipient",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": "Beta",
+				"previous": {
+					"on": "2026-11-20",
+					"to": null
+				}
+			},
+			"plain": "changed the promise's recipient to Beta",
+			"keyed": "changed the recipient of the promise on ABC-12 to Beta"
+		},
+		{
+			"label": "the recipient removed",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": null,
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "removed the promise's recipient",
+			"keyed": "removed the recipient of the promise on ABC-12"
+		},
+		{
+			"label": "nothing changed",
+			"action": "promised",
+			"payload": {
+				"item_type": "story",
+				"on": "2026-11-20",
+				"to": "Acme",
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "promised by 20 Nov 2026 to Acme",
+			"keyed": "promised ABC-12 by 20 Nov 2026 to Acme"
+		},
+		{
+			"label": "cleared",
+			"action": "promise_cleared",
+			"payload": {
+				"item_type": "story",
+				"previous": {
+					"on": "2026-11-20",
+					"to": "Acme"
+				}
+			},
+			"plain": "cleared the promise",
+			"keyed": "cleared the promise on ABC-12"
+		},
+		{
+			"label": "an unreadable promise",
+			"action": "promised",
+			"payload": null,
+			"plain": "promised",
+			"keyed": "promised ABC-12"
+		},
+		{
+			"label": "an unreadable clear",
+			"action": "promise_cleared",
+			"payload": null,
+			"plain": "cleared the promise",
+			"keyed": "cleared the promise on ABC-12"
 		}
 	]
 }

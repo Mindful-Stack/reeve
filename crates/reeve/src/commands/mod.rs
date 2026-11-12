@@ -239,8 +239,8 @@ pub fn parse_promise_on(s: &str) -> Result<PromiseOn, String> {
     }
 }
 
-/// `promise` for stories and epics, on the item at `item` (`/{epics|stories}/{key}`): `--clear` is a bodiless DELETE
-/// of its `/promise` route and prints `cleared`; otherwise a POST of only the fields given (a missing
+/// `promise` for stories and epics, on the item at `item` (`/{epics|stories}/{key}`): `--clear` reads the item, then
+/// sends a bodiless DELETE of its `/promise` route and prints `cleared` of the two answers; otherwise a POST of only the fields given (a missing
 /// `to` keeps the recipient, `""` clears it; the server refuses unknown fields) prints `answer`. No version is sent,
 /// and nothing about the promise is computed here: the answer shows the server's values.
 pub async fn promise<T: Serialize + DeserializeOwned>(
@@ -248,12 +248,20 @@ pub async fn promise<T: Serialize + DeserializeOwned>(
     item: String,
     PromiseArgs { on, to, clear }: PromiseArgs,
     json: bool,
-    cleared: impl Fn(&T) -> String,
+    cleared: impl Fn(&T, &T) -> String,
     answer: impl Fn(&T) -> String,
 ) -> anyhow::Result<i32> {
     let path = format!("{item}/promise");
     if clear {
-        return Ok(finish(c.delete::<T>(&path).await?, json, cleared));
+        // The DELETE answers a clear of none as it answers one that cleared (the item, unchanged), so the item is read
+        // first: the answer compares the two DTOs and nothing else.
+        let before = match c.get::<T>(&item).await? {
+            Outcome::Ok(v) => v,
+            other => return Ok(finish(other, json, |_| String::new())),
+        };
+        return Ok(finish(c.delete::<T>(&path).await?, json, |after| {
+            cleared(&before, after)
+        }));
     }
     let mut body = serde_json::Map::new();
     match on {

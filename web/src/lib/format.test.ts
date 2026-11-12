@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { age, dateLabel, dayLabel, errorMessage, month, short } from './format.ts';
+import words from './promise.fixture.json';
 
 const now = Date.parse('2026-10-26T12:00:00Z');
 const ago = (days: number) => new Date(now - days * 86_400_000).toISOString();
@@ -76,64 +77,10 @@ describe('actionLabel', () => {
 		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
 	});
 
-	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file).
-	const promised = (on: string, to: string | null, previous: { on: string; to: string | null } | null) => ({ item_type: 'story', on, to, previous });
-	it.each<[string, string, unknown, string, string]>([
-		['a new promise', 'promised', promised('2026-11-20', 'Acme', null), 'promised by 20 Nov 2026 to Acme', 'promised ABC-12 by 20 Nov 2026 to Acme'],
-		['a new promise, no recipient', 'promised', promised('2026-11-20', null, null), 'promised by 20 Nov 2026', 'promised ABC-12 by 20 Nov 2026'],
-		[
-			'a new date',
-			'promised',
-			promised('2026-11-27', 'Acme', { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov 2026',
-			'changed the promise on ABC-12 to 27 Nov 2026'
-		],
-		[
-			'a new date and recipient',
-			'promised',
-			promised('2026-11-27', 'Beta', { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov 2026 and its recipient to Beta',
-			'changed the promise on ABC-12 to 27 Nov 2026 and its recipient to Beta'
-		],
-		[
-			'a new date, recipient removed',
-			'promised',
-			promised('2026-11-27', null, { on: '2026-11-20', to: 'Acme' }),
-			'changed the promise to 27 Nov 2026 and removed its recipient',
-			'changed the promise on ABC-12 to 27 Nov 2026 and removed its recipient'
-		],
-		[
-			'a new recipient',
-			'promised',
-			promised('2026-11-20', 'Beta', { on: '2026-11-20', to: 'Acme' }),
-			"changed the promise's recipient to Beta",
-			'changed the recipient of the promise on ABC-12 to Beta'
-		],
-		[
-			'a first recipient',
-			'promised',
-			promised('2026-11-20', 'Beta', { on: '2026-11-20', to: null }),
-			"changed the promise's recipient to Beta",
-			'changed the recipient of the promise on ABC-12 to Beta'
-		],
-		[
-			'the recipient removed',
-			'promised',
-			promised('2026-11-20', null, { on: '2026-11-20', to: 'Acme' }),
-			"removed the promise's recipient",
-			'removed the recipient of the promise on ABC-12'
-		],
-		[
-			'nothing changed',
-			'promised',
-			promised('2026-11-20', 'Acme', { on: '2026-11-20', to: 'Acme' }),
-			'promised by 20 Nov 2026 to Acme',
-			'promised ABC-12 by 20 Nov 2026 to Acme'
-		],
-		['cleared', 'promise_cleared', { item_type: 'story', previous: { on: '2026-11-20', to: 'Acme' } }, 'cleared the promise', 'cleared the promise on ABC-12'],
-		['an unreadable promise', 'promised', null, 'promised', 'promised ABC-12'],
-		['an unreadable clear', 'promise_cleared', null, 'cleared the promise', 'cleared the promise on ABC-12']
-	])('%s', async (_, action, payload, plain, keyed) => {
+	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file). The
+	// rows live in promise.fixture.json, which the TUI ticker's tests (crates/reeve/src/promise.rs) read too.
+	const activityRows = words.activity as { label: string; action: string; payload: unknown; plain: string; keyed: string }[];
+	it.each<[string, string, unknown, string, string]>(activityRows.map((r) => [r.label, r.action, r.payload, r.plain, r.keyed]))('%s', async (_, action, payload, plain, keyed) => {
 		const { actionLabel } = await import('./format.ts');
 		expect(actionLabel(action, payload)).toBe(plain);
 		expect(actionLabel(action, payload, 'ABC-12')).toBe(keyed);

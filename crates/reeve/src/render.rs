@@ -144,19 +144,45 @@ pub fn story_promise_answer(s: &StoryDto) -> String {
     }
 }
 
-/// The answer to clearing a story's promise: `<key> · promise cleared`, then the chip of the epic's promise that still
-/// applies, if one does.
-pub fn story_promise_cleared(s: &StoryDto) -> String {
-    format!(
-        "{} · promise cleared{}",
-        mark(Level::of_kind(s.kind), &s.key),
-        story_chip(s)
-    )
+/// The answer to `story promise --clear`, from the story read before the DELETE and the one it answered: `<key> · no
+/// promise to clear` when the story had no promise of its own (its epic's is not the story's to clear); `<key> · own
+/// promise cleared; still promised by <day> via <epic>` when its epic's promise still applies; else `<key> · promise
+/// cleared`. If the answer still carries an own promise (set again in between), it is shown as promising shows it.
+pub fn story_promise_cleared(before: &StoryDto, after: &StoryDto) -> String {
+    let key = mark(Level::of_kind(after.kind), &after.key);
+    if before
+        .promise
+        .as_ref()
+        .and_then(|p| p.own.as_ref())
+        .is_none()
+    {
+        return format!("{key} · no promise to clear");
+    }
+    match &after.promise {
+        Some(p) if p.own.is_some() => story_promise_answer(after),
+        Some(p) => match &p.epic {
+            Some(e) => format!(
+                "{key} · own promise cleared; still promised by {} via {}",
+                promise::day_label(e.fact.on),
+                e.key
+            ),
+            None => format!("{key} · promise cleared"),
+        },
+        None => format!("{key} · promise cleared"),
+    }
 }
 
-/// The answer to clearing an epic's promise.
-pub fn epic_promise_cleared(e: &EpicDto) -> String {
-    format!("{} · promise cleared", mark(Level::Epic, &e.key))
+/// The answer to `epic promise --clear`, from the epic read before the DELETE: `<key> · promise cleared`, or `<key> · no
+/// promise to clear` when it had none.
+pub fn epic_promise_cleared(before: &EpicDto, after: &EpicDto) -> String {
+    let key = mark(Level::Epic, &after.key);
+    if before.promise.is_none() {
+        format!("{key} · no promise to clear")
+    } else if after.promise.is_some() {
+        epic_promise_answer(after)
+    } else {
+        format!("{key} · promise cleared")
+    }
 }
 
 /// The answer to promising an epic: `<key> · <chip>[ · to <recipient>]`.
@@ -695,6 +721,10 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
 pub const MEMBERSHIP_RULE: &str =
     "Counts the work completed in this sprint; work started but not finished shows as in flight.";
 
+/// The promise rule (kb/ADR-0025 R8), stated under a sprint's promise list, as the web's sprint history states it.
+pub const PROMISE_RULE: &str =
+    "A promise is to a date: work done after it counts as late, even inside the sprint.";
+
 /// Whether the counts at close differ from the derived ones, number by number: totals, and each goal's numbers keyed by
 /// `goal_id` (the vector order and the serialised text never matter). A goal on one side only is a difference.
 /// `blocked_decisions` is a live measure, not part of the window's history, so it never counts as a difference.
@@ -844,8 +874,9 @@ fn indent(s: &str) -> String {
         .join("\n")
 }
 
-/// `reeve sprint show`: the sprint, the membership rule above its counts, each goal with its numbers, the upkeep share
-/// and the demo list. `closed_entry` is a closed sprint's `closed` entry counts: where they differ from the derived ones
+/// `reeve sprint show`: the sprint, the membership rule above its counts, each goal with its numbers, the upkeep share,
+/// the demo list, and the promises due in the sprint (kb/ADR-0025 R8) with their range and rule, all as the server sent
+/// them. `closed_entry` is a closed sprint's `closed` entry counts: where they differ from the derived ones
 /// (`counts_differ`), each differing number shows as `<now> (at close: <then>)`. "Blocked by N decisions" is live for
 /// the active sprint; a closed sprint shows only its value at close, from the entry, never the recomputed one. A draft
 /// has no window, so it shows no counts.
@@ -951,6 +982,25 @@ pub fn sprint_view(v: &SprintViewDto, closed_entry: Option<&SprintCountsDto>) ->
             for d in &v.demo {
                 let _ = write!(out, "\n  {} {}", mark(Level::Story, &d.key), d.title);
             }
+        }
+        if v.promises.is_empty() {
+            out.push_str("\nNo promises due in this sprint.");
+        } else {
+            let _ = write!(
+                out,
+                "\n{}:",
+                promise::promises_heading(v.promises_after, s.ends_on)
+            );
+            for p in &v.promises {
+                let _ = write!(
+                    out,
+                    "\n  {} {} · {}",
+                    mark(Level::Story, &p.key),
+                    p.title,
+                    promise::sprint_row_text(p)
+                );
+            }
+            let _ = write!(out, "\n{PROMISE_RULE}");
         }
     }
     if !s.warnings.is_empty() {
@@ -1600,6 +1650,53 @@ mod tests {
             promises: vec![],
             promises_after: None,
         }
+    }
+
+    /// A sprint lists its promises under the range heading, each row the key, title, recipient and state words, then the
+    /// rule that a promise is to a date; a counted sprint without any says so, and a draft shows neither.
+    #[test]
+    fn sprint_view_lists_the_promises_due_in_the_sprint() {
+        let mut v = view(SprintState::Closed, vec![progress(12, 1, 1)]);
+        v.promises_after = Some("2026-11-02".parse().unwrap());
+        v.promises = vec![
+            reeve_protocol::SprintPromiseDto {
+                key: "ABC-12".parse().unwrap(),
+                title: "Export".into(),
+                on: "2026-11-10".parse().unwrap(),
+                to: Some("Acme".into()),
+                holder: PromiseHolder::Own,
+                epic_key: None,
+                state: reeve_protocol::PromiseState::Kept,
+                done_on: Some("2026-11-09".parse().unwrap()),
+                days: None,
+            },
+            reeve_protocol::SprintPromiseDto {
+                key: "ABC-13".parse().unwrap(),
+                title: "Import".into(),
+                on: "2026-11-14".parse().unwrap(),
+                to: None,
+                holder: PromiseHolder::Epic,
+                epic_key: Some("ABC-7".parse().unwrap()),
+                state: reeve_protocol::PromiseState::Late,
+                done_on: Some("2026-11-16".parse().unwrap()),
+                days: Some(2),
+            },
+        ];
+        let out = sprint_view(&v, None);
+        let want = format!(
+            "Promises due 3–17 Nov:\n  {} Export · to Acme · Kept · 10 Nov\n  {} Import · Done 2 d late · 14 Nov · via ABC-7\n{PROMISE_RULE}",
+            mark(Level::Story, "ABC-12".parse::<Key>().unwrap()),
+            mark(Level::Story, "ABC-13".parse::<Key>().unwrap()),
+        );
+        assert!(out.contains(&want), "{out}");
+        assert!(!out.contains("No promises due"), "{out}");
+
+        let none = sprint_view(&view(SprintState::Active, vec![progress(12, 1, 1)]), None);
+        assert!(none.contains("No promises due in this sprint."), "{none}");
+        assert!(!none.contains(PROMISE_RULE), "{none}");
+
+        let draft = sprint_view(&view(SprintState::Draft, vec![]), None);
+        assert!(!draft.contains("romises"), "{draft}");
     }
 
     /// The rule line sits above the counts; a number that changed since the close shows both, an unchanged one once.

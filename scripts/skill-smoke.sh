@@ -168,16 +168,19 @@ tap_verdict() {
 
 # seed_sprints REEVE: what only a person can do (kb/ADR-0014 R5), so the automation token's smoke has sprints to read and
 # goals to link and suggest on: a sprint closed with a confidence and a verdict, then the active one with a goal and a recorded confidence
-# (opening it leaves the next draft). Run with an interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
+# (opening it leaves the next draft). The closed sprint's planned end is a week from today, before the active one's
+# (the default length), so the active sprint's promise range (kb/ADR-0025 R8) holds the date seed_promise gives
+# `this-sprint`. Run with an interactive token in REEVE_TOKEN; any refusal or error stops the smoke.
 seed_sprints() {
-	local reeve=$1 out
+	local reeve=$1 out week
+	week="$(node -e 'const d = new Date(); d.setUTCDate(d.getUTCDate() + 7); process.stdout.write(d.toISOString().slice(0, 10))')"
 	sp() {
 		out="$("$reeve" --json "$@")" || { echo "seeding the sprints: reeve $* answered $out" >&2; return 1; }
 		node -e 'const e = JSON.parse(process.argv[1]); process.stdout.write(String(e.value.goal ? e.value.goal.id : e.value.id))' "$out"
 	}
 	local closed active
 	closed="$(sp goal add --outcome "Skill smoke closed goal" --check "the smoke reads its verdict" --idempotency-key skill-smoke:sprint:1)" || return 1
-	sp sprint open >/dev/null || return 1
+	sp sprint open --ends "$week" >/dev/null || return 1
 	sp goal confidence "$closed" on_track "seeded by the skill smoke" >/dev/null || return 1
 	sp sprint close --verdict "$closed=met:seeded by the skill smoke" >/dev/null || return 1
 	active="$(sp goal add --outcome "Skill smoke goal" --check "the smoke links work to it" --idempotency-key skill-smoke:sprint:2)" || return 1

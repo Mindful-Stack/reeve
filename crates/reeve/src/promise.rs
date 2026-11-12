@@ -3,7 +3,8 @@
 //! (kb/ADR-0011 R9).
 use chrono::NaiveDate;
 use reeve_protocol::{
-    EpicPromiseDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, StoryPromiseDto,
+    EpicPromiseDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, SprintPromiseDto,
+    StoryPromiseDto,
 };
 
 /// "2026-11-20" → "20 Nov", from the date's own parts (no time zone in between).
@@ -158,6 +159,110 @@ pub fn epic_line_text(p: &EpicPromiseDto) -> String {
     )
 }
 
+/// A row of a sprint's promise list after the story's key and title (the web's `sprintRowParts`): the recipient, then the
+/// chip's words, which on a sprint row never carry a period.
+pub fn sprint_row_text(p: &SprintPromiseDto) -> String {
+    let d = day_label(p.on);
+    let base = match state_words(p.state, p.days) {
+        Some(w) => format!("{} · {d}", capital(&w)),
+        None => format!("Promised by {d}"),
+    };
+    let base = match (&p.epic_key, p.holder) {
+        (Some(e), PromiseHolder::Epic) => format!("{base} · via {e}"),
+        _ => base,
+    };
+    match p.to.as_deref() {
+        Some(t) if !t.is_empty() => format!("to {t} · {base}"),
+        _ => base,
+    }
+}
+
+/// A sprint's promise list heading (the web's `promisesHeading`): "Promises due 11–24 Nov" from the day after the
+/// previous sprint's planned end (`after`, from the server) to this one's end, "Promises due 28 Oct–10 Nov" across
+/// months, "Promises due up to 27 Oct" for the first sprint. Calendar arithmetic on the server's dates only.
+pub fn promises_heading(after: Option<NaiveDate>, ends_on: NaiveDate) -> String {
+    let end = day_label(ends_on);
+    let Some(from) = after.and_then(|a| a.succ_opt()) else {
+        return format!("Promises due up to {end}");
+    };
+    let from = if from.format("%Y-%m").to_string() == ends_on.format("%Y-%m").to_string() {
+        from.format("%-d").to_string()
+    } else {
+        day_label(from)
+    };
+    format!("Promises due {from}–{end}")
+}
+
+/// A payload field as a non-empty string.
+fn field<'a>(v: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    v.get(name)
+        .and_then(|x| x.as_str())
+        .filter(|x| !x.is_empty())
+}
+
+/// An ISO date as a line gives it ("20 Nov 2026"); anything else unchanged (the web's `dateLabel`).
+fn payload_date(iso: &str) -> String {
+    iso.parse::<NaiveDate>()
+        .map(date_label)
+        .unwrap_or_else(|_| iso.to_string())
+}
+
+/// A promise activity entry's words, as the web's `actionLabel` gives them (`web/src/lib/format.ts`): a `promised`
+/// entry's chosen by comparing `on` and `to` with `previous`, a `promise_cleared` entry's fixed. `key` names the item
+/// where the words are not already about it. `None` for every other action.
+pub fn activity_words(
+    action: &str,
+    payload: &serde_json::Value,
+    key: Option<&str>,
+) -> Option<String> {
+    match action {
+        "promise_cleared" => Some(match key {
+            Some(k) => format!("cleared the promise on {k}"),
+            None => "cleared the promise".into(),
+        }),
+        "promised" => Some(promised_words(payload, key)),
+        _ => None,
+    }
+}
+
+fn promised_words(payload: &serde_json::Value, key: Option<&str>) -> String {
+    let Some(on) = field(payload, "on") else {
+        return match key {
+            Some(k) => format!("promised {k}"),
+            None => "promised".into(),
+        };
+    };
+    let to = field(payload, "to");
+    let promise = key.map_or("the promise".into(), |k| format!("the promise on {k}"));
+    let recipient = key.map_or("the promise's recipient".into(), |k| {
+        format!("the recipient of the promise on {k}")
+    });
+    let fresh = format!(
+        "promised {}by {}{}",
+        key.map(|k| format!("{k} ")).unwrap_or_default(),
+        payload_date(on),
+        to.map(|t| format!(" to {t}")).unwrap_or_default()
+    );
+    let prev = match payload.get("previous") {
+        Some(p) if p.is_object() => p,
+        _ => return fresh,
+    };
+    let (prev_on, prev_to) = (field(prev, "on"), field(prev, "to"));
+    if Some(on) != prev_on {
+        let change = format!("changed {promise} to {}", payload_date(on));
+        return match to {
+            _ if to == prev_to => change,
+            None => format!("{change} and removed its recipient"),
+            Some(t) => format!("{change} and its recipient to {t}"),
+        };
+    }
+    match to {
+        _ if to == prev_to => fresh,
+        None => format!("removed {recipient}"),
+        Some(t) => format!("changed {recipient} to {t}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! The word rows are `web/src/lib/promise.fixture.json`, which the web's `promise.test.ts` reads too, so the two
@@ -176,6 +281,15 @@ mod tests {
     }
 
     #[derive(Deserialize)]
+    struct ActivityRow {
+        label: String,
+        action: String,
+        payload: serde_json::Value,
+        plain: String,
+        keyed: String,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Words {
         chip: Vec<Row<StoryPromiseDto>>,
@@ -183,6 +297,8 @@ mod tests {
         line: Vec<Row<StoryPromiseDto>>,
         epic_line: Vec<Row<EpicPromiseDto>>,
         state_words: BTreeMap<String, [String; 2]>,
+        sprint_row: Vec<Row<SprintPromiseDto>>,
+        activity: Vec<ActivityRow>,
     }
 
     fn words() -> Words {
@@ -227,6 +343,62 @@ mod tests {
         assert!(!rows.is_empty());
         for r in rows {
             assert_eq!(epic_line_text(&r.promise), r.text, "{}", r.label);
+        }
+    }
+
+    #[test]
+    fn sprint_row_text_rows() {
+        let rows = words().sprint_row;
+        assert!(!rows.is_empty());
+        for r in rows {
+            assert_eq!(sprint_row_text(&r.promise), r.text, "{}", r.label);
+        }
+    }
+
+    /// The TUI ticker's words are the web's activity words, row for row.
+    #[test]
+    fn activity_words_rows() {
+        let rows = words().activity;
+        assert!(!rows.is_empty());
+        for r in rows {
+            let words = |key| activity_words(&r.action, &r.payload, key);
+            assert_eq!(
+                words(None).as_deref(),
+                Some(r.plain.as_str()),
+                "{}",
+                r.label
+            );
+            assert_eq!(
+                words(Some("ABC-12")).as_deref(),
+                Some(r.keyed.as_str()),
+                "{}",
+                r.label
+            );
+        }
+        for a in ["moved", "goal_linked", "urgent_marked"] {
+            assert_eq!(
+                activity_words(a, &serde_json::Value::Null, Some("ABC-12")),
+                None
+            );
+        }
+    }
+
+    /// The web's `promisesHeading` cases (`web/src/lib/sprint.test.ts`).
+    #[test]
+    fn promises_heading_runs_from_the_day_after_the_previous_end() {
+        let d = |s: &str| s.parse::<NaiveDate>().unwrap();
+        for (after, end, want) in [
+            (Some("2026-11-10"), "2026-11-24", "Promises due 11–24 Nov"),
+            (
+                Some("2026-10-27"),
+                "2026-11-10",
+                "Promises due 28 Oct–10 Nov",
+            ),
+            (Some("2026-10-31"), "2026-11-13", "Promises due 1–13 Nov"),
+            (Some("2026-12-31"), "2027-01-13", "Promises due 1–13 Jan"),
+            (None, "2026-10-27", "Promises due up to 27 Oct"),
+        ] {
+            assert_eq!(promises_heading(after.map(d), d(end)), want);
         }
     }
 

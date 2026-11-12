@@ -1391,6 +1391,19 @@ async fn flow() {
             .ends_with(&format!("{zebra_bug} · promise cleared"))
     );
     assert!(ls(&["--text", "zebra", "--promised", "any"]).is_empty());
+    // Clearing again changes nothing, and the answer says so.
+    let again = plain(&human)
+        .args(["story", "promise", &zebra_bug, "--clear"])
+        .output()
+        .unwrap();
+    assert!(again.status.success());
+    let again = String::from_utf8(again.stdout).unwrap();
+    assert!(
+        again
+            .trim_end()
+            .ends_with(&format!("{zebra_bug} · no promise to clear")),
+        "{again}"
+    );
     assert_eq!(
         ls(&["--text", "zoo-7"]),
         vec![mentions_ref.clone(), exact_ref.clone(), started_ref.clone()],

@@ -2461,22 +2461,44 @@ fn goal_arguments_reach_the_wire() {
     assert_eq!(v, serde_json::json!({"items":["TST-1","SCRUM-4"]}));
 }
 
-/// The active sprint's `--json` view has neither `at_close` nor `changed_since_close`, and reads no activity.
+/// The active sprint's `--json` view has neither `at_close` nor `changed_since_close`, and reads no activity. It is read
+/// again by its id, because `GET /sprints` leaves the active sprint's promises out (kb/ADR-0025 R8).
 #[test]
 fn an_active_sprint_shows_no_counts_at_close() {
-    let (url, server) = serve(vec![(
-        "GET /api/v1/sprints",
-        200,
-        ok(
-            serde_json::json!({"active":view_json("active", counts_json([(12, 1), (13, 0)])),"draft":null,"closed":[]}),
-        ),
-    )]);
+    let mut by_id = view_json("active", counts_json([(12, 1), (13, 0)]));
+    by_id["promises"] = serde_json::json!([{"key":"ABC-12","title":"Export","on":"2026-11-10","to":"Acme",
+        "holder":"own","epic_key":null,"state":"open","done_on":null,"days":null}]);
+    by_id["promises_after"] = "2026-11-02".into();
+    let answers = || {
+        vec![
+            (
+                "GET /api/v1/sprints",
+                200,
+                ok(
+                    serde_json::json!({"active":view_json("active", counts_json([(12, 1), (13, 0)])),"draft":null,"closed":[]}),
+                ),
+            ),
+            ("GET /api/v1/sprints/4", 200, ok(by_id.clone())),
+        ]
+    };
+    let (url, server) = serve(answers());
     let out = reeve_at(&url, &["--json", "sprint", "show"]);
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(v["value"].get("at_close").is_none(), "{v}");
     assert!(v["value"].get("changed_since_close").is_none(), "{v}");
+    assert_eq!(v["value"]["promises"][0]["key"], "ABC-12", "{v}");
+
+    let (url, server) = serve(answers());
+    let out = reeve_at(&url, &["sprint", "show"]);
+    server.join().unwrap();
+    let text = out_text(&out);
+    assert!(text.contains("Promises due 3–17 Nov:"), "{text}");
+    assert!(
+        text.contains("ABC-12 Export · to Acme · Promised by 10 Nov"),
+        "{text}"
+    );
 }
 
 /// A `closed` entry without counts is a clear error, not a view without its counts at close.
@@ -3452,43 +3474,74 @@ fn story_promise_answers_with_what_was_written() {
     );
 }
 
+/// `--clear` reads the story first, so its answer says what the DELETE changed, worded only from the two answers: a
+/// cleared promise; an own promise cleared while the epic's still applies; nothing to clear (the server answers a clear
+/// of none with the unchanged story, as it does one that cleared).
 #[test]
 fn story_promise_clear_prints_what_was_cleared() {
     let mut cleared = urgent_story(vec![]);
     cleared.key = "ABC-12".parse().unwrap();
-    let (url, server) = serve(vec![(
-        "DELETE /api/v1/stories/ABC-12/promise",
-        200,
-        ok(serde_json::to_value(cleared).unwrap()),
-    )]);
-    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
-    let bodies = server.join().unwrap();
-    assert_eq!(bodies[0], "", "a DELETE carries no body");
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        out_text(&out),
-        format!(
-            "{} · promise cleared\n",
-            glyph(reeve::glyphs::Level::Story, "ABC-12")
-        )
-    );
+    let cleared = serde_json::to_value(cleared).unwrap();
+    let story = glyph(reeve::glyphs::Level::Story, "ABC-12");
+    let rows: [(serde_json::Value, serde_json::Value, String); 4] = [
+        (
+            promised_story("2026-11-20", Some("Acme")),
+            cleared.clone(),
+            format!("{story} · promise cleared\n"),
+        ),
+        (
+            story_with_both_promises(),
+            story_promised_via_epic(),
+            format!("{story} · own promise cleared; still promised by 18 Nov via ABC-7\n"),
+        ),
+        (
+            cleared.clone(),
+            cleared.clone(),
+            format!("{story} · no promise to clear\n"),
+        ),
+        (
+            story_promised_via_epic(),
+            story_promised_via_epic(),
+            format!("{story} · no promise to clear\n"),
+        ),
+    ];
+    for (before, after, want) in rows {
+        let (url, server) = serve(vec![
+            ("GET /api/v1/stories/ABC-12", 200, ok(before)),
+            ("DELETE /api/v1/stories/ABC-12/promise", 200, ok(after)),
+        ]);
+        let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+        let bodies = server.join().unwrap();
+        assert_eq!(bodies[1], "", "a DELETE carries no body");
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(out_text(&out), want);
+    }
 
-    // The epic's promise still applies: the answer says so.
-    let (url, server) = serve(vec![(
-        "DELETE /api/v1/stories/ABC-12/promise",
-        200,
-        ok(story_promised_via_epic()),
-    )]);
-    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+    // `--json` prints the DELETE's envelope, after the same read.
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/stories/ABC-12",
+            200,
+            ok(story_with_both_promises()),
+        ),
+        (
+            "DELETE /api/v1/stories/ABC-12/promise",
+            200,
+            ok(story_promised_via_epic()),
+        ),
+    ]);
+    let out = reeve_at(&url, &["--json", "story", "promise", "ABC-12", "--clear"]);
     server.join().unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        out_text(&out),
-        format!(
-            "{} · promise cleared · Promised by 18 Nov · this sprint · via ABC-7\n",
-            glyph(reeve::glyphs::Level::Story, "ABC-12")
-        )
-    );
+    let env: serde_json::Value = serde_json::from_str(&out_text(&out)).unwrap();
+    assert_eq!(env["value"]["promise"]["holder"], "epic", "{env}");
+
+    // A read that fails ends there: nothing is cleared.
+    let missing =
+        serde_json::json!({"outcome":"error","code":"not_found","message":"no story ABC-12"});
+    let (url, server) = serve(vec![("GET /api/v1/stories/ABC-12", 404, missing)]);
+    let out = reeve_at(&url, &["story", "promise", "ABC-12", "--clear"]);
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_ne!(out.status.code(), Some(0));
 }
 
 /// Usage errors exit 1 (2 is kept for refusals) and never reach the server; each is clap's own message for its cause.
@@ -3639,21 +3692,24 @@ fn epic_promise_works_the_same() {
 
     let mut cleared = promised_epic(false);
     cleared["promise"] = serde_json::Value::Null;
-    let (url, server) = serve(vec![(
-        "DELETE /api/v1/epics/ABC-7/promise",
-        200,
-        ok(cleared),
-    )]);
-    let out = reeve_at(&url, &["epic", "promise", "ABC-7", "--clear"]);
-    server.join().unwrap();
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        out_text(&out),
-        format!(
-            "{} · promise cleared\n",
-            glyph(reeve::glyphs::Level::Epic, "ABC-7")
-        )
-    );
+    let epic = glyph(reeve::glyphs::Level::Epic, "ABC-7");
+    for (before, want) in [
+        (promised_epic(false), format!("{epic} · promise cleared\n")),
+        (cleared.clone(), format!("{epic} · no promise to clear\n")),
+    ] {
+        let (url, server) = serve(vec![
+            ("GET /api/v1/epics/ABC-7", 200, ok(before)),
+            (
+                "DELETE /api/v1/epics/ABC-7/promise",
+                200,
+                ok(cleared.clone()),
+            ),
+        ]);
+        let out = reeve_at(&url, &["epic", "promise", "ABC-7", "--clear"]);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(out_text(&out), want);
+    }
 
     let refusal = serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false});
     let (url, server) = serve(vec![("POST /api/v1/epics/ABC-7/promise", 422, refusal)]);
