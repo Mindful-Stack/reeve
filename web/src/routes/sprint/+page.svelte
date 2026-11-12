@@ -4,6 +4,7 @@
      (`GET /sprints/planning`); the Now initiatives no goal covers yet, each with "+ goal"; and the history, where a closed
      sprint shows its counts at close beside the derived ones when they differ (kb/ADR-0014 R6). -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import { api, Refused, unwrap } from '#lib/api/client.ts';
@@ -26,7 +27,8 @@
 
 	let sprints = $state<Sprints | null>(null);
 	/** Each active and draft goal's gates, by goal id. A goal without an entry (the reads raced an opening) shows no
-	 *  gates until the next refetch, which the opening's live event triggers. */
+	 *  gates, groups under "Upkeep / no initiative", and its initiative may show under "no goal yet", until the next
+	 *  refetch, which the opening's live event triggers. */
 	let gates = $state.raw(new Map<number, Gates>());
 	let initiatives = $state.raw<Initiative[]>([]);
 	let loadError = $state<string | null>(null);
@@ -53,7 +55,11 @@
 			]);
 			if (seq !== latest) return;
 			// A new draft (an opening happened): nothing is unticked in it.
-			if (s.draft?.id !== sprints?.draft?.id) leftOut.clear();
+			if (s.draft?.id !== sprints?.draft?.id) {
+				leftOut.clear();
+				// The "+ goal" form is for the draft it was opened on: a new draft never receives its half-typed goal.
+				goalFor = null;
+			}
 			sprints = s;
 			gates = new Map(g.map((x) => [x.goal_id, x]));
 			initiatives = i;
@@ -198,6 +204,20 @@
 	});
 	/** The initiative whose "+ goal" form is open. */
 	let goalFor = $state<string | null>(null);
+	/** Opens the form and focuses its outcome input once it is in the DOM. */
+	/** The "no goal yet" rows, by initiative key, to put focus inside them. */
+	const rows: Record<string, HTMLElement | undefined> = {};
+	async function openGoal(key: string) {
+		goalFor = key;
+		await tick();
+		rows[key]?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus();
+	}
+	/** Cancels the form and returns focus to the row's "+ goal" button. */
+	async function closeGoal(key: string) {
+		goalFor = null;
+		await tick();
+		rows[key]?.querySelector<HTMLButtonElement>('button.add-goal')?.focus();
+	}
 	/** A goal's creation as the browser's local day, in the app's day words ("3 Nov"): `today` gives the local
 	 *  `YYYY-MM-DD` of an instant, `dayLabel` words it, so no locale is assumed. */
 	const waitingSince = (iso: string) => dayLabel(today(new Date(iso)));
@@ -235,7 +255,7 @@
 <PageHeader title="Sprint" />
 
 {#if loadError}
-	<Notice tone="error" onretry={reload}>Could not load the sprints: {loadError}</Notice>
+	<Notice tone="error" onretry={reload}>Could not load the sprint plan: {loadError}</Notice>
 {:else if !sprints}
 	<p class="muted">Loading…</p>
 {:else}
@@ -259,56 +279,56 @@
 				<p class="warn">Warning: {active.sprint.warnings.map((w) => warningText(w)).join('; ')}</p>
 			{/if}
 			{#each groups(active.sprint.goals) as grp (grp.key)}
-				<div class="group" data-testid="group-{grp.key ?? 'none'}">
+				<div class="group" data-testid="active-group-{grp.key ?? 'none'}">
 					{@render groupHead(grp.key, grp.title)}
 					{#each grp.items as g (g.id)}
 						{@const p = progress.get(g.id)}
 						{@const gg = gates.get(g.id)}
 						<article class="goal" data-testid="goal-{g.id}">
-						<h4>{g.outcome}</h4>
-						<p>We'll know when: {g.check}</p>
-						<p class="muted">Owner: {g.owner}</p>
-						{#if g.notes}<p class="notes">{g.notes}</p>{/if}
-						<p>
-							Confidence: <span data-testid="confidence">{g.confidence ? confidenceLabel(g.confidence) : 'not recorded'}</span>
-							{#if g.confidence_note}<span class="muted">({g.confidence_note})</span>{/if}
-						</p>
-						{#if g.suggested_confidence}
-							<p class="suggestion muted" data-testid="suggestion">
-								suggested: {confidenceLabel(g.suggested_confidence)} by {g.suggested_by}{#if g.suggested_note}{' '}({g.suggested_note}){/if}
+							<h4>{g.outcome}</h4>
+							<p>We'll know when: {g.check}</p>
+							<p class="muted">Owner: {g.owner}</p>
+							{#if g.notes}<p class="notes">{g.notes}</p>{/if}
+							<p>
+								Confidence: <span data-testid="confidence">{g.confidence ? confidenceLabel(g.confidence) : 'not recorded'}</span>
+								{#if g.confidence_note}<span class="muted">({g.confidence_note})</span>{/if}
 							</p>
-						{/if}
-						<p class="counts">
-							{p?.completed ?? 0} completed · {p?.in_flight ?? 0} in flight ({p?.in_review ?? 0} in review) · {p?.todo ?? 0} todo
-						</p>
-						{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
-						{@render goalControls(g)}
-						{#if confidenceFor?.id === g.id}
-							<form class="confidence" aria-label="Record confidence" onsubmit={recordConfidence}>
-								{#if g.suggested_confidence}
-									<p class="muted">
-										Suggested by {g.suggested_by}: {g.suggested_note || confidenceLabel(g.suggested_confidence)}
-									</p>
-								{/if}
-								<fieldset disabled={busy}>
-									<legend class="visually-hidden">Confidence</legend>
-									{#each CONFIDENCES as c (c)}
-										<label><input type="radio" name="confidence" value={c} bind:group={choice} /> {confidenceLabel(c)}</label>
-									{/each}
-								</fieldset>
-								<label class="field">Note <textarea bind:value={confidenceNote} rows="2" disabled={busy}></textarea></label>
+							{#if g.suggested_confidence}
+								<p class="suggestion muted" data-testid="suggestion">
+									suggested: {confidenceLabel(g.suggested_confidence)} by {g.suggested_by}{#if g.suggested_note}{' '}({g.suggested_note}){/if}
+								</p>
+							{/if}
+							<p class="counts">
+								{p?.completed ?? 0} completed · {p?.in_flight ?? 0} in flight ({p?.in_review ?? 0} in review) · {p?.todo ?? 0} todo
+							</p>
+							{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
+							{@render goalControls(g)}
+							{#if confidenceFor?.id === g.id}
+								<form class="confidence" aria-label="Record confidence" onsubmit={recordConfidence}>
+									{#if g.suggested_confidence}
+										<p class="muted">
+											Suggested by {g.suggested_by}: {g.suggested_note || confidenceLabel(g.suggested_confidence)}
+										</p>
+									{/if}
+									<fieldset disabled={busy}>
+										<legend class="visually-hidden">Confidence</legend>
+										{#each CONFIDENCES as c (c)}
+											<label><input type="radio" name="confidence" value={c} bind:group={choice} /> {confidenceLabel(c)}</label>
+										{/each}
+									</fieldset>
+									<label class="field">Note <textarea bind:value={confidenceNote} rows="2" disabled={busy}></textarea></label>
+									<div class="row">
+										<button type="submit" class="primary" disabled={busy || !choice}>Record</button>
+										<button type="button" class="ghost" onclick={() => (confidenceFor = null)}>Cancel</button>
+									</div>
+								</form>
+							{:else}
 								<div class="row">
-									<button type="submit" class="primary" disabled={busy || !choice}>Record</button>
-									<button type="button" class="ghost" onclick={() => (confidenceFor = null)}>Cancel</button>
+									<button type="button" disabled={busy} onclick={() => openConfidence(g)}>Record confidence</button>
+									{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
 								</div>
-							</form>
-						{:else}
-							<div class="row">
-								<button type="button" disabled={busy} onclick={() => openConfidence(g)}>Record confidence</button>
-								{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
-							</div>
-						{/if}
-					</article>
+							{/if}
+						</article>
 					{/each}
 				</div>
 			{:else}
@@ -345,32 +365,32 @@
 			<p class="warn">Warning: {draftWarning.map((w) => warningText(w)).join('; ')}</p>
 		{/if}
 		{#each groups(draft?.goals ?? []) as grp (grp.key)}
-			<div class="group" data-testid="group-{grp.key ?? 'none'}">
+			<div class="group" data-testid="next-group-{grp.key ?? 'none'}">
 				{@render groupHead(grp.key, grp.title)}
 				{#each grp.items as g (g.id)}
 					{@const gg = gates.get(g.id)}
 					<article class="goal draft" data-testid="goal-{g.id}">
-					<h4>{g.outcome}</h4>
-					<p class="muted">Waiting since {waitingSince(g.created_at)}</p>
-					<label class="goes-in"
-						><input
-							type="checkbox"
-							aria-label="Goes in at open: {g.outcome}"
-							checked={!leftOut.has(g.id)}
-							disabled={busy}
-							onchange={(e) => (e.currentTarget.checked ? leftOut.delete(g.id) : leftOut.add(g.id))}
-						/> Goes in at open</label
-					>
-					<p>We'll know when: {g.check}</p>
-					<p class="muted">Owner: {g.owner}</p>
-					{#if g.notes}<p class="notes">{g.notes}</p>{/if}
-					{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
-					{@render goalControls(g)}
-					<div class="row">
-						{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
-						<button type="button" class="ghost" disabled={busy} onclick={() => remove(g)}>Remove</button>
-					</div>
-				</article>
+						<h4>{g.outcome}</h4>
+						<p class="muted">Waiting since {waitingSince(g.created_at)}</p>
+						<label class="goes-in"
+							><input
+								type="checkbox"
+								aria-label="Goes in at open: {g.outcome}"
+								checked={!leftOut.has(g.id)}
+								disabled={busy}
+								onchange={(e) => (e.currentTarget.checked ? leftOut.delete(g.id) : leftOut.add(g.id))}
+							/> Goes in at open</label
+						>
+						<p>We'll know when: {g.check}</p>
+						<p class="muted">Owner: {g.owner}</p>
+						{#if g.notes}<p class="notes">{g.notes}</p>{/if}
+						{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
+						{@render goalControls(g)}
+						<div class="row">
+							{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
+							<button type="button" class="ghost" disabled={busy} onclick={() => remove(g)}>Remove</button>
+						</div>
+					</article>
 				{/each}
 			</div>
 		{/each}
@@ -383,12 +403,12 @@
 		<section class="panel" data-testid="no-goal-yet" aria-labelledby="no-goal-title">
 			<h2 id="no-goal-title">{nowBucket}, no goal yet</h2>
 			{#each noGoalYet as i (i.key)}
-				<div class="now-row" data-testid="no-goal-{i.key}">
+				<div class="now-row" data-testid="no-goal-{i.key}" bind:this={rows[i.key]}>
 					<div class="row">
 						<a href={itemRoute({ key: i.key, item: 'initiative' }, page.url)}><span class="key">{i.key}</span> {i.title}</a>
 						{#if i.target_month}<span class="muted">{month(i.target_month)}</span>{/if}
 						{#if !i.discovery_complete}<span class="muted">in discovery</span>{/if}
-						{#if goalFor !== i.key}<button type="button" class="ghost" disabled={busy} onclick={() => (goalFor = i.key)}>+ goal</button>{/if}
+						{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 					</div>
 					{#if goalFor === i.key}
 						<GoalForm
@@ -399,7 +419,7 @@
 								goalFor = null;
 								await reload();
 							}}
-							oncancel={() => (goalFor = null)}
+							oncancel={() => closeGoal(i.key)}
 						/>
 					{/if}
 				</div>

@@ -11,6 +11,7 @@ import { activity, config, goal, goalGates, initiative, sprint, sprintView } fro
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
+let onLiveHandler: (() => void) | null = null;
 vi.mock('$app/state', async () => {
 	const { fakePage } = await import('#lib/test/net.ts');
 	return { page: fakePage({ url: '/sprint' }).page };
@@ -18,7 +19,9 @@ vi.mock('$app/state', async () => {
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('#lib/events.svelte.ts', async (orig) => ({
 	...(await orig<typeof import('#lib/events.svelte.ts')>()),
-	onLive: () => {},
+	onLive: (h: () => void) => {
+		onLiveHandler = h;
+	},
 	everyVisible: () => {}
 }));
 
@@ -750,7 +753,7 @@ describe('planning by goal', () => {
 	it('says "Nothing waits" with its counts and "No linked items yet", and groups goals under their first initiative, upkeep last', async () => {
 		session.config = config({ horizon_buckets: ['Now', 'Next'] });
 		net.initiatives = [initiative({ key: 'ABC-1', title: 'Bookings', horizon: 'Next' }), initiative({ key: 'ABC-5', title: 'Payments', horizon: 'Now' })];
-		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-1'] }), goal({ id: 2 }), goal({ id: 3, links: ['ABC-5'] })]);
+		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-20'] }), goal({ id: 2 }), goal({ id: 3, links: ['ABC-5'] })]);
 		net.gates = [
 			goalGates({ goal_id: 1, initiatives: ['ABC-1'], discovery_total: 1 }),
 			goalGates({ goal_id: 2 }),
@@ -758,8 +761,8 @@ describe('planning by goal', () => {
 		];
 		await open();
 		const panel = q('[data-testid="active-sprint"]')!;
-		const groups = [...panel.querySelectorAll('[data-testid^="group-"]')];
-		expect(groups.map((g) => g.getAttribute('data-testid'))).toEqual(['group-ABC-5', 'group-ABC-1', 'group-none']);
+		const groups = [...panel.querySelectorAll('[data-testid^="active-group-"]')];
+		expect(groups.map((g) => g.getAttribute('data-testid'))).toEqual(['active-group-ABC-5', 'active-group-ABC-1', 'active-group-none']);
 		expect(text(q('h3', groups[0]))).toBe('ABC-5 Payments');
 		expect(q('[data-testid="goal-3"]', groups[0])).not.toBeNull();
 		expect(text(q('h3', groups[2]))).toBe('Upkeep / no initiative');
@@ -794,7 +797,8 @@ describe('planning by goal', () => {
 			initiative({ key: 'ABC-10', title: 'Later work', horizon: 'Next' }),
 			initiative({ key: 'ABC-11', title: 'Covered', horizon: 'Now' })
 		];
-		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, links: ['ABC-11'] })]);
+		// Covered through the gates' initiatives, not the goal's links (an epic, ABC-20), on the active sprint.
+		net.sprints!.active = activeWith([goal({ id: 5, links: ['ABC-20'] })]);
 		net.gates = [goalGates({ goal_id: 5, initiatives: ['ABC-11'] })];
 		await open();
 		const section = q('[data-testid="no-goal-yet"]')!;
@@ -855,5 +859,31 @@ describe('planning by goal', () => {
 		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
 		expect(writes('/api/v1/goals')[0].body).toMatchObject({ outcome: 'By 27 Nov, Ana can book', check: 'one booking', links: ['ABC-7'] });
 		await settle(() => expect(q('form', row)).toBeNull());
+	});
+
+	it('focuses the outcome input on "+ goal" and returns focus to the button on cancel', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('input[name="outcome"]', row)));
+		button('Cancel', row)!.click();
+		await settle(() => expect(document.activeElement).toBe(button('+ goal', row)));
+	});
+
+	it('closes the "+ goal" form when a reload brings a different draft', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		flushSync();
+		expect(q('form', row)).not.toBeNull();
+		net.sprints!.draft = { ...draft([]), id: 9 };
+		onLiveHandler?.();
+		await settle(() => expect(q('form', q('[data-testid="no-goal-ABC-7"]')!)).toBeNull());
 	});
 });
