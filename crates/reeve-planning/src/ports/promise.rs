@@ -37,8 +37,9 @@ pub struct PromisedStoryRow {
 /// versioned. The only writer of the promise columns.
 #[async_trait]
 pub trait PromiseRepo: Send + Sync {
-    /// Locks the item's row (`FOR NO KEY UPDATE`: a promise never changes a key, so foreign-key inserts on the row stay unblocked) and returns its delivery and current promise; None when no item of that type
-    /// has the key. Never asked for an initiative.
+    /// Locks the item's row (`FOR NO KEY UPDATE`: a promise never changes a key, so foreign-key inserts on the row
+    /// stay unblocked) and returns its delivery and current promise; None when no item of that type has the key.
+    /// Never asked for an initiative.
     async fn lock_for_promise(
         &self,
         tx: &mut Transaction<'_, Postgres>,

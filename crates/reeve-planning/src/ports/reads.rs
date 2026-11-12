@@ -133,9 +133,9 @@ pub trait PlanningReads: Send + Sync {
         epics: &[Key],
     ) -> Result<PromiseFacts, RepoError>;
     /// Stories whose own date or whose epic's date is after `after` (exclusive; None: unbounded) and on or before
-    /// `upto`, with title, delivery, resolution and their promise row. Candidates for a sprint's list (kb/ADR-0025 R8): a story whose epic's date is in range is
-    /// returned even when it does not inherit it (R3), so callers classify each by its effective date and re-sort; the
-    /// order here is by key only.
+    /// `upto`, with title, delivery, resolution and their promise row. Candidates for a sprint's list (kb/ADR-0025
+    /// R8): a story whose epic's date is in range is returned even when it does not inherit it (R3), so callers
+    /// classify each by its effective date and re-sort; the order here is by key only.
     async fn promised_between_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

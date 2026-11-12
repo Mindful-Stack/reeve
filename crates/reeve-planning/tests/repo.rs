@@ -1973,6 +1973,19 @@ async fn promised_between_in_returns_candidates_by_own_or_epic_date() {
         .await
         .unwrap();
     assert_eq!(keys(&got), ["ABC-2", "ABC-3"]);
+    // The epic branch's bounds: ABC-6 has only its epic's date (15 Nov); `after` is exclusive, `upto` inclusive.
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, None, pday(11, 15))
+        .await
+        .unwrap();
+    assert!(keys(&got).contains(&"ABC-6".to_string()));
+    let got = ports
+        .reads
+        .promised_between_in(&mut tx, Some(pday(11, 15)), pday(11, 24))
+        .await
+        .unwrap();
+    assert!(!keys(&got).contains(&"ABC-6".to_string()));
     // Done before its epic promised: not inheriting, but its own date is in the window (17 Nov, 1 Dec].
     let got = ports
         .reads
