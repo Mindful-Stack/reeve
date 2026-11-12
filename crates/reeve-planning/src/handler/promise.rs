@@ -36,7 +36,8 @@ impl Handlers {
     }
 
     /// Sets, changes or replaces the promise on a story or an epic (kb/ADR-0025 R2). Interactive only; takes and
-    /// changes no version; logged as `promised` with the promise it replaced.
+    /// changes no version; logged as `promised` with the promise it replaced. An unchanged date and recipient writes and
+    /// logs nothing.
     pub async fn set_promise(
         &self,
         c: &Ctx,
@@ -52,7 +53,8 @@ impl Handlers {
     }
 
     /// Inside the caller's transaction: lock the row, apply the rules, write, and record the entry last. `previous` is
-    /// the promise read under the row lock. GRA-632 composes it with clearing an urgent mark (kb/ADR-0024 R4).
+    /// the promise read under the row lock. An unchanged date and recipient writes and logs nothing. GRA-632 composes it
+    /// with clearing an urgent mark (kb/ADR-0024 R4).
     pub(super) async fn set_promise_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

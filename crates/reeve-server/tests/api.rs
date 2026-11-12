@@ -2992,6 +2992,22 @@ async fn promise_routes_answer_with_the_item_and_refuse_as_urgent_does() {
     assert_eq!(sv["value"]["promise"], story_promise);
     let (_, ev) = admin_get(&h, &format!("/api/v1/epics/{epic}")).await;
     assert_eq!(ev["value"]["promise"], epic_promise);
+    // An unknown field is refused, not ignored.
+    let (st, body) = call(
+        &h.app,
+        t,
+        "POST",
+        &format!("/api/v1/stories/{story}/promise"),
+        Some(json!({"date": "2026-11-20"})),
+    )
+    .await;
+    assert_eq!(st, 400, "{body}");
+    assert_eq!(
+        body,
+        json!({"outcome": "error", "code": "validation",
+               "message": "Failed to deserialize the JSON body into the target type: date: unknown field `date`, \
+                           expected one of `on`, `shortcut`, `to` at line 1 column 7"})
+    );
     // A NUL in the recipient is the person's error, not the server's.
     let (st, body) = call(
         &h.app,

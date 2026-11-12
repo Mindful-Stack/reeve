@@ -7924,8 +7924,8 @@ async fn promises_are_set_changed_and_cleared_by_people_only() {
 }
 
 /// R6: a shortcut stores the sprint's planned end as it is when saved, never a length projection (from either sprint's
-/// start or from the active sprint's end), and never follows a
-/// later edit of the sprint; the due period is then classified against the sprints as they are now (R5).
+/// start or from the active sprint's end), and never follows a later edit of the sprint; the due period is then
+/// classified against the sprints as they are now (R5).
 #[tokio::test]
 async fn shortcuts_store_the_planned_end_and_never_follow_later_edits() {
     use reeve_protocol::PromiseDue;
