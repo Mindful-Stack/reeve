@@ -3379,10 +3379,37 @@ fn attachment_get_refuses_another_content_type() {
     let out = get_with_tmpdir(&url, tmp.path());
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(1));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["code"], "internal");
+    assert!(v["message"].as_str().unwrap().contains("text/html"), "{v}");
     let dir = tmp.path().join("reeve-attachments");
     assert!(
         std::fs::read_dir(&dir)
             .map(|mut d| d.next().is_none())
             .unwrap_or(true)
     );
+}
+
+/// A default directory another user pre-created with open permissions is refused and nothing is written in it.
+#[cfg(unix)]
+#[test]
+fn attachment_get_refuses_a_shared_default_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let (url, server) = serve_raw(200, "image/png", b"\x89PNG");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("reeve-attachments");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let out = get_with_tmpdir(&url, tmp.path());
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a private directory"),
+        "{v}"
+    );
+    assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
 }

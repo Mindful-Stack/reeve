@@ -201,10 +201,11 @@ impl Client {
                 .and_then(|v| v.to_str().ok())
                 .map(String::from)
         };
-        let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_default();
+        let content_type =
+            (status == 200).then(|| header(reqwest::header::CONTENT_TYPE).unwrap_or_default());
         let retry_after = header(reqwest::header::RETRY_AFTER);
         let body = res.bytes().await?;
-        if status == 200 {
+        if let Some(content_type) = content_type {
             return Ok(Ok((content_type, body.to_vec())));
         }
         Ok(Err(outcome_of::<()>(

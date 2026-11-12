@@ -45,6 +45,28 @@ fn default_dir() -> std::io::Result<PathBuf> {
         b.mode(0o700);
     }
     b.create(&dir)?;
+    // A shared temp directory lets another user pre-create the name; refuse anything but a private directory.
+    let meta = std::fs::symlink_metadata(&dir)?;
+    #[cfg(unix)]
+    let shared = {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o077 != 0
+    };
+    #[cfg(not(unix))]
+    let shared = false;
+    if !meta.is_dir() || shared {
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            meta.permissions().mode() & 0o7777
+        };
+        #[cfg(not(unix))]
+        let mode = 0;
+        return Err(std::io::Error::other(format!(
+            "{} is not a private directory (mode {mode:o}); remove it or pass --dir",
+            dir.display()
+        )));
+    }
     Ok(dir)
 }
 
