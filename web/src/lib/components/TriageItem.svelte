@@ -1,6 +1,7 @@
 <!-- web/src/lib/components/TriageItem.svelte: the triage page's item pane. It shows the item and edits its draft (bound);
 	the page owns every request, the keys and the notice. Picking an epic moves focus on to Criteria. -->
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import type { Epic, Story } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, KINDS } from '#lib/board.ts';
 	import Brief from '#lib/components/Brief.svelte';
@@ -18,7 +19,8 @@
 		onplace,
 		armed,
 		ondrop,
-		onskip
+		onskip,
+		similar
 	}: {
 		item: Story;
 		draft: Draft;
@@ -34,6 +36,8 @@
 		armed: string | null;
 		ondrop: () => void;
 		onskip: () => void;
+		/** The similar-items panel, between the description and the form. */
+		similar: Snippet;
 	} = $props();
 
 	let criteriaEl: HTMLTextAreaElement | undefined = $state();
@@ -53,6 +57,7 @@
 	{/if}
 	{#if gone}<p class="gone" role="note">{gone}</p>{/if}
 	{#if item.description.trim()}<div class="description"><Brief markdown={item.description} /></div>{/if}
+	{@render similar()}
 	<form class="place" aria-label="Place {item.key}" onsubmit={(e) => { e.preventDefault(); onplace(); }}>
 		<div class="field epic">
 			<span class="name" aria-hidden="true">Epic</span>

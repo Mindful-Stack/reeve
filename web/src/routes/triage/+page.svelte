@@ -6,9 +6,10 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
-	import type { EditItem, Epic, Story } from '#lib/api/types.ts';
+	import type { EditItem, Epic, SimilarStory, Story } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, KINDS } from '#lib/board.ts';
 	import TriageItem from '#lib/components/TriageItem.svelte';
+	import TriageSimilar from '#lib/components/TriageSimilar.svelte';
 	import { storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, plural } from '#lib/format.ts';
@@ -17,13 +18,17 @@
 		ARM_MS,
 		byKey,
 		draftOf,
+		duplicateCommentKey,
+		duplicateText,
 		FIELD_LABEL,
 		followDraft,
 		nextKey,
 		placeEdit,
 		rebaseAfterConflict,
+		similarQuery,
 		undoEdit,
 		whereNow,
+		withoutSelf,
 		type Arm,
 		type Draft
 	} from '#lib/triage.ts';
@@ -59,6 +64,8 @@
 	 *  used or the next Place or Drop replaces it. */
 	let undoable = $state.raw<Undo | null>(null);
 	let arm = $state<Arm | null>(null);
+	/** The current item's similar stories; `hits` null when its title is out of bounds (nothing was asked). */
+	let similar = $state.raw<{ key: string; hits: SimilarStory[] | null } | null>(null);
 	let armTimer: ReturnType<typeof setTimeout> | undefined;
 	const armed = $derived(
 		arm && current && arm.key === current.key && arm.version === drafts[current.key]?.base.version
@@ -121,11 +128,30 @@
 		}
 	}
 
+	/** Loads the similar list for `s`; an answer for an item the user has left is dropped. */
+	async function loadSimilar(s: Story): Promise<void> {
+		const q = similarQuery(s.title);
+		if (!q) {
+			similar = { key: s.key, hits: null };
+			return;
+		}
+		let hits: SimilarStory[] = [];
+		try {
+			hits = withoutSelf(await unwrap(api.GET('/api/v1/stories/similar', { params: { query: { q, limit: 6 } } })), s.key);
+		} catch {
+			// shown as nothing similar
+		}
+		if (currentKey === s.key) similar = { key: s.key, hits };
+	}
+
 	function select(key: string | null): void {
+		if (key === currentKey && !left) return; // the same item again: nothing to load, and its hits stay put
 		currentKey = key;
 		left = null;
 		const s = queue.find((x) => x.key === key);
-		if (s && !(s.key in drafts)) drafts[s.key] = draftOf(s);
+		if (!s) return;
+		if (!(s.key in drafts)) drafts[s.key] = draftOf(s);
+		void loadSimilar(s);
 	}
 
 	function step(by: 1 | -1): void {
@@ -194,6 +220,11 @@
 				return void drop();
 			case 'undo':
 				return void undo();
+			case 'duplicate': {
+				const hit = similar?.key === currentKey ? similar?.hits?.[c.n - 1] : undefined;
+				if (hit) mark(hit.key);
+				return;
+			}
 			case 'epic':
 				return void area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
 			case 'criteria':
@@ -226,6 +257,31 @@
 		if (!c) return;
 		e.preventDefault();
 		run(c);
+	}
+
+	/** Marks (or, the same hit again, unmarks) the current item's duplicate. A drop armed before names no duplicate, so
+	 *  it is disarmed. */
+	function mark(hit: string | null): void {
+		const d = currentKey ? drafts[currentKey] : undefined;
+		if (!d) return;
+		d.duplicate = d.duplicate === hit ? null : hit;
+		disarm();
+		void say({ text: d.duplicate ? `${d.duplicate} marked as the duplicate.` : 'Duplicate cleared.' });
+	}
+
+	async function commentDuplicate(key: string, dup: string): Promise<boolean> {
+		try {
+			await unwrap(
+				api.POST('/api/v1/stories/{key}/comments', {
+					params: { path: { key } },
+					body: { body: duplicateText(dup), idempotency_key: duplicateCommentKey(key, dup) }
+				})
+			);
+			return true;
+		} catch (e) {
+			void say({ text: `${key} was not dropped: the comment failed: ${errorMessage(e)}`, error: true });
+			return false;
+		}
 	}
 
 	/** An action finished for `key`: it leaves the queue, and the selection moves on only if the user is still on it. */
@@ -283,6 +339,7 @@
 			const { draft, clashes } = rebaseAfterConflict(d, server);
 			drafts[key] = draft;
 			queue = queue.map((x) => (x.key === key ? server : x));
+			if (currentKey === key) void loadSimilar(server);
 			const named = clashes.map((c) => `${FIELD_LABEL[c.field]} is now "${c.value}"`).join('; ');
 			void say({ text: `${head}${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.`, error: true });
 		} catch (e) {
@@ -312,6 +369,7 @@
 		const failed = dup ? 'Comment saved; drop failed: ' : '';
 		writing = s.key;
 		try {
+			if (dup && !(await commentDuplicate(s.key, dup))) return;
 			const out = await postMove({ key: s.key, version }, 'done', { resolution: 'dropped' });
 			if (out.kind !== 'moved') {
 				void say({ text: `${failed || `${s.key} was not dropped: `}${out.kind === 'notice' ? out.notice : 'refused'}`, error: true });
@@ -434,7 +492,18 @@
 				</dl>
 			{/if}
 			{#if current && current.key in drafts}
+				{#snippet similarPanel()}
+					{#if current && similar?.key === current.key}
+						<TriageSimilar
+							hits={similar.hits}
+							marked={drafts[current.key]?.duplicate ?? null}
+							inspect={(k) => storyHref(page.url, k)}
+							onmark={mark}
+						/>
+					{/if}
+				{/snippet}
 				<TriageItem
+					similar={similarPanel}
 					item={current}
 					bind:draft={drafts[current.key]}
 					{epics}

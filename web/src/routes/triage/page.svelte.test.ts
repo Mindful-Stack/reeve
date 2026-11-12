@@ -840,3 +840,117 @@ describe('drop and focus, review fixes', () => {
 		expect(t.status()).toBe('GRA-9 changed since; undo it in the drawer.');
 	});
 });
+
+const hit = (key: string, title: string, over: Partial<SimilarStory> = {}): SimilarStory => ({ key, title, kind: 'bug', delivery: 'todo', ...over });
+const similarGets = () => net.s.gets.filter((g) => g.startsWith('/api/v1/stories/similar'));
+const hits = () => [...document.querySelectorAll('section.item [aria-label="Similar"] li')];
+
+describe('similar and duplicates', () => {
+	beforeEach(() => {
+		net.s.similar['Search ignores accents'] = [
+			hit('GRA-9', 'Search ignores accents'), // the item itself: the server does not leave it out
+			hit('GRA-3', 'Accents break search', { delivery: 'done', resolution: 'dropped' }),
+			hit('GRA-4', 'Search and diacritics')
+		];
+		net.s.similar['Export shows blank page'] = [hit('GRA-5', 'Export is blank')];
+	});
+	it('lists the hits without the item itself, numbered, with the resolution of a done one; asked once, not on a live reload', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		const panel = t.pane().querySelector('[aria-label="Similar"]')!;
+		expect(panel.textContent).not.toContain('GRA-9');
+		expect([...panel.querySelectorAll('.n')].map((n) => n.textContent)).toEqual(['1', '2']);
+		expect(panel.textContent).toContain('done · dropped');
+		// Parsed, not compared as text: openapi-fetch's encoding of the space is its own business.
+		const u = new URL(similarGets()[0], 'http://localhost');
+		expect([u.searchParams.get('q'), u.searchParams.get('limit')]).toEqual(['Search ignores accents', '6']);
+		await live.fns[0]();
+		await settle();
+		expect(similarGets()).toHaveLength(1);
+	});
+	it('2 marks the second hit and says so; d d comments with an idempotency key, then drops', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), '2');
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-4 marked as the duplicate.'));
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toBe('Drop GRA-9 as a duplicate of GRA-4? Press d or click again.'));
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes.map((w) => [w.method, w.path, w.body])).toEqual([
+			['POST', '/api/v1/stories/GRA-9/comments', { body: 'Duplicate of GRA-4.', idempotency_key: 'triage-dup:GRA-9:GRA-4' }],
+			['POST', '/api/v1/stories/GRA-9/move', { version: 1, to: 'done', resolution: 'dropped' }]
+		]);
+	});
+	it('marking a duplicate ends an armed drop: the next d arms again, naming the duplicate', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), 'd');
+		press(t.list(), '2');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toBe('Drop GRA-9 as a duplicate of GRA-4? Press d or click again.'));
+		expect(net.s.writes).toEqual([]);
+	});
+	it('the same digit again unmarks', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), '1');
+		press(t.list(), '1');
+		await vi.waitFor(() => expect(t.status()).toBe('Duplicate cleared.'));
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toBe('Drop GRA-9? Press d or click again.'));
+	});
+	it('a failed comment moves nothing; a 409 after the comment landed says so; the retry posts no second comment', async () => {
+		const t = await open();
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		press(t.list(), '1');
+		net.s.failComment = true;
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toContain('GRA-9 was not dropped'));
+		expect(net.s.writes.some((w) => w.path.endsWith('/move'))).toBe(false);
+		net.s.failComment = false;
+		net.s.stories[1] = { ...net.s.stories[1], version: 2 }; // a colleague's edit, not yet seen live
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.status()).toContain('Comment saved; drop failed: GRA-9 changed meanwhile'));
+		press(t.list(), 'd');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.comments['GRA-9']).toEqual([{ body: 'Duplicate of GRA-3.', key: 'triage-dup:GRA-9:GRA-3' }]); // posted once
+	});
+	it('Inspect links the hit into the drawer over this page; with the drawer open the item and its draft stay', async () => {
+		const t = await open();
+		type(criteria(), 'Kept');
+		await vi.waitFor(() => expect(hits()).toHaveLength(2));
+		const link = [...t.pane().querySelectorAll<HTMLAnchorElement>('[aria-label="Similar"] a')].find((a) => a.textContent === 'Inspect GRA-4')!;
+		expect(link.getAttribute('href')).toBe('/triage?story=GRA-4'); // jsdom has no router: the link, not a navigation
+		await route.fake!.goto(link.getAttribute('href')!); // what SvelteKit does on the click
+		flushSync();
+		press(t.list(), 'j'); // keys are off while the drawer is open
+		expect(t.current()).toBe('GRA-9');
+		expect(criteria().value).toBe('Kept');
+	});
+	it('a short title asks nothing and says so', async () => {
+		net.s.stories[1] = { ...net.s.stories[1], title: 'Accents' };
+		const t = await open();
+		expect(t.pane().textContent).toContain('Too short to compare');
+		expect(similarGets()).toEqual([]);
+	});
+	it('a similar answer for an item the user has left is dropped, whichever answers first', async () => {
+		net.s.hold.add('/api/v1/stories/similar');
+		const t = await open();
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1)); // GRA-9's request waits
+		await settle();
+		expect(net.s.held).toHaveLength(1); // one request on load, not two
+		press(t.list(), 'j');
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(2)); // and GRA-12's
+		net.s.held[1](); // the newest answers first
+		await vi.waitFor(() => expect(t.pane().textContent).toContain('Export is blank'));
+		net.s.held[0](); // then the oldest
+		await settle();
+		flushSync();
+		expect(t.pane().textContent).toContain('Export is blank');
+		expect(t.pane().textContent).not.toContain('Accents break search');
+	});
+});
