@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decision, epic as epicDto, initiative } from '#lib/test/fixtures.ts';
-import { bucketise, groupEpics, horizonLayout, openDecisionsByItem, OTHER } from './planning.ts';
+import { bucketise, groupByInitiative, groupEpics, horizonLayout, openDecisionsByItem, OTHER } from './planning.ts';
 
 const ini = (key: string, horizon: string, title = key, target_month: string | null = null) =>
 	initiative({ key, title, horizon, target_month });
@@ -126,5 +126,28 @@ describe('horizonLayout', () => {
 	it('shows only Other when no horizon is configured', () => {
 		expect(horizonLayout([], bucketise([], []))).toEqual({ columns: [], collapsed: null });
 		expect(horizonLayout([], bucketise([], [ini('R-1', 'Now')]))).toEqual({ columns: [OTHER], collapsed: null });
+	});
+});
+
+describe('groupByInitiative', () => {
+	type G = { id: number; inis: string[] };
+	const inis = [ini('R-1', 'Later'), ini('R-2', 'Now', 'B'), ini('R-3', 'Now', 'A')];
+	const goals: G[] = [
+		{ id: 1, inis: ['R-1', 'R-2'] },
+		{ id: 2, inis: [] },
+		{ id: 3, inis: ['R-99'] },
+		{ id: 4, inis: ['R-3'] }
+	];
+	const groups = groupByInitiative(['Now', 'Next', 'Later'], inis, goals, (g) => g.inis[0] ?? null, 'Upkeep / no initiative');
+	it('puts an item under its first initiative, groups in planning order, unlisted keys after, the none group last', () => {
+		expect(groups.map((g) => [g.key, g.items.map((x) => x.id)])).toEqual([
+			['R-3', [4]],
+			['R-2', []],
+			['R-1', [1]],
+			['R-99', [3]],
+			[null, [2]]
+		]);
+		expect(groups.at(-2)).toMatchObject({ title: 'R-99', initiative: null });
+		expect(groups.at(-1)).toMatchObject({ title: 'Upkeep / no initiative', initiative: null });
 	});
 });

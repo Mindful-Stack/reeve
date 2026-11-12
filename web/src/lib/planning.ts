@@ -81,30 +81,47 @@ export function blockingByItem(decisions: RequiredDecision[]): Map<string, OpenD
 
 export type EpicGroup = { key: string | null; title: string; initiative: Initiative | null; epics: Epic[] };
 
-/** The epics index: every initiative in the planning page's order (`bucketise`: configured horizons, then Other; target
- *  month, then title), each with its epics in the server's order, an empty list included; then a group per parent key
- *  not among `initiatives` (a list loaded mid-change), titled by the key; then "No initiative", only when some epic has
- *  none. */
-export function groupEpics(buckets: string[], initiatives: Initiative[], epics: Epic[]): EpicGroup[] {
+/** A group of `groupByInitiative`: an initiative (or an unlisted key, or none) and its items. */
+export type InitiativeGroup<T> = { key: string | null; title: string; initiative: Initiative | null; items: T[] };
+
+/** Items grouped by initiative: every initiative in the planning page's order (`bucketise`: configured horizons, then
+ *  Other; target month, then title), each with its items in the given order, an empty list included; then a group per
+ *  initiative key not among `initiatives` (a list loaded mid-change), titled by the key, as first seen; then `noneTitle`,
+ *  only when some item has no initiative (`initiativeOf` returns null). */
+export function groupByInitiative<T>(
+	buckets: string[],
+	initiatives: Initiative[],
+	items: T[],
+	initiativeOf: (item: T) => string | null,
+	noneTitle: string
+): InitiativeGroup<T>[] {
 	const ordered = planningOrder(buckets, initiatives);
-	const groups = new Map<string | null, EpicGroup>(
-		ordered.map((i) => [i.key, { key: i.key, title: i.title, initiative: i, epics: [] }])
+	const groups = new Map<string, InitiativeGroup<T>>(
+		ordered.map((i) => [i.key, { key: i.key, title: i.title, initiative: i, items: [] }])
 	);
-	const none: EpicGroup = { key: null, title: 'No initiative', initiative: null, epics: [] };
-	const unlisted: EpicGroup[] = [];
-	for (const e of epics) {
-		const k = e.initiative ?? null;
+	const none: InitiativeGroup<T> = { key: null, title: noneTitle, initiative: null, items: [] };
+	const unlisted: InitiativeGroup<T>[] = [];
+	for (const item of items) {
+		const k = initiativeOf(item);
 		if (k === null) {
-			none.epics.push(e);
+			none.items.push(item);
 			continue;
 		}
 		let g = groups.get(k);
 		if (!g) {
-			g = { key: k, title: k, initiative: null, epics: [] };
+			g = { key: k, title: k, initiative: null, items: [] };
 			groups.set(k, g);
 			unlisted.push(g);
 		}
-		g.epics.push(e);
+		g.items.push(item);
 	}
-	return [...ordered.map((i) => groups.get(i.key)!), ...unlisted, ...(none.epics.length ? [none] : [])];
+	return [...ordered.map((i) => groups.get(i.key)!), ...unlisted, ...(none.items.length ? [none] : [])];
+}
+
+/** The epics index: `groupByInitiative` over the epics by their parent, "No initiative" for the rest. */
+export function groupEpics(buckets: string[], initiatives: Initiative[], epics: Epic[]): EpicGroup[] {
+	return groupByInitiative(buckets, initiatives, epics, (e) => e.initiative ?? null, 'No initiative').map(({ items, ...g }) => ({
+		...g,
+		epics: items
+	}));
 }
