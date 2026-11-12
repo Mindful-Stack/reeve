@@ -664,6 +664,9 @@ async fn export_at_computes_promises_at_that_instant() {
     assert_eq!(before["state"], "open");
     assert_eq!(before["days"], Value::Null);
     assert_eq!(before["own"]["to"], "Acme");
+    // The date is the instant's UTC day: 01:00 on 11 March at +02:00 is still 10 March in UTC.
+    let offset = export_at("2030-03-11T01:00:00+02:00").await;
+    assert_eq!(offset["state"], "open");
     let after = export_at("2030-03-11T00:00:00+00:00").await;
     assert_eq!(after["state"], "overdue");
     assert_eq!(after["due"], Value::Null);

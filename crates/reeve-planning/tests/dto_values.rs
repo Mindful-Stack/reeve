@@ -720,3 +720,25 @@ fn sprints_dto_carries_today() {
         serde_json::from_value(json!({"active": null, "draft": null, "closed": []})).unwrap();
     assert_eq!(old.today, None);
 }
+
+/// An open promise the story holds itself: no epic, its own date due this sprint, no days.
+#[test]
+fn story_promise_dto_of_an_open_own_promise() {
+    let own = kept_promise(ymd(2026, 11, 20), "pm@x", t(5), None);
+    let facts = StoryFacts {
+        delivery: DeliveryState::InProgress,
+        resolution: None,
+        done_at: None,
+        own: Some(&own),
+        epic: None,
+    };
+    let sp = story_promise(&facts, &promise_clock(ymd(2026, 11, 12)));
+    assert_eq!(
+        v!(story_promise_field(sp.as_ref())),
+        json!({
+            "own": {"on": "2026-11-20", "by": "pm@x", "at": "2026-11-09T05:00:00Z", "to": null},
+            "epic": null, "on": "2026-11-20", "holder": "own", "state": "open", "due": "this_sprint",
+            "days": null
+        })
+    );
+}

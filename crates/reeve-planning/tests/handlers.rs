@@ -7223,10 +7223,11 @@ async fn promise_sprints(h: &Handlers, c: &Ctx) {
     h.open_sprint(c, d.id, d.version, Some(nov(24)))
         .await
         .unwrap();
-    sqlx::query("UPDATE sprints SET ends_on = '2026-12-08' WHERE state = 'draft'")
+    let updated = sqlx::query("UPDATE sprints SET ends_on = '2026-12-08' WHERE state = 'draft'")
         .execute(&h.pool)
         .await
         .unwrap();
+    assert_eq!(updated.rows_affected(), 1, "opening left exactly one draft");
 }
 
 async fn set_promise(h: &Handlers, item: ItemType, key: &Key, p: &Promise) {
@@ -7358,7 +7359,25 @@ async fn every_item_dto_carries_its_promise() {
     let ctxd = h.story_context(&a, now).await.unwrap();
     assert_eq!(ctxd.story.promise, a_dto.promise);
     assert_eq!(ctxd.epic.unwrap().promise, Some(ep.clone()));
-    assert_eq!(h.epic_dtos(None, now).await.unwrap()[0].promise, Some(ep));
+    assert_eq!(
+        h.epic_dtos(None, now).await.unwrap()[0].promise,
+        Some(ep.clone())
+    );
+    // The export readers, on one transaction, with the clock computed once on it.
+    let mut tx = pool
+        .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
+    let urg = h.urgency_in(&mut tx, now).await.unwrap();
+    let clock = h.promise_clock_in(&mut tx, now).await.unwrap();
+    let ex_e = h.export_epics(&mut tx, &urg, &clock).await.unwrap();
+    let ex_s = h.export_stories(&mut tx, &urg, &clock).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(ex_e[0].promise, Some(ep));
+    let ex_row = |k: &Key| ex_s.iter().find(|x| &x.key == k).unwrap().promise.clone();
+    assert_eq!(ex_row(&a), a_dto.promise);
+    assert_eq!(ex_row(&b), b_dto.promise);
+    assert_eq!(ex_row(&cc), None);
 }
 
 /// The promise fields read one snapshot: the clock (the sprints' planned ends) and the promise facts are read on the
