@@ -204,9 +204,9 @@
 	});
 	/** The initiative whose "+ goal" form is open. */
 	let goalFor = $state<string | null>(null);
-	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	/** The "no goal yet" rows, by initiative key, to put focus inside them. */
 	const rows: Record<string, HTMLElement | undefined> = {};
+	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	async function openGoal(key: string) {
 		goalFor = key;
 		await tick();
