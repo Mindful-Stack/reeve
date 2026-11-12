@@ -24,8 +24,8 @@ pub use domain::{
     queue::{LineageItem, QueueEntry, QueueStory, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
-        DemoStory, Goal, GoalLink, GoalProgress, Sprint, SprintCounts, StoryTimes, Summary,
-        summarise,
+        DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates, GoalLink, GoalProgress, Sprint,
+        SprintCounts, StoryTimes, Summary, goal_gates, summarise,
     },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
 };
