@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
@@ -92,10 +94,7 @@
 	{#if initiative === undefined}
 		<label class="field">
 			Initiative
-			<select bind:value={draft.initiative} disabled={busy}>
-				<option value="">none</option>
-				{#each ordered as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-			</select>
+			<Picker label="Initiative" options={keyed(ordered)} bind:value={draft.initiative} empty="none" disabled={busy} />
 		</label>
 	{/if}
 	<div class="field">

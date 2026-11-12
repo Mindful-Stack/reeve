@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import GoalLinkButton from '#lib/components/GoalLinkButton.svelte';
 	import { levelOfKind } from '#lib/glyphs.ts';
@@ -352,7 +354,7 @@
 		else if (conflicted && epic) briefBase = rebase({ version: epic.version, text: epic.brief ?? '' });
 	}
 
-	function startDetails(first: 'input' | 'select' = 'input') {
+	function startDetails(first = 'input') {
 		const e = epic;
 		if (!e) return;
 		details = epicDetails(e);
@@ -361,7 +363,7 @@
 		detailsError = null;
 		editingDetails = true;
 		// The trigger is replaced by the form: focus moves to its first field, not to <body>.
-		void tick().then(() => detailsForm?.querySelector(first)?.focus());
+		void tick().then(() => detailsForm?.querySelector<HTMLElement>(first)?.focus());
 	}
 
 	/** Cancel, an unchanged save and a successful one all close the editor and return focus to its toggle. */
@@ -576,13 +578,7 @@
 					<label>Title <input bind:value={details.title} required disabled={busy} /></label>
 					<label>
 						Initiative
-						<select bind:value={details.initiative} disabled={busy}>
-							<option value="">none</option>
-							{#each orderedInitiatives as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-							{#if ep.initiative && !initiatives.some((i) => i.key === ep.initiative)}
-								<option value={ep.initiative}>{ep.initiative}</option>
-							{/if}
-						</select>
+						<Picker label="Initiative" options={keyed(orderedInitiatives)} bind:value={details.initiative} empty="none" disabled={busy} />
 					</label>
 					{#if detailsError}<p class="error" role="alert">{detailsError}</p>{/if}
 					<button type="button" onclick={closeDetails}>Cancel</button>
@@ -594,7 +590,7 @@
 		{#if !ep.initiative}
 			<p class="banner" role="status">
 				<span>This epic belongs to no initiative.</span>
-				{#if !editingDetails}<button type="button" onclick={() => startDetails('select')}>Choose an initiative</button>{/if}
+				{#if !editingDetails}<button type="button" onclick={() => startDetails('input[role="combobox"]')}>Choose an initiative</button>{/if}
 			</p>
 		{/if}
 

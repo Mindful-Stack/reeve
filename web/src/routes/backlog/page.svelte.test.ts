@@ -207,7 +207,7 @@ describe('backlog page', () => {
 		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New epic')!.click();
 		flushSync();
 		const form = document.body.querySelector('form[aria-label="New epic"]') as HTMLFormElement;
-		expect((form.querySelector('select') as HTMLSelectElement).value).toBe('');
+		expect(picker(form, 'Initiative').value).toBe('none');
 	});
 
 	it('opens New story with an epic select defaulting to none', async () => {

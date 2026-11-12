@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '#lib/me.svelte.ts';
 import { live as liveState } from '#lib/events.svelte.ts';
 import type { Epic, Initiative, Reason, RequiredDecision, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import { choose as pickOption, offered, picker } from '#lib/test/picker.ts';
 import { activity, config, decision, initiative, withReadiness } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Page from './+page.svelte';
@@ -194,16 +195,14 @@ const btn = (name: string) => [...document.body.querySelectorAll('button')].find
 const detailsForm = () => document.body.querySelector('form[aria-label="Epic details"]') as HTMLFormElement;
 const label = (name: string) => [...detailsForm().querySelectorAll('label')].find((x) => x.textContent?.trim().startsWith(name))!;
 const title = () => label('Title').querySelector('input') as HTMLInputElement;
-const parent = () => label('Initiative').querySelector('select') as HTMLSelectElement;
+const parent = () => picker(detailsForm(), 'Initiative');
 function type(el: HTMLInputElement, v: string) {
 	el.value = v;
 	el.dispatchEvent(new Event('input', { bubbles: true }));
 	flushSync();
 }
 function choose(v: string) {
-	parent().value = v;
-	parent().dispatchEvent(new Event('change', { bubbles: true }));
-	flushSync();
+	pickOption(detailsForm(), 'Initiative', v, v === '' ? 'none' : v);
 }
 async function open() {
 	app = mount(Page, { target: document.body });
@@ -231,7 +230,7 @@ describe('epic page: edit details', () => {
 	it('offers none, every initiative and the current parent in the select', async () => {
 		net.initiatives = [initiative({ key: 'ABC-2', title: 'Other' })]; // the list lags: ABC-1 is not in it
 		await startEditing();
-		expect([...parent().options].map((o) => o.value)).toEqual(['', 'ABC-2', 'ABC-1']);
+		expect(offered(detailsForm(), 'Initiative')).toEqual(['none', 'ABC-2 Other', 'ABC-1']);
 		expect(parent().value).toBe('ABC-1');
 	});
 
@@ -243,7 +242,7 @@ describe('epic page: edit details', () => {
 			initiative({ key: 'ABC-3', title: 'Atlas', horizon: 'Now' })
 		];
 		await startEditing();
-		expect([...parent().options].map((o) => o.value)).toEqual(['', 'ABC-3', 'ABC-2', 'ABC-1']);
+		expect(offered(detailsForm(), 'Initiative')).toEqual(['none', 'ABC-3 Atlas', 'ABC-2 Other', 'ABC-1 Orion']);
 	});
 
 	it('sends only the changed title with the version the editor started from', async () => {
@@ -288,7 +287,7 @@ describe('epic page: edit details', () => {
 		await open();
 		btn('Choose an initiative').click();
 		flushSync();
-		expect(parent().value).toBe('');
+		expect(parent().value).toBe('none');
 		expect(btn('Choose an initiative')).toBeUndefined();
 		await vi.waitFor(() => {
 			flushSync();
@@ -386,7 +385,7 @@ describe('epic page: edit details', () => {
 		await fireLive();
 		flushSync();
 		expect(title().value).toBe('Mine');
-		expect(parent().value).toBe('ABC-1');
+		expect(parent().value).toBe('ABC-1 Orion');
 		detailsForm().requestSubmit();
 		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
 		expect(net.patches[0]).toEqual({ version: 4, title: 'Mine' });
@@ -398,7 +397,7 @@ describe('epic page: edit details', () => {
 		net.epic = { ...net.epic, initiative: 'ABC-2', version: 4 };
 		await fireLive();
 		flushSync();
-		expect(parent().value).toBe('ABC-1'); // the draft is not overwritten by the reload
+		expect(parent().value).toBe('ABC-1 Orion'); // the draft is not overwritten by the reload
 		net.patchAnswer = conflict;
 		detailsForm().requestSubmit();
 		await vi.waitFor(() => expect(net.patches).toHaveLength(1));
@@ -417,7 +416,7 @@ describe('epic page: edit details', () => {
 		});
 		expect(detailsForm()).not.toBeNull();
 		expect(title().value).toBe('Mine');
-		expect(parent().value).toBe('ABC-2');
+		expect(parent().value).toBe('ABC-2 Other');
 		net.patchAnswer = null;
 		detailsForm().requestSubmit();
 		await vi.waitFor(() => expect(net.patches).toHaveLength(2));
@@ -434,7 +433,7 @@ describe('epic page: edit details', () => {
 			flushSync();
 			expect(notice()).toContain('Someone else changed');
 		});
-		expect(parent().value).toBe('ABC-2');
+		expect(parent().value).toBe('ABC-2 Other');
 		expect(title().value).toBe('Theirs');
 		net.patchAnswer = null;
 		detailsForm().requestSubmit();
@@ -452,7 +451,7 @@ describe('epic page: edit details', () => {
 			flushSync();
 			expect(notice()).toContain('Someone else changed');
 		});
-		expect(parent().value).toBe('');
+		expect(parent().value).toBe('none');
 		expect(title().value).toBe('Theirs');
 		net.patchAnswer = null;
 		detailsForm().requestSubmit();

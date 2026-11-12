@@ -4,6 +4,7 @@
 import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { config, initiative } from '#lib/test/fixtures.ts';
+import { choose, offered, picker } from '#lib/test/picker.ts';
 import { session } from '#lib/me.svelte.ts';
 import NewEpicForm from './NewEpicForm.svelte';
 
@@ -111,8 +112,7 @@ describe('NewEpicForm', () => {
 			ini('ABC-4', 'Alpha', 'Now', '2026-12')
 		];
 		mountForm({ initiatives });
-		const options = [...(field('Initiative') as unknown as HTMLSelectElement).options].map((o) => o.value);
-		expect(options).toEqual(['', 'ABC-4', 'ABC-3', 'ABC-1', 'ABC-2']);
+		expect(offered(form(), 'Initiative')).toEqual(['none', 'ABC-4 Alpha', 'ABC-3 Beta', 'ABC-1 Later thing', 'ABC-2 Unplanned']);
 	});
 
 	it('sends the fixed initiative and no parent picker on an initiative page', async () => {
@@ -198,13 +198,13 @@ describe('NewEpicForm', () => {
 
 	it('picks the parent from a select on the epics index, keeping it after a success', async () => {
 		const oncreated = mountForm({ initiatives: [initiative({ key: 'ABC-1', title: 'One' }), initiative({ key: 'ABC-2', title: 'Two' })] });
-		type(field('Initiative'), 'ABC-2');
+		choose(form(), 'Initiative', 'ABC-2');
 		type(field('Title'), 'An epic');
 		form().requestSubmit();
 		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(1));
 		expect(net.posts[0].initiative).toBe('ABC-2');
 		flushSync();
-		expect(field('Initiative').value).toBe('ABC-2');
+		expect(picker(form(), 'Initiative').value).toBe('ABC-2 Two');
 	});
 });
 

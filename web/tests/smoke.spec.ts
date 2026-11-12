@@ -381,11 +381,13 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	await expect(page.getByRole('link', { name: 'Smoke created story' })).toBeVisible();
 	// Move the epic to no initiative, then back through the banner.
 	await page.getByRole('button', { name: 'Edit details' }).click();
-	await page.getByRole('form', { name: 'Epic details' }).getByLabel('Initiative').selectOption('');
+	await page.getByRole('form', { name: 'Epic details' }).getByRole('combobox', { name: 'Initiative' }).click();
+	await page.getByRole('option', { name: 'none', exact: true }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('button', { name: 'Save details' }).click();
 	await expect(page.getByText('This epic belongs to no initiative.')).toBeVisible();
 	await page.getByRole('button', { name: 'Choose an initiative' }).click();
-	await page.getByRole('form', { name: 'Epic details' }).getByLabel('Initiative').selectOption(iniKey);
+	await page.getByRole('form', { name: 'Epic details' }).getByRole('combobox', { name: 'Initiative' }).fill(iniKey);
+	await page.getByRole('option', { name: new RegExp('^' + iniKey + '\\b') }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('button', { name: 'Save details' }).click();
 	await expect(page.getByText('This epic belongs to no initiative.')).toBeHidden();
 	await expect(page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: iniKey })).toBeVisible();
@@ -398,7 +400,7 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	await page.getByRole('button', { name: 'New epic' }).click();
 	const indexForm = page.getByRole('dialog').getByRole('form', { name: 'New epic' });
 	await indexForm.getByLabel('Title').fill('Smoke loose epic');
-	await expect(indexForm.getByLabel('Initiative')).toHaveValue(''); // none by default
+	await expect(indexForm.getByRole('combobox', { name: 'Initiative' })).toHaveValue('none'); // the closed picker shows the empty choice
 	await indexForm.getByRole('button', { name: 'Create epic' }).click();
 	await expect(page.getByRole('region', { name: 'No initiative' }).getByRole('link', { name: 'Smoke loose epic' })).toBeVisible();
 	// The old index redirects, also on a full load through the server's page fallback.
