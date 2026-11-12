@@ -203,14 +203,18 @@ test('signed out users are sent to sign in and see the button', async ({ browser
 test('an open tab whose session dies is sent to sign in by the event stream', async ({ page }) => {
 	// The board loads once on mount and refetches once 500 ms after the stream opens. Wait for both, so the redirect below
 	// cannot come from that refetch answering 401: it has to come from the stream closing.
+	// The layout's untriaged count loads the same way (on mount, then after the stream opens): wait for it too.
 	let loads = 0;
+	let counts = 0;
 	page.on('response', (r) => {
 		const u = new URL(r.url());
 		if (u.pathname === '/api/v1/stories' && u.searchParams.get('done') === 'recent') loads++;
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('untriaged') === 'true') counts++;
 	});
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
 	await expect.poll(() => loads).toBe(2);
+	await expect.poll(() => counts).toBe(2);
 	// Revoke this tab's session (the newest browser session: beforeEach just signed in) and nothing else, so no other
 	// revocation's activity entry reaches the stream first and triggers a refetch that would 401 on its own.
 	const headers = { 'X-Reeve-Client': 'web' };
@@ -1283,6 +1287,8 @@ test('triage from the keyboard: the count, place with criteria, undo, a phone, a
 	await page.keyboard.press('u');
 	await expect(option(a.key)).toHaveCount(1);
 	await expect(page.locator('textarea.criteria')).toHaveValue('The PDF shows the page');
+	// ... and the server has it unplaced again: the bar's count (a live refetch) is back to what it was.
+	await expect(count).toHaveText(`${before} untriaged`, { timeout: 10_000 });
 	// A phone, on a known item with a long description: no horizontal scroll, and Tab from Criteria reaches the buttons.
 	await page.setViewportSize({ width: 360, height: 740 });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -1314,11 +1320,13 @@ test('triage from the keyboard: the count, place with criteria, undo, a phone, a
 	await expect(status).toHaveText(`Drop ${b.key}? Press d or click again.`);
 	await page.keyboard.press('d');
 	await expect(status).toHaveText(`Dropped ${b.key}.`);
+	await expect(option(b.key)).toHaveCount(0);
 	const dropped = await page.request.get(`/api/v1/stories/${b.key}`);
 	expect((await dropped.json()).value).toMatchObject({ delivery: 'done', resolution: 'dropped' });
 	// Undo the drop: back in the queue, todo again.
 	await list.focus();
 	await page.keyboard.press('u');
+	await expect(status).toHaveText(`Undone: ${b.key} is back in todo.`);
 	await expect(option(b.key)).toHaveCount(1);
 	const back = await page.request.get(`/api/v1/stories/${b.key}`);
 	expect((await back.json()).value).toMatchObject({ delivery: 'todo' });

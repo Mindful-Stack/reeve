@@ -673,4 +673,17 @@ describe('untriaged link', () => {
 		flushSync();
 		expect(link()?.textContent?.trim()).toBe('3 untriaged');
 	});
+	it('asks nothing on a signed-out page, not at mount and not on a live change', async () => {
+		session.me = null;
+		route.path = '/auth/signin'; // signed out: no top bar, so `open()` has no nav to wait for
+		app = mount(Layout, { target: document.body, props: { children: createRawSnippet(() => ({ render: () => '<p>content</p>' })) } as never });
+		flushSync();
+		expect(live.fns).toHaveLength(1); // the layout subscribed: the refresh below reaches its guard
+		await settle();
+		await refresh();
+		await settle();
+		flushSync();
+		expect(asked()).toBe(0);
+		expect(link()).toBeNull();
+	});
 });
