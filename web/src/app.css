@@ -225,7 +225,14 @@ dialog::backdrop {
 }
 
 /* Page shell */
+html {
+	scroll-padding-top: var(--top-bar-height, 0px);
+}
 header.top-bar {
+	position: sticky;
+	top: 0;
+	z-index: 20; /* above the drawers (10), below ActionsMenu's popover (30) */
+	background: var(--background);
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;

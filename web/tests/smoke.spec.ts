@@ -78,6 +78,18 @@ test('board shows ready and blocked stories and the drawer opens by url', async 
 	await expect(page.getByRole('complementary')).toContainText(STORY);
 });
 
+test('the top bar stays at the top while the board scrolls', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 300 });
+	await page.goto('/board');
+	await expect(page.getByTestId(`card-${STORY}`)).toBeVisible(); // the board has loaded and is taller than the viewport
+	const bar = page.getByRole('banner');
+	await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+	expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0); // the page really scrolled
+	const box = (await bar.boundingBox())!;
+	expect(box.y).toBe(0);
+	await page.getByRole('button', { name: 'Report', exact: true }).click({ trial: true }); // visible and not covered
+});
+
 test('board asks for recently done stories and labels the done column', async ({ page }) => {
 	const req = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET');
 	await page.goto('/board');

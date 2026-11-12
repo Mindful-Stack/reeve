@@ -87,6 +87,7 @@ afterEach(() => {
 	net.searchHold = null;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
+	document.documentElement.style.removeProperty('--top-bar-height');
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
@@ -551,5 +552,33 @@ describe('Report review fixes', () => {
 		([...document.body.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === 'Sign out') as HTMLElement).click();
 		await vi.waitFor(() => expect(report.draft).toBeNull());
 		expect(sessionStorage.getItem('reeve.report-draft')).toBeNull();
+	});
+});
+
+describe('top bar', () => {
+	it('publishes its height as --top-bar-height and follows a resize', async () => {
+		let notify: (() => void) | null = null;
+		let observed: Element | null = null;
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(cb: () => void) {
+					notify = cb;
+				}
+				observe(el: Element) {
+					observed = el;
+				}
+				disconnect() {}
+			}
+		);
+		await open('/board');
+		const bar = await vi.waitFor(() => document.body.querySelector<HTMLElement>('header.top-bar')!);
+		expect(observed).toBe(bar);
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 57 });
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('57px');
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 101 }); // wrapped to two rows
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('101px');
 	});
 });
