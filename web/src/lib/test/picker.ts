@@ -1,9 +1,10 @@
 // web/src/lib/test/picker.ts: drive lib/ui/Picker.svelte from a jsdom page test, as a person would.
 import { flushSync } from 'svelte';
+import { PICKER_INPUT } from '#lib/picker.ts';
 
 /** The picker named `label` inside `root`. */
 export function picker(root: ParentNode, label: string): HTMLInputElement {
-	const el = root.querySelector<HTMLInputElement>(`input[role="combobox"][aria-label="${label}"]`);
+	const el = root.querySelector<HTMLInputElement>(`${PICKER_INPUT}[aria-label="${label}"]`);
 	if (!el) throw new Error(`no picker named ${label}`);
 	return el;
 }

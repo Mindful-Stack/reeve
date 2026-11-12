@@ -16,12 +16,12 @@ afterEach(() => {
 	document.body.innerHTML = '';
 });
 function setup(start = '', empty?: string) {
-	const spies = { onsubmit: vi.fn(), onkeydown: vi.fn(), onchange: vi.fn(), onclose: vi.fn() };
+	const spies = { onkeydown: vi.fn(), onchange: vi.fn(), onclose: vi.fn() };
 	app = mount(Harness, { target: document.body, props: { options, start, empty, ...spies } });
 	flushSync();
 	const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')!;
-	const key = (k: string) => {
-		const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+	const key = (k: string, init: KeyboardEventInit = {}) => {
+		const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init });
 		input.dispatchEvent(e);
 		flushSync();
 		return e;
@@ -77,14 +77,13 @@ it('ArrowUp moves the active option back up, and stops at the first', () => {
 });
 
 it('narrows as you type and picks with the keyboard without submitting the form', () => {
-	const { type, key, shown, bound, onsubmit, onchange, input } = setup('', 'No epic');
+	const { type, key, shown, bound, onchange, input } = setup('', 'No epic');
 	type('live go');
 	expect(shown()).toEqual(['GRA-8 Go-live']);
 	key('ArrowDown');
 	expect(input.getAttribute('aria-activedescendant')).toBeTruthy();
 	const enter = key('Enter');
 	expect(enter.defaultPrevented).toBe(true);
-	expect(onsubmit).not.toHaveBeenCalled();
 	expect(bound()).toBe('GRA-8');
 	expect(onchange).toHaveBeenCalledWith('GRA-8');
 	expect(input.value).toBe('GRA-8 Go-live');
@@ -96,19 +95,30 @@ it('offers the empty choice first while the query is blank', () => {
 	expect(shown()[0]).toBe('No epic');
 });
 
-it('Escape while open closes it and does not reach the form; while closed it does', () => {
-	const { type, key, onkeydown, input, shown } = setup('GRA-7');
+it('Escape while open closes it and is cancelled (every Escape listener skips a prevented event); while closed it is left alone', () => {
+	const { type, key, input, shown } = setup('GRA-7');
 	type('xyz');
 	expect(shown()).toEqual([]);
 	expect(document.body.querySelector('[role="status"]')!.textContent).toBe('No match');
-	onkeydown.mockClear(); // the typed letters reached the form, as they would from any field
 	const esc = key('Escape');
 	expect(esc.defaultPrevented).toBe(true);
-	expect(onkeydown).not.toHaveBeenCalled();
 	expect(input.getAttribute('aria-expanded')).toBe('false');
 	expect(input.value).toBe('GRA-7 Migration findings');
-	key('Escape');
-	expect(onkeydown).toHaveBeenCalledOnce();
+	expect(key('Escape').defaultPrevented).toBe(false);
+});
+
+it('Enter with Ctrl, Meta or Alt, or during IME composition, picks nothing and is left to the page', () => {
+	const { type, key, shown, bound, input } = setup('', 'No epic');
+	type('live go');
+	expect(shown()).toEqual(['GRA-8 Go-live']);
+	for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { isComposing: true }]) {
+		const e = key('Enter', init);
+		expect(e.defaultPrevented).toBe(false);
+		expect(bound()).toBe('');
+		expect(input.getAttribute('aria-expanded')).toBe('true');
+	}
+	expect(key('Enter').defaultPrevented).toBe(true);
+	expect(bound()).toBe('GRA-8');
 });
 
 it('Enter while closed is left to the form', () => {

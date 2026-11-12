@@ -73,14 +73,14 @@
 			if (!open) return show();
 			const step = e.key === 'ArrowDown' ? 1 : -1;
 			active = Math.min(last, Math.max(0, Math.min(active, last) + step));
-		} else if (e.key === 'Enter' && open) {
+		} else if (e.key === 'Enter' && open && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+			// Ctrl+Enter, say, is the page's (it places a story), and Enter that commits an IME composition is not a pick.
 			e.preventDefault();
 			const o = shown[Math.min(active, last)];
 			if (o) pick(o);
 			else void hide();
 		} else if (e.key === 'Escape' && open) {
 			e.preventDefault();
-			e.stopPropagation();
 			void hide();
 		}
 	}
@@ -116,7 +116,7 @@
 		     included; otherwise the input blurs and the list closes before the click lands. -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<ul class="list" id="{id}-list" role="listbox" aria-label={label} onmousedown={(e) => e.preventDefault()}>
-			{#each shown as o, i (o.value)}
+			{#each shown as o, i}
 				<!-- svelte-ignore a11y_click_events_have_key_events (the input owns the keyboard: APG combobox) -->
 				<li
 					id="{id}-opt-{i}"
@@ -150,7 +150,21 @@
 	input {
 		width: 100%;
 		box-sizing: border-box;
+		padding-right: 26px; /* room for the chevron */
 		text-overflow: ellipsis;
+	}
+	/* A chevron, as the <select> it replaced had one: the closed picker shows it opens a list. */
+	.picker::after {
+		content: '';
+		position: absolute;
+		top: 50%;
+		right: 11px;
+		width: 6px;
+		height: 6px;
+		border-right: 2px solid var(--muted);
+		border-bottom: 2px solid var(--muted);
+		transform: translateY(-75%) rotate(45deg);
+		pointer-events: none;
 	}
 	/* Floating under the input, so opening it moves nothing (a press beside it lands where it was aimed). z-index 15:
 	   over the drawer (10), under the sticky top bar (20) and ActionsMenu (30), so it slides under the bar on scroll.
@@ -171,7 +185,7 @@
 		background: var(--raised);
 	}
 	.list {
-		max-height: 16rem;
+		max-height: min(16rem, 40dvh); /* fits a short viewport; the dialog lets the list out (app.css) */
 		padding: 4px 0;
 		overflow-y: auto;
 		list-style: none;
@@ -181,6 +195,7 @@
 		overflow-wrap: anywhere;
 		cursor: pointer;
 	}
+	li:hover,
 	li[aria-selected='true'] {
 		background: var(--selection);
 	}

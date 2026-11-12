@@ -12,7 +12,10 @@ export function narrow(options: PickerOption[], query: string): PickerOption[] {
 	});
 }
 
-/** `options`, plus the current value when the list does not hold it (a closed epic, a label no longer in use). */
+/** The Picker's input, for a page that moves focus to it. */
+export const PICKER_INPUT = 'input[role="combobox"]';
+
+/** `options`, plus the current value when the list does not hold it (an epic or initiative the list does not hold, a label no longer in use). */
 export function withCurrent(options: PickerOption[], value: string): PickerOption[] {
 	if (value === '' || options.some((o) => o.value === value)) return options;
 	return [...options, { value, label: value }];
