@@ -334,6 +334,9 @@
 {/if}
 
 <style>
+	p[role='status']:empty {
+		position: absolute;
+	}
 	.goes-in {
 		display: flex;
 		gap: 6px;

@@ -163,6 +163,9 @@
 </div>
 
 <style>
+	p[role='status']:empty {
+		position: absolute;
+	}
 	.close-step {
 		display: grid;
 		gap: 12px;
