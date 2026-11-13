@@ -12,15 +12,13 @@
 		value = $bindable(''),
 		empty,
 		disabled = false,
-		placeholder,
 		onchange
 	}: {
 		label: string;
-		options: PickerOption[];
+		options: readonly PickerOption[];
 		value?: string;
 		empty?: string;
 		disabled?: boolean;
-		placeholder?: string;
 		onchange?: (value: string) => void;
 	} = $props();
 
@@ -31,7 +29,7 @@
 	let active = $state(-1);
 
 	const all = $derived(withCurrent(options, value));
-	const shown = $derived<PickerOption[]>([
+	const shown = $derived<readonly PickerOption[]>([
 		...(empty !== undefined && query.trim() === '' ? [{ value: '', label: empty }] : []),
 		...narrow(all, query)
 	]);
@@ -99,7 +97,6 @@
 		autocomplete="off"
 		spellcheck="false"
 		{disabled}
-		{placeholder}
 		value={text}
 		onfocus={(e) => e.currentTarget.select()}
 		oninput={(e) => {

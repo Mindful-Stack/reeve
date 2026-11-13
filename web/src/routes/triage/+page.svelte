@@ -7,15 +7,15 @@
 	import { page } from '$app/state';
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { EditItem, Epic, SimilarStory, Story } from '#lib/api/types.ts';
-	import { COLUMN_LABEL, KINDS } from '#lib/board.ts';
+	import { COLUMN_LABEL, fullLabel, KINDS } from '#lib/board.ts';
 	import TriageItem from '#lib/components/TriageItem.svelte';
-	import TriageSimilar from '#lib/components/TriageSimilar.svelte';
-	import { storyHref } from '#lib/drawer.ts';
+	import { hasDrawer, storyHref } from '#lib/drawer.ts';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { errorMessage, plural } from '#lib/format.ts';
-	import { postMove } from '#lib/moves.ts';
+	import { focusIsFree } from '#lib/focus.ts';
+	import { errorMessage } from '#lib/format.ts';
+	import { postMove, type Refusal } from '#lib/moves.ts';
+	import { SIMILAR_SHOWN, similarQuery, withoutSelf } from '#lib/similar.ts';
 	import {
-		ARM_MS,
 		byKey,
 		draftOf,
 		duplicateCommentKey,
@@ -25,22 +25,22 @@
 		nextKey,
 		placeEdit,
 		rebaseAfterConflict,
-		similarQuery,
 		undoEdit,
 		whereNow,
-		withoutSelf,
-		type Arm,
 		type Draft
 	} from '#lib/triage.ts';
 	import { command, type Command } from '#lib/triageKeys.ts';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
 	/** The one line of news: the outcome of the last action, with a link to the item it names. The next message replaces
-	 *  it. `error`: a failure or a conflict, which a background announcement never covers. */
-	type Notice = { text: string; open?: string; error?: boolean };
+	 *  it; a failure's words begin with what failed. */
+	type Notice = { text: string; open?: string };
 
 	/** What Undo reverts: the action, the item it writes to, and the write. */
 	type Undo = { action: 'place' | 'drop'; key: string; run: () => Promise<void> };
+
+	/** The drop armed by a first `d`: the item and the version it was reviewed at. Marking a duplicate or Escape ends it. */
+	type Arm = { key: string; version: number };
 
 	let queue = $state.raw<Story[]>([]);
 	let epics = $state.raw<Epic[]>([]);
@@ -48,70 +48,67 @@
 	let loadError = $state<string | null>(null);
 	let currentKey = $state<string | null>(null);
 	/** The current item when it left the queue meanwhile (read directly), else null. */
-	let left = $state<Story | null>(null);
+	let left = $state.raw<Story | null>(null);
 	/** Each visited item's draft, by key: deeply reactive, so `t` (which changes a field inside a draft) re-renders. */
-	let drafts = $state<Record<string, Draft>>({});
+	let drafts = $state<Record<string, Draft | undefined>>({});
 	let notice = $state.raw<Notice | null>(null);
 	let help = $state(false);
 	let area: HTMLElement | undefined = $state();
 	let list: HTMLElement | undefined = $state();
+	let emptyEl: HTMLElement | undefined = $state();
+	let pane: ReturnType<typeof TriageItem> | undefined = $state();
 
 	const current = $derived(left ?? queue.find((s) => s.key === currentKey) ?? null);
+	const draft = $derived(current ? drafts[current.key] : undefined);
 	const position = $derived(queue.findIndex((s) => s.key === currentKey));
-	/** The one write in flight (its item's key), or null. Every write waits for it. */
-	let writing = $state<string | null>(null);
+	/** A write is in flight. Every action waits for it, whichever item it is on, and every item's form says so. */
+	let busy = $state(false);
 	/** The last Place's or Drop's Undo, apart from the notice so that no other message ends it: it lasts until it is
 	 *  used or the next Place or Drop replaces it. */
 	let undoable = $state.raw<Undo | null>(null);
-	let arm = $state<Arm | null>(null);
-	/** The current item's similar stories; `hits` null when its title is out of bounds (nothing was asked). */
-	let similar = $state.raw<{ key: string; hits: SimilarStory[] | null } | null>(null);
-	let armTimer: ReturnType<typeof setTimeout> | undefined;
-	const armed = $derived(
-		arm && current && arm.key === current.key && arm.version === drafts[current.key]?.base.version
-			? armText(current, drafts[current.key].duplicate)
-			: null
-	);
+	let arm = $state.raw<Arm | null>(null);
+	/** The current item's similar stories; empty until they land, and for a title outside what the server compares. */
+	let similar = $state.raw<SimilarStory[]>([]);
+	const armed = $derived(!!arm && !!current && arm.key === current.key && arm.version === draft?.base.version);
 
 	// The current option stays in sight in a scrolled queue (jsdom has no scrollIntoView, hence the optional call).
 	$effect(() => {
 		if (currentKey) document.getElementById(`triage-opt-${currentKey}`)?.scrollIntoView?.({ block: 'nearest' });
 	});
 
-	/** Empties the live region first, so the same message is read again. */
-	async function say(n: Notice) {
-		notice = null;
-		await tick();
+	function say(n: Notice): void {
 		notice = n;
 	}
 
 	let loads = 0;
+	/** A write patched the queue here: a reload that read the list before it answers stale, so its answer is dropped. */
+	const dropPendingReload = () => loads++;
+
 	async function reload(): Promise<void> {
 		const n = ++loads;
-		let rows, eps;
-		try {
-			[rows, eps] = await Promise.all([
-				unwrap(api.GET('/api/v1/stories', { params: { query: { untriaged: true } } })),
-				unwrap(api.GET('/api/v1/epics'))
-			]);
-		} catch (e) {
+		const got = await Promise.all([
+			unwrap(api.GET('/api/v1/stories', { params: { query: { untriaged: true } } })),
+			unwrap(api.GET('/api/v1/epics'))
+		]).catch((e) => {
 			if (n === loads) loadError = errorMessage(e);
-			return;
-		}
-		if (n !== loads) return; // a newer reload answers instead
+			return null;
+		});
+		if (!got || n !== loads) return; // failed, or a newer reload answers instead
+		const [rows, eps] = got;
 		loadError = null;
-		const before = new Set(queue.map((s) => s.key));
 		queue = byKey(rows.map((r) => r.story));
 		epics = eps;
-		for (const s of queue) if (s.key in drafts) drafts[s.key] = followDraft(drafts[s.key], s);
-		const added = loaded ? queue.filter((s) => !before.has(s.key)).length : 0;
-		// Never over what the user must still read: an error or a conflict.
-		if (added && !notice?.error) void say({ text: `${plural(added, 'new untriaged item', 'new untriaged items')}.` });
+		for (const s of queue) {
+			const d = drafts[s.key];
+			if (d) drafts[s.key] = followDraft(d, s);
+		}
+		const here = queue.some((s) => s.key === currentKey);
+		if (left && here) left = null; // someone put it back: it is no longer gone
 		const first = !loaded;
 		loaded = true;
 		if (currentKey === null) select(queue[0]?.key ?? null);
-		// Gone from the queue: read it to say where it went.
-		else if (!left && writing !== currentKey && !queue.some((s) => s.key === currentKey)) await loadLeft(currentKey, n);
+		// Gone from the queue: read it to say where it went (not while a write is in flight: its answer says).
+		else if (!left && !busy && !here) await loadLeft(currentKey, n);
 		// Focus on entry comes with the first answer that lands, whichever reload sent it.
 		if (first) void focusQueue();
 	}
@@ -120,8 +117,10 @@
 		try {
 			const s = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
 			if (n !== loads || currentKey !== key) return;
+			const where = whereNow(s);
+			if (where === null) return select(queue[0]?.key ?? null); // untriaged again: the next list has it
 			left = s;
-			if (!notice?.error) void say({ text: whereNow(s) });
+			say({ text: where });
 			focusBack(); // the pane lost the item until this read landed, and its form is disabled now: focus may be on the page
 		} catch {
 			if (n === loads && currentKey === key) select(queue[0]?.key ?? null);
@@ -132,41 +131,46 @@
 	async function loadSimilar(s: Story): Promise<void> {
 		const q = similarQuery(s.title);
 		if (!q) {
-			similar = { key: s.key, hits: null };
+			similar = []; // too short or too long to compare: nothing is asked
 			return;
 		}
 		let hits: SimilarStory[] = [];
 		try {
-			hits = withoutSelf(await unwrap(api.GET('/api/v1/stories/similar', { params: { query: { q, limit: 6 } } })), s.key);
+			hits = withoutSelf(await unwrap(api.GET('/api/v1/stories/similar', { params: { query: { q, limit: SIMILAR_SHOWN + 1 } } })), s.key);
 		} catch {
 			// shown as nothing similar
 		}
-		if (currentKey === s.key) similar = { key: s.key, hits };
+		if (currentKey === s.key) similar = hits;
 	}
 
 	function select(key: string | null): void {
 		if (key === currentKey && !left) return; // the same item again: nothing to load, and its hits stay put
 		currentKey = key;
 		left = null;
+		similar = [];
 		const s = queue.find((x) => x.key === key);
 		if (!s) return;
-		if (!(s.key in drafts)) drafts[s.key] = draftOf(s);
+		if (!drafts[s.key]) drafts[s.key] = draftOf(s);
 		void loadSimilar(s);
 	}
 
 	function step(by: 1 | -1): void {
-		if (!queue.length) return;
+		if (!queue.length) return select(null); // nothing left: leave the item that went, for the empty state
 		const i = position < 0 ? 0 : Math.min(queue.length - 1, Math.max(0, position + by));
+		if (position >= 0 && i === position) return say({ text: by > 0 ? 'Last item.' : 'First item.' });
 		select(queue[i].key);
 	}
 
 	/** Skip writes nothing; it wraps from the last item to the first, where `j` stops. */
 	function skip(): void {
-		if (!queue.length) return;
+		if (!queue.length) {
+			select(null);
+			return void focusQueue();
+		}
 		const from = currentKey;
 		const i = (position + 1) % queue.length;
 		select(queue[i].key);
-		void say({ text: i === 0 ? `Skipped ${from}; back to the first item.` : `Skipped ${from}.` });
+		say({ text: i === 0 ? `Skipped ${from}; back to the first item.` : `Skipped ${from}.` });
 		void focusQueue();
 	}
 
@@ -174,12 +178,9 @@
 	 *  when the list cannot take focus (hidden on a phone); the empty state's heading when nothing is left. */
 	async function focusQueue(): Promise<void> {
 		await tick();
-		if (!queue.length) {
-			const empty = area?.querySelector<HTMLElement>('#triage-empty');
-			return void (empty ?? area?.querySelector<HTMLElement>('#triage-item-title'))?.focus();
-		}
+		if (!queue.length) return emptyEl ? emptyEl.focus() : pane?.focus('heading');
 		list?.focus();
-		if (document.activeElement !== list) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
+		if (document.activeElement !== list) pane?.focus('heading');
 	}
 
 	/** Back to the queue after a write or a live change disabled the form, unless the user is on an enabled control or
@@ -187,9 +188,7 @@
 	 *  commands). Free is the page itself, the item heading or body, the queue (a `ul[tabindex]`) and a disabled control.
 	 *  Focus outside the triage area (the drawer's heading, a control there) is never taken. */
 	function focusBack(): void {
-		const a = document.activeElement;
-		if (a && a !== document.body && !area?.contains(a)) return;
-		if (!document.activeElement?.matches('a[href], button:enabled, input:enabled, select:enabled, textarea:enabled')) void focusQueue();
+		if (focusIsFree(area) && !document.activeElement?.matches('a[href], button:enabled, input:enabled, select:enabled, textarea:enabled')) void focusQueue();
 	}
 
 	/** Typing in an enabled field. A field disabled under the focus (the item left, a write is in flight) is not typing,
@@ -204,10 +203,9 @@
 		const stop = s.delivery === 'todo' ? '' : ' and stop active work (Undo returns it as todo)';
 		return `Drop ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}${stop}? Press d or click again.`;
 	}
-	function disarm(): void {
-		clearTimeout(armTimer);
-		arm = null;
-	}
+
+	/** What a refused move says: the notice the move wrote, or every reason when an override would have been offered. */
+	const why = (r: Refusal): string => (r.kind === 'notice' ? r.notice : r.reasons.map((x) => fullLabel(x)).join('; '));
 
 	function run(c: Command): void {
 		switch (c.kind) {
@@ -224,52 +222,51 @@
 			case 'undo':
 				return void undo();
 			case 'duplicate': {
-				const hit = similar?.key === currentKey ? similar?.hits?.[c.n - 1] : undefined;
+				const hit = similar[c.n - 1];
 				if (hit) mark(hit.key);
 				return;
 			}
 			case 'epic':
-				return void area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
+				return pane?.focus('epic');
 			case 'criteria':
-				return void area?.querySelector<HTMLElement>('textarea.criteria')?.focus();
-			case 'kind': {
-				const d = currentKey ? drafts[currentKey] : undefined;
-				if (!d || left || writing === currentKey) return;
-				d.fields.kind = KINDS[(KINDS.indexOf(d.fields.kind) + 1) % KINDS.length];
-				return void say({ text: `Kind: ${d.fields.kind}.` });
-			}
+				return pane?.focus('criteria');
+			case 'kind':
+				if (!draft || left || busy) return;
+				draft.fields.kind = KINDS[(KINDS.indexOf(draft.fields.kind) + 1) % KINDS.length];
+				return say({ text: `Kind: ${draft.fields.kind}.` });
 			case 'open':
 				if (currentKey) void goto(storyHref(page.url, currentKey), { reset: false });
 				return;
 			case 'escape':
-				if (typingIn(document.activeElement)) area?.querySelector<HTMLElement>('#triage-item-title')?.focus();
+				if (typingIn(document.activeElement)) pane?.focus('heading');
 				if (arm) {
-					disarm();
-					void say({ text: 'Drop cancelled.' });
+					arm = null;
+					say({ text: 'Drop cancelled.' });
 				}
 				return;
 			case 'help':
 				help = !help;
 				return;
+			default:
+				c satisfies never;
 		}
 	}
 
 	function keydown(e: KeyboardEvent): void {
-		const q = page.url.searchParams;
-		const c = command(e, { typing: typingIn(e.target), inList: e.target === list, overlay: q.has('story') || q.has('decision') });
+		const c = command(e, { typing: typingIn(e.target), inList: e.target === list, overlay: hasDrawer(page.url) });
 		if (!c) return;
 		e.preventDefault();
 		run(c);
 	}
 
-	/** Marks (or, the same hit again, unmarks) the current item's duplicate. A drop armed before names no duplicate, so
-	 *  it is disarmed. Not while the item is gone or a write for it is in flight (the drop in flight named its duplicate). */
+	/** Marks (or, the same hit again, unmarks) the current item as a duplicate of `hit`. A drop armed before names no
+	 *  duplicate, so it is disarmed. Not while the item is gone or a write is in flight (the drop in flight named its
+	 *  duplicate). */
 	function mark(hit: string): void {
-		const d = currentKey ? drafts[currentKey] : undefined;
-		if (!d || left || writing === currentKey) return;
-		d.duplicate = d.duplicate === hit ? null : hit;
-		disarm();
-		void say({ text: d.duplicate ? `${d.duplicate} marked as the duplicate.` : 'Duplicate cleared.' });
+		if (!draft || left || busy) return;
+		draft.duplicateOf = draft.duplicateOf === hit ? null : hit;
+		arm = null;
+		say({ text: draft.duplicateOf ? `Marked as a duplicate of ${draft.duplicateOf}.` : 'Duplicate mark cleared.' });
 	}
 
 	async function commentDuplicate(key: string, dup: string): Promise<boolean> {
@@ -282,108 +279,106 @@
 			);
 			return true;
 		} catch (e) {
-			void say({ text: `${key} was not dropped: the comment failed: ${errorMessage(e)}`, error: true });
+			say({ text: `${key} was not dropped: the comment failed: ${errorMessage(e)}` });
 			return false;
 		}
 	}
 
 	/** An action finished for `key`: it leaves the queue, and the selection moves on only if the user is still on it. */
 	function finished(key: string, order: string[], n: Notice, u: Undo): void {
-		loads++; // a reload in flight read the queue before this write: drop it; the write's own live refetch follows
+		dropPendingReload(); // the write's own live refetch follows
 		queue = queue.filter((s) => s.key !== key);
 		delete drafts[key];
 		if (currentKey === key) select(nextKey(order, key));
 		undoable = u;
-		void say(n);
+		say(n);
 	}
 
 	/** Undo brought `s` back: it rejoins the queue here, as `finished()` took it out, and becomes current. */
 	function returned(s: Story): void {
-		loads++; // a reload in flight read the queue without it; the write's own live refetch follows
+		dropPendingReload(); // the write's own live refetch follows
 		queue = byKey([...queue.filter((x) => x.key !== s.key), s]);
 		select(s.key);
 	}
 
 	async function place(): Promise<void> {
 		const s = current;
-		if (!s || left || writing) return;
-		const d = drafts[s.key];
+		const d = draft;
+		if (!s || !d || left || busy) return;
 		const edit = placeEdit(d);
 		if (edit.kind === 'invalid') {
-			if (!d.fields.epic) area?.querySelector<HTMLElement>('.epic [role="combobox"]')?.focus();
-			void say({ text: edit.error, error: true });
+			if (!d.fields.epic) pane?.focus('epic');
+			say({ text: edit.error });
 			return;
 		}
 		const order = queue.map((x) => x.key);
-		writing = s.key;
+		busy = true;
 		try {
 			const placed = await unwrap(api.PATCH('/api/v1/stories/{key}', { params: { path: { key: s.key } }, body: edit.body }));
 			finished(s.key, order, { text: `Placed ${s.key} under ${placed.epic}.`, open: s.key }, placeUndo(placed, d, edit.body));
 		} catch (e) {
 			if (e instanceof Conflict) await conflicted(s.key, d, 'place');
-			else void say({ text: `${s.key} was not placed: ${errorMessage(e)}`, error: true });
+			else say({ text: `${s.key} was not placed: ${errorMessage(e)}` });
 		} finally {
-			writing = null;
+			busy = false;
 			focusBack();
 		}
 	}
 
 	/** After a 409: read the item, keep the user's fields, take the server's others, and name the fields both changed.
-	 *  `head` says what landed before the conflict (a duplicate comment). */
-	async function conflicted(key: string, d: Draft, again: 'place' | 'drop', head = ''): Promise<void> {
+	 *  `tail` says what landed before the conflict (a duplicate comment). */
+	async function conflicted(key: string, d: Draft, again: 'place' | 'drop', tail = ''): Promise<void> {
 		try {
 			const server = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
-			if (server.epic || server.delivery === 'done') {
+			dropPendingReload();
+			const where = whereNow(server);
+			if (where !== null) {
 				// No longer untriaged (kb/ADR-0018 R4): it leaves the queue and the page says where it went, as on a live change.
 				queue = queue.filter((x) => x.key !== key);
 				if (currentKey === key) left = server;
-				return void say({ text: `${head}${whereNow(server)}`, error: true });
+				say({ text: `${where}${tail}` });
+			} else {
+				const { draft: rebased, clashes } = rebaseAfterConflict(d, server);
+				drafts[key] = rebased;
+				queue = queue.map((x) => (x.key === key ? server : x));
+				if (currentKey === key) void loadSimilar(server);
+				const named = clashes.map((c) => `${FIELD_LABEL[c.field]} is now "${c.value}"`).join('; ');
+				say({ text: `${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.${tail}` });
 			}
-			const { draft, clashes } = rebaseAfterConflict(d, server);
-			drafts[key] = draft;
-			queue = queue.map((x) => (x.key === key ? server : x));
-			if (currentKey === key) void loadSimilar(server);
-			const named = clashes.map((c) => `${FIELD_LABEL[c.field]} is now "${c.value}"`).join('; ');
-			void say({ text: `${head}${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.`, error: true });
+			void reload(); // a conflict has no live event of its own
 		} catch (e) {
-			void say({ text: `${head}${key} changed meanwhile and could not be reloaded: ${errorMessage(e)}`, error: true });
+			say({ text: `${key} changed meanwhile and could not be reloaded: ${errorMessage(e)}${tail}` });
 		}
 	}
 
 	async function drop(): Promise<void> {
 		const s = current;
-		if (!s || left || writing) return;
-		const d = drafts[s.key];
+		const d = draft;
+		if (!s || !d || left || busy) return;
 		const version = d.base.version;
-		const dup = d.duplicate;
+		const dup = d.duplicateOf;
 		if (!armed) {
-			disarm();
-			const prompt = armText(s, dup);
 			arm = { key: s.key, version };
-			armTimer = setTimeout(() => {
-				arm = null;
-				if (notice?.text === prompt) void say({ text: 'Drop cancelled.' });
-			}, ARM_MS);
-			void say({ text: prompt });
+			say({ text: armText(s, dup) });
 			return;
 		}
-		disarm();
+		arm = null;
 		const order = queue.map((x) => x.key);
-		const failed = dup ? 'Comment saved; drop failed: ' : '';
-		writing = s.key;
+		const saved = dup ? ' (the duplicate comment is saved)' : '';
+		busy = true;
 		try {
 			if (dup && !(await commentDuplicate(s.key, dup))) return;
 			const out = await postMove({ key: s.key, version }, 'done', { resolution: 'dropped' });
 			if (out.kind !== 'moved') {
-				void say({ text: `${failed || `${s.key} was not dropped: `}${out.kind === 'notice' ? out.notice : 'refused'}`, error: true });
+				say({ text: `${s.key} was not dropped${saved}: ${why(out)}` });
 				return;
 			}
 			finished(s.key, order, { text: `Dropped ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}.`, open: s.key }, dropUndo(out.story, !!dup));
 		} catch (e) {
-			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', failed);
-			else void say({ text: `${failed || `${s.key} was not dropped: `}${errorMessage(e)}`, error: true });
+			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', dup ? ' The duplicate comment is saved.' : '');
+			else say({ text: `${s.key} was not dropped${saved}: ${errorMessage(e)}` });
 		} finally {
-			writing = null;
+			busy = false;
 			focusBack();
 		}
 	}
@@ -398,7 +393,7 @@
 				restored.fields = { ...d.fields, epic: '' };
 				drafts[back.key] = restored; // before select(), which keeps an existing draft: the typed fields come back
 				returned(back);
-				void say({ text: `Undone: ${back.key} is back in the queue.` });
+				say({ text: `Undone: ${back.key} is back in the queue.` });
 			}
 		};
 	}
@@ -411,33 +406,30 @@
 			key: dropped.key,
 			run: async () => {
 				const out = await postMove({ key: dropped.key, version: dropped.version }, 'todo');
-				if (out.kind !== 'moved') throw new Error(`${dropped.key} could not be moved back to todo`);
+				if (out.kind !== 'moved') throw new Error(why(out));
 				returned(out.story);
-				void say({ text: `Undone: ${dropped.key} is back in todo.${duplicate ? ' The duplicate comment stays.' : ''}` });
+				say({ text: `Undone: ${dropped.key} is back in todo.${duplicate ? ' The duplicate comment stays.' : ''}` });
 			}
 		};
 	}
 
 	async function undo(): Promise<void> {
 		const u = undoable;
-		if (!u || writing) return;
+		if (!u || busy) return;
 		undoable = null; // one Undo per action
-		writing = u.key;
+		busy = true;
 		try {
 			await u.run();
 		} catch (e) {
 			const text = e instanceof Conflict ? `${u.key} changed since; undo it in the drawer.` : `Undo failed: ${errorMessage(e)}`;
-			void say({ text, open: u.key, error: true });
+			say({ text, open: u.key });
 		} finally {
-			writing = null;
+			busy = false;
 			focusBack();
 		}
 	}
 
-	onMount(() => {
-		void reload();
-		return () => clearTimeout(armTimer);
-	});
+	onMount(() => void reload());
 	onLive(reload);
 </script>
 
@@ -448,15 +440,22 @@
 	<div class="notice">
 		<p role="status" aria-live="polite" data-testid="triage-status">{notice?.text ?? ''}</p>
 		{#if notice?.open}<a href={storyHref(page.url, notice.open)} data-sveltekit-reset="false">Open {notice.open}</a>{/if}
-		{#if undoable}<button type="button" onclick={undo}>Undo {undoable.action} {undoable.key} <kbd>u</kbd></button>{/if}
+		{#if undoable}<button type="button" onclick={undo}>Undo {undoable.action} {undoable.key} <kbd aria-hidden="true">u</kbd></button>{/if}
 	</div>
-	{#if loadError}<p role="alert" class="error">Couldn't load the queue: {loadError}</p>{/if}
-	{#if loaded && !queue.length && !left && currentKey === null}
+	{#if loadError}
+		<div class="error" role="alert">
+			<p>Couldn't load the queue: {loadError}</p>
+			<button type="button" onclick={() => void reload()}>Retry</button>
+		</div>
+	{/if}
+	{#if !loaded}
+		{#if !loadError}<p class="loading">Loading…</p>{/if}
+	{:else if !queue.length && !left && currentKey === null}
 		<div class="empty">
-			<h2 id="triage-empty" tabindex="-1">Nothing to triage</h2>
+			<h2 id="triage-empty" tabindex="-1" bind:this={emptyEl}>Nothing to triage</h2>
 			<p><a href="/backlog">Go to the backlog</a></p>
 		</div>
-	{:else if loaded}
+	{:else}
 		<ul
 			class="queue"
 			role="listbox"
@@ -465,17 +464,9 @@
 			bind:this={list}
 			aria-activedescendant={currentKey && position >= 0 ? `triage-opt-${currentKey}` : undefined}
 		>
-			{#each queue as s, i (s.key)}
+			{#each queue as s (s.key)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<li
-					role="option"
-					id="triage-opt-{s.key}"
-					data-key={s.key}
-					aria-selected={s.key === currentKey}
-					aria-posinset={i + 1}
-					aria-setsize={queue.length}
-					onclick={() => select(s.key)}
-				>
+				<li role="option" id="triage-opt-{s.key}" data-key={s.key} aria-selected={s.key === currentKey} onclick={() => select(s.key)}>
 					<span class="key">{s.key}</span> {s.title}{#if s.delivery !== 'todo'}<span class="state"> · {COLUMN_LABEL[s.delivery]}</span>{/if}
 				</li>
 			{/each}
@@ -488,35 +479,28 @@
 			</p>
 			{#if help}
 				<dl class="keys">
-					<dt>j / k</dt><dd>next / previous (stops at the ends)</dd><dt>e</dt><dd>epic (Enter on a new epic moves on to criteria)</dd>
-					<dt>t</dt><dd>kind</dd><dt>c</dt><dd>criteria</dd><dt>Ctrl+Enter</dt><dd>place</dd><dt>d, d</dt><dd>drop</dd>
-					<dt>1–5</dt><dd>mark a similar item as the duplicate</dd><dt>s</dt><dd>skip (after the last, back to the first)</dd>
+					<dt>j / k</dt><dd>next / previous (stops at the ends)</dd><dt>↑ / ↓</dt><dd>the same, with focus on the queue</dd>
+					<dt>e</dt><dd>epic (Enter on a new epic moves on to criteria)</dd><dt>t</dt><dd>kind</dd><dt>c</dt><dd>criteria</dd>
+					<dt>Ctrl/Cmd+Enter</dt><dd>place</dd><dt>d, d</dt><dd>drop</dd>
+					<dt>1–{SIMILAR_SHOWN}</dt><dd>mark the item as a duplicate of a similar one</dd><dt>s</dt><dd>skip (after the last, back to the first)</dd>
 					<dt>o</dt><dd>open in the drawer</dd><dt>u</dt><dd>undo</dd><dt>Escape</dt><dd>leave a field, cancel a drop</dd>
+					<dt>?</dt><dd>this list</dd>
 				</dl>
 			{/if}
-			{#if current && current.key in drafts}
-				{#snippet similarPanel()}
-					{#if current && similar?.key === current.key}
-						<TriageSimilar
-							hits={similar.hits}
-							marked={drafts[current.key]?.duplicate ?? null}
-							inspect={(k) => storyHref(page.url, k)}
-							onmark={mark}
-						/>
-					{/if}
-				{/snippet}
+			{#if current && draft}
 				<TriageItem
-					similar={similarPanel}
+					bind:this={pane}
 					item={current}
-					bind:draft={drafts[current.key]}
+					bind:draft={drafts[current.key]!}
 					{epics}
-					disabled={!!left || writing === current.key}
+					hits={similar}
+					disabled={!!left || busy}
 					gone={left ? whereNow(left) : null}
-					open={storyHref(page.url, current.key)}
 					onplace={place}
 					{armed}
 					ondrop={drop}
 					onskip={skip}
+					onmark={mark}
 				/>
 			{/if}
 		</div>
@@ -539,14 +523,17 @@
 		background: var(--background);
 	}
 	.notice p { margin: 0; }
-	.error { grid-column: 1 / -1; color: var(--danger); }
+	.error { grid-column: 1 / -1; color: var(--danger); display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+	.error p { margin: 0; }
+	.loading { grid-column: 1 / -1; color: var(--muted); }
 	.queue { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: calc(100vh - var(--top-bar-height, 0px) - 120px); }
 	.queue li { padding: 6px 8px; cursor: pointer; border-radius: 6px; }
-	.queue li[aria-selected='true'] { background: var(--selection); outline: 2px solid var(--accent); }
-	.queue:focus-visible { outline: 2px solid var(--accent); }
+	/* The background marks the current item; the focus ring is the listbox's (inset, so the scroll box does not clip it). */
+	.queue li[aria-selected='true'] { background: var(--selection); }
+	.queue:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 	.state { color: var(--muted); }
 	.pane { min-width: 0; }
-	.counter :global(button) { margin-left: 8px; }
+	.counter button { margin-left: 8px; }
 	@media (max-width: 719px) {
 		.triage { grid-template-columns: 1fr; }
 		.queue { display: none; }

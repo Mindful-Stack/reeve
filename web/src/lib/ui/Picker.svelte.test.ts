@@ -16,7 +16,7 @@ afterEach(() => {
 	document.body.innerHTML = '';
 });
 function setup(start = '', empty?: string) {
-	const spies = { onkeydown: vi.fn(), onchange: vi.fn(), onclose: vi.fn() };
+	const spies = { onchange: vi.fn(), onclose: vi.fn() };
 	app = mount(Harness, { target: document.body, props: { options, start, empty, ...spies } });
 	flushSync();
 	const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')!;

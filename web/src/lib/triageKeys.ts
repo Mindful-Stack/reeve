@@ -1,5 +1,7 @@
 // web/src/lib/triageKeys.ts: a keydown on the triage area to a command. The page listens on its own container only (the
 // keys are active only while focus is there, WCAG 2.1.4), and passes what it knows about focus and the drawer.
+import { SIMILAR_SHOWN } from '#lib/similar.ts';
+
 export type Command =
 	| { kind: 'next' | 'prev' | 'epic' | 'kind' | 'criteria' | 'place' | 'drop' | 'skip' | 'open' | 'undo' | 'escape' | 'help' }
 	| { kind: 'duplicate'; n: number };
@@ -30,6 +32,6 @@ export function command(e: Key, c: KeyContext): Command | null {
 	if (c.typing) return null;
 	if (c.inList && e.key === 'ArrowDown') return { kind: 'next' };
 	if (c.inList && e.key === 'ArrowUp') return { kind: 'prev' };
-	if (/^[1-5]$/.test(e.key)) return { kind: 'duplicate', n: Number(e.key) };
+	if (/^[1-9]$/.test(e.key) && Number(e.key) <= SIMILAR_SHOWN) return { kind: 'duplicate', n: Number(e.key) };
 	return LETTERS[e.key] ?? null;
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { story } from '#lib/test/fixtures.ts';
 import {
 	byKey, criteriaFromText, draftOf, duplicateCommentKey, duplicateText, followDraft, nextKey, placeEdit,
-	rebaseAfterConflict, similarQuery, undoEdit, whereNow, withoutSelf
+	rebaseAfterConflict, undoEdit, whereNow
 } from './triage.ts';
 
 describe('byKey', () => {
@@ -71,11 +71,11 @@ describe('followDraft and rebaseAfterConflict', () => {
 	it('follow: the base advances and untouched fields take the server value when the user\'s fields are unchanged there', () => {
 		const d = draftOf(s);
 		d.fields.epic = 'GRA-7';
-		d.duplicate = 'GRA-3';
+		d.duplicateOf = 'GRA-3';
 		const f = followDraft(d, story({ key: 'GRA-5', title: 'Blank PDF export', version: 4 }));
 		expect(f.base.version).toBe(4);
 		expect(f.fields).toMatchObject({ epic: 'GRA-7', title: 'Blank PDF export' });
-		expect(f.duplicate).toBe('GRA-3');
+		expect(f.duplicateOf).toBe('GRA-3');
 	});
 	it('follow: an unchanged item leaves the draft as it is, a line being typed included', () => {
 		const d = draftOf(story({ key: 'GRA-5', criteria: [{ text: 'Renders', done: false }], version: 3 }));
@@ -159,27 +159,13 @@ describe('small helpers', () => {
 		expect(duplicateText('GRA-3')).toBe('Duplicate of GRA-3.');
 		expect(duplicateCommentKey('GRA-5', 'GRA-3')).toBe('triage-dup:GRA-5:GRA-3');
 	});
-	it('withoutSelf drops the item itself and keeps at most five', () => {
-		const hits = ['GRA-5', 'A-1', 'A-2', 'A-3', 'A-4', 'A-5'].map((key) => ({ key, title: key, kind: 'story' as const, delivery: 'todo' as const }));
-		expect(withoutSelf(hits, 'GRA-5').map((h) => h.key)).toEqual(['A-1', 'A-2', 'A-3', 'A-4', 'A-5']);
-		const six = ['A-1', 'A-2', 'A-3', 'A-4', 'A-5', 'A-6'].map((key) => ({ key, title: key, kind: 'story' as const, delivery: 'todo' as const }));
-		expect(withoutSelf(six, 'GRA-5').map((h) => h.key)).toEqual(['A-1', 'A-2', 'A-3', 'A-4', 'A-5']);
-	});
-	it('similarQuery: the trimmed title within 8..200 characters, counted as the server counts (code points), else null', () => {
-		expect(similarQuery('  short ')).toBeNull();
-		expect(similarQuery(' Blank PDF ')).toBe('Blank PDF');
-		expect(similarQuery('x'.repeat(201))).toBeNull();
-		expect(similarQuery('x'.repeat(7))).toBeNull();
-		expect(similarQuery('x'.repeat(8))).toBe('x'.repeat(8));
-		expect(similarQuery('x'.repeat(200))).toBe('x'.repeat(200));
-		expect(similarQuery('😀'.repeat(150))).toBe('😀'.repeat(150)); // 300 UTF-16 units, 150 characters
-	});
 	it('whereNow names the epic, or done and the resolution', () => {
 		expect(whereNow(story({ key: 'GRA-5', epic: 'GRA-7' }))).toBe('Placed elsewhere: GRA-5 is under GRA-7.');
 		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: 'dropped' }))).toBe('GRA-5 is done (dropped).');
 	});
-	it('whereNow: done without a resolution is completed; no epic and not done is changed', () => {
-		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: null }))).toBe('GRA-5 is done (completed).');
-		expect(whereNow(story({ key: 'GRA-5', epic: null, delivery: 'todo' }))).toBe('GRA-5 changed.');
+	it('whereNow: done without a resolution says only done (none is invented); not done and no epic is still untriaged: null', () => {
+		expect(whereNow(story({ key: 'GRA-5', delivery: 'done', resolution: null }))).toBe('GRA-5 is done.');
+		expect(whereNow(story({ key: 'GRA-5', epic: null, delivery: 'todo' }))).toBeNull();
+		expect(whereNow(story({ key: 'GRA-5', epic: null, delivery: 'in_progress' }))).toBeNull();
 	});
 });
