@@ -6,7 +6,8 @@
 //! immediately before commit.
 use super::*;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
-use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
+use crate::domain::readiness::decision_fact;
+use crate::domain::sprint::{self, Goal, GoalGates, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -126,8 +127,12 @@ impl Handlers {
         Ok(())
     }
 
-    /// Adds a goal to the draft (or to the active sprint with `to_active`). Interactive only (kb/ADR-0014 R5); the owner
-    /// defaults to the caller. Returns the goal and the target sprint's warnings after the add.
+    /// Adds a goal to the draft (or to the active sprint with `to_active`), linked to `links` in the same
+    /// transaction. Interactive only (kb/ADR-0014 R5); the owner defaults to the caller. Each link is checked as
+    /// `link_goal` checks it (the item exists; an existing link writes nothing) and logged under the item; an unknown
+    /// key refuses the whole create, so no goal is made. A replay of the idempotency key returns the goal as it now
+    /// stands, unchanged by this call, whatever `links` it sends. Returns the goal and the target sprint's warnings
+    /// after the add.
     pub async fn add_goal(
         &self,
         c: &Ctx,
@@ -137,6 +142,7 @@ impl Handlers {
         owner: Option<String>,
         notes: &str,
         to_active: bool,
+        links: &[Key],
     ) -> Result<(Goal, Vec<SprintWarning>), HandlerError> {
         interactive(c)?;
         if outcome.trim().is_empty() || check.trim().is_empty() {
@@ -184,26 +190,34 @@ impl Handlers {
                 c.now,
             )
             .await?;
+        let mut entries = Vec::new();
+        if inserted {
+            entries.push(self.rec(
+                c,
+                "goal",
+                &g.id.to_string(),
+                "created",
+                serde_json::json!({"sprint_id": g.sprint_id, "outcome": g.outcome, "check": g.check, "owner": g.owner}),
+            ));
+            if !links.is_empty() {
+                // On this transaction: it holds the sprint's lock, so it must not wait for a second connection.
+                let types = self.ports.keys.item_types_in(&mut tx, links).await?;
+                // Dropping `tx` on an unknown key rolls the goal back: it creates nothing.
+                let typed = links
+                    .iter()
+                    .map(|k| Ok((*types.get(k).ok_or(HandlerError::NotFound)?, k)))
+                    .collect::<Result<Vec<_>, HandlerError>>()?;
+                entries.extend(self.link_items(&mut tx, c, g.id, &typed).await?);
+            }
+        }
         let count = self
             .ports
             .sprints
             .goals_of_in(&mut tx, &[g.sprint_id])
             .await?
             .len();
-        if inserted {
-            self.activity
-                .record(
-                    &mut tx,
-                    self.rec(
-                        c,
-                        "goal",
-                        &g.id.to_string(),
-                        "created",
-                        serde_json::json!({"sprint_id": g.sprint_id, "outcome": g.outcome, "check": g.check, "owner": g.owner}),
-                    ),
-                )
-                .await?;
-        }
+        // Every write first, then the entries, immediately before commit.
+        self.record_all(&mut tx, entries).await?;
         tx.commit().await?;
         Ok((g, sprint::warnings(count)))
     }
@@ -559,6 +573,36 @@ impl Handlers {
         Ok(g)
     }
 
+    /// Inserts the goal's links that do not exist yet and returns their `goal_linked` entries, logged under each item.
+    /// The caller records them after all its writes.
+    async fn link_items(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        c: &Ctx,
+        goal_id: i64,
+        items: &[(ItemType, &Key)],
+    ) -> Result<Vec<ActivityRecord>, HandlerError> {
+        let by = reeve_protocol::normalise_email(&c.actor);
+        let mut entries = Vec::new();
+        for &(t, k) in items {
+            if self
+                .ports
+                .sprints
+                .insert_goal_link(tx, goal_id, k, &by, c.now)
+                .await?
+            {
+                entries.push(self.rec(
+                    c,
+                    item_name(t),
+                    &k.to_string(),
+                    "goal_linked",
+                    serde_json::json!({"goal_id": goal_id}),
+                ));
+            }
+        }
+        Ok(entries)
+    }
+
     /// Links work to a goal; any token kind (kb/ADR-0014 R5). Each key must name an item (NotFound otherwise); a link
     /// that already exists writes nothing. Logged under the item, so its history shows it.
     pub async fn link_goal(
@@ -574,24 +618,7 @@ impl Handlers {
         let mut tx = self.pool.begin().await?;
         // Sprint, then goal: a goal removed while this waited on the sprint answers NotFound, not a foreign-key error.
         self.goal_locked(&mut tx, goal_id, Op::Link).await?;
-        let by = reeve_protocol::normalise_email(&c.actor);
-        let mut entries = Vec::new();
-        for (t, k) in typed {
-            if self
-                .ports
-                .sprints
-                .insert_goal_link(&mut tx, goal_id, k, &by, c.now)
-                .await?
-            {
-                entries.push(self.rec(
-                    c,
-                    item_name(t),
-                    &k.to_string(),
-                    "goal_linked",
-                    serde_json::json!({"goal_id": goal_id}),
-                ));
-            }
-        }
+        let entries = self.link_items(&mut tx, c, goal_id, &typed).await?;
         // Every insert first, then the entries, immediately before commit.
         self.record_all(&mut tx, entries).await?;
         tx.commit().await?;
@@ -629,8 +656,8 @@ impl Handlers {
     }
 
     /// Every sprint with its goals and links, and the active sprint's numbers up to `now`, from one read-only snapshot.
-    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (GRA-610), so
-    /// this read, made on every board load, does not pay for it.
+    /// No promises: the active sprint's list is read only by `sprint_view` until a client renders it here (a
+    /// follow-up of GRA-608), so this read, made on every board load, does not pay for it.
     pub async fn sprints(&self, now: DateTime<Utc>) -> Result<Sprints, HandlerError> {
         let mut tx = self
             .pool
@@ -670,6 +697,46 @@ impl Handlers {
             out.active_summary = self.summary_in(tx, a, &out.goals, &out.links, now).await?;
         }
         Ok(out)
+    }
+
+    /// Each goal of the active and the draft sprint with what its work waits on, from one read-only snapshot.
+    /// Derived on read, never stored (kb/ADR-0014 R6). Nothing in `handler/moves.rs` reaches it (kb/ADR-0014 R4).
+    pub async fn sprint_planning(&self) -> Result<Vec<GoalGates>, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.sprint_planning_in(&mut tx).await;
+        end_read(tx, out).await
+    }
+
+    /// A fixed number of statements whatever the number of goals, links, stories or decisions: the two sprints, their
+    /// goals, their links, then whole-table reads filtered in memory (one small team; the export reads the same way).
+    /// Each decision's fact is built and marked as readiness builds and marks it.
+    async fn sprint_planning_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<GoalGates>, HandlerError> {
+        let sprints = self.ports.sprints.active_and_draft_in(tx).await?;
+        let ids: Vec<i64> = sprints.iter().map(|s| s.id).collect();
+        let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
+        let goal_ids: Vec<i64> = goals.iter().map(|g| g.id).collect();
+        let links = self.ports.sprints.links_of_in(tx, &goal_ids).await?;
+        let initiatives = self.ports.reads.initiatives_in(tx).await?;
+        let epics = self.ports.reads.epics_in(tx).await?;
+        let stories = self.ports.reads.stories_in(tx).await?;
+        let decisions = self.ports.reads.decisions_in(tx).await?;
+        Ok(sprint::goal_gates(
+            &goal_ids,
+            &links,
+            (&initiatives, &epics, &stories),
+            &decisions,
+            |d| {
+                let mut f = decision_fact(d);
+                self.mark_repo_configured(&mut f);
+                f
+            },
+        ))
     }
 
     /// One sprint with its goals and links, its numbers and its promises. The numbers are over `[opened_at, closed_at)`

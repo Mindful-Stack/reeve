@@ -667,6 +667,13 @@
           "idempotency_key": {
             "type": "string"
           },
+          "links": {
+            "description": "Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.\nA replay of the idempotency key returns the goal as it now stands, unchanged by this call, whatever `links` it\nsends.",
+            "items": {
+              "$ref": "#/components/schemas/Key"
+            },
+            "type": "array"
+          },
           "notes": {
             "type": [
               "string",
@@ -848,6 +855,22 @@
         ],
         "type": "object"
       },
+      "DecisionGateDto": {
+        "description": "An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3).",
+        "properties": {
+          "on": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/Reason"
+          }
+        },
+        "required": [
+          "on",
+          "reason"
+        ],
+        "type": "object"
+      },
       "DecisionQueueDto": {
         "properties": {
           "entries": {
@@ -1007,6 +1030,26 @@
         },
         "required": [
           "key",
+          "title"
+        ],
+        "type": "object"
+      },
+      "DiscoveryGateDto": {
+        "description": "Shaped like `ItemRefDto` plus a title, so the client links it with `itemRoute`.",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "item",
           "title"
         ],
         "type": "object"
@@ -1463,7 +1506,7 @@
             "type": "string"
           },
           "sprints": {
-            "description": "Every sprint, oldest first, with its goals (confidence, verdict) and their links nested. Not in the DTOs:\n`created_at` of sprints and goals and who linked what and when. The exported activity carries the goal's\n`created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.",
+            "description": "Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the\nDTOs: `created_at` of sprints and who linked what and when. The exported activity carries the goal's\n`created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.",
             "items": {
               "$ref": "#/components/schemas/SprintDto"
             },
@@ -1632,6 +1675,11 @@
               "null"
             ]
           },
+          "created_at": {
+            "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal. Servers always send it; JSON\nwithout it (an older server) reads as the Unix epoch.",
+            "format": "date-time",
+            "type": "string"
+          },
           "id": {
             "format": "int64",
             "type": "integer"
@@ -1715,7 +1763,59 @@
           "owner",
           "notes",
           "version",
+          "created_at",
           "links"
+        ],
+        "type": "object"
+      },
+      "GoalGatesDto": {
+        "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
+        "properties": {
+          "decisions": {
+            "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",
+            "items": {
+              "$ref": "#/components/schemas/DecisionGateDto"
+            },
+            "type": "array"
+          },
+          "decisions_total": {
+            "description": "All the goal's decisions (withdrawn excluded); decided = total - decisions.len().",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveries": {
+            "description": "Initiatives first, then epics, each by key number.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryGateDto"
+            },
+            "type": "array"
+          },
+          "discovery_total": {
+            "description": "All the goal's initiatives and epics; marked = total - discoveries.len().",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "goal_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "initiatives": {
+            "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
+            "items": {
+              "$ref": "#/components/schemas/Key"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "goal_id",
+          "initiatives",
+          "discoveries",
+          "decisions",
+          "discovery_total",
+          "decisions_total"
         ],
         "type": "object"
       },
@@ -4564,7 +4664,7 @@
                     "type": "string"
                   },
                   "sprints": {
-                    "description": "Every sprint, oldest first, with its goals (confidence, verdict) and their links nested. Not in the DTOs:\n`created_at` of sprints and goals and who linked what and when. The exported activity carries the goal's\n`created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.",
+                    "description": "Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the\nDTOs: `created_at` of sprints and who linked what and when. The exported activity carries the goal's\n`created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.",
                     "items": {
                       "$ref": "#/components/schemas/SprintDto"
                     },
@@ -4702,6 +4802,11 @@
                       "null"
                     ]
                   },
+                  "created_at": {
+                    "description": "When the goal was created; the sprint page's \"Waiting since\" on a draft goal. Servers always send it; JSON\nwithout it (an older server) reads as the Unix epoch.",
+                    "format": "date-time",
+                    "type": "string"
+                  },
                   "id": {
                     "format": "int64",
                     "type": "integer"
@@ -4785,6 +4890,7 @@
                   "owner",
                   "notes",
                   "version",
+                  "created_at",
                   "links"
                 ],
                 "type": "object"
@@ -7277,6 +7383,136 @@
                       "type": "object"
                     }
                   ]
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_Vec_GoalGatesDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
+                  "properties": {
+                    "decisions": {
+                      "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",
+                      "items": {
+                        "$ref": "#/components/schemas/DecisionGateDto"
+                      },
+                      "type": "array"
+                    },
+                    "decisions_total": {
+                      "description": "All the goal's decisions (withdrawn excluded); decided = total - decisions.len().",
+                      "format": "int32",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "discoveries": {
+                      "description": "Initiatives first, then epics, each by key number.",
+                      "items": {
+                        "$ref": "#/components/schemas/DiscoveryGateDto"
+                      },
+                      "type": "array"
+                    },
+                    "discovery_total": {
+                      "description": "All the goal's initiatives and epics; marked = total - discoveries.len().",
+                      "format": "int32",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "goal_id": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "initiatives": {
+                      "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
+                      "items": {
+                        "$ref": "#/components/schemas/Key"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "goal_id",
+                    "initiatives",
+                    "discoveries",
+                    "decisions",
+                    "discovery_total",
+                    "decisions_total"
+                  ],
+                  "type": "object"
                 },
                 "type": "array"
               }
@@ -12316,7 +12552,7 @@
             "bearer": []
           }
         ],
-        "summary": "Adds a goal to the draft, or to the active sprint with `active` (interactive only)."
+        "summary": "Adds a goal to the draft, or to the active sprint with `active` (interactive only), linked to `links` in the same\nwrite; an unknown key is 404 and creates nothing."
       }
     },
     "/api/v1/goals/{id}": {
@@ -14454,6 +14690,79 @@
           }
         ],
         "summary": "The active sprint with its numbers, the draft, and the closed sprints newest first, from one snapshot."
+      }
+    },
+    "/api/v1/sprints/planning": {
+      "get": {
+        "operationId": "planning",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_GoalGatesDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how\nmany of each are done, derived on read. Any signed-in caller; no parameters."
       }
     },
     "/api/v1/sprints/{id}": {

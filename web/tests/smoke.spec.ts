@@ -1270,6 +1270,33 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 	}
 });
 
+test('a Now initiative without a goal gets one from its row, and the goal waits on its unmarked epic', async ({ page }) => {
+	// Data of its own: the seeded Now initiative is discovery-complete and already gets goals.
+	const tag = crypto.randomUUID().slice(0, 8);
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title: `Gates smoke ${tag}`, horizon: 'Now' });
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Gates epic ${tag}`, initiative: ini.key });
+	const outcome = `Gates smoke goal ${tag}`;
+
+	await page.goto('/sprint');
+	const row = page.getByTestId(`no-goal-${ini.key}`);
+	await expect(row).toContainText('in discovery');
+	await row.getByRole('button', { name: '+ goal' }).click();
+	const form = row.getByRole('form', { name: `New goal for next sprint · linked to ${ini.key}` });
+	await form.getByLabel('Outcome').fill(outcome);
+	await form.getByLabel("We'll know when").fill('the smoke sees its gate');
+	await form.getByRole('button', { name: 'Add goal', exact: true }).click();
+
+	// The goal is in the next sprint, under its initiative, and its epic is one of the gates it waits on.
+	const group = page.getByTestId('next-sprint').getByTestId(`next-group-${ini.key}`);
+	const card = group.locator('article.goal', { has: page.getByRole('heading', { name: outcome, exact: true }) });
+	await expect(card.getByTestId(`discovery-${epic.key}`)).toContainText(`Gates epic ${tag}`);
+	await expect(page.getByTestId(`no-goal-${ini.key}`)).toHaveCount(0);
+
+	// Leave the draft as this test found it.
+	await card.getByRole('button', { name: 'Remove', exact: true }).click();
+	await expect(card).toHaveCount(0);
+});
+
 test('triage from the keyboard: the count, place with criteria, undo, a phone, and drop', async ({ page }) => {
 	const suffix = crypto.randomUUID().slice(0, 6);
 	// a: no epic (untriaged), with a long description for the phone check.

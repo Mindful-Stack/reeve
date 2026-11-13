@@ -119,7 +119,7 @@ pub trait SprintRepo: Send + Sync {
         goal_id: i64,
         item: &Key,
     ) -> Result<bool, RepoError>;
-    /// The links of these goals, by goal then key number, in one statement.
+    /// The links of these goals, by goal then key number (then key text, for mixed prefixes), in one statement.
     async fn links_of_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

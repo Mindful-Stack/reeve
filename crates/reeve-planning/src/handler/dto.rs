@@ -5,15 +5,16 @@ use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
-use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
+use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use chrono::NaiveDate;
 use reeve_protocol::{
-    AffectedStoryDto, ClosedDto, CriterionDto, DecisionQueueEntryDto, DecisionQueueSummaryDto,
-    DemoStoryDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto,
-    GoalProgressDto, InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
-    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
+    DecisionQueueSummaryDto, DemoStoryDto, DiscoveryGateDto, DiscoveryMarkDto, EpicDto,
+    EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto, InitiativeDto, Key,
+    PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto,
+    RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState,
+    SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -221,11 +222,40 @@ pub fn goal_dto(g: &Goal, links: &[GoalLink]) -> GoalDto {
         verdict: g.verdict,
         verdict_note: g.verdict_note.clone(),
         version: g.version,
+        created_at: g.created_at,
         links: links
             .iter()
             .filter(|l| l.goal_id == g.id)
             .map(|l| l.item_key.clone())
             .collect(),
+    }
+}
+
+impl From<&GoalGates> for GoalGatesDto {
+    fn from(g: &GoalGates) -> Self {
+        Self {
+            goal_id: g.goal_id,
+            initiatives: g.initiatives.clone(),
+            discoveries: g
+                .discoveries
+                .iter()
+                .map(|d| DiscoveryGateDto {
+                    key: d.key.clone(),
+                    item: d.item,
+                    title: d.title.clone(),
+                })
+                .collect(),
+            decisions: g
+                .decisions
+                .iter()
+                .map(|d| DecisionGateDto {
+                    on: d.on.clone(),
+                    reason: d.reason.clone(),
+                })
+                .collect(),
+            discovery_total: g.discovery_total,
+            decisions_total: g.decisions_total,
+        }
     }
 }
 

@@ -433,7 +433,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Adds a goal to the draft, or to the active sprint with `active` (interactive only). */
+        /**
+         * Adds a goal to the draft, or to the active sprint with `active` (interactive only), linked to `links` in the same
+         *     write; an unknown key is 404 and creates nothing.
+         */
         post: operations["create_goal"];
         delete?: never;
         options?: never;
@@ -770,6 +773,26 @@ export interface paths {
         };
         /** The active sprint with its numbers, the draft, and the closed sprints newest first, from one snapshot. */
         get: operations["sprints_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sprints/planning": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how
+         *     many of each are done, derived on read. Any signed-in caller; no parameters.
+         */
+        get: operations["planning"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1377,6 +1400,12 @@ export interface components {
             active?: boolean;
             check: string;
             idempotency_key: string;
+            /**
+             * @description Items the new goal links in its create, each a key; omitted means none. An unknown key refuses the whole create.
+             *     A replay of the idempotency key returns the goal as it now stands, unchanged by this call, whatever `links` it
+             *     sends.
+             */
+            links?: components["schemas"]["Key"][];
             notes?: string | null;
             outcome: string;
             owner?: string | null;
@@ -1429,6 +1458,11 @@ export interface components {
         CriterionDto: {
             done: boolean;
             text: string;
+        };
+        /** @description An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3). */
+        DecisionGateDto: {
+            on: components["schemas"]["Key"];
+            reason: components["schemas"]["Reason"];
         };
         DecisionQueueDto: {
             /**
@@ -1485,6 +1519,12 @@ export interface components {
         DeliveryState: "todo" | "in_progress" | "in_review" | "testing" | "done";
         /** @description A story completed in the window's last seven days (never before its start), oldest first. */
         DemoStoryDto: {
+            key: components["schemas"]["Key"];
+            title: string;
+        };
+        /** @description Shaped like `ItemRefDto` plus a title, so the client links it with `itemRoute`. */
+        DiscoveryGateDto: {
+            item: components["schemas"]["ItemType"];
             key: components["schemas"]["Key"];
             title: string;
         };
@@ -1614,8 +1654,8 @@ export interface components {
             initiatives: components["schemas"]["InitiativeDto"][];
             key_prefix: string;
             /**
-             * @description Every sprint, oldest first, with its goals (confidence, verdict) and their links nested. Not in the DTOs:
-             *     `created_at` of sprints and goals and who linked what and when. The exported activity carries the goal's
+             * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
+             *     DTOs: `created_at` of sprints and who linked what and when. The exported activity carries the goal's
              *     `created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.
              */
             sprints: components["schemas"]["SprintDto"][];
@@ -1659,6 +1699,12 @@ export interface components {
             /** Format: date-time */
             confidence_at?: string | null;
             confidence_note?: string | null;
+            /**
+             * Format: date-time
+             * @description When the goal was created; the sprint page's "Waiting since" on a draft goal. Servers always send it; JSON
+             *     without it (an older server) reads as the Unix epoch.
+             */
+            created_at: string;
             /** Format: int64 */
             id: number;
             /** @description The items linked to this goal, in key-number order; an epic or initiative link covers their stories. */
@@ -1677,6 +1723,33 @@ export interface components {
             verdict_note?: string | null;
             /** Format: int64 */
             version: number;
+        };
+        /**
+         * @description What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
+         *     kb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+         */
+        GoalGatesDto: {
+            /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */
+            decisions: components["schemas"]["DecisionGateDto"][];
+            /**
+             * Format: int32
+             * @description All the goal's decisions (withdrawn excluded); decided = total - decisions.len().
+             */
+            decisions_total: number;
+            /** @description Initiatives first, then epics, each by key number. */
+            discoveries: components["schemas"]["DiscoveryGateDto"][];
+            /**
+             * Format: int32
+             * @description All the goal's initiatives and epics; marked = total - discoveries.len().
+             */
+            discovery_total: number;
+            /** Format: int64 */
+            goal_id: number;
+            /**
+             * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
+             *     key number); the sprint page groups the goal under the first.
+             */
+            initiatives: components["schemas"]["Key"][];
         };
         /** @description One goal's counts over a sprint's window (kb/ADR-0014 R2). */
         GoalProgressDto: {
@@ -2505,8 +2578,8 @@ export interface components {
                 initiatives: components["schemas"]["InitiativeDto"][];
                 key_prefix: string;
                 /**
-                 * @description Every sprint, oldest first, with its goals (confidence, verdict) and their links nested. Not in the DTOs:
-                 *     `created_at` of sprints and goals and who linked what and when. The exported activity carries the goal's
+                 * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
+                 *     DTOs: `created_at` of sprints and who linked what and when. The exported activity carries the goal's
                  *     `created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.
                  */
                 sprints: components["schemas"]["SprintDto"][];
@@ -2545,6 +2618,12 @@ export interface components {
                 /** Format: date-time */
                 confidence_at?: string | null;
                 confidence_note?: string | null;
+                /**
+                 * Format: date-time
+                 * @description When the goal was created; the sprint page's "Waiting since" on a draft goal. Servers always send it; JSON
+                 *     without it (an older server) reads as the Unix epoch.
+                 */
+                created_at: string;
                 /** Format: int64 */
                 id: number;
                 /** @description The items linked to this goal, in key-number order; an epic or initiative link covers their stories. */
@@ -3319,6 +3398,54 @@ export interface components {
                 /** @enum {string} */
                 finding: "discovery_complete_without_stories";
             })[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_GoalGatesDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */
+                decisions: components["schemas"]["DecisionGateDto"][];
+                /**
+                 * Format: int32
+                 * @description All the goal's decisions (withdrawn excluded); decided = total - decisions.len().
+                 */
+                decisions_total: number;
+                /** @description Initiatives first, then epics, each by key number. */
+                discoveries: components["schemas"]["DiscoveryGateDto"][];
+                /**
+                 * Format: int32
+                 * @description All the goal's initiatives and epics; marked = total - discoveries.len().
+                 */
+                discovery_total: number;
+                /** Format: int64 */
+                goal_id: number;
+                /**
+                 * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
+                 *     key number); the sprint page groups the goal under the first.
+                 */
+                initiatives: components["schemas"]["Key"][];
+            }[];
         } | {
             /** @enum {string} */
             outcome: "refused";
@@ -8002,6 +8129,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_SprintsDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    planning: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_GoalGatesDto"];
                 };
             };
             /** @description validation error */

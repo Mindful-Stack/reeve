@@ -1,3 +1,4 @@
+use super::decision::RequiredDecision;
 use reeve_protocol::{CheckResult, Key, Kind, Readiness, Reason};
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,24 @@ pub struct ReadinessInput {
     pub open_blockers: Vec<Key>,
 }
 
-fn decision_reason(d: &DecisionFact) -> Option<Reason> {
+/// A decision's readiness fact: the one way every reader builds it (readiness's loader and the sprint planning read).
+/// `repo_configured` starts true; the handler sets it from the settings (`Handlers::mark_repo_configured`), which the
+/// repo does not know.
+pub fn decision_fact(d: &RequiredDecision) -> DecisionFact {
+    DecisionFact {
+        id: d.id(),
+        title: d.title().to_owned(),
+        check: d.check().clone(),
+        closed: d.closed().is_some(),
+        has_record: d.record().is_some(),
+        record_repo: d.record().map(|r| r.repo().to_owned()),
+        repo_configured: true,
+    }
+}
+
+/// The reason an open, unsatisfied decision gives (kb/ADR-0018 R3), or None for a closed or satisfied one. Readiness
+/// and the sprint planning read both call it, so a gate and a story's reason never disagree.
+pub fn decision_reason(d: &DecisionFact) -> Option<Reason> {
     if d.closed {
         return None;
     }
