@@ -21,7 +21,7 @@
 	import Avatar from '#lib/ui/Avatar.svelte';
 	import StoryDrawer from '#lib/components/StoryDrawer.svelte';
 	import DecisionDrawer from '#lib/components/DecisionDrawer.svelte';
-	import { storyHref } from '#lib/drawer.ts';
+	import { decisionId, hasDrawer, storyHref } from '#lib/drawer.ts';
 	import Logo from '#lib/components/Logo.svelte';
 	import GoalPicker from '#lib/components/GoalPicker.svelte';
 	import type { LayoutProps } from './$types';
@@ -90,12 +90,7 @@
 	const drawerKey = $derived(page.url.searchParams.get('story'));
 	/** `?decision=ID` opens the decision drawer the same way. The two are mutually exclusive (links drop the other, see
 	 *  #lib/drawer.ts); a URL with both shows the story. Anything but a positive whole number opens nothing. */
-	const drawerDecision = $derived.by(() => {
-		const raw = page.url.searchParams.get('decision');
-		return raw !== null && /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
-	});
-	/** The URL names a drawer, whichever. */
-	const hasDrawer = (u: URL) => u.searchParams.has('story') || u.searchParams.has('decision');
+	const drawerDecision = $derived(decisionId(page.url));
 
 	// Focus returns to whatever opened the drawer (a card's title link, a row's title) when it closes. Moving from one
 	// story to another (a blocker link), or between a decision and a story, remounts the drawer but keeps the first opener. Captured in onNavigate: the
@@ -128,7 +123,7 @@
 	let reportButton: HTMLButtonElement | undefined = $state();
 	let drawerWasOpen = false;
 	$effect.pre(() => {
-		const open = drawerKey !== null || drawerDecision !== null;
+		const open = hasDrawer(page.url);
 		if (!open && drawerWasOpen) {
 			const o = opener;
 			opener = null;

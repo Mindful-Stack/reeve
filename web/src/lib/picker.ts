@@ -3,7 +3,7 @@
 export type PickerOption = { value: string; label: string };
 
 /** The options whose label holds every whitespace-separated word of `query`, case-insensitively, in list order. */
-export function narrow(options: PickerOption[], query: string): PickerOption[] {
+export function narrow(options: readonly PickerOption[], query: string): readonly PickerOption[] {
 	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
 	if (words.length === 0) return options;
 	return options.filter((o) => {
@@ -16,11 +16,11 @@ export function narrow(options: PickerOption[], query: string): PickerOption[] {
 export const PICKER_INPUT = 'input[role="combobox"]';
 
 /** `options`, plus the current value when the list does not hold it (an epic or initiative the list does not hold, a label no longer in use). */
-export function withCurrent(options: PickerOption[], value: string): PickerOption[] {
+export function withCurrent(options: readonly PickerOption[], value: string): readonly PickerOption[] {
 	if (value === '' || options.some((o) => o.value === value)) return options;
 	return [...options, { value, label: value }];
 }
 
 /** Epics or initiatives as options: "KEY Title", valued by the key. Every site labels them this one way. */
-export const keyed = (items: readonly { key: string; title: string }[]): PickerOption[] =>
+export const keyed = (items: readonly { key: string; title: string }[]): readonly PickerOption[] =>
 	items.map((i) => ({ value: i.key, label: `${i.key} ${i.title}` }));
