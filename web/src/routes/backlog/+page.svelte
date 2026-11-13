@@ -33,6 +33,8 @@
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import StoryForm from '#lib/components/StoryForm.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
@@ -526,15 +528,7 @@
 		<form aria-label="Change epic" onsubmit={saveEpic}>
 			<label class="field">
 				Epic
-				<select bind:value={changingEpic.epic} disabled={busy}>
-					<option value="">No epic</option>
-					{#each epics as ep (ep.key)}
-						<option value={ep.key}>{ep.key} {ep.title}</option>
-					{/each}
-					{#if c.item.story.epic && !epics.some((ep) => ep.key === c.item.story.epic)}
-						<option value={c.item.story.epic}>{c.item.story.epic}</option>
-					{/if}
-				</select>
+				<Picker label="Epic" options={keyed(epics)} bind:value={changingEpic.epic} empty="No epic" disabled={busy} />
 			</label>
 			<div class="actions">
 				<button type="button" onclick={() => (changingEpic = null)} disabled={busy}>Cancel</button>

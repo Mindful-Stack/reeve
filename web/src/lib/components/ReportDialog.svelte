@@ -4,10 +4,11 @@
 	import { tick, untrack } from 'svelte';
 	import { api, unwrap, ApiError, Refused } from '#lib/api/client.ts';
 	import type { SimilarStory, Story } from '#lib/api/types.ts';
-	import { COLUMN_LABEL, fullLabel, type Kind } from '#lib/board.ts';
+	import { fullLabel, hitState, type Kind } from '#lib/board.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import { levelOfKind } from '#lib/glyphs.ts';
+	import { points, QUERY_MAX, QUERY_MIN } from '#lib/similar.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { report, discardDraft, isUntouched, payloadOf, payloadText, reportUploads, templateFor } from '#lib/report.svelte.ts';
 	import { attachable } from '#lib/attach.svelte.ts';
@@ -26,10 +27,7 @@
 		{ kind: 'chore', label: 'Maintenance task', help: 'Cleanup, upgrades or routine upkeep.' }
 	];
 	const id = $props.id();
-	const MIN = 8;
 	const COUNT_FROM = 180;
-	const MAX = 200;
-	const points = (s: string): number => [...s].length;
 
 	// The form renders only while a draft exists (see the {#if} below): Discard and a create set it to null.
 	const d = $derived(report.draft!);
@@ -60,7 +58,7 @@
 			// A kept draft whose send was lost still says so; any other error belongs to a draft that is gone.
 			error = d?.uncertain ? LOST : null;
 			// The title is focused by Dialog's focusFirst (it is the first field); only a resume moves focus after that.
-			if (d && points(d.title.trim()) >= MIN) titleChanged(0);
+			if (d && points(d.title.trim()) >= QUERY_MIN) titleChanged(0);
 		});
 		return () => {
 			clearTimeout(timer);
@@ -94,9 +92,9 @@
 	/** Trims the title to 200 code points from the text just typed (before the caret), keeping what follows it. */
 	function fit(el: HTMLInputElement) {
 		const cps = [...el.value];
-		if (cps.length <= MAX) return;
+		if (cps.length <= QUERY_MAX) return;
 		const caret = [...el.value.slice(0, el.selectionStart ?? el.value.length)].length;
-		const keep = Math.max(0, caret - (cps.length - MAX));
+		const keep = Math.max(0, caret - (cps.length - QUERY_MAX));
 		el.value = [...cps.slice(0, keep), ...cps.slice(caret)].join('');
 		const pos = cps.slice(0, keep).join('').length;
 		el.setSelectionRange(pos, pos);
@@ -129,7 +127,7 @@
 		clearTimeout(timer);
 		const mine = ++seq; // any older answer, in flight or not, is now stale
 		const q = d.title.trim();
-		if (points(q) < MIN) {
+		if (points(q) < QUERY_MIN) {
 			similar = { state: 'idle', hits: [] };
 			return;
 		}
@@ -199,8 +197,6 @@
 		}
 	}
 
-	const hitState = (h: SimilarStory): string =>
-		h.delivery === 'done' && h.resolution ? `done, ${h.resolution}` : COLUMN_LABEL[h.delivery];
 	const status = $derived(
 		similar.state === 'checking'
 			? 'Checking similar work…'
@@ -229,7 +225,7 @@
 					disabled={busy}
 				/>
 			</label>
-			{#if points(d.title) >= COUNT_FROM}<p class="counter" id="{id}-count">{points(d.title)} / {MAX}</p>{/if}
+			{#if points(d.title) >= COUNT_FROM}<p class="counter" id="{id}-count">{points(d.title)} / {QUERY_MAX}</p>{/if}
 
 			<p class="hint status" aria-live="polite">{status}</p>
 			{#if similar.hits.length > 0}

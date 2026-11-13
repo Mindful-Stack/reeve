@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import { levelOfKind } from '#lib/glyphs.ts';
 	import { onMount, tick } from 'svelte';
@@ -40,6 +41,8 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import UrgentLine from '#lib/components/UrgentLine.svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import PromiseDialog from '#lib/components/PromiseDialog.svelte';
 	import PromiseLine from '#lib/components/PromiseLine.svelte';
 	import ClearPromiseDialog from '#lib/components/ClearPromiseDialog.svelte';
@@ -738,6 +741,7 @@
 					<label>Title <input bind:value={decision.title} required disabled={busy} /></label>
 					<label>Decider <input type="email" bind:value={decision.decider} required disabled={busy} placeholder="name@example.com" /></label>
 					<label>Due <input type="date" bind:value={decision.due} disabled={busy} /></label>
+					<DueShortcuts bind:value={decision.due} disabled={busy} />
 					<div class="actions">
 						<button type="button" disabled={locked('decision')} onclick={() => cancel('decision')}>Cancel</button>
 						<button type="submit" disabled={busy || !decision.title.trim() || !decision.decider.trim()}
@@ -827,17 +831,9 @@
 
 			<div class="field">
 				{#if editing.has('epic')}
-					<label for="drawer-epic" class="name">Epic</label>
+					<span class="name" aria-hidden="true">Epic</span>
 					<form id="drawer-epic-form" onsubmit={saveEpic} onkeydown={cancelOnEscape('epic')}>
-						<select id="drawer-epic" bind:value={epic} disabled={locked('epic')}>
-							<option value="">none</option>
-							{#each epics as ep (ep.key)}
-								<option value={ep.key}>{ep.key} {ep.title}</option>
-							{/each}
-							{#if s.epic && !epics.some((ep) => ep.key === s.epic)}
-								<option value={s.epic}>{s.epic}</option>
-							{/if}
-						</select>
+						<Picker label="Epic" options={keyed(epics)} bind:value={epic} empty="No epic" disabled={locked('epic')} />
 						<button type="button" disabled={locked('epic')} onclick={() => cancel('epic')}>Cancel</button>
 						<button type="submit" disabled={busy}>Save</button>
 					</form>
@@ -1013,9 +1009,7 @@
 {#if promise.open && story}
 	<PromiseDialog
 		key={story.key}
-		activeEnds={sprints?.active?.sprint.ends_on ?? null}
-		draftEnds={sprints?.draft?.ends_on ?? null}
-		today={sprints?.today ?? null}
+		{sprints}
 		sprintsFailed={sprints == null}
 		current={story.promise?.own ?? null}
 		epic={inheritedEpic(story.promise)}
@@ -1272,6 +1266,9 @@
 		flex: 1;
 		min-width: 0;
 		font: inherit;
+	}
+	.fields :global(.picker) {
+		flex: 1 1 12rem;
 	}
 	.stack {
 		display: grid;

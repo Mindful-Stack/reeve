@@ -4,6 +4,8 @@
      URL in place (#lib/backlog.ts reads it); the server filters (kb/ADR-0021 R1). -->
 <script module lang="ts">
 	import { tick } from 'svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 
 	/** After a control that removed itself (the chip's ×, Clear filters here or in the page's empty state): focus the
@@ -39,7 +41,7 @@
 	}: {
 		epics: Epic[];
 		initiatives: Initiative[];
-		/** The Label select's options (the page's: the todo list's, the rows' and the selected one). */
+		/** The Label picker's options (the page's: the todo list's, the rows' and the selected one). */
 		labels: string[];
 		children?: Snippet;
 	} = $props();
@@ -76,7 +78,7 @@
 
 	const epic = $derived(p.get('epic') ?? '');
 	const initiative = $derived(p.get('initiative') ?? '');
-	/** The Epic select's options: the chosen initiative's epics (all of them when none is chosen, or when the URL names
+	/** The Epic picker's options: the chosen initiative's epics (all of them when none is chosen, or when the URL names
 	 *  one by a reference the list does not hold), plus the chosen epic. */
 	const epicOptions = $derived(
 		initiative && initiatives.some((i) => i.key === initiative) ? epics.filter((e) => e.initiative === initiative || e.key === epic) : epics
@@ -125,26 +127,21 @@
 	</label>
 	<label class="field inline">
 		Epic
-		<select value={epic} onchange={(e) => set('epic', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each epicOptions as e (e.key)}<option value={e.key}>{e.key} {e.title}</option>{/each}
-			{#if epic && !epics.some((e) => e.key === epic)}<option value={epic}>{epic}</option>{/if}
-		</select>
+		<Picker label="Epic" options={keyed(epicOptions)} value={epic} empty="any" onchange={(v) => set('epic', v || null)} />
 	</label>
 	<label class="field inline">
 		Initiative
-		<select value={initiative} onchange={(e) => set('initiative', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each initiatives as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-			{#if initiative && !initiatives.some((i) => i.key === initiative)}<option value={initiative}>{initiative}</option>{/if}
-		</select>
+		<Picker label="Initiative" options={keyed(initiatives)} value={initiative} empty="any" onchange={(v) => set('initiative', v || null)} />
 	</label>
 	<label class="field inline">
 		Label
-		<select value={p.get('label') ?? ''} onchange={(e) => set('label', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each labels as l (l)}<option value={l}>{l}</option>{/each}
-		</select>
+		<Picker
+			label="Label"
+			options={labels.map((l) => ({ value: l, label: l }))}
+			value={p.get('label') ?? ''}
+			empty="any"
+			onchange={(v) => set('label', v || null)}
+		/>
 	</label>
 	<label class="field inline">
 		Promise
@@ -216,7 +213,7 @@
 		gap: 6px;
 		color: var(--muted);
 	}
-	/* A long option (an epic's key and title) shrinks the select, not the page: at 320px the label fits the panel. */
+	/* A long option (an epic's key and title) shrinks the picker, not the page: at 320px the label fits the panel. */
 	.inline {
 		display: flex;
 		align-items: center;

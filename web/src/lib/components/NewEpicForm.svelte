@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { focusIsFree } from '#lib/focus.ts';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
@@ -11,7 +13,7 @@
 	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
 	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
-	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a select of
+	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a picker of
 	// `initiatives` plus "none" picks it. Mount it under `{#key}` of the page's item so a draft never moves to another item.
 	let {
 		initiative,
@@ -92,10 +94,7 @@
 	{#if initiative === undefined}
 		<label class="field">
 			Initiative
-			<select bind:value={draft.initiative} disabled={busy}>
-				<option value="">none</option>
-				{#each ordered as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-			</select>
+			<Picker label="Initiative" options={keyed(ordered)} bind:value={draft.initiative} empty="No initiative" disabled={busy} />
 		</label>
 	{/if}
 	<div class="field">

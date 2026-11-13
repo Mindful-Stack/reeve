@@ -1,5 +1,5 @@
 // Pure helpers for the delivery board: columns, reason labels, filters and rank placement.
-import type { PromisedFilter, Readiness, Reason, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import type { PromisedFilter, Readiness, Reason, SimilarStory, Story, StoryWithReadiness } from '#lib/api/types.ts';
 import { promisedMatches } from '#lib/promise.ts';
 
 export type Column = Story['delivery'];
@@ -22,6 +22,11 @@ export const COLUMN_LABEL: Record<Column, string> = {
 /** The board's column headings: todo reads "up next" there only. COLUMN_LABEL keeps naming the delivery state (the
  *  drawer, the override prompt, the card's "Move to" items), kb/ADR-0002 R6. */
 export const BOARD_HEADING: Record<Column, string> = { ...COLUMN_LABEL, todo: 'up next' };
+
+/** Where a similar story stands: its delivery state, and for a finished one how it ended (shown in the Report dialog and in
+ *  triage). A resolution on a story that is not done is stale and not shown. */
+export const hitState = (h: Pick<SimilarStory, 'delivery' | 'resolution'>): string =>
+	h.delivery === 'done' && h.resolution ? `done, ${h.resolution}` : COLUMN_LABEL[h.delivery];
 
 /** The key of the full-column story right after `part`'s last story, or null (the part ends the column, or is empty).
  *  A move to the end of an Up next part ranks before it, so the card stays inside its part instead of landing after every

@@ -9,6 +9,7 @@ import {
 	COLUMNS,
 	dropBefore,
 	fullLabel,
+	hitState,
 	neighbourBefore,
 	orderAfterDrop,
 	resolutionsFor,
@@ -316,5 +317,13 @@ describe('storyStatus', () => {
 	it('shows a done story by its resolution', () => {
 		expect(storyStatus(statusItem('done', [], 'dropped'))).toEqual({ word: 'dropped', tone: 'muted' });
 		expect(storyStatus(statusItem('done'))).toEqual({ word: 'done', tone: 'muted' });
+	});
+});
+
+describe('hitState', () => {
+	it('names a finished hit with its resolution, any other by its delivery state; a stale resolution is not shown', () => {
+		expect(hitState({ delivery: 'done', resolution: 'dropped' })).toBe('done, dropped');
+		expect(hitState({ delivery: 'done' })).toBe('done');
+		expect(hitState({ delivery: 'in_progress', resolution: 'dropped' })).toBe('in progress');
 	});
 });
