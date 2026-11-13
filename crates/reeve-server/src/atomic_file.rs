@@ -1,5 +1,5 @@
 //! Writes a file atomically with mode 0600: a temporary file beside the target, created exclusively, synced, then
-//! renamed over the target. A copy of `crates/reeve/src/commands/export.rs`'s writer, kept separate because
+//! renamed over the target. A copy of `crates/reeve/src/atomic_file.rs`'s writer, kept separate because
 //! `reeve-server` must not depend on the CLI crate and `reeve-protocol` holds wire types only; change both together.
 
 use std::io::Write;

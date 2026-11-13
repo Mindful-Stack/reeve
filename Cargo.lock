@@ -1086,7 +1086,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3005,7 +3005,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "reeve"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3263,11 +3263,12 @@ dependencies = [
  "tokio",
  "toml",
  "unicode-width",
+ "uuid",
 ]
 
 [[package]]
 name = "reeve-activity"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3283,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-identity"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3309,7 +3310,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-planning"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3330,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-protocol"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3342,7 +3343,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3387,7 +3388,7 @@ dependencies = [
 
 [[package]]
 name = "reeve-testdb"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hex",
  "sha2 0.10.9",
@@ -3585,15 +3586,15 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.2",
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4423,7 +4424,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5388,7 +5389,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

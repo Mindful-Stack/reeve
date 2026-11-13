@@ -781,8 +781,8 @@ impl Handlers {
             .collect())
     }
 
-    /// The story, its ancestors, open decisions, blockers, comments, readiness and the active sprint's goals it serves,
-    /// all from one `REPEATABLE READ READ ONLY` snapshot, in a number of statements that does not depend on the number
+    /// The story, its ancestors, open decisions, blockers, comments, attachments, readiness and the active sprint's goals
+    /// it serves, all from one `REPEATABLE READ READ ONLY` snapshot, in a number of statements that does not depend on the number
     /// of blockers or goals.
     pub async fn story_context(
         &self,
@@ -872,6 +872,16 @@ impl Handlers {
         let story = dtos.next().ok_or(HandlerError::NotFound)?;
         let blockers = dtos.collect();
         let goals = self.goals_context_in(tx, &story.goals).await?;
+        let attachments = self
+            .ports
+            .attachments
+            .list_context_attachments_in(
+                tx,
+                key,
+                epic.as_ref().map(|e| e.key()),
+                initiative.as_ref().map(|i| &i.key),
+            )
+            .await?;
         Ok(StoryContextDto {
             story,
             epic: epic
@@ -890,6 +900,7 @@ impl Handlers {
                 .await?,
             readiness: self.readiness_in(tx, key).await?,
             goals,
+            attachments: attachments.iter().map(super::dto::attachment_dto).collect(),
         })
     }
 

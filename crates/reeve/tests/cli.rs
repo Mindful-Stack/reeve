@@ -3326,6 +3326,106 @@ fn war_room_clear_101_rows_are_all_posted_and_the_server_refusal_printed() {
     assert_eq!(out_text(&out), "");
 }
 
+/// Answers one request with `status`, `content_type` and `body`; returns the request line.
+fn serve_raw(
+    status: u16,
+    content_type: &'static str,
+    body: &'static [u8],
+) -> (String, std::thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let h = std::thread::spawn(move || {
+        let stream = accept(&listener);
+        let (line, _) = read_request(&stream);
+        let mut w = stream;
+        write!(
+            w,
+            "HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        )
+        .unwrap();
+        w.write_all(body).unwrap();
+        line
+    });
+    (url, h)
+}
+
+const ATTACHMENT_ID: &str = "0193a6a2-7b1c-7d2e-9f00-000000000001";
+
+fn get_into(url: &str, dir: &std::path::Path) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    Command::cargo_bin("reeve")
+        .unwrap()
+        .env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .args(["attachment", "get", ATTACHMENT_ID, "--json", "--dir"])
+        .arg(dir)
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap()
+}
+
+/// A missing --dir is created (parents too) owner-only, and the extension comes from the answer's type.
+#[test]
+fn attachment_get_creates_a_private_directory() {
+    let (url, server) = serve_raw(200, "image/webp", b"RIFF....WEBP");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("a").join("b");
+    let out = get_into(&url, &dir);
+    assert_eq!(
+        server.join().unwrap(),
+        format!("GET /api/v1/attachments/{ATTACHMENT_ID} HTTP/1.1")
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let want = dir.join(format!("{ATTACHMENT_ID}.webp"));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["value"]["path"], want.to_str().unwrap());
+    assert_eq!(std::fs::read(&want).unwrap(), b"RIFF....WEBP");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+}
+
+/// An answer that is not PNG, JPEG or WebP (kb/ADR-0023 R1) is an error and nothing is written.
+#[test]
+fn attachment_get_refuses_another_content_type() {
+    let (url, server) = serve_raw(200, "text/html", b"<html>");
+    let tmp = tempfile::tempdir().unwrap();
+    let out = get_into(&url, tmp.path());
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["code"], "internal");
+    assert!(v["message"].as_str().unwrap().contains("text/html"), "{v}");
+    assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+}
+
+/// --dir is required: the CLI has no shared default location for private screenshots.
+#[test]
+fn attachment_get_requires_a_directory() {
+    let out = Command::cargo_bin("reeve")
+        .unwrap()
+        .env("REEVE_URL", "http://127.0.0.1:9")
+        .env("REEVE_TOKEN", "reeve_test")
+        .args(["attachment", "get", ATTACHMENT_ID, "--json"])
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--dir"));
+}
+
 /// A story as the promise routes answer it: ABC-12, promised on `on` by its own promise to `to`, open and due this
 /// sprint (the server's derivation, never the CLI's).
 fn promised_story(on: &str, to: Option<&str>) -> serde_json::Value {

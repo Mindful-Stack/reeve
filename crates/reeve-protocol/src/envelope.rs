@@ -34,7 +34,8 @@ pub enum Response<T> {
     Error {
         code: ErrorCode,
         message: String,
-        /// On a `conflict`: the row's version now, or -1 when the server retried a serialisation failure. Absent otherwise.
+        /// On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+        /// serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         current: Option<i64>,
     },

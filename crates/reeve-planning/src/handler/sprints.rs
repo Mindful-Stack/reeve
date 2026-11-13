@@ -1,7 +1,9 @@
-//! Sprints and goals (kb/ADR-0014). The handlers lock, load, call `domain::sprint` and record activity; every rule lives
-//! in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so a close and a goal
-//! write or link queue on the sprint row rather than deadlock, and each rechecks the sprint's state under that lock.
-//! Activity is each transaction's final work: entries are collected and recorded in order immediately before commit.
+//! Sprints and goals (kb/ADR-0014, kb/ADR-0026). The handlers lock, load, call `domain::sprint` and record activity;
+//! every rule lives in the domain. Lock order everywhere: the sprint row first (`sprint_for_update`), then goal rows, so
+//! a close, an opening and a goal write or link queue on the sprint row rather than deadlock. A goal write compares the
+//! locked goal's sprint with the locked sprint first (an opening may have moved the goal), then rechecks the sprint's
+//! state under that lock. Activity is each transaction's final work: entries are collected and recorded in order
+//! immediately before commit.
 use super::*;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
@@ -91,18 +93,25 @@ impl Handlers {
         }
     }
 
-    /// Locks a goal's sprint, then the goal, after checking the sprint's state allows `op`.
+    /// Locks a goal's sprint, then the goal; answers Conflict when the goal is no longer that sprint's (an opening moved
+    /// it to the next draft meanwhile, kb/ADR-0026 R2), and only then checks that the sprint's state allows `op`. The
+    /// Conflict is -1, "concurrent update, retry": a move does not bump the goal's version, and these writes take none.
+    /// Never lock `g.sprint_id` here on a mismatch: holding the goal while waiting for a sprint inverts the lock order
+    /// and deadlocks against a writer that read the new sprint. A goal removed meanwhile answers NotFound, unlink included.
     async fn goal_locked(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
         op: Op,
     ) -> Result<(Sprint, Goal), HandlerError> {
-        // A goal never changes sprint, so the unlocked read names the right row to lock.
+        // Unlocked, so only a hint: an opening may move the goal before this transaction gets the sprint's lock.
         let sprint_id = self.ports.sprints.get_goal_in(tx, id).await?.sprint_id;
         let s = self.ports.sprints.sprint_for_update(tx, sprint_id).await?;
-        allowed(&s, op)?;
         let g = self.ports.sprints.goal_for_update(tx, id).await?;
+        if g.sprint_id != s.id {
+            return Err(HandlerError::Conflict { current: -1 });
+        }
+        allowed(&s, op)?;
         Ok((s, g))
     }
 
@@ -199,14 +208,27 @@ impl Handlers {
         Ok((g, sprint::warnings(count)))
     }
 
-    /// Opens the draft: it becomes active from `c.now`, and the next draft is created in the same transaction.
-    /// Interactive only (kb/ADR-0014 R5).
+    /// Opens the draft with every goal (kb/ADR-0014); `open_sprint_leaving` with nothing left out.
     pub async fn open_sprint(
         &self,
         c: &Ctx,
         id: i64,
         version: i64,
         ends_on: Option<NaiveDate>,
+    ) -> Result<Sprint, HandlerError> {
+        self.open_sprint_leaving(c, id, version, ends_on, &[]).await
+    }
+
+    /// Opens the draft: it becomes active from `c.now`, the next draft is created in the same transaction, and the goals
+    /// in `leave_out` move with their links to that next draft (kb/ADR-0026 R1). An id that is not this draft's goal
+    /// refuses the whole opening. Interactive only (kb/ADR-0014 R5).
+    pub async fn open_sprint_leaving(
+        &self,
+        c: &Ctx,
+        id: i64,
+        version: i64,
+        ends_on: Option<NaiveDate>,
+        leave_out: &[i64],
     ) -> Result<Sprint, HandlerError> {
         interactive(c)?;
         let mut tx = self.pool.begin().await?;
@@ -223,6 +245,19 @@ impl Handlers {
             .is_some()
         {
             return Err(HandlerError::Refused(vec![Reason::SprintActive]));
+        }
+        // Under the draft's lock: `add_goal` and `remove_goal` wait on it, so the draft's goals cannot change before the
+        // move below.
+        let mut left_out = leave_out.to_vec();
+        left_out.sort_unstable();
+        left_out.dedup();
+        if !left_out.is_empty() {
+            let held = self.ports.sprints.goals_of_in(&mut tx, &[id]).await?;
+            if let Some(gid) = left_out.iter().find(|g| !held.iter().any(|h| h.id == **g)) {
+                return Err(HandlerError::Validation(format!(
+                    "goal {gid} is not in sprint {id}"
+                )));
+            }
         }
         let (starts, ends) = sprint::open_dates(c.now, ends_on, self.settings.sprint_length_days)
             .map_err(|e| HandlerError::Validation(e.to_string()))?;
@@ -248,6 +283,12 @@ impl Handlers {
             .insert_draft(&mut tx, ns, ne, c.now)
             .await?
             .ok_or(HandlerError::Refused(vec![Reason::SprintNotDraft]))?;
+        if !left_out.is_empty() {
+            self.ports
+                .sprints
+                .move_goals(&mut tx, &left_out, id, next.id)
+                .await?;
+        }
         self.activity
             .record(
                 &mut tx,
@@ -256,7 +297,7 @@ impl Handlers {
                     "sprint",
                     &id.to_string(),
                     "opened",
-                    serde_json::json!({"starts_on": starts, "ends_on": ends, "next_draft": next.id}),
+                    serde_json::json!({"starts_on": starts, "ends_on": ends, "next_draft": next.id, "left_out": left_out}),
                 ),
             )
             .await?;
@@ -561,13 +602,7 @@ impl Handlers {
     pub async fn unlink_goal(&self, c: &Ctx, goal_id: i64, item: &Key) -> Result<(), HandlerError> {
         let t = self.item_type_of(item).await?;
         let mut tx = self.pool.begin().await?;
-        let g = self.ports.sprints.get_goal_in(&mut tx, goal_id).await?;
-        let s = self
-            .ports
-            .sprints
-            .sprint_for_update(&mut tx, g.sprint_id)
-            .await?;
-        allowed(&s, Op::Unlink)?;
+        self.goal_locked(&mut tx, goal_id, Op::Unlink).await?;
         if !self
             .ports
             .sprints

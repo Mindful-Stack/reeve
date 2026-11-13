@@ -242,6 +242,7 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
                     serde_json::to_value(OpenSprint {
                         version: draft.version,
                         ends_on: ends,
+                        leave_out: Vec::new(),
                     })?,
                 )
                 .await?;

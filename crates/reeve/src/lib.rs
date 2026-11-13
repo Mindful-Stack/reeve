@@ -1,5 +1,6 @@
 //! The `reeve` CLI. `main.rs` is the binary; the library target exists so the TUI's integration tests can drive
 //! `tui::Driver`. Every module except `tui` stays private to the crate.
+mod atomic_file;
 mod client;
 mod commands;
 mod config;
@@ -24,7 +25,7 @@ use clap::Parser;
 )]
 struct Cli {
     /// Print machine-readable JSON (the full response envelope) instead of text. A version conflict's envelope carries
-    /// `current`, the version to re-read from (-1 when the server gave up on a concurrent update).
+    /// `current`, the version to re-read from (-1 for a concurrent update with no version to give: re-read and retry).
     #[arg(long, global = true)]
     json: bool,
     /// Mark keys with plain text ([I], [E], [S], [B], [C]) instead of glyphs, for a terminal that cannot show them; also

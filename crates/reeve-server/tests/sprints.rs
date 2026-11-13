@@ -34,6 +34,47 @@ fn keys(v: &serde_json::Value) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn opening_with_leave_out_moves_that_goal_to_the_next_draft() {
+    let h = harness().await;
+    let mut ids = vec![];
+    for idem in ["keep", "leave"] {
+        let g = ok_value(
+            &h,
+            "POST",
+            "/api/v1/goals",
+            Some(json!({"idempotency_key": idem, "outcome": idem, "check": "c"})),
+        )
+        .await;
+        ids.push(g["goal"]["id"].as_i64().unwrap());
+    }
+    let draft = ok_value(&h, "GET", "/api/v1/sprints", None).await["draft"].clone();
+    let sid = draft["id"].as_i64().unwrap();
+    ok_value(
+        &h,
+        "POST",
+        &format!("/api/v1/sprints/{sid}/open"),
+        Some(json!({"version": draft["version"], "leave_out": [ids[1]]})),
+    )
+    .await;
+
+    let all = ok_value(&h, "GET", "/api/v1/sprints", None).await;
+    let goal_ids = |s: &serde_json::Value| -> Vec<i64> {
+        s["goals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["id"].as_i64().unwrap())
+            .collect()
+    };
+    assert_eq!(goal_ids(&all["active"]["sprint"]), vec![ids[0]]);
+    assert_eq!(
+        goal_ids(&all["draft"]),
+        vec![ids[1]],
+        "the left-out goal is in the next draft"
+    );
+}
+
+#[tokio::test]
 async fn a_sprint_cycle_over_the_wire() {
     let h = harness().await;
     let epic = ready_epic(&h, "ready-epic").await;
