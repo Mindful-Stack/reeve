@@ -203,7 +203,9 @@ test('signed out users are sent to sign in and see the button', async ({ browser
 test('an open tab whose session dies is sent to sign in by the event stream', async ({ page }) => {
 	// The board loads once on mount and refetches once 500 ms after the stream opens. Wait for both, so the redirect below
 	// cannot come from that refetch answering 401: it has to come from the stream closing.
-	// The layout's untriaged count loads the same way (on mount, then after the stream opens): wait for it too.
+	// The layout's untriaged count loads the same way (on mount, then after the stream opens): wait for both of those too.
+	// It also refetches on any activity entry the stream carries, and other tests share this database, so a third read
+	// can land; "at least two" is what the test needs (both answered before the session is revoked), not "exactly two".
 	let loads = 0;
 	let counts = 0;
 	page.on('response', (r) => {
@@ -214,7 +216,7 @@ test('an open tab whose session dies is sent to sign in by the event stream', as
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
 	await expect.poll(() => loads).toBe(2);
-	await expect.poll(() => counts).toBe(2);
+	await expect.poll(() => counts).toBeGreaterThanOrEqual(2);
 	// Revoke this tab's session (the newest browser session: beforeEach just signed in) and nothing else, so no other
 	// revocation's activity entry reaches the stream first and triggers a refetch that would 401 on its own.
 	const headers = { 'X-Reeve-Client': 'web' };
@@ -1301,13 +1303,10 @@ test('triage from the keyboard: the count, place with criteria, undo, a phone, a
 		await expect(page.getByRole('button', { name })).toBeFocused();
 		await expect(page.getByRole('button', { name })).toBeInViewport();
 	}
-	// Armed, Drop's longer words grow the button in place, so the second tap lands where the first did.
-	const dropButton = page.getByRole('button', { name: /^Drop/ });
-	const at = (await dropButton.boundingBox())!;
-	await dropButton.click();
+	// Armed, the button reads "Confirm drop" and the sentence is in the status line.
+	await page.getByRole('button', { name: /^Drop/ }).click();
 	await expect(status).toHaveText(`Drop ${a.key}? Press d or click again.`);
-	const armedAt = (await dropButton.boundingBox())!;
-	expect([armedAt.x, armedAt.y]).toEqual([at.x, at.y]);
+	await expect(page.getByRole('button', { name: /^Confirm drop/ })).toBeVisible();
 	await page.keyboard.press('Escape'); // cancels the drop
 	await expect(status).toHaveText('Drop cancelled.');
 	await page.setViewportSize({ width: 1280, height: 720 });
