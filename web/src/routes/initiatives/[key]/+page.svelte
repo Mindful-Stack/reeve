@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import GoalLinkButton from '#lib/components/GoalLinkButton.svelte';
 	import { page } from '$app/state';
@@ -687,6 +688,7 @@
 				<label class="field">Title <input bind:value={decision.title} required disabled={decisionBusy} /></label>
 				<label class="field">Decider <input type="email" bind:value={decision.decider} required disabled={decisionBusy} placeholder="name@example.com" /></label>
 				<label class="field">Due <input type="date" bind:value={decision.due} disabled={decisionBusy} /></label>
+				<DueShortcuts bind:value={decision.due} disabled={decisionBusy} />
 				{#if decisionError}<p class="error" role="alert">{decisionError}</p>{/if}
 				<button type="submit" class="primary" disabled={decisionBusy || !decision.title.trim() || !decision.decider.trim()}>Require decision</button>
 			</form>
@@ -815,13 +817,6 @@
 		display: grid;
 		gap: 0.2rem;
 		font-size: 14px;
-	}
-	.decision-form {
-		display: grid;
-		gap: 12px;
-	}
-	.decision-form button {
-		justify-self: start;
 	}
 	.error {
 		margin: 0;

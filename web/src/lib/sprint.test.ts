@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { GoalProgress, SprintCounts } from '#lib/api/types.ts';
+import type { GoalProgress, SprintCounts, Sprints } from '#lib/api/types.ts';
+import { sprint, sprintView } from '#lib/test/fixtures.ts';
 import words from './promise.fixture.json';
 import {
 	promisesHeading,
@@ -12,6 +13,7 @@ import {
 	nudgeStillDue,
 	RULE,
 	shouldNudge,
+	sprintEnds,
 	truncate,
 	upkeepText,
 	upkeepTextAt,
@@ -193,4 +195,25 @@ describe('a closed sprint\'s promise dates', () => {
 	it.each(headingRows.map((r) => [r.label, r] as const))('promisesHeading: %s', (_, r) =>
 		expect(promisesHeading(r.after, r.ends_on)).toBe(r.text)
 	);
+});
+
+describe('sprintEnds', () => {
+	const sprints = (activeEnds: string | null, draftEnds: string | null, today: string | null): Sprints => ({
+		active: activeEnds ? sprintView(sprint({ ends_on: activeEnds })) : null,
+		draft: draftEnds ? sprint({ id: 2, state: 'draft', ends_on: draftEnds }) : null,
+		closed: [],
+		today
+	});
+	it('offers both ends from today on, labelled with the day', () => {
+		expect(sprintEnds(sprints('2026-11-17', '2026-12-01', '2026-11-12'))).toEqual([
+			{ shortcut: 'this_sprint', label: 'End of this sprint (17 Nov)', ends: '2026-11-17' },
+			{ shortcut: 'next_sprint', label: 'End of next sprint (1 Dec)', ends: '2026-12-01' }
+		]);
+	});
+	it('offers an end on today itself, never a past one, and none while today is unknown', () => {
+		expect(sprintEnds(sprints('2026-11-12', null, '2026-11-12')).map((x) => x.shortcut)).toEqual(['this_sprint']);
+		expect(sprintEnds(sprints('2026-11-10', null, '2026-11-12'))).toEqual([]);
+		expect(sprintEnds(sprints('2026-11-17', '2026-12-01', null))).toEqual([]);
+		expect(sprintEnds(null)).toEqual([]);
+	});
 });

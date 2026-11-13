@@ -15,7 +15,7 @@ export type Prepared<T> = { ok: true; body: T; text: string } | { ok: false; err
 /** An edit: the fields that changed, nothing to send, or why it cannot be sent. */
 export type Edit<T> = { kind: 'send'; body: T } | { kind: 'unchanged' } | { kind: 'invalid'; error: string };
 
-const BLANK_TITLE = 'Title must not be blank.';
+export const BLANK_TITLE = 'Title must not be blank.';
 const BAD_MONTH = 'Target month must be YYYY-MM.';
 
 export type InitiativeDraft = { title: string; horizon: string; target_month: string; brief: string };
@@ -49,8 +49,8 @@ export function fieldsText(d: Record<string, string>): string {
  *  merge after a conflict (what is kept) use, so the two can never disagree about whether the user changed a field. */
 export type Same<T> = { [K in keyof T]: (a: string, b: string) => boolean };
 
-const trimmed = (a: string, b: string) => a.trim() === b.trim();
-const exact = (a: string, b: string) => a === b;
+export const trimmed = (a: string, b: string) => a.trim() === b.trim();
+export const exact = (a: string, b: string) => a === b;
 /** Blank means none; otherwise emails compare case-insensitively (`sameEmail`, as the server normalises owners). */
 const email = (a: string, b: string) => (!a.trim() || !b.trim() ? a.trim() === b.trim() : sameEmail(a, b));
 
