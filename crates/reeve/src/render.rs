@@ -47,7 +47,11 @@ pub fn reason(r: &Reason) -> String {
             }
             None => format!("decision #{decision_id} \"{title}\" is {status}"),
         },
-        Reason::BlockedBy { story } => format!("blocked by {}", mark(Level::Story, story)),
+        Reason::BlockedBy {
+            story,
+            delivery,
+            owner,
+        } => blocked_by_sentence(&mark(Level::Story, story), *delivery, owner.as_deref()),
         Reason::ResolutionRequired => "a resolution is required to move to done".into(),
         Reason::CompletedNeedsActiveOrigin => {
             "completed needs the story to have been in active work".into()
@@ -310,13 +314,48 @@ fn pr_status_word(s: PrStatus) -> &'static str {
     }
 }
 
+/// The delivery state as prose ("in review"), where `state_word` is the hyphenated CLI token.
+pub fn state_phrase(s: DeliveryState) -> &'static str {
+    match s {
+        DeliveryState::Todo => "todo",
+        DeliveryState::InProgress => "in progress",
+        DeliveryState::InReview => "in review",
+        DeliveryState::Testing => "testing",
+        DeliveryState::Done => "done",
+    }
+}
+
+/// kb/ADR-0027's BlockedBy in full: what the blocker is doing and who can unblock it.
+fn blocked_by_sentence(story: &str, delivery: DeliveryState, owner: Option<&str>) -> String {
+    let state = state_phrase(delivery);
+    match (delivery, owner) {
+        (DeliveryState::Todo, None) => {
+            format!("blocked by {story}: todo, not yet started by anyone")
+        }
+        (DeliveryState::Todo, Some(o)) => format!("blocked by {story}: todo, owned by {o}"),
+        (_, Some(o)) => format!(
+            "blocked by {story}: {state}, owned by {o}; it unblocks when merged, or ask its owner"
+        ),
+        (_, None) => format!("blocked by {story}: {state}, no owner; it unblocks when merged"),
+    }
+}
+
 pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
     let ready_word = if r.ready {
         "ready".to_string()
     } else {
         r.reasons
             .first()
-            .map(reason)
+            .map(|r| match r {
+                Reason::BlockedBy {
+                    story, delivery, ..
+                } => format!(
+                    "blocked by {} ({})",
+                    mark(Level::Story, story),
+                    state_phrase(*delivery)
+                ),
+                other => reason(other),
+            })
             .unwrap_or_else(|| "not ready".into())
     };
     format!(
@@ -1118,11 +1157,28 @@ mod tests {
             out.starts_with("■ ABC-2 Hosting") && out.contains("initiative: ◆ ABC-3"),
             "{out}"
         );
-        assert_eq!(
+        let blocked = |delivery, owner: Option<&str>| {
             reason(&Reason::BlockedBy {
-                story: "ABC-4".parse().unwrap()
-            }),
-            "blocked by ● ABC-4"
+                story: "ABC-4".parse().unwrap(),
+                delivery,
+                owner: owner.map(str::to_string),
+            })
+        };
+        assert_eq!(
+            blocked(DeliveryState::Todo, None),
+            "blocked by ● ABC-4: todo, not yet started by anyone"
+        );
+        assert_eq!(
+            blocked(DeliveryState::Todo, Some("dan@example.com")),
+            "blocked by ● ABC-4: todo, owned by dan@example.com"
+        );
+        assert_eq!(
+            blocked(DeliveryState::InReview, Some("dan@example.com")),
+            "blocked by ● ABC-4: in review, owned by dan@example.com; it unblocks when merged, or ask its owner"
+        );
+        assert_eq!(
+            blocked(DeliveryState::InProgress, None),
+            "blocked by ● ABC-4: in progress, no owner; it unblocks when merged"
         );
         assert_eq!(
             reason(&Reason::Untriaged),
@@ -1298,6 +1354,30 @@ mod tests {
             "{}",
             epic(&e)
         );
+    }
+
+    #[test]
+    fn a_list_row_shortens_only_blocked_by() {
+        let r = Readiness {
+            ready: false,
+            reasons: vec![Reason::BlockedBy {
+                story: "ABC-4".parse().unwrap(),
+                delivery: DeliveryState::InReview,
+                owner: Some("dan@example.com".into()),
+            }],
+        };
+        let row = story_row(&dto(vec![]), &r);
+        assert!(row.contains("blocked by ● ABC-4 (in review)"), "{row}");
+        assert!(!row.contains("it unblocks"), "{row}");
+        let d = Readiness {
+            ready: false,
+            reasons: vec![Reason::DecisionProposedPrOpen {
+                decision_id: 7,
+                title: "Use Postgres".into(),
+            }],
+        };
+        let row = story_row(&dto(vec![]), &d);
+        assert!(row.contains("decision #7 \"Use Postgres\""), "{row}");
     }
 
     #[test]

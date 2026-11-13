@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Reason } from '#lib/api/types.ts';
 import { moveStep, refusal } from '#lib/moves.ts';
 
-const blocked: Reason = { reason: 'blocked_by', story: 'ABC-2' };
+const blocked: Reason = { reason: 'blocked_by', story: 'ABC-2', delivery: 'todo', owner: null };
 const rule: Reason = { reason: 'resolution_required' };
 
 describe('moveStep', () => {
@@ -27,7 +27,7 @@ describe('refusal', () => {
 	it('gives automation a notice instead', () => {
 		expect(refusal('ABC-1', 'in_progress', [blocked], true, false)).toEqual({
 			kind: 'notice',
-			notice: 'ABC-1 was not moved to in progress: blocked by ABC-2.'
+			notice: 'ABC-1 was not moved to in progress: blocked by ABC-2: todo, not yet started by anyone.'
 		});
 	});
 	it('never offers an override for a delivery rule', () => {

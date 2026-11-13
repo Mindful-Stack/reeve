@@ -46,7 +46,7 @@ export function columnHeading(col: Column, doneWindowDays: number | undefined): 
 }
 
 /** Up next: the todo column, ready stories first; both parts keep the column's rank order. Readiness is the
- *  server's answer, never recomputed (kb/ADR-0018 R1). */
+ *  server's answer, never recomputed (kb/ADR-0027 R1). */
 export function splitUpNext(todo: StoryWithReadiness[]): {
 	ready: StoryWithReadiness[];
 	notReady: StoryWithReadiness[];
@@ -78,7 +78,7 @@ export const SHORT = {
 	decision_repo_not_configured: () => 'decision: record in an unchecked repository',
 	decision_not_accepted: (r) =>
 		r.superseded_by ? `decision: superseded by ${r.superseded_by}, re-point` : `decision: ${r.status}`,
-	blocked_by: (r) => `blocked by ${r.story}`,
+	blocked_by: (r) => `blocked by ${r.story} (${COLUMN_LABEL[r.delivery]})`,
 	resolution_required: () => 'resolution required',
 	completed_needs_active_origin: () => 'completed needs active work',
 	override_needs_reason: () => 'override needs a reason',
@@ -90,6 +90,15 @@ export const SHORT = {
 	sprint_closed: () => 'sprint closed',
 	interactive_only: () => 'interactive only'
 } satisfies Labels;
+
+/** What the blocker is doing and who can unblock it (kb/ADR-0027). */
+function blockerClause(delivery: Column, owner?: string | null): string {
+	if (delivery === 'todo') return owner ? `todo, owned by ${owner}` : 'todo, not yet started by anyone';
+	const state = COLUMN_LABEL[delivery];
+	return owner
+		? `${state}, owned by ${owner}; it unblocks when merged, or ask its owner`
+		: `${state}, no owner; it unblocks when merged`;
+}
 
 /** The full sentence: the badge's title attribute, the override prompt and refusal notices. */
 export const FULL = {
@@ -105,7 +114,7 @@ export const FULL = {
 		r.superseded_by
 			? `decision "${r.title}": superseded by ${r.superseded_by}, re-point`
 			: `decision "${r.title}" is ${r.status}`,
-	blocked_by: (r) => `blocked by ${r.story}`,
+	blocked_by: (r) => `blocked by ${r.story}: ${blockerClause(r.delivery, r.owner)}`,
 	resolution_required: () => 'a resolution is required to move to done',
 	completed_needs_active_origin: () => 'completed needs the story to have been in active work',
 	override_needs_reason: () => 'an override needs a reason',
@@ -134,7 +143,7 @@ export function shortReason(r: Readiness): string {
 export type StoryStatus = { word: string; tone: 'ready' | 'warn' | 'muted' };
 
 /** A story's status word and dot tone, as board cards and the epic page's rows show it: a done story its resolution,
- *  else the server's readiness rendered short (kb/ADR-0018 R1). */
+ *  else the server's readiness rendered short (kb/ADR-0027 R1). */
 export function storyStatus(item: StoryWithReadiness): StoryStatus {
 	const s = item.story;
 	if (s.delivery === 'done') return { word: s.resolution ?? 'done', tone: 'muted' };
@@ -177,8 +186,8 @@ export type Filters = {
 	promised?: PromisedFilter | null;
 };
 
-/** Untriaged (kb/ADR-0018 R4: an item of any kind without an epic that is not done): the server's readiness reason,
- *  never re-derived from kind and epic on the client (kb/ADR-0018 R1), and not a finished item. */
+/** Untriaged (kb/ADR-0027 R4: an item of any kind without an epic that is not done): the server's readiness reason,
+ *  never re-derived from kind and epic on the client (kb/ADR-0027 R1), and not a finished item. */
 export function isUntriaged(s: StoryWithReadiness): boolean {
 	return s.story.delivery !== 'done' && s.readiness.reasons.some((r) => r.reason === 'untriaged');
 }

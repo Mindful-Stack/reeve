@@ -115,7 +115,7 @@ impl Handlers {
     /// relink-A-to-B-to-A hole that comparing the record id alone leaves open.
     ///
     /// `is_admin` is the caller's current role, decided by the route (kb/ADR-0010 R2). Only an admin may store the
-    /// satisfying result (kb/ADR-0018 R3), from any token kind (storing a result is not an override). A non-admin's is
+    /// satisfying result (kb/ADR-0027 R3), from any token kind (storing a result is not an override). A non-admin's is
     /// refused before the decision is read, so the answer says nothing about its version, reference, closure or
     /// existence, and nothing is written. Unchecked is refused from anyone (422); every other non-satisfying result is
     /// stored from any caller: it can only add a reason. A result that says the same as the stored one
@@ -408,8 +408,8 @@ impl Handlers {
     }
 
     /// The reads run over every unfinished story whatever the scope: a decision's affected stories can sit anywhere
-    /// below its item, and the board read costs the same fixed statements either way. Unfinished (delivery not done,
-    /// kb/ADR-0018 R5) is what makes a todo story "held" and a started one "under way"; `list_stories_in` is the
+    /// below its item, and the board read costs the same fixed statements either way. Unfinished (delivery not done)
+    /// is what makes a todo story "held" and a started one "under way"; `list_stories_in` is the
     /// board's own path, so the queue's readiness is the gate's. Goals (active on the stories, draft on one more read),
     /// lineage and urgency are read on the same snapshot, with statement counts independent of how many there are.
     async fn decision_queue_in(

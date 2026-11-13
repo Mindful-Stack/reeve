@@ -1,6 +1,6 @@
 //! The decision queue: pure, over decisions and the readiness the loader already computed. Nothing here
-//! derives readiness (kb/ADR-0018 R1, kb/ADR-0013 R4); affected stories are read off the reasons. `needed_in`, the
-//! next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
+//! derives readiness (kb/ADR-0027 R1, kb/ADR-0013 R4); affected stories are read off the reasons. `needed_in`, the
+//! next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0027 R1).
 
 use crate::domain::decision::RequiredDecision;
 use crate::domain::promise::{HeldBy, State, StoryPromise};
@@ -12,7 +12,7 @@ use reeve_protocol::{
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// An unfinished story with the facts the queue classifies by (kb/ADR-0018 R5: unfinished is delivery not done).
+/// An unfinished story with the facts the queue classifies by (unfinished: delivery not done).
 #[derive(Debug, Clone)]
 pub struct AffectedStory {
     pub key: Key,

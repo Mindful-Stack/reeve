@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The board's decision pieces: a banner of what needs a decision (the queue's summary), the Not ready summary saying how
-// many cards wait on decisions, and the queue as an extra: its failure never blocks the cards (kb/ADR-0018 R1).
+// many cards wait on decisions, and the queue as an extra: its failure never blocks the cards (kb/ADR-0027 R1).
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecisionQueue, Reason, StoryWithReadiness } from '#lib/api/types.ts';

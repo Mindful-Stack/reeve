@@ -1664,7 +1664,7 @@ export interface components {
         };
         /**
          * @description Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
-         *     a move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
+         *     a move (kb/ADR-0027 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.
          */
         Finding: {
             /** @enum {string} */
@@ -2188,6 +2188,8 @@ export interface components {
             superseded_by?: string | null;
             title: string;
         } | {
+            delivery: components["schemas"]["DeliveryState"];
+            owner?: string | null;
             /** @enum {string} */
             reason: "blocked_by";
             story: components["schemas"]["Key"];
@@ -8455,7 +8457,7 @@ export interface operations {
                 epic?: components["schemas"]["KeyRef"];
                 owner?: string;
                 delivery?: components["schemas"]["DeliveryState"];
-                /** @description Items of any kind with no epic that are not done (kb/ADR-0018 R4). */
+                /** @description Items of any kind with no epic that are not done (kb/ADR-0027 R4). */
                 untriaged?: boolean;
                 label?: string;
                 ready?: boolean;

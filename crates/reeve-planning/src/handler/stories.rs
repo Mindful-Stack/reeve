@@ -492,15 +492,17 @@ impl Handlers {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        let r = self.readiness_in(&mut tx, key).await;
+        let r = self.readiness_in(&mut tx, key, None).await;
         end_read(tx, r).await
     }
 
-    /// Readiness of one story on the caller's transaction; NotFound when it has no row.
+    /// Readiness of one story on the caller's transaction; NotFound when it has no row. `judge_as` is the mover when
+    /// the gate judges a move: an unowned story is judged as theirs (kb/ADR-0027 R6). Reads pass `None`.
     pub(crate) async fn readiness_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         key: &Key,
+        judge_as: Option<&str>,
     ) -> Result<Readiness, HandlerError> {
         let mut m = self
             .ports
@@ -509,6 +511,9 @@ impl Handlers {
             .await?;
         let mut input = m.remove(key).ok_or(HandlerError::NotFound)?;
         self.mark_configured(&mut input);
+        if input.owner.is_none() {
+            input.owner = judge_as.map(str::to_string);
+        }
         Ok(compute_readiness(&input))
     }
 
@@ -659,7 +664,7 @@ impl Handlers {
     }
 
     /// Removes "`blocker` blocks `story`". Both stories must exist (NotFound otherwise, as for `add_block`); an edge that does
-    /// not exist is a no-op that writes nothing. Readiness is computed from facts on read (kb/ADR-0018 R1), so the next read
+    /// not exist is a no-op that writes nothing. Readiness is computed from facts on read (kb/ADR-0027 R1), so the next read
     /// drops the reason; no story version moves, as with `add_block`.
     pub async fn remove_block(
         &self,
@@ -906,7 +911,7 @@ impl Handlers {
                 .comments
                 .list_comments_for_story_in(tx, key)
                 .await?,
-            readiness: self.readiness_in(tx, key).await?,
+            readiness: self.readiness_in(tx, key, None).await?,
             goals,
             attachments: attachments.iter().map(super::dto::attachment_dto).collect(),
         })

@@ -177,7 +177,10 @@ impl Handlers {
             s.epic.clone(),
             s.description.as_deref().unwrap_or(""),
             s.criteria.iter().map(|x| x.text.clone()).collect(),
-            s.owner.map(|e| reeve_protocol::normalise_email(&e)),
+            // A blank owner is no owner (kb/ADR-0027 R6).
+            s.owner
+                .map(|e| reeve_protocol::normalise_email(&e))
+                .filter(|e| !e.is_empty()),
             s.labels,
         )?;
         if let Some(ek) = &s.epic {

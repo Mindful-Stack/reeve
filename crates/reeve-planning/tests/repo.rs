@@ -2,10 +2,10 @@ mod common;
 use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
-    ActivityRecord, ActivitySink, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative, ItemType,
-    Promisable, Promise, PromiseFacts, PromiseItem, PromiseTarget, PromisedStoryRow, RepoError,
-    RequiredDecision, Settings, Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark,
-    compute_readiness, make_planning_ports,
+    ActivityRecord, ActivitySink, BlockerFact, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative,
+    ItemType, Promisable, Promise, PromiseFacts, PromiseItem, PromiseTarget, PromisedStoryRow,
+    RepoError, RequiredDecision, Settings, Story, StoryFilter, StoryPromiseRow, StoryText,
+    UrgentMark, compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
@@ -456,7 +456,15 @@ async fn keys_items_versions_and_readiness_inputs() {
         .unwrap()
         .remove(&ku)
         .unwrap();
-    assert_eq!(input.open_blockers, vec![k3.clone()]);
+    assert_eq!(
+        input.blockers,
+        vec![BlockerFact {
+            key: k3.clone(),
+            delivery: DeliveryState::Todo,
+            owner: Some("dan@example.com".into())
+        }],
+        "the duplicate edge is one fact"
+    );
     tx.commit().await.unwrap();
     let mut tx = pool.begin().await.unwrap();
     assert_eq!(
@@ -468,6 +476,90 @@ async fn keys_items_versions_and_readiness_inputs() {
             .remove(&ku)
             .unwrap(),
         vec![k3.clone()]
+    );
+    tx.rollback().await.unwrap();
+
+    // The loader returns facts, not policy: every blocker (done included) with its delivery and owner, and the
+    // story's own owner. Rolled back, so the rest of the test sees only k3 blocking.
+    let mut tx = pool.begin().await.unwrap();
+    let mut extra = Vec::new();
+    for owner in [Some("mia@example.com"), None] {
+        let k = ports.keys.next_key(&mut tx, "ABC").await.unwrap();
+        let st = Story::new(
+            k.clone(),
+            "Extra",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            owner.map(Into::into),
+            vec![],
+        )
+        .unwrap();
+        assert!(
+            ports
+                .stories
+                .insert_story(&mut tx, &st, &format!("idem-{k}"), now)
+                .await
+                .unwrap()
+        );
+        ports.stories.add_block(&mut tx, &ku, &k).await.unwrap();
+        extra.push(k);
+    }
+    sqlx::query("UPDATE stories SET owner = 'dan@example.com' WHERE key = $1")
+        .bind(ku.to_string())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let (k_review, k_done) = (extra[0].clone(), extra[1].clone());
+    for (k, to, res) in [
+        (&k_review, DeliveryState::InReview, None),
+        (&k_done, DeliveryState::Done, Some(Resolution::Completed)),
+    ] {
+        let v = ports
+            .stories
+            .get_story_for_update(&mut tx, k)
+            .await
+            .unwrap()
+            .version();
+        ports
+            .stories
+            .set_delivery(&mut tx, &target(k, to, res, None), v, now)
+            .await
+            .unwrap();
+    }
+    let input = ports
+        .reads
+        .readiness_inputs(&mut tx, std::slice::from_ref(&ku))
+        .await
+        .unwrap()
+        .remove(&ku)
+        .unwrap();
+    assert_eq!(
+        input.owner.as_deref(),
+        Some("dan@example.com"),
+        "the story's own owner is loaded"
+    );
+    assert_eq!(
+        input.blockers,
+        vec![
+            BlockerFact {
+                key: k3.clone(),
+                delivery: DeliveryState::Todo,
+                owner: Some("dan@example.com".into())
+            },
+            BlockerFact {
+                key: k_review.clone(),
+                delivery: DeliveryState::InReview,
+                owner: Some("mia@example.com".into())
+            },
+            BlockerFact {
+                key: k_done.clone(),
+                delivery: DeliveryState::Done,
+                owner: None
+            },
+        ],
+        "every blocker, done included, with its delivery and owner, in key-number order"
     );
     tx.rollback().await.unwrap();
 
@@ -884,13 +976,17 @@ async fn batched_readiness_equals_one_key_at_a_time() {
     assert_eq!(
         reasons_of(s4.key()),
         vec![Reason::BlockedBy {
-            story: s5.key().clone()
+            story: s5.key().clone(),
+            delivery: DeliveryState::Todo,
+            owner: None
         }]
     );
     assert_eq!(
         reasons_of(s5.key()),
         vec![Reason::BlockedBy {
-            story: s4.key().clone()
+            story: s4.key().clone(),
+            delivery: DeliveryState::Todo,
+            owner: None
         }]
     );
     assert_eq!(reasons_of(s6.key()), vec![]);

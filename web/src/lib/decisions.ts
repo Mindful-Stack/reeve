@@ -71,7 +71,7 @@ export function pruneExpanded(expanded: Set<number>, listed: readonly { id: numb
 	for (const id of expanded) if (!present.has(id)) expanded.delete(id);
 }
 
-/** Open and unsatisfied: what readiness waits on (kb/ADR-0018 R3). Closed ones are ignored; an accepted record
+/** Open and unsatisfied: what readiness waits on (kb/ADR-0027 R3). Closed ones are ignored; an accepted record
  *  satisfies its decision even though the decision stays open under check. */
 export function blocking(list: RequiredDecision[]): RequiredDecision[] {
 	return list.filter((d) => !d.closed && d.check.kind !== 'accepted');

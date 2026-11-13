@@ -1540,7 +1540,7 @@
         "type": "object"
       },
       "Finding": {
-        "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
+        "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0027 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
         "oneOf": [
           {
             "description": "The brief is empty.",
@@ -3335,7 +3335,17 @@
             "type": "object"
           },
           {
+            "description": "A blocking story that is unfinished for this story (kb/ADR-0027 R5), with what decides when it unblocks: its\ndelivery (merged, it blocks nobody) and its owner (who can build on it, or whom to ask).",
             "properties": {
+              "delivery": {
+                "$ref": "#/components/schemas/DeliveryState"
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "reason": {
                 "enum": [
                   "blocked_by"
@@ -3348,6 +3358,7 @@
             },
             "required": [
               "story",
+              "delivery",
               "reason"
             ],
             "type": "object"
@@ -7304,7 +7315,7 @@
               },
               "value": {
                 "items": {
-                  "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0018 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
+                  "description": "Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by\na move (kb/ADR-0027 keeps one gate, readiness). Shown by the CLI, the web and quoted by the planning skills.",
                   "oneOf": [
                     {
                       "description": "The brief is empty.",
@@ -15067,7 +15078,7 @@
             }
           },
           {
-            "description": "Items of any kind with no epic that are not done (kb/ADR-0018 R4).",
+            "description": "Items of any kind with no epic that are not done (kb/ADR-0027 R4).",
             "in": "query",
             "name": "untriaged",
             "required": false,
