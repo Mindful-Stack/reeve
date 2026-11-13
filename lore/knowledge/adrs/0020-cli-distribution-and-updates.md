@@ -3,7 +3,7 @@ id: kb/ADR-0020
 title: "ADR-0020: The Reeve server distributes the CLI it was released with, and the CLI asks to be updated when they differ"
 description: "Each Reeve server with a configured public URL serves, without sign-in, the `reeve` CLI binaries built for its release, verified by SHA-256 over HTTPS, and the CLI tells a person at a terminal to run `reeve update` when its CLI version differs from the server's, because one install line and an exact match with each instance beat a channel that every instance shares and that drifts from each of them."
 tags: [adr, reeve, cli, deploy, security]
-status: proposed
+status: accepted
 date: 2026-11-13
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-13.
+Accepted 2026-11-13 by Daniel Thyselius.
 
 ## Context
 People install the `reeve` CLI today by building it from a checkout, or with `cargo install` from the public repository. Both need a Rust toolchain and a full compile, and both leave each person on whatever commit they last built. Lorekeeper skills shell out to the same binary under an automation token and detect the planner by `reeve --version` (kb/ADR-0005), and the TUI is used against a live instance, so a client that drifts from its server meets API changes it was not built for.
