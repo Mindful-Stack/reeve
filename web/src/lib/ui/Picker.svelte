@@ -71,8 +71,12 @@
 			if (!open) return show();
 			const step = e.key === 'ArrowDown' ? 1 : -1;
 			active = Math.min(last, Math.max(0, Math.min(active, last) + step));
-		} else if (e.key === 'Enter' && open && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
-			// Ctrl+Enter, say, is the page's (it places a story), and Enter that commits an IME composition is not a pick.
+		} else if (e.key === 'Enter' && open && (e.ctrlKey || e.metaKey || e.altKey || e.isComposing)) {
+			// Ctrl+Enter, say, is the page's (it places a story), and Enter that commits an IME composition is not a pick:
+			// the list closes without preventing the key, so the page acts with the value bound and the list does not
+			// survive onto the next item.
+			void hide();
+		} else if (e.key === 'Enter' && open) {
 			e.preventDefault();
 			const o = shown[Math.min(active, last)];
 			if (o) pick(o);

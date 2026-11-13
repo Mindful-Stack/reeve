@@ -27,7 +27,7 @@
 	{:else}
 		<ol>
 			{#each hits as h, i (h.key)}
-				<li class:marked={marked === h.key}>
+				<li>
 					<span class="n" aria-hidden="true">{i + 1}</span>
 					<span class="key">{h.key}</span> {h.title}
 					<span class="state">{hitState(h)}</span>
@@ -44,6 +44,5 @@
 <style>
 	ol { padding-left: 0; list-style: none; display: grid; gap: 4px; }
 	li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-	li.marked { outline: 2px solid var(--danger); border-radius: 4px; }
 	.state, .muted, .n { color: var(--muted); }
 </style>

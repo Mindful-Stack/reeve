@@ -12,7 +12,7 @@ export type KeyContext = {
 	/** Focus is on the queue listbox. */
 	inList: boolean;
 	/** A story or decision drawer is open over the page. (A dialog, a menu or an open Picker list never lets a key reach
-	 *  the area: a modal dialog makes it inert, a menu holds focus, the Picker stops Escape and takes Enter.) */
+	 *  the area: a modal dialog makes it inert, a menu holds focus; the Picker prevents the default of the Escape and Enter it takes, and `command` ignores a prevented key.) */
 	overlay: boolean;
 };
 

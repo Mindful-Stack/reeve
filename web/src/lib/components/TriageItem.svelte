@@ -73,7 +73,7 @@
 	{#if item.description.trim()}<div class="description"><Brief markdown={item.description} /></div>{/if}
 	<TriageSimilar {hits} marked={draft.duplicateOf} {onmark} />
 	<form class="place" aria-label="Place {item.key}" onsubmit={(e) => { e.preventDefault(); onplace(); }}>
-		<label class="field epic">Epic <span class="hint">(e)</span>
+		<label class="field">Epic <span class="hint">(e)</span>
 			<Picker label="Epic" options={keyed(epics)} bind:value={draft.fields.epic} {disabled} onchange={() => criteriaEl?.focus()} />
 		</label>
 		<label class="field">Kind <span class="hint">(t)</span>

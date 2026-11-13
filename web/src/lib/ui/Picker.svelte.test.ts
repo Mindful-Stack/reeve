@@ -115,7 +115,9 @@ it('Enter with Ctrl, Meta or Alt, or during IME composition, picks nothing and i
 		const e = key('Enter', init);
 		expect(e.defaultPrevented).toBe(false);
 		expect(bound()).toBe('');
-		expect(input.getAttribute('aria-expanded')).toBe('true');
+		expect(input.getAttribute('aria-expanded')).toBe('false'); // closed, so the list does not outlive the page's action
+		input.value = '';
+		type('live go'); // reopen for the next modified key
 	}
 	expect(key('Enter').defaultPrevented).toBe(true);
 	expect(bound()).toBe('GRA-8');

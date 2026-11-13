@@ -29,6 +29,7 @@
 		whereNow,
 		type Draft
 	} from '#lib/triage.ts';
+	import { ACTIVE } from '#lib/sprint.ts';
 	import { command, type Command } from '#lib/triageKeys.ts';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
@@ -76,9 +77,6 @@
 		if (currentKey) document.getElementById(`triage-opt-${currentKey}`)?.scrollIntoView?.({ block: 'nearest' });
 	});
 
-	function say(n: Notice): void {
-		notice = n;
-	}
 
 	let loads = 0;
 	/** A write patched the queue here: a reload that read the list before it answers stale, so its answer is dropped. */
@@ -118,9 +116,9 @@
 			const s = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
 			if (n !== loads || currentKey !== key) return;
 			const where = whereNow(s);
-			if (where === null) return select(queue[0]?.key ?? null); // untriaged again: the next list has it
+			if (where === null) return; // untriaged again: its own live event reloads the list and finds it, with the user's place kept
 			left = s;
-			say({ text: where });
+			notice = { text: where };
 			focusBack(); // the pane lost the item until this read landed, and its form is disabled now: focus may be on the page
 		} catch {
 			if (n === loads && currentKey === key) select(queue[0]?.key ?? null);
@@ -147,6 +145,7 @@
 		if (key === currentKey && !left) return; // the same item again: nothing to load, and its hits stay put
 		currentKey = key;
 		left = null;
+		arm = null; // a drop armed for the item just left is not armed for this one
 		similar = [];
 		const s = queue.find((x) => x.key === key);
 		if (!s) return;
@@ -155,9 +154,12 @@
 	}
 
 	function step(by: 1 | -1): void {
-		if (!queue.length) return select(null); // nothing left: leave the item that went, for the empty state
+		if (!queue.length) {
+			select(null); // nothing left: leave the item that went, for the empty state
+			return void focusQueue();
+		}
 		const i = position < 0 ? 0 : Math.min(queue.length - 1, Math.max(0, position + by));
-		if (position >= 0 && i === position) return say({ text: by > 0 ? 'Last item.' : 'First item.' });
+		if (position >= 0 && i === position) return void (notice = { text: by > 0 ? 'Last item.' : 'First item.' });
 		select(queue[i].key);
 	}
 
@@ -170,7 +172,7 @@
 		const from = currentKey;
 		const i = (position + 1) % queue.length;
 		select(queue[i].key);
-		say({ text: i === 0 ? `Skipped ${from}; back to the first item.` : `Skipped ${from}.` });
+		notice = { text: i === 0 ? `Skipped ${from}; back to the first item.` : `Skipped ${from}.` };
 		void focusQueue();
 	}
 
@@ -200,7 +202,7 @@
 	}
 
 	function armText(s: Story, dup: string | null): string {
-		const stop = s.delivery === 'todo' ? '' : ' and stop active work (Undo returns it as todo)';
+		const stop = ACTIVE.has(s.delivery) ? ' and stop active work (Undo returns it as todo)' : '';
 		return `Drop ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}${stop}? Press d or click again.`;
 	}
 
@@ -233,7 +235,7 @@
 			case 'kind':
 				if (!draft || left || busy) return;
 				draft.fields.kind = KINDS[(KINDS.indexOf(draft.fields.kind) + 1) % KINDS.length];
-				return say({ text: `Kind: ${draft.fields.kind}.` });
+				return void (notice = { text: `Kind: ${draft.fields.kind}.` });
 			case 'open':
 				if (currentKey) void goto(storyHref(page.url, currentKey), { reset: false });
 				return;
@@ -241,7 +243,7 @@
 				if (typingIn(document.activeElement)) pane?.focus('heading');
 				if (arm) {
 					arm = null;
-					say({ text: 'Drop cancelled.' });
+					notice = { text: 'Drop cancelled.' };
 				}
 				return;
 			case 'help':
@@ -266,7 +268,7 @@
 		if (!draft || left || busy) return;
 		draft.duplicateOf = draft.duplicateOf === hit ? null : hit;
 		arm = null;
-		say({ text: draft.duplicateOf ? `Marked as a duplicate of ${draft.duplicateOf}.` : 'Duplicate mark cleared.' });
+		notice = { text: draft.duplicateOf ? `Marked as a duplicate of ${draft.duplicateOf}.` : 'Duplicate mark cleared.' };
 	}
 
 	async function commentDuplicate(key: string, dup: string): Promise<boolean> {
@@ -279,7 +281,7 @@
 			);
 			return true;
 		} catch (e) {
-			say({ text: `${key} was not dropped: the comment failed: ${errorMessage(e)}` });
+			notice = { text: `${key} was not dropped: the comment failed: ${errorMessage(e)}` };
 			return false;
 		}
 	}
@@ -291,7 +293,7 @@
 		delete drafts[key];
 		if (currentKey === key) select(nextKey(order, key));
 		undoable = u;
-		say(n);
+		notice = n;
 	}
 
 	/** Undo brought `s` back: it rejoins the queue here, as `finished()` took it out, and becomes current. */
@@ -308,7 +310,7 @@
 		const edit = placeEdit(d);
 		if (edit.kind === 'invalid') {
 			if (!d.fields.epic) pane?.focus('epic');
-			say({ text: edit.error });
+			notice = { text: edit.error };
 			return;
 		}
 		const order = queue.map((x) => x.key);
@@ -318,7 +320,7 @@
 			finished(s.key, order, { text: `Placed ${s.key} under ${placed.epic}.`, open: s.key }, placeUndo(placed, d, edit.body));
 		} catch (e) {
 			if (e instanceof Conflict) await conflicted(s.key, d, 'place');
-			else say({ text: `${s.key} was not placed: ${errorMessage(e)}` });
+			else notice = { text: `${s.key} was not placed: ${errorMessage(e)}` };
 		} finally {
 			busy = false;
 			focusBack();
@@ -330,24 +332,23 @@
 	async function conflicted(key: string, d: Draft, again: 'place' | 'drop', tail = ''): Promise<void> {
 		try {
 			const server = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
-			dropPendingReload();
 			const where = whereNow(server);
 			if (where !== null) {
 				// No longer untriaged (kb/ADR-0018 R4): it leaves the queue and the page says where it went, as on a live change.
 				queue = queue.filter((x) => x.key !== key);
 				if (currentKey === key) left = server;
-				say({ text: `${where}${tail}` });
+				notice = { text: `${where}${tail}` };
 			} else {
 				const { draft: rebased, clashes } = rebaseAfterConflict(d, server);
 				drafts[key] = rebased;
 				queue = queue.map((x) => (x.key === key ? server : x));
 				if (currentKey === key) void loadSimilar(server);
 				const named = clashes.map((c) => `${FIELD_LABEL[c.field]} is now "${c.value}"`).join('; ');
-				say({ text: `${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.${tail}` });
+				notice = { text: `${key} changed meanwhile${named ? `: ${named}` : ''}. Check and ${again} again.${tail}` };
 			}
 			void reload(); // a conflict has no live event of its own
 		} catch (e) {
-			say({ text: `${key} changed meanwhile and could not be reloaded: ${errorMessage(e)}${tail}` });
+			notice = { text: `${key} changed meanwhile and could not be reloaded: ${errorMessage(e)}${tail}` };
 		}
 	}
 
@@ -359,24 +360,25 @@
 		const dup = d.duplicateOf;
 		if (!armed) {
 			arm = { key: s.key, version };
-			say({ text: armText(s, dup) });
+			notice = { text: armText(s, dup) };
 			return;
 		}
 		arm = null;
 		const order = queue.map((x) => x.key);
 		const saved = dup ? ' (the duplicate comment is saved)' : '';
+		const tail = dup ? ' The duplicate comment is saved.' : '';
 		busy = true;
 		try {
 			if (dup && !(await commentDuplicate(s.key, dup))) return;
 			const out = await postMove({ key: s.key, version }, 'done', { resolution: 'dropped' });
 			if (out.kind !== 'moved') {
-				say({ text: `${s.key} was not dropped${saved}: ${why(out)}` });
+				notice = { text: `${why(out)}${tail}` };
 				return;
 			}
 			finished(s.key, order, { text: `Dropped ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}.`, open: s.key }, dropUndo(out.story, !!dup));
 		} catch (e) {
-			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', dup ? ' The duplicate comment is saved.' : '');
-			else say({ text: `${s.key} was not dropped${saved}: ${errorMessage(e)}` });
+			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', tail);
+			else notice = { text: `${s.key} was not dropped${saved}: ${errorMessage(e)}` };
 		} finally {
 			busy = false;
 			focusBack();
@@ -393,7 +395,7 @@
 				restored.fields = { ...d.fields, epic: '' };
 				drafts[back.key] = restored; // before select(), which keeps an existing draft: the typed fields come back
 				returned(back);
-				say({ text: `Undone: ${back.key} is back in the queue.` });
+				notice = { text: `Undone: ${back.key} is back in the queue.` };
 			}
 		};
 	}
@@ -408,7 +410,7 @@
 				const out = await postMove({ key: dropped.key, version: dropped.version }, 'todo');
 				if (out.kind !== 'moved') throw new Error(why(out));
 				returned(out.story);
-				say({ text: `Undone: ${dropped.key} is back in todo.${duplicate ? ' The duplicate comment stays.' : ''}` });
+				notice = { text: `Undone: ${dropped.key} is back in todo.${duplicate ? ' The duplicate comment stays.' : ''}` };
 			}
 		};
 	}
@@ -422,7 +424,7 @@
 			await u.run();
 		} catch (e) {
 			const text = e instanceof Conflict ? `${u.key} changed since; undo it in the drawer.` : `Undo failed: ${errorMessage(e)}`;
-			say({ text, open: u.key });
+			notice = { text, open: u.key };
 		} finally {
 			busy = false;
 			focusBack();
@@ -479,7 +481,7 @@
 			</p>
 			{#if help}
 				<dl class="keys">
-					<dt>j / k</dt><dd>next / previous (stops at the ends)</dd><dt>↑ / ↓</dt><dd>the same, with focus on the queue</dd>
+					<dt>j / k</dt><dd>next / previous (stops at the ends)</dd><dt>↓ / ↑</dt><dd>the same, with focus on the queue</dd>
 					<dt>e</dt><dd>epic (Enter on a new epic moves on to criteria)</dd><dt>t</dt><dd>kind</dd><dt>c</dt><dd>criteria</dd>
 					<dt>Ctrl/Cmd+Enter</dt><dd>place</dd><dt>d, d</dt><dd>drop</dd>
 					<dt>1–{SIMILAR_SHOWN}</dt><dd>mark the item as a duplicate of a similar one</dd><dt>s</dt><dd>skip (after the last, back to the first)</dd>

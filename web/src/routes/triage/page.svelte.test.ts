@@ -269,7 +269,7 @@ describe('queue', () => {
 		expect(kbds.length).toBeGreaterThanOrEqual(4);
 		expect(kbds.every((k) => k.getAttribute('aria-hidden') === 'true')).toBe(true);
 		expect(document.querySelector('[role="option"][aria-posinset], [role="option"][aria-setsize]')).toBeNull();
-		const label = document.querySelector('section.item label.epic')!;
+		const label = document.querySelector('section.item input[role="combobox"]')!.closest('label')!;
 		expect(label.textContent).toContain('Epic');
 		expect(label.querySelector('input[role="combobox"]')).not.toBeNull();
 		expect(label.querySelector('input[placeholder]')).toBeNull();
@@ -281,7 +281,7 @@ describe('queue', () => {
 		flushSync();
 		const keys = document.querySelector('.keys')!.textContent!;
 		expect(keys).toContain('Ctrl/Cmd+Enter');
-		expect(keys).toContain('↑ / ↓');
+		expect(keys).toContain('↓ / ↑');
 		expect(keys).toContain('?');
 	});
 	it('keys outside the triage area do nothing', async () => {
@@ -336,6 +336,16 @@ describe('the current item leaves the queue', () => {
 		await vi.waitFor(() => expect(document.body.textContent).toContain('Nothing to triage'));
 		await vi.waitFor(() => expect(document.activeElement?.id).toBe('triage-empty'));
 	});
+	it('the last item leaving: the Next button leaves the dead end too, with focus on the empty state', async () => {
+		const t = await leave(['GRA-9']);
+		net.s.hold.clear();
+		net.s.held.forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toBe('Placed elsewhere: GRA-9 is under GRA-7.'));
+		[...document.querySelectorAll('.counter button')].find((b) => b.textContent === 'Next')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		flushSync();
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Nothing to triage'));
+		await vi.waitFor(() => expect(document.activeElement?.id).toBe('triage-empty'));
+	});
 	it('the last item leaving: s leaves the dead end too', async () => {
 		const t = await leave(['GRA-9']);
 		net.s.hold.clear();
@@ -372,7 +382,21 @@ describe('the current item leaves the queue', () => {
 		await vi.waitFor(() => expect(t.status()).toBe('GRA-30 is done (dropped).'));
 		expect(t.pane().querySelector('.warn')).toBeNull();
 	});
-	it('a read that finds the item untriaged again (a race) selects the queue\'s first item instead of a dead pane', async () => {
+	it('an in-progress item placed elsewhere shows no active-work warning', async () => {
+		net.s.stories = net.s.stories.filter((s) => s.key === 'GRA-30' || s.epic);
+		const t = await open();
+		expect(t.pane().querySelector('.warn')).not.toBeNull();
+		net.s.hold.add('/api/v1/stories/GRA-30');
+		const i = net.s.stories.findIndex((s) => s.key === 'GRA-30');
+		net.s.stories[i] = { ...net.s.stories[i], epic: 'GRA-7', version: 2 }; // still in progress
+		live.fns.forEach((f) => f());
+		await vi.waitFor(() => expect(net.s.held).toHaveLength(1));
+		net.s.hold.clear();
+		net.s.held.forEach((r) => r());
+		await vi.waitFor(() => expect(t.status()).toBe('Placed elsewhere: GRA-30 is under GRA-7.'));
+		expect(t.pane().querySelector('.warn')).toBeNull();
+	});
+	it('a read that finds the item untriaged again (a race) keeps the user\'s place', async () => {
 		const t = await open();
 		net.s.stories[1] = { ...net.s.stories[1], epic: 'GRA-7', version: 2 };
 		net.s.hold.add('/api/v1/stories/GRA-9');
@@ -381,9 +405,11 @@ describe('the current item leaves the queue', () => {
 		net.s.stories[1] = { ...net.s.stories[1], epic: null, version: 3 }; // un-placed before the read lands
 		net.s.hold.clear();
 		net.s.held.forEach((r) => r());
-		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		await settle();
 		expect(t.status()).not.toContain('changed');
-		expect(document.querySelector('section.item')).not.toBeNull();
+		await live.fns[0](); // the item's own live event brings it back
+		await vi.waitFor(() => expect(document.querySelector('section.item')).not.toBeNull());
+		expect(t.current()).toBe('GRA-9');
 	});
 	it('the last item leaving shows no empty state and keeps focus on the item heading', async () => {
 		await leave(['GRA-9']);
@@ -428,6 +454,21 @@ describe('place', () => {
 		await vi.waitFor(() => expect(t.status()).toBe('Placed GRA-9 under GRA-7.'));
 		expect(document.querySelector('.notice a')!.getAttribute('href')).toBe('/triage?story=GRA-9');
 		expect(document.activeElement).toBe(t.list());
+	});
+	it('Ctrl+Enter from the epic combobox with its list open closes the list and places with the bound epic', async () => {
+		const t = await open();
+		pickEpic('GRA-7');
+		const input = document.querySelector<HTMLInputElement>('section.item input[role="combobox"]')!;
+		input.focus();
+		input.click(); // reopens the list
+		flushSync();
+		expect(input.getAttribute('aria-expanded')).toBe('true');
+		const e = press(input, 'Enter', { ctrlKey: true });
+		expect(e.defaultPrevented).toBe(true); // the page took it (place)
+		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
+		expect(net.s.writes).toHaveLength(1);
+		expect(net.s.writes[0]).toMatchObject({ method: 'PATCH', path: '/api/v1/stories/GRA-9', body: { epic: 'GRA-7' } });
+		expect(document.querySelector('section.item input[role="combobox"]')!.getAttribute('aria-expanded')).toBe('false');
 	});
 	it('without an epic, Place focuses the Picker and says so', async () => {
 		const t = await open();
@@ -646,6 +687,20 @@ describe('drop', () => {
 		await vi.waitFor(() => expect(t.current()).toBe('GRA-12'));
 		expect(net.s.writes).toEqual([{ method: 'POST', path: '/api/v1/stories/GRA-9/move', body: { version: 1, to: 'done', resolution: 'dropped' } }]);
 		await vi.waitFor(() => expect(t.status()).toBe('Dropped GRA-9.'));
+	});
+	it('leaving the item ends the arm: d, j, k, d writes nothing and a further d drops', async () => {
+		const t = await open();
+		press(t.list(), 'd');
+		press(t.list(), 'j');
+		press(t.list(), 'k');
+		expect(t.current()).toBe('GRA-9');
+		expect(dropButton().textContent).not.toContain('Confirm drop');
+		press(t.list(), 'd'); // arms afresh
+		await settle();
+		expect(net.s.writes).toEqual([]);
+		expect(t.status()).toBe('Drop GRA-9? Press d or click again.');
+		press(t.list(), 'd');
+		await vi.waitFor(() => expect(net.s.writes).toHaveLength(1));
 	});
 	it('Escape ends the arm and says so; the next d arms again', async () => {
 		const t = await open();
@@ -1110,7 +1165,7 @@ describe('triage review fixes', () => {
 		net.s.failMove = 'refuse';
 		press(t.list(), 'd');
 		press(t.list(), 'd');
-		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not dropped \(the duplicate comment is saved\): GRA-9 was not moved to done/));
+		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not moved to done.* The duplicate comment is saved\.$/));
 	});
 	it('without a duplicate the same failures say "was not dropped"', async () => {
 		const t = await open();
@@ -1121,7 +1176,7 @@ describe('triage review fixes', () => {
 		net.s.failMove = 'refuse';
 		press(t.list(), 'd');
 		press(t.list(), 'd');
-		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not dropped: GRA-9 was not moved to done/));
+		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not moved to done/));
 	});
 	it('Inspect keeps scroll and focus (reset=false); only a done hit shows its resolution', async () => {
 		const t = await open();
@@ -1141,7 +1196,6 @@ describe('triage review fixes', () => {
 		await vi.waitFor(() => expect(t.status()).toBe('Marked as a duplicate of GRA-4.'));
 		expect(button(2).getAttribute('aria-pressed')).toBe('true');
 		expect(button(1).getAttribute('aria-pressed')).toBe('false');
-		expect(hits()[1].classList.contains('marked')).toBe(true);
 		button(2).click();
 		flushSync();
 		await vi.waitFor(() => expect(t.status()).toBe('Duplicate mark cleared.'));
