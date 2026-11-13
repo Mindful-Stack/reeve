@@ -71,10 +71,11 @@
 			if (!open) return show();
 			const step = e.key === 'ArrowDown' ? 1 : -1;
 			active = Math.min(last, Math.max(0, Math.min(active, last) + step));
-		} else if (e.key === 'Enter' && open && (e.ctrlKey || e.metaKey || e.altKey || e.isComposing)) {
-			// Ctrl+Enter, say, is the page's (it places a story), and Enter that commits an IME composition is not a pick:
-			// the list closes without preventing the key, so the page acts with the value bound and the list does not
-			// survive onto the next item.
+		} else if (e.key === 'Enter' && e.isComposing) {
+			// Enter that commits an IME composition is the input method's: no pick, and the query stays.
+		} else if (e.key === 'Enter' && open && (e.ctrlKey || e.metaKey || e.altKey)) {
+			// Ctrl+Enter, say, is the page's (it places a story): the list closes without preventing the key, so the page
+			// acts with the value bound and the list does not survive onto the next item.
 			void hide();
 		} else if (e.key === 'Enter' && open) {
 			e.preventDefault();

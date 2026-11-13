@@ -107,11 +107,21 @@ it('Escape while open closes it and is cancelled (every Escape listener skips a 
 	expect(key('Escape').defaultPrevented).toBe(false);
 });
 
-it('Enter with Ctrl, Meta or Alt, or during IME composition, picks nothing and is left to the page', () => {
+it('Enter that commits an IME composition picks nothing and keeps the list and the query', () => {
+	const { type, key, shown, bound, input } = setup('', 'No epic');
+	type('live go');
+	const e = key('Enter', { isComposing: true });
+	expect(e.defaultPrevented).toBe(false);
+	expect(bound()).toBe('');
+	expect(input.getAttribute('aria-expanded')).toBe('true');
+	expect(shown()).toEqual(['GRA-8 Go-live']);
+});
+
+it('Enter with Ctrl, Meta or Alt picks nothing and is left to the page', () => {
 	const { type, key, shown, bound, input } = setup('', 'No epic');
 	type('live go');
 	expect(shown()).toEqual(['GRA-8 Go-live']);
-	for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { isComposing: true }]) {
+	for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
 		const e = key('Enter', init);
 		expect(e.defaultPrevented).toBe(false);
 		expect(bound()).toBe('');

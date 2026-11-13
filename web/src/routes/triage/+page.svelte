@@ -40,7 +40,8 @@
 	/** What Undo reverts: the action, the item it writes to, and the write. */
 	type Undo = { action: 'place' | 'drop'; key: string; run: () => Promise<void> };
 
-	/** The drop armed by a first `d`: the item and the version it was reviewed at. Marking a duplicate or Escape ends it. */
+	/** The drop armed by a first `d`: the item and the version it was reviewed at. Leaving the item, marking a duplicate
+	 *  or Escape ends it. */
 	type Arm = { key: string; version: number };
 
 	let queue = $state.raw<Story[]>([]);
@@ -145,6 +146,7 @@
 		if (key === currentKey && !left) return; // the same item again: nothing to load, and its hits stay put
 		currentKey = key;
 		left = null;
+		if (arm) notice = null; // its prompt names the item just left
 		arm = null; // a drop armed for the item just left is not armed for this one
 		similar = [];
 		const s = queue.find((x) => x.key === key);
@@ -365,7 +367,6 @@
 		}
 		arm = null;
 		const order = queue.map((x) => x.key);
-		const saved = dup ? ' (the duplicate comment is saved)' : '';
 		const tail = dup ? ' The duplicate comment is saved.' : '';
 		busy = true;
 		try {
@@ -378,7 +379,7 @@
 			finished(s.key, order, { text: `Dropped ${s.key}${dup ? ` as a duplicate of ${dup}` : ''}.`, open: s.key }, dropUndo(out.story, !!dup));
 		} catch (e) {
 			if (e instanceof Conflict) await conflicted(s.key, d, 'drop', tail);
-			else notice = { text: `${s.key} was not dropped${saved}: ${errorMessage(e)}` };
+			else notice = { text: `${s.key} was not dropped: ${errorMessage(e)}${tail}` };
 		} finally {
 			busy = false;
 			focusBack();

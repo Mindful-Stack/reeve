@@ -692,6 +692,7 @@ describe('drop', () => {
 		const t = await open();
 		press(t.list(), 'd');
 		press(t.list(), 'j');
+		expect(t.status()).toBe(''); // the prompt for GRA-9 does not linger over GRA-12
 		press(t.list(), 'k');
 		expect(t.current()).toBe('GRA-9');
 		expect(dropButton().textContent).not.toContain('Confirm drop');
@@ -1161,13 +1162,13 @@ describe('triage review fixes', () => {
 		net.s.failMove = 'fail';
 		press(t.list(), 'd');
 		press(t.list(), 'd');
-		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 was not dropped (the duplicate comment is saved): boom'));
+		await vi.waitFor(() => expect(t.status()).toBe('GRA-9 was not dropped: boom The duplicate comment is saved.'));
 		net.s.failMove = 'refuse';
 		press(t.list(), 'd');
 		press(t.list(), 'd');
 		await vi.waitFor(() => expect(t.status()).toMatch(/^GRA-9 was not moved to done.* The duplicate comment is saved\.$/));
 	});
-	it('without a duplicate the same failures say "was not dropped"', async () => {
+	it('without a duplicate the same failures say what failed', async () => {
 		const t = await open();
 		net.s.failMove = 'fail';
 		press(t.list(), 'd');
