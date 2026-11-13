@@ -130,7 +130,7 @@
 			{/each}
 		</ul>
 	{:else if open}
-		<p class="none">No match</p>
+		<p class="none" aria-hidden="true">No match</p>
 	{/if}
 	<!-- Always present, so a screen reader hears the text change; a live region inserted with its text is skipped. -->
 	<span class="visually-hidden" role="status">{open && !shown.length ? 'No match' : ''}</span>
