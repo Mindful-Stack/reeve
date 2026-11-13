@@ -45,6 +45,9 @@ export type Confidence = S['Confidence'];
 export type Verdict = S['Verdict'];
 export type SprintWarning = S['SprintWarning'];
 export type CreatedGoal = S['CreatedGoalDto'];
+export type GoalGates = S['GoalGatesDto'];
+export type DiscoveryGate = S['DiscoveryGateDto'];
+export type DecisionGate = S['DecisionGateDto'];
 export type UrgentMark = S['UrgentMarkDto'];
 export type ItemRef = S['ItemRefDto'];
 export type StoryPromise = S['StoryPromiseDto'];
@@ -62,3 +65,5 @@ export type AccessEntry = S['AccessEntryDto'];
 export type AccessKind = S['AccessKind'];
 /** The query `GET /api/v1/stories` takes. */
 export type StoryQuery = NonNullable<operations['stories_list']['parameters']['query']>;
+export type MoveStory = S['MoveStory'];
+export type AddComment = S['AddComment'];

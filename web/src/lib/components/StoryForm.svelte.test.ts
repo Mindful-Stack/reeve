@@ -5,6 +5,7 @@ import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { epic } from '#lib/test/fixtures.ts';
+import { choose, picker } from '#lib/test/picker.ts';
 import StoryForm from './StoryForm.svelte';
 
 type Posted = { idempotency_key: string; title: string; kind: Story['kind']; epic: string | null; criteria: unknown[]; labels: unknown[] };
@@ -72,12 +73,12 @@ describe('StoryForm', () => {
 
 	it('sends epic null when the epic is "none", and the picked epic otherwise', async () => {
 		const oncreated = mountForm({ epics });
-		expect(field('Epic').value).toBe('');
+		expect(picker(form(), 'Epic').value).toBe('No epic');
 		type(field('Title'), 'Loose');
 		form().requestSubmit();
 		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(1));
 		expect(net.posts[0]).toEqual({ idempotency_key: expect.any(String), title: 'Loose', kind: 'story', epic: null, criteria: [], labels: [] });
-		type(field('Epic'), 'ABC-2');
+		choose(form(), 'Epic', 'ABC-2');
 		type(field('Title'), 'Placed');
 		form().requestSubmit();
 		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(2));

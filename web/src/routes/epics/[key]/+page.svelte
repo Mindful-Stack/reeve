@@ -1,4 +1,7 @@
 <script lang="ts">
+	import DueShortcuts from '#lib/components/DueShortcuts.svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed, PICKER_INPUT } from '#lib/picker.ts';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import GoalLinkButton from '#lib/components/GoalLinkButton.svelte';
 	import { levelOfKind } from '#lib/glyphs.ts';
@@ -60,9 +63,9 @@
 	let comments = $state<Comment[]>([]);
 	/** The epic's activity log, fetched best effort like the comments. */
 	let activity = $state<ActivityEntry[]>([]);
-	/** Every initiative, for the details select. */
+	/** Every initiative, for the details picker. */
 	let initiatives = $state<Initiative[]>([]);
-	/** The details select lists them in the planning page's order. */
+	/** The details picker lists them in the planning page's order. */
 	const orderedInitiatives = $derived(planningOrder(session.config?.horizon_buckets ?? [], initiatives));
 	let loadError = $state<string | null>(null);
 	/** A refetch failed after the page had loaded: the content (and its open editors) stays mounted; the banner offers a retry. */
@@ -352,7 +355,7 @@
 		else if (conflicted && epic) briefBase = rebase({ version: epic.version, text: epic.brief ?? '' });
 	}
 
-	function startDetails(first: 'input' | 'select' = 'input') {
+	function startDetails(field: 'title' | 'initiative' = 'title') {
 		const e = epic;
 		if (!e) return;
 		details = epicDetails(e);
@@ -361,7 +364,7 @@
 		detailsError = null;
 		editingDetails = true;
 		// The trigger is replaced by the form: focus moves to its first field, not to <body>.
-		void tick().then(() => detailsForm?.querySelector(first)?.focus());
+		void tick().then(() => detailsForm?.querySelector<HTMLElement>(field === 'title' ? 'input' : PICKER_INPUT)?.focus());
 	}
 
 	/** Cancel, an unchanged save and a successful one all close the editor and return focus to its toggle. */
@@ -576,13 +579,7 @@
 					<label>Title <input bind:value={details.title} required disabled={busy} /></label>
 					<label>
 						Initiative
-						<select bind:value={details.initiative} disabled={busy}>
-							<option value="">none</option>
-							{#each orderedInitiatives as i (i.key)}<option value={i.key}>{i.key} {i.title}</option>{/each}
-							{#if ep.initiative && !initiatives.some((i) => i.key === ep.initiative)}
-								<option value={ep.initiative}>{ep.initiative}</option>
-							{/if}
-						</select>
+						<Picker label="Initiative" options={keyed(orderedInitiatives)} bind:value={details.initiative} empty="No initiative" disabled={busy} />
 					</label>
 					{#if detailsError}<p class="error" role="alert">{detailsError}</p>{/if}
 					<button type="button" onclick={closeDetails}>Cancel</button>
@@ -594,7 +591,7 @@
 		{#if !ep.initiative}
 			<p class="banner" role="status">
 				<span>This epic belongs to no initiative.</span>
-				{#if !editingDetails}<button type="button" onclick={() => startDetails('select')}>Choose an initiative</button>{/if}
+				{#if !editingDetails}<button type="button" onclick={() => startDetails('initiative')}>Choose an initiative</button>{/if}
 			</p>
 		{/if}
 
@@ -792,6 +789,7 @@
 				<label class="field">Title <input bind:value={decision.title} required disabled={decisionBusy} /></label>
 				<label class="field">Decider <input type="email" bind:value={decision.decider} required disabled={decisionBusy} placeholder="name@example.com" /></label>
 				<label class="field">Due <input type="date" bind:value={decision.due} disabled={decisionBusy} /></label>
+				<DueShortcuts bind:value={decision.due} disabled={decisionBusy} />
 				{#if decisionError}<p class="error" role="alert">{decisionError}</p>{/if}
 				<button type="submit" class="primary" disabled={decisionBusy || !decision.title.trim() || !decision.decider.trim()}>Require decision</button>
 			</form>
@@ -814,9 +812,7 @@
 	{#if promise.open}
 		<PromiseDialog
 			key={ep.key}
-			activeEnds={promise.sprints?.active?.sprint.ends_on ?? null}
-			draftEnds={promise.sprints?.draft?.ends_on ?? null}
-			today={promise.sprints?.today ?? null}
+			sprints={promise.sprints}
 			sprintsFailed={promise.sprintsFailed}
 			current={ep.promise?.fact ?? null}
 			{busy}
@@ -1013,13 +1009,6 @@
 		display: grid;
 		gap: 0.2rem;
 		font-size: 14px;
-	}
-	.decision-form {
-		display: grid;
-		gap: 12px;
-	}
-	.decision-form button {
-		justify-self: start;
 	}
 	.error {
 		margin: 0;

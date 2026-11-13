@@ -9,6 +9,7 @@ import { page } from '$app/state';
 import type { Epic, Initiative, PromisedFilter, Story, StoryPromise, StoryWithReadiness } from '#lib/api/types.ts';
 import { promisedMatches } from '#lib/promise.ts';
 import { epic, initiative, withReadiness } from '#lib/test/fixtures.ts';
+import { choose as pickOption, offered, picker } from '#lib/test/picker.ts';
 
 /** `untriaged` puts the server's untriaged reason on the row (the page never derives it from kind and epic). */
 const row = (key: string, rank: number, epic: string | null, ready = true, kind: Story['kind'] = 'story', untriaged = false, over: Partial<Story> = {}) =>
@@ -206,16 +207,15 @@ describe('backlog page', () => {
 		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New epic')!.click();
 		flushSync();
 		const form = document.body.querySelector('form[aria-label="New epic"]') as HTMLFormElement;
-		expect((form.querySelector('select') as HTMLSelectElement).value).toBe('');
+		expect(picker(form, 'Initiative').value).toBe('No initiative');
 	});
 
-	it('opens New story with an epic select defaulting to none', async () => {
+	it('opens New story with an epic picker defaulting to No epic', async () => {
 		await open('Loose epic');
 		[...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'New story')!.click();
 		flushSync();
 		const form = document.body.querySelector('form[aria-label="New story"]') as HTMLFormElement;
-		const selects = [...form.querySelectorAll('select')];
-		expect(selects.at(-1)!.value).toBe('');
+		expect(picker(form, 'Epic').value).toBe('No epic');
 		expect(form.querySelector('button[type="submit"]')!.textContent).toBe('Create story');
 	});
 
@@ -320,12 +320,9 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		expect([...select.options].map((o) => o.textContent)).toEqual(['No epic', 'E-1 Loose epic', 'E-2 Other epic']);
-		expect(select.value).toBe('E-1');
-		select.value = 'E-2';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		expect(offered(form, 'Epic')).toEqual(['No epic', 'E-1 Loose epic', 'E-2 Other epic']);
+		expect(picker(form, 'Epic').value).toBe('E-1 Loose epic');
+		pickOption(form, 'Epic', 'E-2');
 		const gets = data.storyGets;
 		form.requestSubmit();
 		await vi.waitFor(() => {
@@ -346,10 +343,7 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = '';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', '', 'No epic');
 		form.requestSubmit();
 		await vi.waitFor(() => expect(data.patches).toEqual([{ key: 'S-1', body: { version: 1, epic: null } }]));
 	});
@@ -542,10 +536,7 @@ describe('backlog page', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = '';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', '', 'No epic');
 		form.requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();
@@ -783,8 +774,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		go('?state=all&label=gone');
 		await vi.waitFor(() => {
 			flushSync();
-			const select = [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Label'))!.querySelector('select')!;
-			expect([...select.options].map((o) => o.value)).toEqual(['', 'gone', 'old', 'ux']);
+			expect(offered(document.body, 'Label')).toEqual(['any', 'gone', 'old', 'ux']);
 		});
 	});
 
@@ -836,10 +826,7 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		choose('S-1', 'Change epic').click();
 		flushSync();
 		const form = document.body.querySelector('dialog form[aria-label="Change epic"]') as HTMLFormElement;
-		const select = form.querySelector('select') as HTMLSelectElement;
-		select.value = 'E-2';
-		select.dispatchEvent(new Event('change', { bubbles: true }));
-		flushSync();
+		pickOption(form, 'Epic', 'E-2');
 		form.requestSubmit();
 		await vi.waitFor(() => {
 			flushSync();
@@ -1212,22 +1199,50 @@ describe('backlog filters (the server filters, kb/ADR-0021 R1)', () => {
 		expect(document.body.querySelector('.footer')).toBeNull();
 	});
 
-	it('the Epic select lists only the chosen initiative\'s epics, and the chosen epic', async () => {
+	it('the Epic filter lists only the chosen initiative\'s epics, and the chosen epic', async () => {
 		data.initiatives = [initiative({ key: 'I-1', title: 'Hosting', horizon: 'Now' })];
 		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Move', initiative: 'I-1' })];
 		go('?initiative=I-1');
 		await open('No stories match');
-		const epicSelect = () => [...document.body.querySelectorAll('label')].find((l) => l.textContent?.trim().startsWith('Epic'))!.querySelector('select')!;
-		expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-2']);
+		const epicOptions = () => offered(document.body, 'Epic');
+		expect(epicOptions()).toEqual(['any', 'E-2 Move']);
 		go('?initiative=I-1&epic=E-1');
 		await vi.waitFor(() => {
 			flushSync();
-			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
+			expect(epicOptions()).toEqual(['any', 'E-1 Loose epic', 'E-2 Move']);
 		});
 		go('');
 		await vi.waitFor(() => {
 			flushSync();
-			expect([...epicSelect().options].map((o) => o.value)).toEqual(['', 'E-1', 'E-2']);
+			expect(epicOptions()).toEqual(['any', 'E-1 Loose epic', 'E-2 Move']);
+		});
+	});
+
+	it('choosing an epic in the filter navigates with epic=<key>, so the server filters', async () => {
+		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
+		await open('Loose epic');
+		(document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement).click();
+		flushSync();
+		pickOption(document.body, 'Epic', 'E-2');
+		await vi.waitFor(() => expect(vi.mocked(goto)).toHaveBeenCalled());
+		const [url] = vi.mocked(goto).mock.calls.at(-1)!;
+		expect(new URL(String(url)).searchParams.get('epic')).toBe('E-2');
+		await vi.waitFor(() => expect(page.url.searchParams.get('epic')).toBe('E-2')); // the fake navigates a tick later: let it land before the next step
+		pickOption(document.body, 'Epic', '', 'any'); // the empty choice is no filter (kb/ADR-0021)
+		await vi.waitFor(() => expect(new URL(String(vi.mocked(goto).mock.calls.at(-1)![0])).searchParams.has('epic')).toBe(false));
+		await vi.waitFor(() => expect(page.url.searchParams.has('epic')).toBe(false));
+	});
+
+	it('a URL change shows in the closed epic filter', async () => {
+		data.epics = [epic({ key: 'E-1', title: 'Loose epic' }), epic({ key: 'E-2', title: 'Other epic' })];
+		await open('Loose epic');
+		(document.body.querySelector('button[data-filters-toggle]') as HTMLButtonElement).click();
+		flushSync();
+		expect(picker(document.body, 'Epic').value).toBe('any');
+		go('?epic=E-2');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(picker(document.body, 'Epic').value).toBe('E-2 Other epic');
 		});
 	});
 });

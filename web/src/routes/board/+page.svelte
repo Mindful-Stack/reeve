@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -352,12 +354,13 @@
 	/>
 	<label class="field inline">
 		Epic
-		<select value={query.get('epic') ?? ''} onchange={(e) => setFilter('epic', e.currentTarget.value || null)}>
-			<option value="">any</option>
-			{#each epics as e (e.key)}
-				<option value={e.key}>{e.key} {e.title}</option>
-			{/each}
-		</select>
+		<Picker
+			label="Epic"
+			options={keyed(epics)}
+			value={query.get('epic') ?? ''}
+			empty="any"
+			onchange={(v) => setFilter('epic', v || null)}
+		/>
 	</label>
 	<label class="field inline">
 		Kind

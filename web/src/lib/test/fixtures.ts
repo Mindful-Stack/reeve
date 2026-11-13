@@ -9,6 +9,7 @@ import type {
 	Comment,
 	Epic,
 	Goal,
+	GoalGates,
 	Initiative,
 	InstanceConfig,
 	Me,
@@ -176,8 +177,14 @@ export function goal(over: Partial<Goal> = {}): Goal {
 		verdict: null,
 		verdict_note: null,
 		version: 1,
+		created_at: '2026-11-03T12:00:00Z',
 		...over
 	};
+}
+
+/** A goal's gates with nothing waiting and nothing counted. */
+export function goalGates(over: Partial<GoalGates> = {}): GoalGates {
+	return { goal_id: 1, initiatives: [], discoveries: [], decisions: [], discovery_total: 0, decisions_total: 0, ...over };
 }
 
 /** The active sprint 1, with no goals unless given. */

@@ -6,6 +6,7 @@ import type { Story } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
 import { discardDraft, openReport, report } from '#lib/report.svelte.ts';
 import { me, story } from '#lib/test/fixtures.ts';
+import { settle } from '#lib/test/net.ts';
 import { goto } from '$app/navigation';
 import Layout from './+layout.svelte';
 
@@ -42,15 +43,34 @@ vi.mock('#lib/components/ReportDialog.svelte', () => ({
 		dialog.props = props;
 	}
 }));
-const net = vi.hoisted(() => ({ gets: [] as string[], hold: null as null | Promise<void>, searchHold: null as null | Promise<void> }));
+const net = vi.hoisted(() => ({
+	gets: [] as string[],
+	hold: null as null | Promise<void>,
+	searchHold: null as null | Promise<void>,
+	untriaged: 0 as number | null, // the list's length, or null for a failing read
+	untriagedHold: null as null | Promise<void>
+}));
+const live = vi.hoisted(() => ({ fns: [] as (() => unknown)[] }));
+vi.mock('#lib/events.svelte.ts', async (orig) => ({
+	...(await orig<typeof import('#lib/events.svelte.ts')>()),
+	onLive: (fn: () => unknown) => {
+		live.fns.push(fn);
+	}
+}));
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
-	const { me, epic } = await import('#lib/test/fixtures.ts');
-	installFetch(({ method, path }) => {
+	const { me, epic, withReadiness } = await import('#lib/test/fixtures.ts');
+	installFetch(({ method, path, url }) => {
 		net.gets.push(`${method} ${path}`);
 		if (path === '/api/v1/me') return me();
 		if (path === '/api/v1/search') return Promise.resolve(net.searchHold).then(() => [{ key: 'ABC-12', item: 'story', kind: 'story', title: 'Twelve', matched: ['key'], exact: true }]);
 		if (path === '/api/v1/epics/ABC-30') return Promise.resolve(net.hold).then(() => epic({ key: 'ABC-30', title: 'Payments' }));
+		if (path === '/api/v1/stories' && url.search === '?untriaged=true') {
+			const n = net.untriaged; // what the server held when asked
+			return Promise.resolve(net.untriagedHold).then(() =>
+				n === null ? failure('down') : Array.from({ length: n }, (_, i) => withReadiness({ key: `ABC-${i + 1}` }))
+			);
+		}
 		return failure('unexpected', 404);
 	});
 	return orig();
@@ -85,8 +105,12 @@ afterEach(() => {
 	net.gets.length = 0;
 	net.hold = null;
 	net.searchHold = null;
+	net.untriaged = 0;
+	net.untriagedHold = null;
+	live.fns.length = 0;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
+	document.documentElement.style.removeProperty('--top-bar-height');
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
@@ -390,6 +414,23 @@ describe('Report', () => {
 		expect(net.gets).not.toContain('GET /api/v1/epics/ABC-30');
 	});
 
+	it('started with a drawer open, keeps the page and the story in the origin, and prefills the epic only on an epic page', async () => {
+		session.me = me();
+		await open('/board?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.origin.path).toBe('/board?story=ABC-1');
+		expect(report.draft!.epic).toBeNull(); // the story never prefills the chip
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		discardDraft();
+		await open('/epics/ABC-30?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.epic).toEqual({ key: 'ABC-30', title: 'Payments' }); // the page's epic, not the story's
+	});
+
 	it('keeps a notice after a create until another page is opened, and links the key', async () => {
 		session.me = me();
 		await open('/board');
@@ -551,5 +592,98 @@ describe('Report review fixes', () => {
 		([...document.body.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === 'Sign out') as HTMLElement).click();
 		await vi.waitFor(() => expect(report.draft).toBeNull());
 		expect(sessionStorage.getItem('reeve.report-draft')).toBeNull();
+	});
+});
+
+describe('top bar', () => {
+	it('publishes its height as --top-bar-height and follows a resize', async () => {
+		let notify: (() => void) | null = null;
+		let observed: Element | null = null;
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(cb: () => void) {
+					notify = cb;
+				}
+				observe(el: Element) {
+					observed = el;
+				}
+				disconnect() {}
+			}
+		);
+		await open('/board');
+		const bar = await vi.waitFor(() => document.body.querySelector<HTMLElement>('header.top-bar')!);
+		expect(observed).toBe(bar);
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 57 });
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('57px');
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 101 }); // wrapped to two rows
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('101px');
+		unmount(app!); // the effect's own cleanup removes the property
+		app = null;
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('');
+	});
+});
+
+describe('untriaged link', () => {
+	const link = () => document.querySelector<HTMLAnchorElement>('header.top-bar a.untriaged');
+	const asked = () => net.gets.filter((g) => g === 'GET /api/v1/stories').length;
+	const refresh = async () => {
+		for (const fn of live.fns) await fn(); // a live change or a reconnect
+	};
+	beforeEach(() => {
+		session.me = me();
+	});
+	it('shows "N untriaged" linking to /triage, and refreshes on a live change', async () => {
+		net.untriaged = 2;
+		await open('/board');
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('2 untriaged'));
+		expect(link()!.getAttribute('href')).toBe('/triage');
+		net.untriaged = 1;
+		await refresh();
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('1 untriaged'));
+	});
+	it('is absent at zero, after the count has loaded', async () => {
+		await open('/board');
+		await vi.waitFor(() => expect(asked()).toBeGreaterThan(0));
+		await settle();
+		flushSync();
+		expect(link()).toBeNull();
+	});
+	it('keeps the last count when a reload fails, and drops a late older answer', async () => {
+		net.untriaged = 4;
+		await open('/board');
+		await vi.waitFor(() => expect(link()?.textContent?.trim()).toBe('4 untriaged'));
+		net.untriaged = null;
+		await refresh();
+		await settle();
+		flushSync();
+		expect(link()?.textContent?.trim()).toBe('4 untriaged');
+		let release = () => {};
+		net.untriagedHold = new Promise<void>((r) => (release = r));
+		net.untriaged = 7;
+		const older = refresh(); // waits
+		net.untriagedHold = null;
+		net.untriaged = 3;
+		await refresh(); // answers first
+		release();
+		await older;
+		await settle();
+		flushSync();
+		expect(link()?.textContent?.trim()).toBe('3 untriaged');
+	});
+	it('asks nothing on a signed-out page, not at mount and not on a live change', async () => {
+		session.me = null;
+		route.path = '/auth/signin'; // signed out: no top bar, so `open()` has no nav to wait for
+		app = mount(Layout, { target: document.body, props: { children: createRawSnippet(() => ({ render: () => '<p>content</p>' })) } as never });
+		flushSync();
+		expect(live.fns).toHaveLength(1); // the layout subscribed: the refresh below reaches its guard
+		await settle();
+		await refresh();
+		await settle();
+		flushSync();
+		expect(asked()).toBe(0);
+		expect(link()).toBeNull();
 	});
 });

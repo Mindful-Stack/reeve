@@ -35,7 +35,7 @@ const chore = (page: Page, title: string, epic: string | null = EPIC) =>
 // Sign in through the real browser flow against the static provider: /auth/login → provider → /auth/callback sets the
 // cookie.
 test.beforeEach(async ({ page, context }) => {
-	// Lands on Planning, which loads no story list, so a test that counts story requests sees only its own page's.
+	// Lands on Planning, whose page loads no story list (the top bar's untriaged count does; counters filter it out).
 	await page.goto('/auth/login?next=/planning');
 	await expect(page).toHaveURL(/\/planning$/);
 	const session = (await context.cookies()).find((c) => c.name === 'reeve_session');
@@ -78,8 +78,22 @@ test('board shows ready and blocked stories and the drawer opens by url', async 
 	await expect(page.getByRole('complementary')).toContainText(STORY);
 });
 
+test('the top bar stays at the top while the board scrolls', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 300 });
+	await page.goto('/board');
+	await expect(page.getByTestId(`card-${STORY}`)).toBeVisible(); // the board has loaded and is taller than the viewport
+	const bar = page.getByRole('banner');
+	await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+	expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0); // the page really scrolled
+	const box = (await bar.boundingBox())!;
+	expect(box.y).toBe(0);
+	await page.getByRole('button', { name: 'Report', exact: true }).click({ trial: true }); // visible and not covered
+});
+
 test('board asks for recently done stories and labels the done column', async ({ page }) => {
-	const req = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET');
+	const req = page.waitForRequest(
+		(r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET' && new URL(r.url()).searchParams.has('done')
+	);
 	await page.goto('/board');
 	expect(new URL((await req).url()).searchParams.get('done')).toBe('recent');
 	await expect(page.getByRole('heading', { name: /^done · last 14 days/ })).toBeVisible();
@@ -120,13 +134,39 @@ test('a move refused by the gate shows the override prompt and the override move
 	expect(body.value.some((e) => e.payload.reason === 'smoke override')).toBe(true);
 });
 
+test('the card\'s copy button does not start the card\'s drag, and does not make the meta row tall', async ({ page }) => {
+	const s = await chore(page, `Smoke copy drag ${crypto.randomUUID().slice(0, 6)}`);
+	await page.goto('/board');
+	// A new chore is not ready, so its card sits in the collapsed "Not ready" disclosure; dragging it would open the override prompt.
+	const openNotReady = async () => {
+		const nr = page.locator('details.not-ready');
+		if ((await nr.getAttribute('open')) === null) await nr.locator('summary').click();
+	};
+	await openNotReady();
+	const card = page.getByTestId(`card-${s.key}`);
+	await expect(card).toBeVisible();
+	expect((await card.locator('.meta').boundingBox())!.height).toBeLessThan(24);
+	await page.evaluate(() => {
+		(window as unknown as { dragStarts: number }).dragStarts = 0;
+		document.addEventListener('dragstart', () => (window as unknown as { dragStarts: number }).dragStarts++);
+	});
+	await card.getByRole('button', { name: `Copy ${s.key}` }).dragTo(page.getByTestId('column-in_progress'));
+	expect(await page.evaluate(() => (window as unknown as { dragStarts: number }).dragStarts)).toBe(0); // the browser starts the card's drag from a non-draggable descendant
+	await expect(page.getByRole('dialog')).toHaveCount(0); // the override prompt a drop would open
+	await page.reload();
+	await openNotReady();
+	await expect(page.getByTestId('column-todo').getByTestId(`card-${s.key}`)).toBeVisible();
+	await expect(page.getByTestId('column-in_progress').getByTestId(`card-${s.key}`)).toHaveCount(0);
+});
+
 test('a move made elsewhere reaches an open board over the event stream, without a reload', async ({ page, browser }) => {
 	// The board loads once on mount and refetches once 500 ms after the stream opens. Wait for both before the other
 	// browser moves the story, so the card can only reach in progress through an `activity` frame: with the stream's
 	// `activity` listener removed (or the event renamed on the server) this test fails, since no later refetch happens.
 	let loads = 0;
 	page.on('response', (r) => {
-		if (new URL(r.url()).pathname === '/api/v1/stories') loads++;
+		const u = new URL(r.url());
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('done') === 'recent') loads++;
 	});
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
@@ -163,13 +203,20 @@ test('signed out users are sent to sign in and see the button', async ({ browser
 test('an open tab whose session dies is sent to sign in by the event stream', async ({ page }) => {
 	// The board loads once on mount and refetches once 500 ms after the stream opens. Wait for both, so the redirect below
 	// cannot come from that refetch answering 401: it has to come from the stream closing.
+	// The layout's untriaged count loads the same way (on mount, then after the stream opens): wait for both of those too.
+	// It also refetches on any activity entry the stream carries, and other tests share this database, so a third read
+	// can land; "at least two" is what the test needs (both answered before the session is revoked), not "exactly two".
 	let loads = 0;
+	let counts = 0;
 	page.on('response', (r) => {
-		if (new URL(r.url()).pathname === '/api/v1/stories') loads++;
+		const u = new URL(r.url());
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('done') === 'recent') loads++;
+		if (u.pathname === '/api/v1/stories' && u.searchParams.get('untriaged') === 'true') counts++;
 	});
 	await page.goto('/board');
 	await expect(page.getByText('live', { exact: true })).toBeAttached(); // visually hidden
 	await expect.poll(() => loads).toBe(2);
+	await expect.poll(() => counts).toBeGreaterThanOrEqual(2);
 	// Revoke this tab's session (the newest browser session: beforeEach just signed in) and nothing else, so no other
 	// revocation's activity entry reaches the stream first and triggers a refetch that would 401 on its own.
 	const headers = { 'X-Reeve-Client': 'web' };
@@ -195,6 +242,34 @@ test('the drawer removes a block', async ({ page }) => {
 		value: { blocked_by: string[] };
 	};
 	expect(after.value.blocked_by).toEqual([]);
+});
+
+test('the drawer epic picker: typing replaces the label, the active option stays in sight, Enter picks then saves', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	// Twelve matches overflow the 16rem list.
+	for (let i = 0; i < 12; i++) {
+		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Smoke picker ${suffix} ${String(i).padStart(2, '0')}` });
+	}
+	const s = await chore(page, `Smoke picker story ${suffix}`); // under EPIC: the closed picker shows EPIC's label
+	await page.goto(`/board?story=${s.key}`);
+	const drawer = page.getByRole('complementary');
+	await drawer.getByRole('button', { name: 'Edit epic' }).click();
+	await expect(drawer.getByRole('combobox', { name: 'Epic' })).toBeFocused(); // focused by script, not by a click
+	await page.keyboard.type(`picker ${suffix}`); // keys, not fill(): they must replace the selected label
+	const list = drawer.getByRole('listbox', { name: 'Epic' });
+	await expect(list.getByRole('option')).toHaveCount(12);
+	for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowDown');
+	await expect(list.getByRole('option', { name: new RegExp(`${suffix} 11$`) })).toBeInViewport();
+	await page.keyboard.press('Enter'); // picks; the list closes
+	await expect(list).toBeHidden();
+	await page.keyboard.press('Enter'); // closed, Enter is the form's: it saves
+	await expect(drawer.getByRole('link', { name: new RegExp(`^\\S+ Smoke picker ${suffix} 11$`) })).toBeVisible();
+	// Cancel sits beside the open list: the press blurs the input and closes the list, which moves nothing, so the click lands.
+	await drawer.getByRole('button', { name: 'Edit epic' }).click();
+	await page.keyboard.press('ArrowDown');
+	await expect(list).toBeVisible();
+	await drawer.getByRole('button', { name: 'Cancel', exact: true }).click();
+	await expect(drawer.getByRole('combobox', { name: 'Epic' })).toBeHidden();
 });
 
 test('a decision is edited in place: its decider changes', async ({ page }) => {
@@ -316,11 +391,13 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	await expect(page.getByRole('link', { name: 'Smoke created story' })).toBeVisible();
 	// Move the epic to no initiative, then back through the banner.
 	await page.getByRole('button', { name: 'Edit details' }).click();
-	await page.getByRole('form', { name: 'Epic details' }).getByLabel('Initiative').selectOption('');
+	await page.getByRole('form', { name: 'Epic details' }).getByRole('combobox', { name: 'Initiative' }).click();
+	await page.getByRole('option', { name: 'No initiative', exact: true }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('button', { name: 'Save details' }).click();
 	await expect(page.getByText('This epic belongs to no initiative.')).toBeVisible();
 	await page.getByRole('button', { name: 'Choose an initiative' }).click();
-	await page.getByRole('form', { name: 'Epic details' }).getByLabel('Initiative').selectOption(iniKey);
+	await page.getByRole('form', { name: 'Epic details' }).getByRole('combobox', { name: 'Initiative' }).fill(iniKey);
+	await page.getByRole('option', { name: new RegExp('^' + iniKey + '\\b') }).click();
 	await page.getByRole('form', { name: 'Epic details' }).getByRole('button', { name: 'Save details' }).click();
 	await expect(page.getByText('This epic belongs to no initiative.')).toBeHidden();
 	await expect(page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: iniKey })).toBeVisible();
@@ -333,7 +410,7 @@ test('the planning loop runs in the browser: initiative, epic, story, backlog', 
 	await page.getByRole('button', { name: 'New epic' }).click();
 	const indexForm = page.getByRole('dialog').getByRole('form', { name: 'New epic' });
 	await indexForm.getByLabel('Title').fill('Smoke loose epic');
-	await expect(indexForm.getByLabel('Initiative')).toHaveValue(''); // none by default
+	await expect(indexForm.getByRole('combobox', { name: 'Initiative' })).toHaveValue('No initiative'); // the closed picker shows the empty choice
 	await indexForm.getByRole('button', { name: 'Create epic' }).click();
 	await expect(page.getByRole('region', { name: 'No initiative' }).getByRole('link', { name: 'Smoke loose epic' })).toBeVisible();
 	// The old index redirects, also on a full load through the server's page fallback.
@@ -373,6 +450,21 @@ test('the backlog lists epic-less work under No epic and moves a row up through 
 	expect(down.a).toBeLessThan(down.b);
 	await page.goto('/backlog');
 	await expect(page.getByRole('region', { name: 'No epic' })).toContainText('Smoke backlog first');
+	// Change epic: the dialog focuses its picker; the open list floats past the dialog's edge and is not clipped by it.
+	await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: 'Smoke change epic target' });
+	await page.reload();
+	await page.getByRole('button', { name: `Actions for ${a.key}`, exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Change epic' }).click();
+	const changeEpic = page.getByRole('dialog');
+	await expect(changeEpic.getByRole('combobox', { name: 'Epic' })).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	// ratio 1: the whole list box intersects the viewport, after the clipping of every scrolling ancestor (the dialog).
+	await expect(changeEpic.getByRole('listbox', { name: 'Epic' })).toBeInViewport({ ratio: 1 });
+	await page.keyboard.press('Escape'); // the list only
+	await expect(changeEpic.getByRole('listbox')).toBeHidden();
+	await expect(changeEpic).toBeVisible();
+	await page.keyboard.press('Escape'); // now the dialog
+	await expect(changeEpic).toBeHidden();
 });
 
 test('the client loads nothing from outside the server', async ({ page }) => {
@@ -584,6 +676,98 @@ test('decision rows keep every cell within its column at desktop widths', async 
 	}
 });
 
+// The Add decision form (GRA-636): the sprint-end shortcut row is offered and its buttons lie inside the form's box.
+for (const width of [320, 1280]) {
+	test(`the Add decision form keeps its sprint-end shortcuts inside its box at ${width}px`, async ({ page }) => {
+		const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Decision form smoke ${crypto.randomUUID().slice(0, 8)}`,
+			horizon: 'Now'
+		});
+		// The shortcuts need a sprint end: open a sprint (a goal creates the draft when there is none) and close it after.
+		type Listed = {
+			active: { sprint: { id: number; version: number; goals: { id: number }[] } } | null;
+			draft: { id: number; version: number } | null;
+		};
+		const listed = async () => ((await (await page.request.get('/api/v1/sprints', { headers })).json()) as { value: Listed }).value;
+		if ((await listed()).draft == null) {
+			await post(page, '/api/v1/goals', { idempotency_key: crypto.randomUUID(), outcome: `Decision form goal ${crypto.randomUUID().slice(0, 8)}`, check: 'the shortcuts show' });
+		}
+		const draft = (await listed()).draft!;
+		await post(page, `/api/v1/sprints/${draft.id}/open`, { version: draft.version });
+		const sprint = (await listed()).active!.sprint;
+		try {
+			await page.setViewportSize({ width, height: 900 });
+			await page.goto(`/initiatives/${ini.key}`);
+			await page.getByRole('button', { name: '+ Add decision' }).click();
+			const form = page.getByRole('dialog').getByRole('form', { name: 'Add decision' });
+			await expect(form).toBeVisible();
+			const group = form.getByRole('group', { name: 'Due date shortcuts' });
+			await expect(group).toBeVisible();
+			const box = (await form.boundingBox())!;
+			const buttons = await group.getByRole('button').all();
+			expect(buttons.length).toBeGreaterThan(0);
+			for (const el of buttons) {
+				const b = (await el.boundingBox())!;
+				expect(b.x + b.width, `${await el.innerText()} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+				expect(b.x).toBeGreaterThanOrEqual(box.x - 0.5);
+			}
+		} finally {
+			await post(page, `/api/v1/sprints/${sprint.id}/close`, {
+				version: sprint.version,
+				verdicts: sprint.goals.map((g) => ({ goal_id: g.id, verdict: 'missed' }))
+			});
+		}
+	});
+}
+
+// A decision's inline edit form (GRA-636): Title takes the form's width, no field is cut or spills, and the page does
+// not scroll sideways at a phone width, even with an empty list.
+for (const width of [320, 1280]) {
+	test(`a decision's edit form fits its row at ${width}px`, async ({ page }) => {
+		const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+			idempotency_key: crypto.randomUUID(),
+			title: `Edit form smoke ${crypto.randomUUID().slice(0, 8)}`,
+			horizon: 'Now'
+		});
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto(`/initiatives/${ini.key}`);
+		// Measure the loaded page, not its "Loading…" frame.
+		await expect(page.getByRole('button', { name: '+ Add decision' })).toBeVisible();
+		await expect(page.locator('#decisions').getByText('Nothing blocking')).toBeVisible();
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll with no decisions').toBe(true);
+		const title = 'Portal ADR (one-way): the org profile carries the fields and drives a hidden watch';
+		await post(page, '/api/v1/decisions', {
+			idempotency_key: crypto.randomUUID(),
+			on: ini.key,
+			title,
+			decider: 'daniel.thyselius@grantigo.com'
+		});
+		await page.goto(`/initiatives/${ini.key}`);
+		const row = page.getByRole('listitem').filter({ hasText: title });
+		await row.getByRole('button', { name: /^Actions for Portal ADR/ }).click();
+		await page.getByRole('menuitem', { name: 'Edit' }).click();
+		const form = row.getByRole('form', { name: /^Edit decision / });
+		await expect(form).toBeVisible();
+		const box = (await form.boundingBox())!;
+		for (const field of ['title', 'decider', 'due', 'reversibility']) {
+			const b = (await form.locator(`[data-field="${field}"]`).boundingBox())!;
+			expect(b.x + b.width, `${field} right edge`).toBeLessThanOrEqual(box.x + box.width + 0.5);
+			expect(b.x, `${field} left edge`).toBeGreaterThanOrEqual(box.x - 0.5);
+			if (field === 'title') expect(b.width, 'title width').toBeGreaterThanOrEqual(box.width * 0.6);
+		}
+		// The title is longer than a phone's line: only the wide layout shows all of it.
+		if (width >= 1280) {
+			for (const field of ['title', 'decider']) {
+				const el = form.locator(`[data-field="${field}"]`);
+				const [wide, shown] = await el.evaluate((e: HTMLInputElement) => [e.scrollWidth, e.clientWidth]);
+				expect(wide, `${field} shows its full value`).toBeLessThanOrEqual(shown + 1);
+			}
+		}
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no page scroll').toBe(true);
+	});
+}
+
 test('the header goal picker links an initiative and, after navigating by click, one of its epics', async ({ page }) => {
 	const outcome = `Picker smoke ${crypto.randomUUID().slice(0, 8)}`;
 	await page.goto('/planning');
@@ -693,16 +877,25 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	const title = `Smoke export PDF is blank ${suffix}`;
 	const existing = await chore(page, title); // an existing item to be found as similar (under SMOKE_EPIC)
 	await page.goto('/board');
-	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	await page.mouse.click(5, 5); // the backdrop closes an untouched dialog
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
+	await page.mouse.click(5, 5); // the backdrop: ignored once something is typed
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press('Escape'); // closes and keeps the draft
+	await expect(dialog).toBeHidden();
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue(`PDF export shows a blank page ${suffix}`);
 	const hit = dialog.locator(`[data-hit="${existing.key}"]`);
 	await expect(hit).toContainText(title); // "Already reported?" found it
 	await hit.click();
 	await expect(dialog).toBeHidden();
 	const drawer = page.getByRole('complementary');
 	await expect(drawer).toContainText(title); // the drawer is usable, not inert
-	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click(); // the drawer opens under the bar
 	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
 	await dialog.getByLabel("Something's broken").check();
 	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
@@ -717,7 +910,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
 });
 
-test('the story drawer header fits at 320px with a draft: Close stays on screen beside Resume report', async ({ page }) => {
+test('the story drawer header fits at 320px with a draft: Close stays on screen and the bar\'s Resume report stays usable', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 640 });
 	const s = await chore(page, `Smoke drawer header ${crypto.randomUUID().slice(0, 6)}`);
 	await page.goto('/board');
@@ -728,21 +921,69 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	await expect(dialog).toBeHidden();
 	await page.goto(`/board?story=${s.key}`);
 	const drawer = page.getByRole('complementary');
-	const resume = drawer.getByRole('button', { name: 'Resume report' });
+	const resume = page.getByRole('banner').getByRole('button', { name: 'Resume report' });
 	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
 	await expect(resume).toBeVisible();
 	await expect(close).toBeVisible();
-	const r = (await resume.boundingBox())!;
+	await close.click({ trial: true }); // not covered by the sticky bar
+	await resume.click({ trial: true }); // the bar's button is usable while the drawer is open
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
-	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
+	// The key and its glyph stay on one line; only the chips after it may wrap.
+	const key = drawer.locator('h2 .key');
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
+	// Squeeze the heading line: the key must not break even when it has to overflow.
+	await drawer.locator('.heading-line').evaluate((el) => ((el as HTMLElement).style.width = '40px'));
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
+	await expect(drawer.getByRole('button', { name: `Copy ${s.key}` })).toBeVisible();
 });
+
+for (const width of [1280, 360]) {
+	test(`drawers open under the top bar at ${width}px`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		const s = await chore(page, `Smoke drawer under bar ${crypto.randomUUID().slice(0, 6)}`);
+		const d = await post<{ id: number }>(page, '/api/v1/decisions', {
+			idempotency_key: crypto.randomUUID(), on: s.key, title: 'Smoke decision under the bar', decider: 'smoke@example.com'
+		});
+		const banner = page.getByRole('banner');
+		const under = async (drawer: Locator) => {
+			await expect(drawer).toBeVisible();
+			const bar = (await banner.boundingBox())!;
+			const box = (await drawer.boundingBox())!;
+			expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+			expect(box.y).toBeLessThanOrEqual(bar.y + bar.height + 1); // no gap
+			await close.click({ trial: true }); // fails if the bar covers the drawer
+		};
+		let close = page.getByRole('button', { name: `Close story ${s.key}` });
+		await page.goto(`/board?story=${s.key}`);
+		await under(page.getByRole('complementary'));
+		close = page.getByRole('button', { name: `Close decision #${d.id}` });
+		await page.goto(`/decisions?decision=${d.id}`);
+		await under(page.getByTestId('decision-drawer'));
+	});
+}
+
+for (const width of [1280, 360]) {
+	test(`the account menu opens from the top bar at ${width}px and stays open`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		await page.goto('/board');
+		const trigger = page.getByRole('banner').getByRole('button', { name: /^Account:/ });
+		await trigger.click();
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.waitForTimeout(300); // a menu that closes itself after opening would be gone by now
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0);
+	});
+}
 
 for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
 	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {
 		await page.setViewportSize({ width, height });
+		await chore(page, `Header fit untriaged ${crypto.randomUUID().slice(0, 6)}`, null); // the bar carries an untriaged count
 		await page.goto('/board');
 		await expect(page.getByRole('checkbox', { name: 'Untriaged' })).toBeVisible(); // the board has rendered
+		await expect(page.locator('header.top-bar a.untriaged')).toBeVisible();
 		const report = page.getByRole('button', { name: 'Report', exact: true });
 		await expect(report).toBeVisible();
 		const search = page.getByRole('search', { name: 'Site search' }).getByRole('searchbox');
@@ -849,8 +1090,8 @@ test('the header box filters the open backlog by relevance, links to search all,
 for (const width of [320, 720, 1280]) {
 	test(`the backlog's filter bar fits at ${width}px with the filters open: no horizontal scroll`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 800 });
-		// The widest options the selects can hold: an epic with an 80-character title (the Epic select) and a long label
-		// on a todo story (the Label select).
+		// The widest options the pickers can hold: an epic with an 80-character title (the Epic picker) and a long label
+		// on a todo story (the Label picker).
 		const title = `Smoke epic at ${width}px with a title long enough to fill eighty characters`.padEnd(80, '.');
 		expect(title).toHaveLength(80);
 		await post(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title });
@@ -868,8 +1109,14 @@ for (const width of [320, 720, 1280]) {
 		await expect(page.getByRole('button', { name: /^Remove the text filter/ })).toBeVisible();
 		await expect(page.locator('ol.rows li[data-key]').first()).toBeVisible();
 		const panel = page.getByRole('group', { name: 'Filters' });
-		await expect(panel.getByRole('combobox', { name: 'Epic' }).locator('option', { hasText: title })).toHaveCount(1);
-		await expect(panel.getByRole('combobox', { name: 'Label' }).locator('option', { hasText: 'smoke-a-label-long-enough' })).toHaveCount(1);
+		await panel.getByRole('combobox', { name: 'Label' }).click();
+		await page.keyboard.type('smoke-a-label');
+		await expect(panel.getByRole('option', { name: 'smoke-a-label-long-enough' })).toHaveCount(1);
+		await page.keyboard.press('Escape');
+		// The open epic list, with the widest option, stays open while the measurement runs.
+		await panel.getByRole('combobox', { name: 'Epic' }).click();
+		await page.keyboard.type(title.slice(0, 40));
+		await expect(panel.getByRole('option', { name: title })).toHaveCount(1);
 		const m = await page.evaluate(() => ({
 			scroll: document.documentElement.scrollWidth,
 			client: document.documentElement.clientWidth,
@@ -1021,4 +1268,111 @@ test("a story promised by the end of this sprint shows its chip after a reload, 
 			verdicts: sprint.goals.map((g) => ({ goal_id: g.id, verdict: 'missed' }))
 		});
 	}
+});
+
+test('a Now initiative without a goal gets one from its row, and the goal waits on its unmarked epic', async ({ page }) => {
+	// Data of its own: the seeded Now initiative is discovery-complete and already gets goals.
+	const tag = crypto.randomUUID().slice(0, 8);
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title: `Gates smoke ${tag}`, horizon: 'Now' });
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Gates epic ${tag}`, initiative: ini.key });
+	const outcome = `Gates smoke goal ${tag}`;
+
+	await page.goto('/sprint');
+	const row = page.getByTestId(`no-goal-${ini.key}`);
+	await expect(row).toContainText('in discovery');
+	await row.getByRole('button', { name: '+ goal' }).click();
+	const form = row.getByRole('form', { name: `New goal for next sprint · linked to ${ini.key}` });
+	await form.getByLabel('Outcome').fill(outcome);
+	await form.getByLabel("We'll know when").fill('the smoke sees its gate');
+	await form.getByRole('button', { name: 'Add goal', exact: true }).click();
+
+	// The goal is in the next sprint, under its initiative, and its epic is one of the gates it waits on.
+	const group = page.getByTestId('next-sprint').getByTestId(`next-group-${ini.key}`);
+	const card = group.locator('article.goal', { has: page.getByRole('heading', { name: outcome, exact: true }) });
+	await expect(card.getByTestId(`discovery-${epic.key}`)).toContainText(`Gates epic ${tag}`);
+	await expect(page.getByTestId(`no-goal-${ini.key}`)).toHaveCount(0);
+
+	// Leave the draft as this test found it.
+	await card.getByRole('button', { name: 'Remove', exact: true }).click();
+	await expect(card).toHaveCount(0);
+});
+
+test('triage from the keyboard: the count, place with criteria, undo, a phone, and drop', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	// a: no epic (untriaged), with a long description for the phone check.
+	const a = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Triage smoke export blank ${suffix}`,
+		kind: 'bug',
+		epic: null,
+		criteria: [],
+		labels: [],
+		description: 'Long description. '.repeat(200)
+	});
+	const b = await chore(page, `Triage smoke search accents ${suffix}`, null);
+	await page.goto('/board');
+	const count = page.getByRole('banner').getByRole('link', { name: /untriaged$/ });
+	await expect(count).toBeVisible();
+	const before = Number((await count.textContent())!.split(' ')[0]);
+	await count.click();
+	await expect(page).toHaveURL(/\/triage$/);
+	const list = page.getByRole('listbox', { name: 'Untriaged' });
+	const option = (key: string) => list.getByRole('option', { name: new RegExp(`^${key}\\b`) });
+	const status = page.getByTestId('triage-status');
+	await expect(list).toBeFocused();
+	// Go to item a (other untriaged items may exist from earlier tests): click its option, then use only the keyboard.
+	await option(a.key).click();
+	await page.keyboard.press('e');
+	await page.keyboard.type(EPIC); // typed over the Picker's selected label
+	await page.keyboard.press('Enter'); // picks; focus moves on to Criteria
+	await expect(page.locator('textarea.criteria')).toBeFocused();
+	await page.keyboard.type('The PDF shows the page');
+	await page.keyboard.press('Control+Enter');
+	await expect(status).toHaveText(`Placed ${a.key} under ${EPIC}.`);
+	await expect(option(a.key)).toHaveCount(0);
+	await expect(count).toHaveText(`${before - 1} untriaged`, { timeout: 10_000 });
+	// Undo brings it back, unplaced, with the typed criterion.
+	await page.keyboard.press('u');
+	await expect(option(a.key)).toHaveCount(1);
+	await expect(page.locator('textarea.criteria')).toHaveValue('The PDF shows the page');
+	// ... and the server has it unplaced again: the bar's count (a live refetch) is back to what it was.
+	await expect(count).toHaveText(`${before} untriaged`, { timeout: 10_000 });
+	// A phone, on a known item with a long description: no horizontal scroll, and Tab from Criteria reaches the buttons.
+	await page.setViewportSize({ width: 360, height: 740 });
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.locator('textarea.criteria').focus();
+	for (const name of [/^Place/, /^Drop/, /^Skip/]) {
+		await page.keyboard.press('Tab');
+		await expect(page.getByRole('button', { name })).toBeFocused();
+		await expect(page.getByRole('button', { name })).toBeInViewport();
+	}
+	// Armed, the button reads "Confirm drop" and the sentence is in the status line.
+	await page.getByRole('button', { name: /^Drop/ }).click();
+	await expect(status).toHaveText(`Drop ${a.key}? Press d or click again.`);
+	await expect(page.getByRole('button', { name: /^Confirm drop/ })).toBeVisible();
+	await page.keyboard.press('Escape'); // cancels the drop
+	await expect(status).toHaveText('Drop cancelled.');
+	await page.setViewportSize({ width: 1280, height: 720 });
+	// Place it again.
+	await page.keyboard.press('e');
+	await page.keyboard.type(EPIC);
+	await page.keyboard.press('Enter');
+	await page.keyboard.press('Control+Enter');
+	await expect(status).toHaveText(`Placed ${a.key} under ${EPIC}.`);
+	// Drop b with d d.
+	await option(b.key).click();
+	await page.keyboard.press('d');
+	await expect(status).toHaveText(`Drop ${b.key}? Press d or click again.`);
+	await page.keyboard.press('d');
+	await expect(status).toHaveText(`Dropped ${b.key}.`);
+	await expect(option(b.key)).toHaveCount(0);
+	const dropped = await page.request.get(`/api/v1/stories/${b.key}`);
+	expect((await dropped.json()).value).toMatchObject({ delivery: 'done', resolution: 'dropped' });
+	// Undo the drop: back in the queue, todo again.
+	await list.focus();
+	await page.keyboard.press('u');
+	await expect(status).toHaveText(`Undone: ${b.key} is back in todo.`);
+	await expect(option(b.key)).toHaveCount(1);
+	const back = await page.request.get(`/api/v1/stories/${b.key}`);
+	expect((await back.json()).value).toMatchObject({ delivery: 'todo' });
 });

@@ -46,7 +46,7 @@ export const hasDraft = (): boolean => {
 	return !!d && (d.uncertain || d.kind !== null || d.title.trim() !== '' || !isUntouched(d.description));
 };
 
-/** The Report button's label and accessible name: the header's and the story drawer's. */
+/** The Report button's label and accessible name: the top bar's. */
 export const reportLabel = (): string => (hasDraft() ? 'Resume report' : 'Report');
 
 const isStr = (x: unknown): x is string => typeof x === 'string';

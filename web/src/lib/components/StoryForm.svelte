@@ -1,8 +1,10 @@
 <!-- web/src/lib/components/StoryForm.svelte: creates a story. On an epic page the epic is fixed (`epic`); on the backlog an
-     epic select (with "none") picks it. Same send cycle as NewEpicForm (one request per double submit). Mount it under
+     epic picker (with "No epic") picks it. Same send cycle as NewEpicForm (one request per double submit). Mount it under
      `{#key}` of the page's item so a draft never moves to another item. -->
 <script lang="ts">
 	import { tick } from 'svelte';
+	import Picker from '#lib/ui/Picker.svelte';
+	import { keyed } from '#lib/picker.ts';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import type { Epic, Story } from '#lib/api/types.ts';
@@ -87,10 +89,7 @@
 	{#if epic === undefined}
 		<label class="field">
 			Epic
-			<select bind:value={draft.epic} disabled={off}>
-				<option value="">none</option>
-				{#each epics as e (e.key)}<option value={e.key}>{e.key} {e.title}</option>{/each}
-			</select>
+			<Picker label="Epic" options={keyed(epics)} bind:value={draft.epic} empty="No epic" disabled={off} />
 		</label>
 	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}

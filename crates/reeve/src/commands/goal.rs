@@ -139,6 +139,7 @@ pub async fn run(c: &Client, g: Goal, json: bool) -> anyhow::Result<i32> {
                     owner,
                     notes,
                     active,
+                    links: vec![],
                 })?,
             )
             .await?,

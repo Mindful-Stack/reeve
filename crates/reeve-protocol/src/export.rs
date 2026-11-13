@@ -16,8 +16,8 @@ pub struct ExportDto {
     pub initiatives: Vec<InitiativeDto>,
     pub epics: Vec<EpicDto>,
     pub stories: Vec<StoryDto>,
-    /// Every sprint, oldest first, with its goals (confidence, verdict) and their links nested. Not in the DTOs:
-    /// `created_at` of sprints and goals and who linked what and when. The exported activity carries the goal's
+    /// Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
+    /// DTOs: `created_at` of sprints and who linked what and when. The exported activity carries the goal's
     /// `created` entry and each item's `goal_linked` entry (actor, time); a draft sprint's creation is not logged.
     pub sprints: Vec<SprintDto>,
     pub decisions: Vec<RequiredDecisionDto>,

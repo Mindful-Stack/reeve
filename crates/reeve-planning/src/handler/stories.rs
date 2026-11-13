@@ -520,14 +520,22 @@ impl Handlers {
     /// Readiness inputs come from the repo, which does not know the settings: each decision's record is marked by
     /// whether its repository is configured.
     pub(super) fn mark_configured(&self, i: &mut crate::domain::readiness::ReadinessInput) {
-        let repos = &self.settings.repos;
         for d in i
             .own_decisions
             .iter_mut()
             .chain(i.ancestors.iter_mut().flat_map(|a| a.decisions.iter_mut()))
         {
-            d.repo_configured = d.record_repo.as_ref().is_none_or(|r| repos.contains(r));
+            self.mark_repo_configured(d);
         }
+    }
+
+    /// The one rule for a fact's `repo_configured`: no record, or a record in a configured repository
+    /// (`DecisionRepoNotConfigured` otherwise). Readiness and the sprint planning read both call it.
+    pub(super) fn mark_repo_configured(&self, d: &mut crate::domain::readiness::DecisionFact) {
+        d.repo_configured = d
+            .record_repo
+            .as_ref()
+            .is_none_or(|r| self.settings.repos.contains(r));
     }
 
     /// Places a todo story before `before` (another todo story), or at the end of the todo column. One transaction at the

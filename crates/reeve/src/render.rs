@@ -1694,6 +1694,7 @@ mod tests {
             verdict: None,
             verdict_note: None,
             version: 3,
+            created_at: "2026-11-03T09:00:00Z".parse().unwrap(),
             links: vec!["ABC-1".parse().unwrap()],
         }
     }

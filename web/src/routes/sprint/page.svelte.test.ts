@@ -5,11 +5,13 @@
 // only when they differ (kb/ADR-0014 R6).
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActivityEntry, Goal, Sprint, SprintCounts, Sprints, SprintView } from '#lib/api/types.ts';
-import { activity, goal, sprint, sprintView } from '#lib/test/fixtures.ts';
+import type { ActivityEntry, Goal, GoalGates, Initiative, Sprint, SprintCounts, Sprints, SprintView } from '#lib/api/types.ts';
+import { session } from '#lib/me.svelte.ts';
+import { activity, config, goal, goalGates, initiative, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
+let onLiveHandler: (() => void) | null = null;
 vi.mock('$app/state', async () => {
 	const { fakePage } = await import('#lib/test/net.ts');
 	return { page: fakePage({ url: '/sprint' }).page };
@@ -17,7 +19,9 @@ vi.mock('$app/state', async () => {
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('#lib/events.svelte.ts', async (orig) => ({
 	...(await orig<typeof import('#lib/events.svelte.ts')>()),
-	onLive: () => {},
+	onLive: (h: () => void) => {
+		onLiveHandler = h;
+	},
 	everyVisible: () => {}
 }));
 
@@ -28,22 +32,29 @@ const net = vi.hoisted(() => ({
 	closedEntries: {} as Record<number, ActivityEntry[]>,
 	writes: [] as Write[],
 	reads: [] as string[],
+	gates: [] as GoalGates[],
+	initiatives: [] as Initiative[],
+	/** Fails a read with a 500 when it answers true. */
+	fail: null as null | ((path: string) => boolean),
 	/** Answers a write instead of the default (a value, or a Response for a refusal or error). */
 	answer: null as null | ((w: Write) => unknown),
 	/** Holds a read until the returned promise settles (to resolve reads out of order). */
 	gate: null as null | ((path: string) => Promise<void> | undefined)
 }));
 vi.mock('#lib/api/client.ts', async (orig) => {
-	const { installFetch } = await import('#lib/test/net.ts');
+	const { failure, installFetch } = await import('#lib/test/net.ts');
 	installFetch(async ({ method, url, path, body }) => {
 		if (method === 'GET') {
 			net.reads.push(path + url.search);
+			if (net.fail?.(path)) return failure('boom');
 			// The answer is what the server had when asked; a gate only delays its arrival.
 			const one = path.match(/^\/api\/v1\/sprints\/(\d+)$/);
 			let value: unknown;
 			if (path === '/api/v1/sprints') value = structuredClone(net.sprints);
 			else if (one) value = net.views[Number(one[1])];
 			else if (path === '/api/v1/activity') value = net.closedEntries[Number(url.searchParams.get('entity_key'))] ?? [];
+			else if (path === '/api/v1/sprints/planning') value = structuredClone(net.gates);
+			else if (path === '/api/v1/initiatives') value = structuredClone(net.initiatives);
 			else throw new Error(`unexpected GET ${path}`);
 			const held = net.gate?.(path);
 			if (held) await held;
@@ -76,6 +87,10 @@ afterEach(() => {
 	net.reads.length = 0;
 	net.answer = null;
 	net.gate = null;
+	net.gates = [];
+	net.initiatives = [];
+	net.fail = null;
+	session.config = null;
 });
 
 async function open() {
@@ -126,19 +141,10 @@ function activeWith(goals: Goal[], view: Partial<SprintView> = {}): SprintView {
 	return sprintView(sprint({ id: 1, goals, version: 3 }), view);
 }
 
-describe('the active sprint', () => {
-	it('links "blocked by n decisions" to the decisions page, which leads with records to review', async () => {
-		// Records to review leave the this-sprint lane, so the link goes to the page, not to #this-sprint.
-		net.sprints!.active = activeWith([goal({ id: 1 }), goal({ id: 2 })], {
-			counts: counts([progress(1, { blocked_decisions: 2 }), progress(2, { blocked_decisions: 0 })])
-		});
-		await open();
-		const link = q<HTMLAnchorElement>('[data-testid="goal-1"] a[href="/decisions"]');
-		expect(text(link)).toBe('blocked by 2 decisions');
-		expect(q('[data-testid="goal-2"] a')).toBeNull();
-		expect(text(q('[data-testid="goal-2"] .counts'))).toContain('blocked by 0 decisions');
-	});
+/** The draft sprint 2 (16–27 Nov, version 5) with these goals. */
+const draft = (goals: Goal[] = []): Sprint => sprint({ id: 2, state: 'draft', starts_on: '2026-11-16', ends_on: '2026-11-27', opened_at: null, goals, version: 5 });
 
+describe('the active sprint', () => {
 	it('states the rule above the counts and shows each goal with its numbers, the upkeep line and the demo list', async () => {
 		const g = goal({
 			id: 1,
@@ -168,7 +174,6 @@ describe('the active sprint', () => {
 		expect(t).toContain('2 completed');
 		expect(t).toContain('3 in flight (1 in review)');
 		expect(t).toContain('4 todo');
-		expect(t).toContain('blocked by 2 decisions');
 		expect(text(panel)).toContain('7 of 24 completed stories were upkeep (29%; team line 20%)');
 		const demo = q('[data-testid="demo"]', panel)!;
 		expect(text(demo)).toContain('done in the last 7 days');
@@ -241,8 +246,6 @@ describe('recording confidence', () => {
 });
 
 describe('the next sprint (draft)', () => {
-	const draft = (goals: Goal[] = []): Sprint => sprint({ id: 2, state: 'draft', starts_on: '2026-11-16', ends_on: '2026-11-27', opened_at: null, goals, version: 5 });
-
 	it('adds a goal with a fresh idempotency key', async () => {
 		net.sprints!.draft = draft();
 		await open();
@@ -379,7 +382,7 @@ describe('editing a goal', () => {
 		};
 		await edit('active');
 		await settle(() => expect(text(document.body)).toContain('someone else changed this goal; reloaded'));
-		await settle(() => expect(text(q('[data-testid="active-sprint"] h3'))).toBe('Theirs'));
+		await settle(() => expect(text(q('[data-testid="goal-5"] h4'))).toBe('Theirs'));
 		const form = q<HTMLFormElement>('form[aria-label="Edit goal"]')!;
 		expect(form).not.toBeNull();
 		expect(q<HTMLInputElement>('input[name="outcome"]', form)!.value).toBe('New');
@@ -709,5 +712,192 @@ describe('the history', () => {
 			expect(none.classList.contains('muted')).toBe(true);
 			expect(text(row)).not.toContain('A promise is to a date');
 		});
+	});
+});
+
+describe('planning by goal', () => {
+	it("shows each goal's gates: discovery by level, decisions by what they need, and the counts line", async () => {
+		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] }), goal({ id: 2, links: ['ABC-2'] })]);
+		net.gates = [
+			goalGates({ goal_id: 2, initiatives: ['ABC-1'], decisions_total: 2 }),
+			goalGates({
+				goal_id: 1,
+				initiatives: ['ABC-1'],
+				discoveries: [{ key: 'ABC-1', item: 'initiative', title: 'Bookings' }],
+				decisions: [{ on: 'ABC-2', reason: { reason: 'decision_no_record', decision_id: 7, title: 'Which calendar' } }],
+				discovery_total: 2,
+				decisions_total: 3
+			})
+		];
+		await open();
+		const block = q('[data-testid="goal-1"] [data-testid="gates"]')!;
+		expect(text(q('h5', block))).toBe('Waits on');
+		expect(q<HTMLAnchorElement>('[data-testid="discovery-ABC-1"] a', block)!.getAttribute('href')).toBe('/initiatives/ABC-1');
+		expect(text(q('[data-testid="discovery-ABC-1"]', block))).toBe('ABC-1 Bookings initiative in discovery');
+		const row = q('[data-testid="decision-7"]', block)!;
+		const link = q<HTMLAnchorElement>('a', row)!;
+		expect(link.getAttribute('href')).toBe('/sprint?decision=7');
+		expect(link.getAttribute('data-sveltekit-reset')).toBe('false');
+		expect(text(link)).toBe('#7 Which calendar');
+		expect(text(row)).toBe('#7 Which calendar · no record · on ABC-2');
+		expect(text(q('[data-testid="gate-counts"]', block))).toBe('Discovery 1 of 2 marked · decisions 2 of 3 decided');
+		expect(text(q('[data-testid="goal-1"]'))).not.toContain('blocked by');
+		// A goal with no discovery items words the line with decisions only.
+		expect(text(q('[data-testid="goal-2"] [data-testid="gate-counts"]'))).toBe('Decisions 2 of 2 decided');
+	});
+
+	it('says "Nothing waits" with its counts and "No linked items yet", and groups goals under their first initiative, upkeep last', async () => {
+		session.config = config({ horizon_buckets: ['Now', 'Next'] });
+		net.initiatives = [initiative({ key: 'ABC-1', title: 'Bookings', horizon: 'Next' }), initiative({ key: 'ABC-5', title: 'Payments', horizon: 'Now' })];
+		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-20'] }), goal({ id: 2 }), goal({ id: 3, links: ['ABC-5'] })]);
+		net.gates = [
+			goalGates({ goal_id: 1, initiatives: ['ABC-1'], discovery_total: 1 }),
+			goalGates({ goal_id: 2 }),
+			goalGates({ goal_id: 3, initiatives: ['ABC-5', 'ABC-1'] })
+		];
+		await open();
+		const panel = q('[data-testid="active-sprint"]')!;
+		const groups = [...panel.querySelectorAll('[data-testid^="active-group-"]')];
+		expect(groups.map((g) => g.getAttribute('data-testid'))).toEqual(['active-group-ABC-5', 'active-group-ABC-1', 'active-group-none']);
+		expect(text(q('h3', groups[0]))).toBe('ABC-5 Payments');
+		expect(q('[data-testid="goal-3"]', groups[0])).not.toBeNull();
+		expect(text(q('h3', groups[2]))).toBe('Upkeep / no initiative');
+		const one = q('[data-testid="goal-1"] [data-testid="gates"]')!;
+		expect(text(one)).toContain('Nothing waits');
+		expect(text(q('[data-testid="gate-counts"]', one))).toBe('Discovery 1 of 1 marked');
+		expect(text(q('[data-testid="goal-2"] [data-testid="gates"]'))).toContain('No linked items yet');
+	});
+
+	it('states the rule on the active panel only, and dates each draft goal "Waiting since"', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, created_at: '2026-11-03T12:00:00Z' })]);
+		await open();
+		const hasRule = (sel: string) => [...q(sel)!.querySelectorAll('p')].some((p) => text(p) === RULE);
+		expect(hasRule('[data-testid="active-sprint"]')).toBe(true);
+		expect(hasRule('[data-testid="next-sprint"]')).toBe(false);
+		expect(text(q('[data-testid="goal-5"]'))).toContain('Waiting since 3 Nov');
+	});
+
+	it('lists the Now initiatives no goal covers by target month, then title, months first, never by urgency', async () => {
+		session.config = config({ horizon_buckets: ['Now', 'Next'] });
+		net.initiatives = [
+			initiative({ key: 'ABC-7', title: 'Z', horizon: 'Now', target_month: '2026-12' }),
+			initiative({
+				key: 'ABC-8',
+				title: 'A',
+				horizon: 'Now',
+				discovery_complete: { at: '2026-11-01T00:00:00Z', by: 'ana@example.com' },
+				urgent_sources: [{ key: 'ABC-8', item: 'initiative' }]
+			}),
+			initiative({ key: 'ABC-9', title: 'B', horizon: 'Now', target_month: '2026-11' }),
+			initiative({ key: 'ABC-10', title: 'Later work', horizon: 'Next' }),
+			initiative({ key: 'ABC-11', title: 'Covered', horizon: 'Now' })
+		];
+		// Covered through the gates' initiatives, not the goal's links (an epic, ABC-20), on the active sprint.
+		net.sprints!.active = activeWith([goal({ id: 5, links: ['ABC-20'] })]);
+		net.gates = [goalGates({ goal_id: 5, initiatives: ['ABC-11'] })];
+		await open();
+		const section = q('[data-testid="no-goal-yet"]')!;
+		expect(text(q('h2', section))).toBe('Now, no goal yet');
+		const rows = [...section.querySelectorAll('[data-testid^="no-goal-ABC"]')].map((r) => r.getAttribute('data-testid'));
+		expect(rows).toEqual(['no-goal-ABC-9', 'no-goal-ABC-7', 'no-goal-ABC-8']);
+		expect(text(q('[data-testid="no-goal-ABC-9"]'))).toContain('Nov 2026');
+		expect(text(q('[data-testid="no-goal-ABC-9"]'))).toContain('in discovery');
+		expect(text(q('[data-testid="no-goal-ABC-8"]'))).not.toContain('in discovery');
+		expect(text(section)).not.toContain('urgent');
+	});
+
+	it('says when every Now initiative has a goal', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-11', horizon: 'Now' })];
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, links: ['ABC-11'] })]);
+		net.gates = [goalGates({ goal_id: 5, initiatives: ['ABC-11'] })];
+		await open();
+		expect(text(q('[data-testid="no-goal-yet"]'))).toContain('Every Now initiative has a goal this sprint or next.');
+	});
+
+	it('shows no "no goal yet" section without a configured bucket', async () => {
+		session.config = config({ horizon_buckets: [] });
+		net.initiatives = [initiative({ key: 'ABC-11', horizon: 'Now' })];
+		await open();
+		expect(q('[data-testid="no-goal-yet"]')).toBeNull();
+	});
+
+	it('keeps the whole page and says so when one of the three reads fails on a reload', async () => {
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, outcome: 'Five' })]);
+		await open();
+		// The server's sprints change, but the planning read fails: nothing of the new answer may show.
+		net.sprints!.draft = draft([goal({ id: 6, sprint_id: 2, outcome: 'Six' })]);
+		net.fail = (path) => path === '/api/v1/sprints/planning';
+		button('Remove', q('[data-testid="goal-5"]')!)!.click();
+		await settle(() => expect(text(document.body)).toContain('Could not reload the sprint plan'));
+		expect(q('[data-testid="goal-5"]')).not.toBeNull();
+		expect(q('[data-testid="goal-6"]')).toBeNull();
+	});
+
+	it('"+ goal" opens the add form for the next sprint and sends one POST /goals linking the initiative', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', title: 'Bookings', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form', row)!;
+		// The form is named by its title (aria-label), which also heads it.
+		expect(form.getAttribute('aria-label')).toBe('New goal for next sprint · linked to ABC-7');
+		expect(text(q('h3', form))).toBe('New goal for next sprint · linked to ABC-7');
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'By 27 Nov, Ana can book');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'one booking');
+		flushSync();
+		button('Add goal', form)!.click();
+		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
+		expect(writes('/api/v1/goals')[0].body).toMatchObject({ outcome: 'By 27 Nov, Ana can book', check: 'one booking', links: ['ABC-7'] });
+		await settle(() => expect(q('form', row)).toBeNull());
+	});
+
+	it('focuses the new goal\'s card after "+ goal" adds it, as its row unmounts', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form', row)!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'By 27 Nov, Ana can book');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'one booking');
+		flushSync();
+		// What the reload after the add brings.
+		net.sprints!.draft = draft([goal({ id: 99, sprint_id: 2, links: ['ABC-7'] })]);
+		net.gates = [goalGates({ goal_id: 99, initiatives: ['ABC-7'] })];
+		button('Add goal', form)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('[data-testid="goal-99"]')));
+	});
+
+	it('focuses the outcome input on "+ goal" and returns focus to the button on cancel', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('input[name="outcome"]', row)));
+		button('Cancel', row)!.click();
+		await settle(() => expect(document.activeElement).toBe(button('+ goal', row)));
+	});
+
+	it('closes the "+ goal" form when a reload brings a different draft', async () => {
+		session.config = config({ horizon_buckets: ['Now'] });
+		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
+		net.sprints!.draft = draft([]);
+		await open();
+		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		button('+ goal', row)!.click();
+		flushSync();
+		expect(q('form', row)).not.toBeNull();
+		net.sprints!.draft = { ...draft([]), id: 9 };
+		onLiveHandler?.();
+		await settle(() => expect(q('form', q('[data-testid="no-goal-ABC-7"]')!)).toBeNull());
 	});
 });

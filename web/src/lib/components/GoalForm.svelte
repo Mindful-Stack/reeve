@@ -1,6 +1,8 @@
-<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates the
-     first draft), or, given `goal`, edits that goal (`PATCH /goals/{id}` at its version). Mount a new form under
-     `{#key}` of the draft so a half-typed goal never moves to another sprint. -->
+<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates
+    the first draft; given `links`, the add also links those items in the same write (`POST /goals` `links`), and
+    `title` heads and names the form; `links` adds only, ignored when editing), or, given `goal`, edits that goal
+    (`PATCH /goals/{id}` at its version). Mount a new form under `{#key}` of the draft so a half-typed goal never
+    moves to another sprint. -->
 <script lang="ts">
 	import { api, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { CreatedGoal, Goal } from '#lib/api/types.ts';
@@ -9,6 +11,8 @@
 
 	let {
 		endsOn = null,
+		title,
+		links = [],
 		goal,
 		oncreated,
 		onsaved,
@@ -17,6 +21,10 @@
 	}: {
 		/** The draft's last day, for the outcome's shape; null before the first draft exists. */
 		endsOn?: string | null;
+		/** Heads the form and names it (default "New goal", or "Edit goal" when editing). */
+		title?: string;
+		/** Add only, ignored when editing: items the new goal links in its create; none by default. */
+		links?: string[];
 		/** The goal to edit; without it the form adds one. */
 		goal?: Goal;
 		/** Add: the goal and the sprint's warnings after the add. */
@@ -47,7 +55,8 @@
 			outcome: outcome.trim(),
 			check: check.trim(),
 			owner: owner.trim() || null, // the server defaults the owner to the caller
-			notes: notes.trim() || null
+			notes: notes.trim() || null,
+			links
 		};
 		const out = await cycle.send(JSON.stringify(body), (idempotency_key) =>
 			unwrap(api.POST('/api/v1/goals', { body: { ...body, idempotency_key } }))
@@ -94,7 +103,12 @@
 	}
 </script>
 
-<form class="goal-form" aria-label={start ? 'Edit goal' : 'New goal'} onsubmit={submit}>
+<form
+	class="goal-form"
+	aria-label={title ?? (start ? 'Edit goal' : 'New goal')}
+	onsubmit={submit}
+>
+	{#if title}<h3 class="title">{title}</h3>{/if}
 	<label class="field"
 		>Outcome <input name="outcome" bind:value={outcome} required disabled={busy} placeholder="By {endsOn ?? '<ends_on>'}, <who> can <outcome>" /></label
 	>
@@ -109,6 +123,10 @@
 </form>
 
 <style>
+	.title {
+		margin: 0;
+		font-size: 15px;
+	}
 	.goal-form {
 		display: grid;
 		gap: 10px;

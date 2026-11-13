@@ -5504,6 +5504,7 @@ async fn sprints_serving(
             None,
             "",
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -5519,6 +5520,7 @@ async fn sprints_serving(
             None,
             "",
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -5855,7 +5857,16 @@ async fn decision_queue_costs_the_same_with_goals() {
     // Grow the ACTIVE sprint's goals (even i, to_active) and the draft's (odd i), each linked to seeded stories.
     for (i, k) in b.iter().chain(c.iter()).enumerate() {
         let (g, _) = h
-            .add_goal(&dan, &format!("more-{i}"), "o", "c", None, "", i % 2 == 0)
+            .add_goal(
+                &dan,
+                &format!("more-{i}"),
+                "o",
+                "c",
+                None,
+                "",
+                i % 2 == 0,
+                &[],
+            )
             .await
             .unwrap();
         h.link_goal(&dan, g.id, std::slice::from_ref(k))
@@ -7318,7 +7329,7 @@ fn nov(d: u32) -> chrono::NaiveDate {
 
 /// An active sprint planned to end 24 Nov and a draft planned to end 8 Dec, made through the sprint handler.
 async fn promise_sprints(h: &Handlers, c: &Ctx) {
-    h.add_goal(c, "promise-g", "outcome", "check", None, "", false)
+    h.add_goal(c, "promise-g", "outcome", "check", None, "", false, &[])
         .await
         .unwrap();
     let d = h.sprints(c.now).await.unwrap().draft.unwrap();

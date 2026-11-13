@@ -1,5 +1,6 @@
 use super::*;
 use crate::domain::queue::LineageItem;
+use crate::domain::readiness::decision_fact;
 
 #[async_trait]
 impl PlanningReads for PgPlanningRepo {
@@ -48,26 +49,19 @@ impl PlanningReads for PgPlanningRepo {
             .chain(initiative_keys.iter())
             .map(Key::to_string)
             .collect();
-        let rows = sqlx::query("SELECT on_key, id, title, check_result, closed_at, record_path IS NOT NULL AS has_record, record_repo FROM required_decisions WHERE on_key = ANY($1) ORDER BY on_key, id")
-            .bind(on_keys)
-            .fetch_all(&mut **tx)
-            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {DECISION_COLS} FROM required_decisions WHERE on_key = ANY($1) ORDER BY on_key, id"
+        ))
+        .bind(on_keys)
+        .fetch_all(&mut **tx)
+        .await?;
         let mut facts: HashMap<Key, Vec<DecisionFact>> = HashMap::new();
         for r in &rows {
-            let fact = DecisionFact {
-                id: r.get("id"),
-                title: r.get("title"),
-                check: serde_json::from_value(r.get::<serde_json::Value, _>("check_result"))
-                    .map_err(|e| sqlx::Error::Decode(e.into()))?,
-                closed: r.get::<Option<DateTime<Utc>>, _>("closed_at").is_some(),
-                has_record: r.get("has_record"),
-                record_repo: r.get("record_repo"),
-                repo_configured: true,
-            };
+            let d = decision_from(r)?;
             facts
-                .entry(key(r.get::<&str, _>("on_key")))
+                .entry(d.on().clone())
                 .or_default()
-                .push(fact);
+                .push(decision_fact(&d));
         }
         // Facts only: every edge with its blocker's delivery and owner. Which ones block is domain policy (`blocks`).
         let blocker_rows = sqlx::query("SELECT b.story_key, b.blocker_key, x.delivery, x.owner FROM story_blocks b JOIN stories x ON x.key = b.blocker_key WHERE b.story_key = ANY($1) ORDER BY b.story_key, length(b.blocker_key), b.blocker_key")

@@ -6,6 +6,7 @@
 	import { prLine, prSummary, safePrUrl } from '#lib/prs.ts';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
+	import CopyKey from '#lib/ui/CopyKey.svelte';
 	import StatusDot from '#lib/ui/StatusDot.svelte';
 	import GoalChip from './GoalChip.svelte';
 	import UrgentChip from './UrgentChip.svelte';
@@ -93,7 +94,7 @@
 		{#if items.length}<ActionsMenu label="Actions for {s.key}" {items} control="menu" />{/if}
 	</div>
 	<div class="meta">
-		<span class="key">{s.key}</span>
+		<span class="key">{s.key}</span><CopyKey key={s.key} />
 		{#if urgent}<UrgentChip line={urgentTip()} />{/if}
 		{#if s.promise}<PromiseChip promise={s.promise} />{/if}
 		{#if s.kind !== 'story'}<span class="kind">{s.kind === 'bug' ? 'Bug' : 'Chore'}</span>{/if}

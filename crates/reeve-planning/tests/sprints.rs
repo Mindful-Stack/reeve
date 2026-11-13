@@ -764,6 +764,7 @@ mod lifecycle {
             None,
             "",
             false,
+            &[],
         )
         .await
         .unwrap()
@@ -899,7 +900,7 @@ mod lifecycle {
                 "{via:?} close"
             );
             assert!(
-                interactive_only(h.add_goal(&x, "g3", "o", "c", None, "", true).await),
+                interactive_only(h.add_goal(&x, "g3", "o", "c", None, "", true, &[]).await),
                 "{via:?} add"
             );
             assert!(
@@ -1248,21 +1249,21 @@ mod lifecycle {
         let (h, sink) = mk(pool.clone());
         let c = ctx(Via::Interactive, 2);
         assert!(refused_with(
-            h.add_goal(&c, "a", "o", "c", None, "", true).await,
+            h.add_goal(&c, "a", "o", "c", None, "", true, &[]).await,
             reeve_protocol::Reason::SprintNotActive
         ));
         assert!(matches!(
-            h.add_goal(&c, "b", " ", "c", None, "", false).await,
+            h.add_goal(&c, "b", " ", "c", None, "", false, &[]).await,
             Err(HandlerError::Validation(_))
         ));
         let (g, w) = h
-            .add_goal(&c, "g1", "o", "c", None, "", false)
+            .add_goal(&c, "g1", "o", "c", None, "", false, &[])
             .await
             .unwrap();
         assert!(w.is_empty());
         assert_eq!(g.owner, "dan@example.com");
         let (again, _) = h
-            .add_goal(&c, "g1", "o", "c", None, "", false)
+            .add_goal(&c, "g1", "o", "c", None, "", false, &[])
             .await
             .unwrap();
         assert_eq!(again.id, g.id);
@@ -1278,6 +1279,7 @@ mod lifecycle {
                 Some("Ann@Example.com".into()),
                 "",
                 true,
+                &[],
             )
             .await
             .unwrap();
@@ -1524,7 +1526,7 @@ mod lifecycle {
             .unwrap();
         let add = tokio::spawn({
             let (h, c) = (h.clone(), c.clone());
-            async move { h.add_goal(&c, "g2", "o", "c", None, "", false).await }
+            async move { h.add_goal(&c, "g2", "o", "c", None, "", false, &[]).await }
         });
         until_waiting_on_a_lock(&pool, "add_goal").await;
         opener.commit().await.unwrap();
@@ -2163,6 +2165,7 @@ mod views {
                 None,
                 "",
                 false,
+                &[],
             )
             .await
             .unwrap()
@@ -2219,9 +2222,18 @@ mod views {
             )
             .await
             .unwrap();
-        h.add_goal(&me(n1_open), "gm", "M outcome", "M check", None, "", false)
-            .await
-            .unwrap();
+        h.add_goal(
+            &me(n1_open),
+            "gm",
+            "M outcome",
+            "M check",
+            None,
+            "",
+            false,
+            &[],
+        )
+        .await
+        .unwrap();
         let d = draft(&h).await;
         let n1 = h
             .open_sprint(&me(n1_open), d.id, d.version, None)
@@ -2341,7 +2353,7 @@ mod views {
         let a = mk_story("a", Some(e.key().clone())).await;
         let b = mk_story("b", None).await;
         let g1 = h
-            .add_goal(&me(2, 9), "g1", "o1", "c1", None, "", false)
+            .add_goal(&me(2, 9), "g1", "o1", "c1", None, "", false, &[])
             .await
             .unwrap()
             .0;
@@ -2396,7 +2408,7 @@ mod views {
             .await
             .unwrap();
         let g2 = h
-            .add_goal(&me(17, 18), "g2", "o2", "c2", None, "", false)
+            .add_goal(&me(17, 18), "g2", "o2", "c2", None, "", false, &[])
             .await
             .unwrap()
             .0;
@@ -2796,6 +2808,7 @@ mod views {
                     None,
                     "",
                     true,
+                    &[],
                 )
                 .await
                 .unwrap()
@@ -3024,7 +3037,8 @@ mod promises {
 
         let list = h.sprints(now).await.unwrap();
         assert_eq!(list.active.as_ref().map(|a| a.id), Some(s2));
-        // The active sprint's list is read through its view (`GET /sprints` leaves it empty until GRA-610).
+        // The active sprint's list is read through its view (`GET /sprints` leaves it empty until a follow-up of
+        // GRA-608).
         let list = h.sprint_view(s2, now).await.unwrap();
         assert_eq!(
             keys(&list.promises),
@@ -3109,5 +3123,402 @@ mod promises {
         assert_eq!(keys(&v1.promises), vec![p1, p8, p11]);
         let after = h.sprint_view(s2, now).await.unwrap().promises;
         assert_eq!(keys(&after), vec![p2, p5, p7, p3]);
+    }
+}
+
+/// GRA-610: a goal created with its links, and each goal's gates on one snapshot.
+mod planning_gates {
+    use super::lifecycle::mk;
+    use super::started_at::{at, ctx};
+    use reeve_planning::*;
+    use reeve_protocol::{ClosureKind, Key, Kind, Reason, Verdict, Via};
+
+    async fn story(h: &Handlers, me: &Ctx, idem: &str, epic: &Key) -> Story {
+        h.create_story(
+            me,
+            idem,
+            idem,
+            Kind::Story,
+            Some(epic.clone()),
+            "",
+            vec!["x".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A goal is created with its links in one transaction or not at all; a replay returns the first goal unchanged.
+    #[tokio::test]
+    async fn a_goal_is_created_with_its_links_or_not_at_all() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, sink) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        let e = h.create_epic(&me, "e", "E", None, "", None).await.unwrap();
+        let other = h
+            .create_epic(&me, "e2", "E2", None, "", None)
+            .await
+            .unwrap();
+        let before = sink.0.lock().unwrap().len();
+
+        let unknown: Key = "ABC-999".parse().unwrap();
+        assert!(matches!(
+            h.add_goal(
+                &me,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                &[e.key().clone(), unknown]
+            )
+            .await,
+            Err(HandlerError::NotFound)
+        ));
+        let none = h.sprints(at(2, 0)).await.unwrap();
+        assert!(none.goals.is_empty(), "no goal was created");
+        assert!(
+            none.draft.is_none(),
+            "not even the draft it would have gone into"
+        );
+        assert_eq!(sink.0.lock().unwrap().len(), before, "nothing was logged");
+
+        // The same idempotency key with a valid link: the refused attempt left nothing behind.
+        let (g, _) = h
+            .add_goal(
+                &me,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                &[e.key().clone(), e.key().clone()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(g.created_at, me.now);
+        assert_eq!(
+            h.goal(g.id).await.unwrap().1,
+            vec![GoalLink {
+                goal_id: g.id,
+                item_key: e.key().clone(),
+            }]
+        );
+        let logged: Vec<(String, String, String, serde_json::Value)> = sink.0.lock().unwrap()
+            [before..]
+            .iter()
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.action.to_string(),
+                    r.payload.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            logged
+                .iter()
+                .map(|(t, k, a, _)| (t.as_str(), k.clone(), a.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("goal", g.id.to_string(), "created"),
+                ("epic", e.key().to_string(), "goal_linked"),
+            ]
+        );
+        assert_eq!(logged.len(), 2, "a duplicated key links and logs once");
+        assert_eq!(logged[1].3, serde_json::json!({"goal_id": g.id}));
+
+        // A replay with other links: the first goal, unchanged, and nothing linked or logged.
+        let n = sink.0.lock().unwrap().len();
+        let later = ctx(Via::Interactive, 3);
+        let (again, _) = h
+            .add_goal(
+                &later,
+                "g1",
+                "o",
+                "c",
+                None,
+                "",
+                false,
+                std::slice::from_ref(other.key()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again, g);
+        assert_eq!(
+            h.goal(g.id).await.unwrap().1.len(),
+            1,
+            "the replay linked nothing"
+        );
+        assert_eq!(sink.0.lock().unwrap().len(), n);
+    }
+
+    /// An active goal linked to an epic and a draft goal linked to its initiative, over one seeded tree: each gets its
+    /// own items, gates and totals, end to end through the repos.
+    #[tokio::test]
+    async fn the_active_and_the_draft_goals_carry_their_gates_and_counts() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        let i = h
+            .create_initiative(&me, "i", "Bookings", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        let e1 = h
+            .create_epic(&me, "e1", "Calendar", Some(i.key().clone()), "", None)
+            .await
+            .unwrap();
+        h.mark_discovery(&me, ItemType::Epic, e1.key(), e1.version(), true)
+            .await
+            .unwrap();
+        let e2 = h
+            .create_epic(&me, "e2", "Payments", Some(i.key().clone()), "", None)
+            .await
+            .unwrap();
+        let s1 = story(&h, &me, "s1", e1.key()).await;
+        let d1 = h
+            .require_decision(
+                &me,
+                "d1",
+                e1.key(),
+                "Which calendar",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let d2 = h
+            .require_decision(
+                &me,
+                "d2",
+                s1.key(),
+                "Slot length",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        h.close_decision(&me, d2.id(), ClosureKind::Decided, "30 minutes")
+            .await
+            .unwrap();
+        // A record in a repository the settings do not configure (the test settings configure none): readiness says
+        // `DecisionRepoNotConfigured`, and so must the gate, which needs the handler's marking.
+        let d3 = h
+            .require_decision(
+                &me,
+                "d3",
+                e2.key(),
+                "Which provider",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        h.link_record(
+            &me,
+            d3.id(),
+            "elsewhere",
+            "adrs/0001-provider.md",
+            "ADR-0001",
+            None,
+        )
+        .await
+        .unwrap();
+        // A goal of a sprint opened and closed before: never read.
+        let gx = h
+            .add_goal(
+                &me,
+                "gx",
+                "Old",
+                "done",
+                None,
+                "",
+                false,
+                std::slice::from_ref(e1.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        let d0 = h.sprints(at(1, 0)).await.unwrap().draft.unwrap();
+        let s0 = h
+            .open_sprint(&ctx(Via::Interactive, 1), d0.id, d0.version, None)
+            .await
+            .unwrap();
+        h.close_sprint(&me, s0.id, s0.version, vec![(gx.id, Verdict::Met, None)])
+            .await
+            .unwrap();
+        let ga = h
+            .add_goal(
+                &me,
+                "ga",
+                "Book a room",
+                "one booking",
+                None,
+                "",
+                false,
+                std::slice::from_ref(e1.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        let d = h.sprints(at(2, 0)).await.unwrap().draft.unwrap();
+        h.open_sprint(&ctx(Via::Interactive, 3), d.id, d.version, None)
+            .await
+            .unwrap();
+        let gd = h
+            .add_goal(
+                &ctx(Via::Interactive, 4),
+                "gd",
+                "Pay",
+                "one payment",
+                None,
+                "",
+                false,
+                std::slice::from_ref(i.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+
+        let no_record = |d: &RequiredDecision| DecisionGate {
+            on: d.on().clone(),
+            reason: Reason::DecisionNoRecord {
+                decision_id: d.id(),
+                title: d.title().into(),
+            },
+        };
+        let disc = |key: &Key, item, title: &str| DiscoveryGate {
+            key: key.clone(),
+            item,
+            title: title.into(),
+        };
+        let planned = h.sprint_planning().await.unwrap();
+        assert_eq!(
+            planned,
+            vec![
+                GoalGates {
+                    goal_id: ga.id,
+                    initiatives: vec![i.key().clone()],
+                    discoveries: vec![disc(i.key(), ItemType::Initiative, "Bookings")],
+                    decisions: vec![no_record(&d1)],
+                    discovery_total: 2,
+                    decisions_total: 2,
+                },
+                GoalGates {
+                    goal_id: gd.id,
+                    initiatives: vec![i.key().clone()],
+                    discoveries: vec![
+                        disc(i.key(), ItemType::Initiative, "Bookings"),
+                        disc(e2.key(), ItemType::Epic, "Payments"),
+                    ],
+                    decisions: vec![
+                        no_record(&d1),
+                        DecisionGate {
+                            on: e2.key().clone(),
+                            reason: Reason::DecisionRepoNotConfigured {
+                                decision_id: d3.id(),
+                                title: "Which provider".into(),
+                            },
+                        },
+                    ],
+                    discovery_total: 3,
+                    decisions_total: 3,
+                },
+            ]
+        );
+    }
+
+    /// The read costs the same for one goal and for ten over more stories and decisions: whole-table reads filtered in
+    /// memory, never a statement per goal, link or item.
+    #[tokio::test]
+    async fn planning_costs_the_same_for_one_goal_and_for_ten() {
+        let (_c, pool) = super::common::pg_counted().await;
+        let (h, _) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        let i = h
+            .create_initiative(&me, "i", "I", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        let e = h
+            .create_epic(&me, "e", "E", Some(i.key().clone()), "", None)
+            .await
+            .unwrap();
+        let s = story(&h, &me, "s0", e.key()).await;
+        h.require_decision(&me, "d0", s.key(), "D0", "dan@example.com", None, None)
+            .await
+            .unwrap();
+        h.add_goal(
+            &me,
+            "g0",
+            "o",
+            "c",
+            None,
+            "",
+            false,
+            std::slice::from_ref(e.key()),
+        )
+        .await
+        .unwrap();
+        let d = h.sprints(at(2, 0)).await.unwrap().draft.unwrap();
+        h.open_sprint(&ctx(Via::Interactive, 3), d.id, d.version, None)
+            .await
+            .unwrap();
+        let read = || {
+            let h = h.clone();
+            async move {
+                h.sprint_planning().await.unwrap();
+            }
+        };
+        read().await; // warm up
+        let one = super::common::statements(&pool, read).await;
+        let later = ctx(Via::Interactive, 4);
+        for n in 1..10 {
+            let e = h
+                .create_epic(
+                    &later,
+                    &format!("e{n}"),
+                    "E",
+                    Some(i.key().clone()),
+                    "",
+                    None,
+                )
+                .await
+                .unwrap();
+            let s = story(&h, &later, &format!("s{n}"), e.key()).await;
+            h.require_decision(
+                &later,
+                &format!("d{n}"),
+                s.key(),
+                "D",
+                "dan@example.com",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            h.add_goal(
+                &later,
+                &format!("g{n}"),
+                "o",
+                "c",
+                None,
+                "",
+                n % 2 == 0,
+                std::slice::from_ref(s.key()),
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(h.sprint_planning().await.unwrap().len(), 10);
+        let ten = super::common::statements(&pool, read).await;
+        assert_eq!(one, ten);
     }
 }

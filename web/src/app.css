@@ -164,6 +164,12 @@ button.primary:hover:not(:disabled),
 	background: color-mix(in srgb, var(--accent) 88%, var(--foreground));
 	border-color: color-mix(in srgb, var(--accent) 88%, var(--foreground));
 }
+/* A toggle button that is on (aria-pressed): the visible half of what a screen reader hears. Components with their own
+   pressed look (chips, segmented choices) are more specific and keep it. */
+button[aria-pressed='true'] {
+	border-color: var(--accent);
+	background: var(--selection);
+}
 button.primary,
 .button.primary {
 	border-color: var(--accent);
@@ -224,8 +230,23 @@ dialog::backdrop {
 	background: var(--scrim);
 }
 
+/* An open Picker list floats out of its dialog instead of being clipped by it (lib/ui/Picker.svelte). */
+dialog:has([role='combobox'][aria-expanded='true']) {
+	overflow: visible;
+}
+
 /* Page shell */
+html {
+	scroll-padding-top: var(--top-bar-height, 0px);
+}
 header.top-bar {
+	position: sticky;
+	top: 0;
+	/* Above the drawers (10). Menus whose trigger is inside the bar (the account menu) are exempt from ActionsMenu's
+	   close-behind-the-bar rule and its clamp; page menus (ActionsMenu, z 30) paint over the bar and close when
+	   their trigger scrolls behind it. */
+	z-index: 20;
+	background: var(--background);
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;

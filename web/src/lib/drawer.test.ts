@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decisionHref, storyHref } from './drawer.ts';
+import { decisionHref, hasDrawer, storyHref } from './drawer.ts';
 
 describe('storyHref', () => {
 	it('keeps the path and the other parameters, and sets or replaces story', () => {
@@ -19,5 +19,17 @@ describe('the two drawers\' parameters', () => {
 	});
 	it('storyHref drops decision', () => {
 		expect(storyHref(new URL('http://x/board?decision=7'), 'A-1')).toBe('/board?story=A-1');
+	});
+});
+
+describe('hasDrawer', () => {
+	it('is true for a story key or a positive whole decision id, whichever the layout would open', () => {
+		expect(hasDrawer(new URL('http://x/board?story=A-1'))).toBe(true);
+		expect(hasDrawer(new URL('http://x/board?decision=7'))).toBe(true);
+	});
+	it('is false for what opens nothing: no parameter, an empty story, a decision that is not a positive whole number', () => {
+		for (const q of ['', '?story=', '?decision=', '?decision=abc', '?decision=0', '?decision=-1', '?decision=1.5']) {
+			expect(hasDrawer(new URL('http://x/board' + q)), q).toBe(false);
+		}
 	});
 });
