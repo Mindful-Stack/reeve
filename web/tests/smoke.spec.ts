@@ -78,6 +78,18 @@ test('board shows ready and blocked stories and the drawer opens by url', async 
 	await expect(page.getByRole('complementary')).toContainText(STORY);
 });
 
+test('the top bar stays at the top while the board scrolls', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 300 });
+	await page.goto('/board');
+	await expect(page.getByTestId(`card-${STORY}`)).toBeVisible(); // the board has loaded and is taller than the viewport
+	const bar = page.getByRole('banner');
+	await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+	expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0); // the page really scrolled
+	const box = (await bar.boundingBox())!;
+	expect(box.y).toBe(0);
+	await page.getByRole('button', { name: 'Report', exact: true }).click({ trial: true }); // visible and not covered
+});
+
 test('board asks for recently done stories and labels the done column', async ({ page }) => {
 	const req = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/v1/stories' && r.method() === 'GET');
 	await page.goto('/board');
@@ -118,6 +130,31 @@ test('a move refused by the gate shows the override prompt and the override move
 	expect(log.ok()).toBe(true);
 	const body = (await log.json()) as { value: { payload: { reason?: string } }[] };
 	expect(body.value.some((e) => e.payload.reason === 'smoke override')).toBe(true);
+});
+
+test('the card\'s copy button does not start the card\'s drag, and does not make the meta row tall', async ({ page }) => {
+	const s = await chore(page, `Smoke copy drag ${crypto.randomUUID().slice(0, 6)}`);
+	await page.goto('/board');
+	// A new chore is not ready, so its card sits in the collapsed "Not ready" disclosure; dragging it would open the override prompt.
+	const openNotReady = async () => {
+		const nr = page.locator('details.not-ready');
+		if ((await nr.getAttribute('open')) === null) await nr.locator('summary').click();
+	};
+	await openNotReady();
+	const card = page.getByTestId(`card-${s.key}`);
+	await expect(card).toBeVisible();
+	expect((await card.locator('.meta').boundingBox())!.height).toBeLessThan(24);
+	await page.evaluate(() => {
+		(window as unknown as { dragStarts: number }).dragStarts = 0;
+		document.addEventListener('dragstart', () => (window as unknown as { dragStarts: number }).dragStarts++);
+	});
+	await card.getByRole('button', { name: `Copy ${s.key}` }).dragTo(page.getByTestId('column-in_progress'));
+	expect(await page.evaluate(() => (window as unknown as { dragStarts: number }).dragStarts)).toBe(0); // the browser starts the card's drag from a non-draggable descendant
+	await expect(page.getByRole('dialog')).toHaveCount(0); // the override prompt a drop would open
+	await page.reload();
+	await openNotReady();
+	await expect(page.getByTestId('column-todo').getByTestId(`card-${s.key}`)).toBeVisible();
+	await expect(page.getByTestId('column-in_progress').getByTestId(`card-${s.key}`)).toHaveCount(0);
 });
 
 test('a move made elsewhere reaches an open board over the event stream, without a reload', async ({ page, browser }) => {
@@ -693,16 +730,25 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	const title = `Smoke export PDF is blank ${suffix}`;
 	const existing = await chore(page, title); // an existing item to be found as similar (under SMOKE_EPIC)
 	await page.goto('/board');
-	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report something' });
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
+	await page.mouse.click(5, 5); // the backdrop closes an untouched dialog
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Report', exact: true }).click();
 	await dialog.getByLabel('Title').fill(`PDF export shows a blank page ${suffix}`);
+	await page.mouse.click(5, 5); // the backdrop: ignored once something is typed
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press('Escape'); // closes and keeps the draft
+	await expect(dialog).toBeHidden();
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue(`PDF export shows a blank page ${suffix}`);
 	const hit = dialog.locator(`[data-hit="${existing.key}"]`);
 	await expect(hit).toContainText(title); // "Already reported?" found it
 	await hit.click();
 	await expect(dialog).toBeHidden();
 	const drawer = page.getByRole('complementary');
 	await expect(drawer).toContainText(title); // the drawer is usable, not inert
-	await drawer.getByRole('button', { name: 'Resume report' }).click(); // the drawer covers the header's Report button
+	await page.getByRole('banner').getByRole('button', { name: 'Resume report' }).click(); // the drawer opens under the bar
 	await expect(dialog.getByLabel('Title')).toHaveValue(new RegExp(`PDF export shows a blank page ${suffix}`));
 	await dialog.getByLabel("Something's broken").check();
 	await dialog.getByRole('button', { name: 'Report', exact: true }).click();
@@ -717,7 +763,7 @@ test('report a bug from the board: it lands in triage, and a similar story can b
 	await expect(page.getByTestId(`card-${existing.key}`)).toHaveCount(0);
 });
 
-test('the story drawer header fits at 320px with a draft: Close stays on screen beside Resume report', async ({ page }) => {
+test('the story drawer header fits at 320px with a draft: Close stays on screen and the bar\'s Resume report stays usable', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 640 });
 	const s = await chore(page, `Smoke drawer header ${crypto.randomUUID().slice(0, 6)}`);
 	await page.goto('/board');
@@ -728,15 +774,61 @@ test('the story drawer header fits at 320px with a draft: Close stays on screen 
 	await expect(dialog).toBeHidden();
 	await page.goto(`/board?story=${s.key}`);
 	const drawer = page.getByRole('complementary');
-	const resume = drawer.getByRole('button', { name: 'Resume report' });
+	const resume = page.getByRole('banner').getByRole('button', { name: 'Resume report' });
 	const close = drawer.getByRole('button', { name: `Close story ${s.key}` });
 	await expect(resume).toBeVisible();
 	await expect(close).toBeVisible();
-	const r = (await resume.boundingBox())!;
+	await close.click({ trial: true }); // not covered by the sticky bar
+	await resume.click({ trial: true }); // the bar's button is usable while the drawer is open
 	const c = (await close.boundingBox())!;
 	expect(c.x + c.width).toBeLessThanOrEqual(320);
-	expect(r.x + r.width).toBeLessThanOrEqual(c.x + 1); // beside Close, not over it
+	// The key and its glyph stay on one line; only the chips after it may wrap.
+	const key = drawer.locator('h2 .key');
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
+	// Squeeze the heading line: the key must not break even when it has to overflow.
+	await drawer.locator('.heading-line').evaluate((el) => ((el as HTMLElement).style.width = '40px'));
+	expect((await key.boundingBox())!.height).toBeLessThan(30);
+	await expect(drawer.getByRole('button', { name: `Copy ${s.key}` })).toBeVisible();
 });
+
+for (const width of [1280, 360]) {
+	test(`drawers open under the top bar at ${width}px`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		const s = await chore(page, `Smoke drawer under bar ${crypto.randomUUID().slice(0, 6)}`);
+		const d = await post<{ id: number }>(page, '/api/v1/decisions', {
+			idempotency_key: crypto.randomUUID(), on: s.key, title: 'Smoke decision under the bar', decider: 'smoke@example.com'
+		});
+		const banner = page.getByRole('banner');
+		const under = async (drawer: Locator) => {
+			await expect(drawer).toBeVisible();
+			const bar = (await banner.boundingBox())!;
+			const box = (await drawer.boundingBox())!;
+			expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+			expect(box.y).toBeLessThanOrEqual(bar.y + bar.height + 1); // no gap
+			await close.click({ trial: true }); // fails if the bar covers the drawer
+		};
+		let close = page.getByRole('button', { name: `Close story ${s.key}` });
+		await page.goto(`/board?story=${s.key}`);
+		await under(page.getByRole('complementary'));
+		close = page.getByRole('button', { name: `Close decision #${d.id}` });
+		await page.goto(`/decisions?decision=${d.id}`);
+		await under(page.getByTestId('decision-drawer'));
+	});
+}
+
+for (const width of [1280, 360]) {
+	test(`the account menu opens from the top bar at ${width}px and stays open`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 700 });
+		await page.goto('/board');
+		const trigger = page.getByRole('banner').getByRole('button', { name: /^Account:/ });
+		await trigger.click();
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.waitForTimeout(300); // a menu that closes itself after opening would be gone by now
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('menuitem', { name: 'Sign out' })).toHaveCount(0);
+	});
+}
 
 for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280, 800, false]] as const) {
 	test(`the header fits at ${width}px: no horizontal scroll, Report reachable, search usable`, async ({ page }) => {

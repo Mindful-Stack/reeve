@@ -1,4 +1,5 @@
 pub mod apply;
+pub mod attachment;
 pub mod auth;
 pub mod comment;
 pub mod decision;
@@ -68,6 +69,9 @@ pub enum Cmd {
     /// Comments on stories and decisions.
     #[command(subcommand)]
     Comment(comment::Comment),
+    /// Attachments (screenshots) on initiatives, epics and stories: download one to a file.
+    #[command(subcommand)]
+    Attachment(attachment::Attachment),
     /// Create a plan of items, required decisions and blockers from a YAML or JSON file, in one request.
     Apply(apply::Apply),
     /// Find items by text in their title, brief, description or Jira reference.
@@ -104,6 +108,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Sprint(x) => sprint::run(&c, x, json).await,
                 Cmd::Goal(x) => goal::run(&c, x, json).await,
                 Cmd::Comment(x) => comment::run(&c, x, json).await,
+                Cmd::Attachment(x) => attachment::run(&c, x, json).await,
                 Cmd::Apply(x) => apply::run(&c, x, json).await,
                 Cmd::Search(x) => search::run(&c, x, json).await,
                 Cmd::Export(x) => export::run(&c, x, json).await,

@@ -6291,6 +6291,13 @@
               "value": {
                 "description": "`reeve story context`: everything an agent needs before starting a story.",
                 "properties": {
+                  "attachments": {
+                    "description": "The attachments of the story (its comments' included), then its epic's, then its initiative's, each oldest\nfirst; claimed ones only. Always sent; JSON without it (an older server) reads as none.",
+                    "items": {
+                      "$ref": "#/components/schemas/AttachmentDto"
+                    },
+                    "type": "array"
+                  },
                   "blockers": {
                     "items": {
                       "$ref": "#/components/schemas/StoryDto"
@@ -6349,7 +6356,8 @@
                   "blockers",
                   "comments",
                   "readiness",
-                  "goals"
+                  "goals",
+                  "attachments"
                 ],
                 "type": "object"
               }
@@ -8977,6 +8985,13 @@
       "StoryContextDto": {
         "description": "`reeve story context`: everything an agent needs before starting a story.",
         "properties": {
+          "attachments": {
+            "description": "The attachments of the story (its comments' included), then its epic's, then its initiative's, each oldest\nfirst; claimed ones only. Always sent; JSON without it (an older server) reads as none.",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentDto"
+            },
+            "type": "array"
+          },
           "blockers": {
             "items": {
               "$ref": "#/components/schemas/StoryDto"
@@ -9035,7 +9050,8 @@
           "blockers",
           "comments",
           "readiness",
-          "goals"
+          "goals",
+          "attachments"
         ],
         "type": "object"
       },

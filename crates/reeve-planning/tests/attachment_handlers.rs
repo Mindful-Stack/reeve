@@ -117,6 +117,96 @@ mod attachment_handlers {
             .id()
     }
 
+    /// Uploads as `who` at `ctx`'s clock plus `secs`.
+    async fn up_at(w: &World, who: &str, secs: i64) -> Uuid {
+        let c = Ctx {
+            now: ctx(who).now + Duration::seconds(secs),
+            ..ctx(who)
+        };
+        w.h.upload_attachment(&c, "shot.png", None, png())
+            .await
+            .unwrap()
+            .id()
+    }
+
+    /// The context lists the story's attachments (its comments' included), then its epic's, then its initiative's,
+    /// each oldest first, with their owners; another story's and an unclaimed upload are absent.
+    #[tokio::test]
+    async fn the_story_context_lists_the_attachments_of_its_story_epic_and_initiative() {
+        let w = world().await;
+        let c = ctx("a@x");
+        let on_i = up_at(&w, "a@x", 1).await;
+        let on_e = up_at(&w, "a@x", 2).await;
+        let newer = up_at(&w, "a@x", 9).await;
+        let older = up_at(&w, "a@x", 3).await;
+        let i =
+            w.h.create_initiative_attaching(&c, "i", "I", "", "Now", None, None, None, &[on_i])
+                .await
+                .unwrap();
+        let e =
+            w.h.create_epic_attaching(&c, "e", "E", Some(i.key().clone()), "", None, &[on_e])
+                .await
+                .unwrap();
+        let s =
+            w.h.create_story_attaching(
+                &c,
+                "s",
+                "S",
+                Kind::Story,
+                Some(e.key().clone()),
+                "",
+                vec![],
+                vec![],
+                None,
+                None,
+                &[newer],
+            )
+            .await
+            .unwrap();
+        w.h.comment_story_attaching(&c, s.key(), "see", None, &[older])
+            .await
+            .unwrap();
+        let elsewhere = up_at(&w, "a@x", 4).await;
+        w.h.create_story_attaching(
+            &c,
+            "o",
+            "O",
+            Kind::Story,
+            Some(e.key().clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+            &[elsewhere],
+        )
+        .await
+        .unwrap();
+        let _unclaimed = up_at(&w, "a@x", 5).await;
+
+        let got = w.h.story_context(s.key(), Utc::now()).await.unwrap();
+
+        assert_eq!(
+            got.attachments.iter().map(|a| a.id).collect::<Vec<_>>(),
+            [older, newer, on_e, on_i]
+        );
+        let owners: Vec<_> = got
+            .attachments
+            .iter()
+            .map(|a| a.owner.clone().unwrap())
+            .map(|o| (o.item, o.key))
+            .collect();
+        assert_eq!(
+            owners,
+            [
+                (ItemType::Story, s.key().clone()),
+                (ItemType::Story, s.key().clone()),
+                (ItemType::Epic, e.key().clone()),
+                (ItemType::Initiative, i.key().clone()),
+            ]
+        );
+    }
+
     fn owner_of(a: &Attachment) -> Option<(ItemType, Key)> {
         match a.owner() {
             AttachmentOwner::Item(t, k) => Some((*t, k.clone())),

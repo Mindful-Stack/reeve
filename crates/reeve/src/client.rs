@@ -149,6 +149,23 @@ impl Client {
         body: Option<serde_json::Value>,
         timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<Outcome<T>> {
+        let (status, headers, bytes) = self.exchange(method, path, query, body, timeout).await?;
+        outcome_of(
+            status,
+            header(&headers, reqwest::header::RETRY_AFTER).as_deref(),
+            &bytes,
+            chrono::Utc::now(),
+        )
+    }
+    /// Sends one authenticated request and reads the whole answer: status, headers and body.
+    async fn exchange(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<serde_json::Value>,
+        timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<(u16, reqwest::header::HeaderMap, Vec<u8>)> {
         let mut req = self
             .http
             .request(method, format!("{}/api/v1{}", self.base, path))
@@ -162,13 +179,8 @@ impl Client {
         }
         let res = req.send().await?;
         let status = res.status().as_u16();
-        let retry_after = res
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .map(String::from);
-        let bytes = res.bytes().await?;
-        outcome_of(status, retry_after.as_deref(), &bytes, chrono::Utc::now())
+        let headers = res.headers().clone();
+        Ok((status, headers, res.bytes().await?.to_vec()))
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<Outcome<T>> {
         self.call(reqwest::Method::GET, path, &[], None).await
@@ -181,6 +193,26 @@ impl Client {
     ) -> anyhow::Result<Outcome<T>> {
         self.send(reqwest::Method::GET, path, &[], None, Some(timeout))
             .await
+    }
+    /// GET an image route: on 200 its content type and bytes; any other answer is the server's outcome. An image is at
+    /// most the 10 MiB upload cap (kb/ADR-0023), so it is held in memory.
+    pub async fn get_image(
+        &self,
+        path: &str,
+    ) -> anyhow::Result<Result<(String, Vec<u8>), Outcome<()>>> {
+        let (status, headers, body) = self
+            .exchange(reqwest::Method::GET, path, &[], None, None)
+            .await?;
+        if status == 200 {
+            let content_type = header(&headers, reqwest::header::CONTENT_TYPE).unwrap_or_default();
+            return Ok(Ok((content_type, body)));
+        }
+        Ok(Err(outcome_of(
+            status,
+            header(&headers, reqwest::header::RETRY_AFTER).as_deref(),
+            &body,
+            chrono::Utc::now(),
+        )?))
     }
     /// GET with query parameters, encoded by reqwest.
     pub async fn get_query<T: DeserializeOwned>(
@@ -209,6 +241,17 @@ impl Client {
         self.call(reqwest::Method::PATCH, path, &[], Some(body))
             .await
     }
+}
+
+/// A header's value, when present and printable.
+fn header(
+    headers: &reqwest::header::HeaderMap,
+    name: reqwest::header::HeaderName,
+) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
 }
 
 #[cfg(test)]

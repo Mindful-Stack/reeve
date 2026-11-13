@@ -24,8 +24,6 @@
 	import { draftKey, newDraftKey } from '#lib/idempotency.ts';
 	import { followBase, rebase, type EditorBase } from '#lib/editorBase.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { reportContext } from '#lib/nav.ts';
-	import { openReport, reportLabel } from '#lib/report.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
 	import { PR_LABEL, safePrUrl } from '#lib/prs.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
@@ -50,6 +48,7 @@
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import ActionsMenu, { type MenuItem } from '#lib/ui/ActionsMenu.svelte';
 	import Avatar from '#lib/ui/Avatar.svelte';
+	import CopyKey from '#lib/ui/CopyKey.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import Toggle from '#lib/ui/Toggle.svelte';
@@ -586,11 +585,14 @@
 <!-- svelte-ignore a11y_no_redundant_roles, a11y_no_noninteractive_element_interactions -->
 <aside class="drawer" role="complementary" aria-label="Story {storyKey}" data-testid="story-drawer" bind:this={panel} onkeydown={keydown}>
 	<header class="top">
-		<h2 tabindex="-1" bind:this={heading}>
-			<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
+		<div class="heading-line">
+			<h2 tabindex="-1" bind:this={heading}>
+				<span class="key">{#if story}<Glyph level={levelOfKind(story.kind)} />{/if}{storyKey}</span>
+			</h2>
+			<CopyKey key={story?.key ?? storyKey} />
 			{#if story}<span class="chip">{story.kind}</span>{/if}
 			{#if story?.external_ref}<span class="muted" title="External reference">from {story.external_ref}</span>{/if}
-		</h2>
+		</div>
 		{#if story}
 			{#if story.epic}
 				{@const e = story.epic}
@@ -602,8 +604,6 @@
 				<span class="muted epic-link">No epic</span>
 			{/if}
 		{/if}
-		<!-- The drawer covers the header's Report button at every width; the story never prefills the epic chip. -->
-		<button type="button" class="report-here" onclick={() => openReport({ ...reportContext(page.url), epic: null })}>{reportLabel()}</button>
 		<button type="button" class="close" aria-label="Close story {storyKey}" onclick={onclose}>×</button>
 	</header>
 
@@ -1060,7 +1060,7 @@
 	}
 	.drawer {
 		position: fixed;
-		top: 0;
+		top: var(--top-bar-height, 0px);
 		right: 0;
 		bottom: 0;
 		z-index: 10;
@@ -1087,12 +1087,19 @@
 		border: 0;
 		background: none;
 	}
-	h2 {
+	.heading-line {
 		display: flex;
+		flex-wrap: wrap;
+		min-width: 0;
 		gap: 0.5rem;
 		align-items: center;
+	}
+	h2 {
 		margin: 0;
 		font-size: 18px;
+	}
+	h2 .key {
+		white-space: nowrap;
 	}
 	h3 {
 		margin: 0 0 6px;
@@ -1226,13 +1233,6 @@
 		font-size: 14px;
 		white-space: nowrap;
 		text-overflow: ellipsis;
-	}
-	.report-here {
-		margin-left: auto;
-		margin-right: 8px;
-	}
-	.top .epic-link + .report-here {
-		margin-left: 0;
 	}
 	.close {
 		font-size: 18px;

@@ -1466,6 +1466,7 @@ mod tests {
             comments: vec![],
             readiness: ready(),
             goals: vec![],
+            attachments: vec![],
         };
         let out = context_markdown(&c, now());
         let lines: Vec<&str> = out.lines().collect();
