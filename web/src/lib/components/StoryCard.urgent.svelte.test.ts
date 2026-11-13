@@ -43,6 +43,12 @@ describe('StoryCard urgency', () => {
 		expect(calm.classList.contains('urgent')).toBe(false);
 		expect(calm.querySelector('.urgent-chip')).toBeNull();
 	});
+
+	it('the key in .meta has a copy button', () => {
+		app = mount(StoryCard, { target: document.body, props: { item: withReadiness({ key: 'ABC-10' }), href: '?story=ABC-10' } });
+		const card = document.body.querySelector('[data-testid="card-ABC-10"]')!;
+		expect(card.querySelector('.meta button[aria-label="Copy ABC-10"]')).not.toBeNull();
+	});
 });
 
 describe('BacklogList urgency', () => {

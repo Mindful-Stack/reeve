@@ -87,6 +87,7 @@ afterEach(() => {
 	net.searchHold = null;
 	router.onNavigate.length = 0;
 	sessionStorage.clear();
+	document.documentElement.style.removeProperty('--top-bar-height');
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
@@ -390,6 +391,23 @@ describe('Report', () => {
 		expect(net.gets).not.toContain('GET /api/v1/epics/ABC-30');
 	});
 
+	it('started with a drawer open, keeps the page and the story in the origin, and prefills the epic only on an epic page', async () => {
+		session.me = me();
+		await open('/board?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.origin.path).toBe('/board?story=ABC-1');
+		expect(report.draft!.epic).toBeNull(); // the story never prefills the chip
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		discardDraft();
+		await open('/epics/ABC-30?story=ABC-1');
+		click(button());
+		await vi.waitFor(() => expect(report.open).toBe(true));
+		expect(report.draft!.epic).toEqual({ key: 'ABC-30', title: 'Payments' }); // the page's epic, not the story's
+	});
+
 	it('keeps a notice after a create until another page is opened, and links the key', async () => {
 		session.me = me();
 		await open('/board');
@@ -551,5 +569,36 @@ describe('Report review fixes', () => {
 		([...document.body.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === 'Sign out') as HTMLElement).click();
 		await vi.waitFor(() => expect(report.draft).toBeNull());
 		expect(sessionStorage.getItem('reeve.report-draft')).toBeNull();
+	});
+});
+
+describe('top bar', () => {
+	it('publishes its height as --top-bar-height and follows a resize', async () => {
+		let notify: (() => void) | null = null;
+		let observed: Element | null = null;
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(cb: () => void) {
+					notify = cb;
+				}
+				observe(el: Element) {
+					observed = el;
+				}
+				disconnect() {}
+			}
+		);
+		await open('/board');
+		const bar = await vi.waitFor(() => document.body.querySelector<HTMLElement>('header.top-bar')!);
+		expect(observed).toBe(bar);
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 57 });
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('57px');
+		Object.defineProperty(bar, 'offsetHeight', { configurable: true, value: 101 }); // wrapped to two rows
+		notify!();
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('101px');
+		unmount(app!); // the effect's own cleanup removes the property
+		app = null;
+		expect(document.documentElement.style.getPropertyValue('--top-bar-height')).toBe('');
 	});
 });

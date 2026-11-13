@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
 import { activity, decision, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
-import { discardDraft, report } from '#lib/report.svelte.ts';
+import { discardDraft } from '#lib/report.svelte.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
 import StoryDrawer from './StoryDrawer.svelte';
 
@@ -87,28 +87,13 @@ describe('StoryDrawer Report action', () => {
 	const settled = () =>
 		vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
 
-	it('has a Report button that opens the dialog with no epic chip', async () => {
+	it('has no Report button of its own: the top bar stays usable above the drawer', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
 		await settled();
-		const b = [...document.body.querySelectorAll('header.top button')].find((x) => x.textContent === 'Report') as HTMLButtonElement;
-		expect(b).toBeDefined();
-		b.click();
-		flushSync();
-		expect(report.open).toBe(true);
-		expect(report.draft!.epic).toBeNull();
-		expect(report.draft!.origin).toEqual({ path: '/board?story=SCRUM-11', label: 'Board' });
-	});
-
-	it('says Resume report while a draft exists', async () => {
-		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
-		await settled();
-		const btn = () => document.body.querySelector<HTMLButtonElement>('header.top button.report-here')!;
-		expect(btn().textContent).toBe('Report');
-		btn().click();
-		flushSync();
-		report.draft!.title = 'a draft in progress';
-		flushSync();
-		expect(btn().textContent).toBe('Resume report');
+		const labels = [...document.body.querySelectorAll('header.top button')].map((b) => b.textContent?.trim());
+		expect(labels).not.toContain('Report');
+		expect(labels).not.toContain('Resume report');
+		expect(document.body.querySelector('header.top button.close')).not.toBeNull(); // the header itself rendered
 	});
 });
 
@@ -179,6 +164,14 @@ describe('StoryDrawer opened by an external reference', () => {
 		expect(activity.map((u) => u.searchParams.get('entity_key'))).toEqual(['RV-5']);
 	});
 
+	it('copies the story\'s own key, not the reference it was opened by', async () => {
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'SCRUM-11', onclose: () => {} } });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(document.body.querySelector('[data-testid="story-drawer"] header button[aria-label="Copy RV-5"]')).not.toBeNull();
+		});
+	});
+
 	it('names the reference the story came from', async () => {
 		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'SCRUM-11', onclose: () => {} } });
 		await vi.waitFor(() => {
@@ -240,7 +233,7 @@ describe('StoryDrawer removes a block', () => {
 		remove.click();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(document.body.querySelector('[role="status"]')?.textContent).toContain('no story RV-6');
+			expect(document.body.querySelector('.notice[role="status"]')?.textContent).toContain('no story RV-6');
 		});
 		const b = document.body.querySelector<HTMLButtonElement>('button[aria-label="Remove block by RV-6"]');
 		expect(b).not.toBeNull();
@@ -907,7 +900,7 @@ describe('StoryDrawer urgent mark', () => {
 			expect(document.body.querySelector('dialog [role="alert"]')).not.toBeNull();
 		});
 		expect(document.body.querySelector('dialog [role="alert"]')!.textContent).toContain('boom');
-		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice')).toBeNull();
 	});
 
 	it('a mark on a done story reads "Urgent mark · done" with Clear and no chip', async () => {
@@ -1154,7 +1147,7 @@ describe('StoryDrawer promise', () => {
 			expect(document.activeElement).toBe(dialogButton('Cancel'));
 		});
 		expect(deletes()).toBe(1);
-		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice, [role="alert"]')).toBeNull();
 	});
 
 	it("asking before clearing a done story's own promise under a promised epic says it stays listed under the epic's date", async () => {
@@ -1217,6 +1210,6 @@ describe('StoryDrawer promise', () => {
 			flushSync();
 			expect(document.body.querySelector('dialog [role="alert"]')?.textContent).toContain('boom');
 		});
-		expect(d.querySelector('.notice, [role="status"], [role="alert"]')).toBeNull();
+		expect(d.querySelector('.notice, [role="alert"]')).toBeNull();
 	});
 });

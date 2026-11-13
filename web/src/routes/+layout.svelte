@@ -242,6 +242,20 @@
 		if (email && restoredFor === email) persist(email);
 	});
 
+	// The bar is sticky and wraps to two rows on a phone: drawers start at its measured height (--top-bar-height).
+	let topBar = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const el = topBar;
+		if (!el || typeof ResizeObserver === 'undefined') return;
+		const root = document.documentElement;
+		const ro = new ResizeObserver(() => root.style.setProperty('--top-bar-height', `${el.offsetHeight}px`));
+		ro.observe(el);
+		return () => {
+			ro.disconnect();
+			root.style.removeProperty('--top-bar-height');
+		};
+	});
+
 	async function signOut() {
 		discardDraft(); // a deliberate sign-out ends the draft; a session expiry (401) keeps it
 		await fetch('/auth/logout', { method: 'POST', headers: { 'X-Reeve-Client': 'web' } });
@@ -257,7 +271,7 @@
 	{#await load()}
 		<p class="status">Loading…</p>
 	{:then}
-		<header class="top-bar">
+		<header class="top-bar" bind:this={topBar}>
 			<a class="brand" href="/"><Logo />Reeve</a>
 			<nav aria-label="Main">
 				{#each links as link (link.href)}

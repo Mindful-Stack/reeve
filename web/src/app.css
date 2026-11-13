@@ -225,7 +225,17 @@ dialog::backdrop {
 }
 
 /* Page shell */
+html {
+	scroll-padding-top: var(--top-bar-height, 0px);
+}
 header.top-bar {
+	position: sticky;
+	top: 0;
+	/* Above the drawers (10). Menus whose trigger is inside the bar (the account menu) are exempt from ActionsMenu's
+	   close-behind-the-bar rule and its clamp; page menus (ActionsMenu, z 30) paint over the bar and close when
+	   their trigger scrolls behind it. */
+	z-index: 20;
+	background: var(--background);
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;

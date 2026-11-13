@@ -1,5 +1,5 @@
 // web/src/lib/nav.ts: the main navigation destinations, and the context a Report started from a page captures. The
-// header button and the drawer's button both build it here, so one page gives one context.
+// top bar's Report button builds it here, so one page gives one context.
 import type { Origin } from '#lib/report.svelte.ts';
 
 export const links = [
@@ -25,7 +25,7 @@ function decode(s: string): string {
 }
 
 /** Where a report starts: the path with its query, the section label (the epic's key on an epic page), and the epic
- *  key a chip may name (epic pages only; the drawer never asks for it). */
+ *  key a chip may name (epic pages only; an open story drawer never prefills it). */
 export function reportContext(url: Where): Origin & { epicKey: string | null } {
 	const epicKey = url.pathname.match(/^\/epics\/([^/]+)$/)?.[1];
 	const key = epicKey ? decode(epicKey) : null;
