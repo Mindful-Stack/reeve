@@ -124,12 +124,16 @@ impl Entry {
         now - self.created_at >= Duration::minutes(REQUEST_MINUTES)
     }
 
-    /// Whether nothing can come of this request any more: it has expired, or it was approved and its code has
-    /// (a code that was exchanged took its request with it; one that never was would otherwise count toward the
-    /// cap until the request's ten minutes are up).
+    /// Whether nothing can come of this request any more. Pending, when its ten minutes are up; approved, when
+    /// its code has expired, whatever the request's age: a code approved late keeps its full minute. (A code that
+    /// was exchanged took its request with it.)
     fn lapsed(&self, now: DateTime<Utc>) -> bool {
-        self.expired(now)
-            || matches!(&self.phase, Phase::Approved { code_expires_at, .. } if *code_expires_at <= now)
+        match &self.phase {
+            Phase::Pending => self.expired(now),
+            Phase::Approved {
+                code_expires_at, ..
+            } => *code_expires_at <= now,
+        }
     }
 
     fn return_address(&self) -> ReturnAddress {
@@ -325,9 +329,8 @@ impl AuthorizationRequests {
         if !e.challenge.matches(verifier) {
             return Err(RedeemRefusal::InvalidGrant);
         }
-        let expired = e.expired(now) || code_expires_at <= now;
         entries.remove(&id);
-        if expired {
+        if code_expires_at <= now {
             return Err(RedeemRefusal::InvalidGrant);
         }
         Ok(grant)
@@ -676,7 +679,8 @@ mod tests {
     }
 
     /// Catches a token route that needs `redirect_uri` or `resource` (an OAuth 2.1 client sends no redirect
-    /// address there), and a code that lives longer than a minute or longer than its request.
+    /// address there), and a code that lives longer than a minute, and one approved late that
+    /// loses part of its minute to the request's ten.
     #[test]
     fn a_code_needs_no_redirect_or_resource_and_lives_one_minute() {
         let store = AuthorizationRequests::new();
@@ -698,15 +702,25 @@ mod tests {
             Err(RedeemRefusal::InvalidGrant),
             "an expired code is gone"
         );
-        // Approved 9 min 50 s after authorize: the request's ten minutes end before the code's minute.
+        // Approved 9 min 50 s after authorize: the code keeps its full minute, past the request's ten minutes.
+        let id = open_at(&store, t0());
+        let value = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
+        let (_, code, _) = store
+            .approve(&id, &value, TOKEN_ID, DAN, Scope::Read, after(590))
+            .unwrap();
+        assert!(
+            redeem_at(&store, &code, after(649)).is_ok(),
+            "59 s after a late approval"
+        );
         let id = open_at(&store, t0());
         let value = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
         let (_, code, _) = store
             .approve(&id, &value, TOKEN_ID, DAN, Scope::Read, after(590))
             .unwrap();
         assert_eq!(
-            redeem_at(&store, &code, after(600)),
-            Err(RedeemRefusal::InvalidGrant)
+            redeem_at(&store, &code, after(650)),
+            Err(RedeemRefusal::InvalidGrant),
+            "60 s after a late approval"
         );
     }
 
