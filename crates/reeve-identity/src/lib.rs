@@ -2,7 +2,11 @@
 mod access;
 mod access_handler;
 mod access_repo;
+mod client_fetch;
+mod clients;
 mod domain;
+#[cfg(feature = "static-oidc")]
+mod fake_client_host;
 #[cfg(feature = "static-oidc")]
 mod fake_issuer;
 mod handler;
@@ -15,10 +19,18 @@ pub use access::{
 };
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
+pub use client_fetch::make_client_fetcher;
+#[cfg(feature = "static-oidc")]
+pub use client_fetch::make_loopback_client_fetcher;
+pub use clients::{
+    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
+};
 pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
     normalise_email,
 };
+#[cfg(feature = "static-oidc")]
+pub use fake_client_host::{FakeAnswer, FakeClientHost};
 #[cfg(feature = "static-oidc")]
 pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
 pub use handler::{
