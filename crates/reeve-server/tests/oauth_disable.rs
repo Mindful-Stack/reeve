@@ -132,12 +132,13 @@ async fn a_refresh_and_an_exchange_wait_for_a_disable_in_progress_and_then_issue
     assert_eq!((connections, tokens, unused), (1, 1, 1));
 }
 
-/// The first lock of every flow is the person's `users` row. While the test holds it, a refresh and a disable
-/// both wait, and neither has written the connection, the token or the refresh token yet. Catches a flow that
-/// writes any of them before it holds the user's row (two such flows can deadlock, and a write can slip past a
-/// disable).
+/// The first lock of a refresh and of a disable is the person's `users` row. While the test holds it, both wait,
+/// and neither has written the connection, the token or the refresh token yet. Catches either of the two writing
+/// any of them before it holds the user's row (two such flows can deadlock, and a write can slip past a disable).
+/// The exchange is probed only against a disable in progress (above); the developer command and
+/// `connections-revoke-all` are not probed.
 #[tokio::test]
-async fn every_flow_takes_the_users_row_before_anything_else() {
+async fn a_refresh_and_a_disable_take_the_users_row_before_anything_else() {
     let f = flow().await;
     let h = &f.h;
     let c = connect(&f, &h.victim_token, "read").await;
