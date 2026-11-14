@@ -10,13 +10,13 @@ pub(crate) const LEGACY: &str = "2025-11-25";
 /// Every answer that lists the supported revisions lists these, in this order.
 pub(crate) const SUPPORTED: [&str; 2] = [MODERN, LEGACY];
 
-pub(crate) const PARSE_ERROR: i64 = -32700;
-pub(crate) const INVALID_REQUEST: i64 = -32600;
+const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
 pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
-pub(crate) const INVALID_PARAMS: i64 = -32602;
+const INVALID_PARAMS: i64 = -32602;
 pub(crate) const INTERNAL_ERROR: i64 = -32603;
-pub(crate) const HEADER_MISMATCH: i64 = -32020;
-pub(crate) const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
+const HEADER_MISMATCH: i64 = -32020;
+const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 
 const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
@@ -223,7 +223,7 @@ fn modern_checks(
 
 /// An `Mcp-Name` header value as the text it stands for: the `=?base64?…?=` form decoded, anything else as it is.
 /// `None` when the encoded form is not base64 of UTF-8.
-pub(crate) fn decode_header_value(raw: &str) -> Option<String> {
+fn decode_header_value(raw: &str) -> Option<String> {
     match raw
         .strip_prefix("=?base64?")
         .and_then(|rest| rest.strip_suffix("?="))
@@ -263,36 +263,6 @@ mod tests {
             method: Some(method),
             name: None,
         }
-    }
-
-    /// Steps 7 and 8 and the two ways into the legacy revision. The whole table is tested once, through the router
-    /// (`every_row_of_the_classification_table_through_the_router`); this pins the order of the two steps.
-    #[test]
-    fn the_header_must_equal_the_body_version_before_the_version_is_judged() {
-        let code = |body: Option<&str>, header: Option<&str>| {
-            classify(&msg("tools/list", body), headers(header, "tools/list")).map_err(|e| {
-                assert_eq!(e.status, StatusCode::BAD_REQUEST);
-                e.code
-            })
-        };
-        assert_eq!(code(Some(MODERN), Some(MODERN)), Ok(Revision::Modern));
-        assert_eq!(code(None, Some(LEGACY)), Ok(Revision::Legacy));
-        // Step 7: absent or different, whether or not the body's version is one this server supports.
-        assert_eq!(code(Some(MODERN), None), Err(HEADER_MISMATCH));
-        assert_eq!(code(Some(MODERN), Some(LEGACY)), Err(HEADER_MISMATCH));
-        assert_eq!(code(Some("1900-01-01"), None), Err(HEADER_MISMATCH));
-        assert_eq!(code(None, Some(MODERN)), Err(HEADER_MISMATCH));
-        // Step 8: only once the two agree.
-        assert_eq!(
-            code(Some("1900-01-01"), Some("1900-01-01")),
-            Err(UNSUPPORTED_PROTOCOL_VERSION)
-        );
-        // The handshake opens the legacy revision without a header; nothing else does.
-        assert_eq!(
-            classify(&msg("initialize", None), headers(None, "initialize")),
-            Ok(Revision::Legacy)
-        );
-        assert_eq!(code(None, None), Err(HEADER_MISMATCH));
     }
 
     #[test]

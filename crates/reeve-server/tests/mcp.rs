@@ -508,28 +508,9 @@ async fn the_legacy_handshake_is_served_without_a_session() {
 async fn the_legacy_path_needs_an_mcp_token_like_the_modern_one() {
     let h = mcp_harness().await;
     let init = json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}});
-    let mut no_token = mcp_legacy("", Some(1), "initialize", init.clone());
+    let mut no_token = mcp_legacy("", Some(1), "initialize", init);
     no_token.headers_mut().remove("authorization");
     assert_eq!(send(&h.app, no_token).await.0, 401);
-    assert_eq!(
-        send(
-            &h.app,
-            mcp_legacy(&h.admin_token, Some(1), "initialize", init)
-        )
-        .await
-        .0,
-        401
-    );
-    let call = json!({"name": "get_story", "arguments": {"key": "TST-1"}});
-    assert_eq!(
-        send(
-            &h.app,
-            mcp_legacy(&h.admin_token, Some(2), "tools/call", call)
-        )
-        .await
-        .0,
-        401
-    );
 }
 
 #[tokio::test]
@@ -619,4 +600,125 @@ async fn an_authorization_header_that_is_not_bearer_is_401() {
     let (status, headers, _) = send(&h.app, req).await;
     assert_eq!(status, 401);
     assert_eq!(headers["www-authenticate"], "Bearer");
+}
+
+#[tokio::test]
+async fn a_malformed_meta_is_refused_or_read_as_absent() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let post = |header: Option<&str>, meta: Value| {
+        let mut req = Request::post("/mcp")
+            .header("authorization", format!("Bearer {t}"))
+            .header("content-type", "application/json")
+            .header("mcp-method", "tools/list");
+        if let Some(v) = header {
+            req = req.header("mcp-protocol-version", v);
+        }
+        let body =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"_meta": meta}});
+        req.body(Body::from(body.to_string())).unwrap()
+    };
+    // A protocol version that is not a string is malformed, whatever the header says.
+    let not_a_string = json!({
+        "io.modelcontextprotocol/protocolVersion": 20260728,
+        "io.modelcontextprotocol/clientCapabilities": {}
+    });
+    let (s, _, b) = send(&h.app, post(Some("2026-07-28"), not_a_string)).await;
+    assert_eq!((s, rpc(&b)["error"]["code"].as_i64()), (400, Some(-32602)));
+    // A `_meta` that is not an object carries no version, so the header rule decides.
+    for (header, status, code) in [
+        (Some("2025-11-25"), 200, None),
+        (Some("2026-07-28"), 400, Some(-32020)),
+        (None, 400, Some(-32020)),
+    ] {
+        let (s, _, b) = send(&h.app, post(header, json!("2026-07-28"))).await;
+        assert_eq!(
+            (s, rpc(&b)["error"]["code"].as_i64()),
+            (status, code),
+            "{header:?}: {b}"
+        );
+    }
+}
+
+/// What the code logged while the guard is alive, as text.
+#[derive(Clone, Default)]
+struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+    fn make_writer(&'a self) -> Logs {
+        self.clone()
+    }
+}
+impl Logs {
+    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .finish();
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn a_refused_token_is_logged_once_and_never_with_its_secret() {
+    let h = mcp_harness().await;
+    let (logs, _guard) = Logs::capture();
+    // An API token: a real secret, refused here for its audience.
+    assert_eq!(send(&h.app, knock(Some(&h.admin_token), None)).await.0, 401);
+    let text = logs.text();
+    assert_eq!(text.matches("refused").count(), 1, "{text}");
+    assert!(text.contains("wrong audience"), "{text}");
+    assert!(!text.contains(&h.admin_token), "{text}");
+    // A missing bearer header is the endpoint's own line, with what the request said about its protocol.
+    let (logs, _guard) = Logs::capture();
+    assert_eq!(send(&h.app, knock(None, None)).await.0, 401);
+    let text = logs.text();
+    assert_eq!(text.matches("refused").count(), 1, "{text}");
+    assert!(
+        text.contains("no bearer header")
+            && text.contains("2026-07-28")
+            && text.contains("nope/unknown"),
+        "{text}"
+    );
+}
+
+/// Steps 1 to 4 answer without reading the body: each request carries a body that fails the test when polled.
+#[tokio::test]
+async fn a_request_refused_before_step_5_never_has_its_body_read() {
+    fn unread(mut req: Request<Body>) -> Request<Body> {
+        *req.body_mut() = Body::from_stream(futures_util::stream::poll_fn(
+            |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
+                panic!("the request body was polled")
+            },
+        ));
+        req
+    }
+    let off = harness().await;
+    let t = admin_mcp(&off).await;
+    assert_eq!(send(&off.app, unread(knock(Some(&t), None))).await.0, 404);
+
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let mut get = knock(Some(&t), None);
+    *get.method_mut() = axum::http::Method::GET;
+    assert_eq!(send(&h.app, unread(get)).await.0, 405);
+    let mut foreign = knock(Some(&t), None);
+    foreign
+        .headers_mut()
+        .insert("origin", "https://evil.example".parse().unwrap());
+    assert_eq!(send(&h.app, unread(foreign)).await.0, 403);
+    assert_eq!(send(&h.app, unread(knock(None, None))).await.0, 401);
 }

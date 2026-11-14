@@ -47,6 +47,21 @@ pub fn has_client_header(headers: &axum::http::HeaderMap) -> bool {
         .is_some_and(|v| v == "web")
 }
 
+/// The secret of a request's bearer header: `Ok(None)` without an `Authorization` header, `Err` with the reason when
+/// the header is not a bearer token. The one reading of that header, for `Caller` and `McpCaller` alike.
+fn bearer_secret(headers: &axum::http::HeaderMap) -> Result<Option<&str>, &'static str> {
+    let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+    let header = header
+        .to_str()
+        .map_err(|_| "authorization header is not text")?;
+    match header.split_once(' ') {
+        Some((scheme, secret)) if scheme.eq_ignore_ascii_case("bearer") => Ok(Some(secret.trim())),
+        _ => Err("authorization header is not a bearer token"),
+    }
+}
+
 /// The authenticated caller, the instant the request was authenticated (the clock is read once per request, here),
 /// and the secret it presented, kept so a long-lived response can re-authenticate on every tick (kb/ADR-0015 R5).
 pub struct Caller(
@@ -64,29 +79,12 @@ impl FromRequestParts<AppState> for Caller {
             tracing::warn!(method = %parts.method, path = %request_path(parts), reason, "request refused");
             err
         };
-        let (secret, via) = match parts.headers.get(axum::http::header::AUTHORIZATION) {
+        let (secret, via) = match bearer_secret(&parts.headers) {
             // 1. A bearer header decides alone; a cookie never rescues a bad header.
-            Some(header) => {
-                let header = header.to_str().map_err(|_| {
-                    refuse(
-                        "authorization header is not text",
-                        AppError::Unauthenticated,
-                    )
-                })?;
-                match header.split_once(' ') {
-                    Some((scheme, secret)) if scheme.eq_ignore_ascii_case("bearer") => {
-                        (secret.trim().to_string(), "bearer")
-                    }
-                    _ => {
-                        return Err(refuse(
-                            "authorization header is not a bearer token",
-                            AppError::Unauthenticated,
-                        ));
-                    }
-                }
-            }
+            Ok(Some(secret)) => (secret.to_string(), "bearer"),
+            Err(reason) => return Err(refuse(reason, AppError::Unauthenticated)),
             // 2. The session cookie, with the CSRF header rule for anything but a read.
-            None => {
+            Ok(None) => {
                 let secret = session_secret(&parts.headers, state.config.https())
                     .ok_or_else(|| refuse("no credential", AppError::Unauthenticated))?;
                 if parts.method != Method::GET
@@ -148,18 +146,20 @@ impl Caller {
 
 /// The caller of the MCP endpoint (kb/ADR-0029 R6): an MCP token in the bearer header and nothing else. It never
 /// reads cookies. Not an extractor: the endpoint calls `from_headers` itself, after its switch and origin check.
-pub struct McpCaller {
-    pub principal: McpPrincipal,
+#[allow(dead_code)] // the fields are read once a tool acts for the caller (GRA-659)
+pub(crate) struct McpCaller {
+    pub(crate) principal: McpPrincipal,
     /// The instant the request was authenticated; the clock is read once per request, here.
-    pub now: DateTime<Utc>,
+    pub(crate) now: DateTime<Utc>,
 }
 
 impl McpCaller {
     /// `Unauthenticated` for every refusal; `Db` when the access policy or the token could not be read, which is an
-    /// internal error and never a fallback to the floor. Each refusal is logged here once, at `warn`, with its
-    /// reason and what the request said about its protocol (never the secret): before sign-in exists, this line is
-    /// how it is learnt which revision a client speaks.
-    pub async fn from_headers(
+    /// internal error and never a fallback to the floor. Each refusal is logged once at `warn`, never with the
+    /// secret: a missing or malformed bearer header here, with what the request said about its protocol (before
+    /// sign-in exists, this line is how it is learnt which revision a client speaks); a refused token by
+    /// `authenticate_mcp`, with its reason.
+    pub(crate) async fn from_headers(
         state: &AppState,
         headers: &axum::http::HeaderMap,
     ) -> Result<Self, AuthError> {
@@ -174,23 +174,13 @@ impl McpCaller {
             );
             AuthError::Unauthenticated
         };
-        let header = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .ok_or_else(|| refuse("no bearer header"))?
-            .to_str()
-            .map_err(|_| refuse("authorization header is not text"))?;
-        let secret = match header.split_once(' ') {
-            Some((scheme, secret)) if scheme.eq_ignore_ascii_case("bearer") => secret.trim(),
-            _ => return Err(refuse("authorization header is not a bearer token")),
-        };
+        let secret = bearer_secret(headers)
+            .map_err(refuse)?
+            .ok_or_else(|| refuse("no bearer header"))?;
         let now = Utc::now();
         // Loaded on every request, never cached (kb/ADR-0015 R5, kb/ADR-0029 R8).
         let policy = state.access.load(&state.identity).await?;
-        let principal = match authenticate_mcp(&*state.tokens, &policy, secret, now).await {
-            Ok(principal) => principal,
-            Err(AuthError::Db(e)) => return Err(AuthError::Db(e)),
-            Err(_) => return Err(refuse("the token did not authenticate")),
-        };
+        let principal = authenticate_mcp(&*state.tokens, &policy, secret, now).await?;
         Ok(Self { principal, now })
     }
 }
