@@ -148,9 +148,9 @@ With `[mcp] enabled = true` the server answers two documents without a caller, w
 
 The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, these two answer 404 as well.
 
-The addresses in the documents are built from `public_url`, and a client compares them with the address the person typed, as text: the MCP endpoint is exactly `<public_url>/mcp`.
+The addresses in the documents are built from `public_url` as the server parses it (lower-case host, no default port), without its trailing slash, followed by the path: `public_url = "https://reeve.example.com/"` gives the MCP endpoint `https://reeve.example.com/mcp`. A client compares them with the address the person typed, as text, so that is the address to give people.
 
-The two documents send no CORS headers, so a client running in a browser page cannot read them; the supported clients fetch them from their servers.
+The two documents send no CORS headers, so a cross-origin client running in a browser page cannot read them; the supported clients fetch them from their servers.
 
 Limit both documents at the proxy. A chat provider's users all arrive from a few shared addresses (Claude's from `160.79.104.0/21`), so the limit is per address but sized for many people behind one; the documents are small and the same for everyone. For nginx, five requests a second per address:
 

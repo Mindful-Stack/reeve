@@ -47,12 +47,13 @@ admins = ["admin@example.com"]
 # The MCP endpoint at <public_url>/mcp, for MCP clients such as claude.ai and ChatGPT (kb/ADR-0029). Off by default:
 # /mcp and the two documents below answer 404. It needs [oidc]; the server refuses to start with [mcp] enabled and no
 # sign-in. Enabled, the server also answers, without a caller, the two documents a client reads to find where to
-# sign in: <public_url>/.well-known/oauth-protected-resource/mcp and
-# <public_url>/.well-known/oauth-authorization-server. The sign-in routes those documents name (/oauth/authorize and
-# /oauth/token) are not built yet, so no client can sign in: only tokens minted by `reeve-server mcp-token-issue`
-# work, a developer command that exists only in builds with `--features reeve-server/static-oidc`. Leave [mcp] off
-# in production until sign-in is complete. allowed_origins lists the Origin header values accepted (a request
-# without an Origin header always passes); unset, only public_url's own origin.
+# sign in, at /.well-known/oauth-protected-resource/mcp and /.well-known/oauth-authorization-server. Every address,
+# these two and the ones in the documents, is public_url as parsed (lower-case host, no default port), without its
+# trailing slash, followed by the path. The sign-in routes the documents name (/oauth/authorize and /oauth/token)
+# are not built yet, so no client can sign in: only tokens minted by `reeve-server mcp-token-issue` work, a
+# developer command that exists only in builds with `--features reeve-server/static-oidc`. Leave [mcp] off in
+# production until sign-in is complete. allowed_origins lists the Origin header values accepted (a request without
+# an Origin header always passes); unset, only public_url's own origin.
 # [mcp]
 # enabled = true
 # allowed_origins = ["https://claude.ai"]
