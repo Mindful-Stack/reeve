@@ -20,12 +20,15 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 /// How long a connection lasts from its approval (kb/ADR-0029 R5).
 pub(crate) const CONNECTION_DAYS: i64 = 30;
+/// The longest an MCP access token lives (kb/ADR-0029 R5); migration 2005 holds the database to it as well.
+pub(crate) const ACCESS_TOKEN_HOURS: i64 = 1;
 /// The client of a connection made by `reeve-server mcp-token-issue` (a developer command of test builds), and
 /// the name listings show for it.
 pub(crate) const DEVELOPER_CLIENT_ID: &str = "urn:reeve:developer-command";
 pub(crate) const DEVELOPER_CLIENT_NAME: &str = "Developer command";
 
-/// The one place "live" is decided: not revoked, and not yet at its end.
+/// What "live" means: not revoked, and not yet at its end. The same predicate is repeated in SQL, in
+/// `revoke_connections` and `live_connection_owners` in `repo.rs`; a change here changes them too.
 pub(crate) fn is_live(
     ends_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
@@ -34,7 +37,8 @@ pub(crate) fn is_live(
     revoked_at.is_none() && ends_at > now
 }
 
-/// A connection: the one type the store hands out and the handlers and the server read.
+/// A connection as the store hands it out. Today only the refresh grant reads it; the listing of a person's
+/// connections (kb/ADR-0029 R9) arrives in the next pull request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
     pub id: i64,
@@ -118,7 +122,7 @@ async fn issue_pair(
     now: DateTime<Utc>,
 ) -> Result<TokenPair, sqlx::Error> {
     // kb/ADR-0029 R5: at most one hour, and never past the connection's end.
-    let expires_at = (now + Duration::hours(1)).min(ends_at);
+    let expires_at = (now + Duration::hours(ACCESS_TOKEN_HOURS)).min(ends_at);
     let access_token = new_secret();
     store
         .insert_mcp_token(

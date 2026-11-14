@@ -1,6 +1,8 @@
 use crate::{
     access::AccessPolicy,
-    connections::{DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations},
+    connections::{
+        ACCESS_TOKEN_HOURS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations,
+    },
     domain::*,
     ports::*,
     repo::{TokenRow, TokenStore, TokenSummary, UserRow},
@@ -49,7 +51,7 @@ pub async fn issue_mcp_token(
     expires_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Result<IssuedToken, AuthError> {
-    if expires_at > now + chrono::Duration::hours(1) {
+    if expires_at > now + chrono::Duration::hours(ACCESS_TOKEN_HOURS) {
         return Err(AuthError::Validation(
             "an MCP token lives at most one hour".into(),
         ));
