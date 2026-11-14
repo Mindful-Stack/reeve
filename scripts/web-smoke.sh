@@ -53,10 +53,14 @@ sed "s|@DATABASE_URL@|$db_sed|" reeve.smoke.toml >"$config"
 export REEVE_CONFIG="$config"
 
 # A leftover server on the port would answer the health check while the new one fails to bind.
-if (exec 3<>/dev/tcp/127.0.0.1/7475) 2>/dev/null; then
-	echo "port 7475 is already in use; stop whatever listens there (a previous smoke server?) and retry" >&2
-	exit 1
-fi
+# 7475 is the server's; 7477 is the stand-in for an MCP client that one test starts (reeve.smoke.toml lists its
+# callback).
+for port in 7475 7477; do
+	if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+		echo "port $port is already in use; stop whatever listens there (a previous smoke server?) and retry" >&2
+		exit 1
+	fi
+done
 
 log "starting reeve-server on $url"
 # Auth refusals name their reason at warn/debug (reeve_server's Caller, reeve_identity's authenticate_api); CI uploads this
