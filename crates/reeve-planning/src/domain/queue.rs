@@ -492,8 +492,8 @@ fn near_due(d: &RequiredDecision, limit: NaiveDate) -> Option<(NaiveDate, i64)> 
 /// Open, Accepted, Closed. In this sprint, next sprint and Later, discovery rows first (more held stories, then key
 /// number), then standalone decisions in `entry_order`; in Now, the Now ranking over rows and standalone decisions, a
 /// full tie putting rows first, then key number or id, and each gets the reason of the first rule that holds for it
-/// (nested decisions keep their own); each row is directly followed by its nested decisions in `entry_order`, and its `at` is
-/// set. Rows come first because the discovery is what their decisions wait on.
+/// (nested decisions keep their own); each row is directly followed by its nested decisions in `entry_order`, and its
+/// `at` is set. Rows come first because the discovery is what their decisions wait on.
 fn arrange(
     mut entries: Vec<QueueEntry>,
     mut rows: Vec<DiscoveryRow>,
@@ -534,7 +534,7 @@ fn arrange(
                     month: target_month(inp, &r.key),
                     due: entries
                         .iter()
-                        .filter(|e| live(e) && e.decision.on() == &r.key)
+                        .filter(|e| e.under.as_ref() == Some(&r.key))
                         .filter_map(|e| near_due(&e.decision, limit))
                         .min(),
                     held: r.held.len(),
@@ -1205,13 +1205,13 @@ mod tests {
     }
 
     /// The Now ranking (spec §3), one table over fourteen top-level rows fed in reverse; today is 3 Nov, the sprint
-    /// length 14 days (limit 17 Nov). A (urgent, no month) beats B (a month); C (2026-12, no near due) beats D (2027-01,
-    /// due 5 Nov), and 2026-12 sorts before 2027-01 across the year; with no month, G (overdue, 30 Oct), row R (its
-    /// nested D111 due 10 Nov), D122 and D121 (both due 12 Nov: the larger id holds more and goes first, so the date
-    /// alone decides rule 3) and E (due 17 Nov, the boundary) rank by due, before F (18 Nov, one day out, holding 3);
-    /// then by held: F 3, H 2 (month "2026-13" ranks as none), row Y (key 140) and decision D131 1 each (a full tie: the
-    /// row first, although its key is larger than the decision's id), row Z holding none (one story under way). Every row's reason is the first rule that holds for it; D111,
-    /// nested, keeps its own (none). Catches a rule out of order, an exclusive or off-by-one boundary, a malformed month
+    /// length 14 days (limit 17 Nov). A (urgent, no month) beats B (a month); C (2026-12, no near due) beats D
+    /// (2027-01, due 5 Nov), and 2026-12 sorts before 2027-01 across the year; with no month, G (overdue, 30 Oct), row
+    /// R (its nested D111 due 10 Nov), D122 and D121 (both due 12 Nov: the larger id holds more and goes first, so the
+    /// date alone decides rule 3) and E (due 17 Nov, the boundary) rank by due, before F (18 Nov, one day out, holding
+    /// 3); then by held: F 3, H 2 (month "2026-13" ranks as none), row Y (key 140) and decision D131 1 each (a full
+    /// tie: the row first, although its key is larger than the decision's id), row Z holding none (one story under
+    /// way). Every row's reason is the first rule that holds for it; D111, nested, keeps its own (none). Catches a rule out of order, an exclusive or off-by-one boundary, a malformed month
     /// ranked as a month, a row ignoring its nested decision's due, a decision before a row on a full tie (or a
     /// key compared with an id), a due compared beyond the date (ids deciding before held), and an input-order sort.
     #[test]
