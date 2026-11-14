@@ -53,8 +53,8 @@ pub enum ConnectionsAction {
     },
 }
 
-/// One line per connection: the id (what `revoke` takes), the app, what it may do, and when it ends, ended, or
-/// was revoked and why.
+/// One line per connection: the id (what `revoke` takes), the app, what it may do, and when it ends, ended and
+/// why, or was revoked.
 fn connection_line(
     c: &reeve_protocol::ConnectionDto,
     now: chrono::DateTime<chrono::Utc>,
@@ -71,15 +71,18 @@ fn connection_line(
     };
     let day = |at: &chrono::DateTime<chrono::Utc>| at.format("%Y-%m-%d").to_string();
     let state = match (&c.revoked_at, c.revoked_reason) {
-        (Some(at), Some(reason)) => {
-            let why = match reason {
-                RevokedReason::Revoked => "by its owner or an admin",
-                RevokedReason::RefreshTokenReused => "the app's sign-in went out of step",
-                RevokedReason::UserDisabled => "the account was disabled",
-                RevokedReason::Restored => "the instance was restored from a backup",
-            };
-            format!("revoked {}: {why}", day(at))
-        }
+        // The words of the web page: a person revoked it, or it ended for a reason of the system's.
+        (Some(at), Some(reason)) => match reason {
+            RevokedReason::Revoked => format!("revoked {}", day(at)),
+            RevokedReason::RefreshTokenReused => format!(
+                "ended {}: the app's sign-in went out of step; connect it again",
+                day(at)
+            ),
+            RevokedReason::UserDisabled => format!("ended {}: the account was disabled", day(at)),
+            RevokedReason::Restored => {
+                format!("ended {}: the instance was restored from a backup", day(at))
+            }
+        },
         _ if c.ends_at <= now => format!("ended {}", day(&c.ends_at)),
         _ => format!("ends {}", day(&c.ends_at)),
     };

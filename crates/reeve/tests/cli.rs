@@ -4058,6 +4058,21 @@ fn auth_connections_lists_connections() {
             Some(("2020-01-10T09:00:00Z", "refresh_token_reused"))
         ),
         connection_row(9, "2020-01-31T09:00:00Z", None),
+        connection_row(
+            10,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-11T09:00:00Z", "revoked"))
+        ),
+        connection_row(
+            11,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-12T09:00:00Z", "user_disabled"))
+        ),
+        connection_row(
+            12,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-13T09:00:00Z", "restored"))
+        ),
     ]);
     let (url, server) = serve(vec![("GET /api/v1/connections", 200, ok(rows.clone()))]);
     let out = reeve_at(&url, &["--json", "auth", "connections"]);
@@ -4082,8 +4097,11 @@ fn auth_connections_lists_connections() {
         lines,
         [
             "7\tclaude.ai (Claude)\tread and change\tends 2099-12-01",
-            "8\tclaude.ai (Claude)\tread\trevoked 2020-01-10: the app's sign-in went out of step",
+            "8\tclaude.ai (Claude)\tread\tended 2020-01-10: the app's sign-in went out of step; connect it again",
             "9\tclaude.ai (Claude)\tread\tended 2020-01-31",
+            "10\tclaude.ai (Claude)\tread\trevoked 2020-01-11",
+            "11\tclaude.ai (Claude)\tread\tended 2020-01-12: the account was disabled",
+            "12\tclaude.ai (Claude)\tread\tended 2020-01-13: the instance was restored from a backup",
         ]
     );
 
