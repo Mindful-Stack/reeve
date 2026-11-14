@@ -46,6 +46,7 @@ fn who(email: &str, role: Role, token_kind: TokenKind) -> Principal {
         email: email.into(),
         role,
         token_kind,
+        token_id: 1,
     }
 }
 fn dan() -> Principal {

@@ -166,8 +166,8 @@ async fn issue(
     Ok(IssuedToken { id, secret })
 }
 
-/// Resolves a bearer or session secret to its owner and kind, for the audience `want`. Every refusal is logged at
-/// `warn` with its reason, the token id and owner when a row was found, and the first eight hex digits of the
+/// Resolves a bearer or session secret to its owner, its kind and the token's id, for the audience `want`. Every
+/// refusal is logged at `warn` with its reason, the token id and owner when a row was found, and the first eight hex digits of the
 /// secret's hash (never the secret), so a 401 can be told apart afterwards: not found, revoked, owner disabled,
 /// expired, owner not allowed, bad kind, bad audience, wrong audience.
 async fn resolve(
@@ -176,7 +176,7 @@ async fn resolve(
     secret: &str,
     now: DateTime<Utc>,
     want: Audience,
-) -> Result<(String, TokenKind), AuthError> {
+) -> Result<(String, TokenKind, i64), AuthError> {
     let hash = hash_secret(secret);
     let hash_prefix = &hash[..8];
     let Some(row) = store.find_by_hash(&hash).await? else {
@@ -216,7 +216,7 @@ async fn resolve(
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, audience = %row.audience, "authentication refused");
         return Err(AuthError::Unauthenticated);
     }
-    Ok((owner, kind))
+    Ok((owner, kind, row.id))
 }
 
 /// The caller of the API, the event stream, attachments and the session cookie: an API token only. An MCP token is
@@ -227,11 +227,12 @@ pub async fn authenticate_api(
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<Principal, AuthError> {
-    let (owner, token_kind) = resolve(store, policy, secret, now, Audience::Api).await?;
+    let (owner, token_kind, token_id) = resolve(store, policy, secret, now, Audience::Api).await?;
     Ok(Principal {
         role: policy.role_for(&owner),
         email: owner,
         token_kind,
+        token_id,
     })
 }
 
@@ -242,7 +243,7 @@ pub async fn authenticate_mcp(
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<McpPrincipal, AuthError> {
-    let (owner, _) = resolve(store, policy, secret, now, Audience::Mcp).await?;
+    let (owner, _, _) = resolve(store, policy, secret, now, Audience::Mcp).await?;
     Ok(McpPrincipal {
         role: policy.role_for(&owner),
         email: owner,

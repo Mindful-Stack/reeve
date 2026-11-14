@@ -861,3 +861,43 @@ async fn failed_activity_write_rolls_back_sign_in_revoke_and_enable() {
             .unwrap();
     assert!(disabled);
 }
+
+/// Catches a principal whose `token_id` is a constant or the wrong token's.
+#[tokio::test]
+async fn a_principal_names_the_token_it_authenticated_with() {
+    let (_c, pool) = common::pg().await;
+    let store = reeve_identity::make_token_store(pool.clone());
+    let log = MemActivity(Mutex::new(vec![]));
+    let policy = AccessPolicy::floor_only(&cfg());
+    let now = Utc.with_ymd_and_hms(2026, 11, 14, 9, 0, 0).unwrap();
+    let mut issued = vec![];
+    for label in ["one", "two"] {
+        issued.push(
+            issue_token(
+                &pool,
+                &*store,
+                &log,
+                &policy,
+                "test",
+                Via::Interactive,
+                "dan@example.com",
+                TokenKind::Interactive,
+                label,
+                None,
+                now,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    assert_ne!(issued[0].id, issued[1].id);
+    for t in &issued {
+        assert_eq!(
+            authenticate_api(&*store, &policy, &t.secret, now)
+                .await
+                .unwrap()
+                .token_id,
+            t.id
+        );
+    }
+}

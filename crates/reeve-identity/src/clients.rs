@@ -244,6 +244,19 @@ async fn resolve(
 }
 
 #[cfg(test)]
+impl ValidatedClient {
+    /// A client for unit tests elsewhere in this crate. Everything else gets one from `resolve_client` only.
+    pub(crate) fn for_tests(client_id: &str, redirect_uri: &str) -> Self {
+        Self {
+            client_id: client_id.to_string(),
+            client_host: "client.example".to_string(),
+            client_name: "Example App".to_string(),
+            redirect_uri: redirect_uri.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
