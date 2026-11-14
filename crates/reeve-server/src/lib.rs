@@ -1,4 +1,5 @@
 //! Composition root for the planner: configuration, state, auth, routes.
+mod actions;
 pub mod assets;
 pub mod atomic_file;
 pub mod auth;

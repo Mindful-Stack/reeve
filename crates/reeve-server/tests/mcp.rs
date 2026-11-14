@@ -416,7 +416,7 @@ async fn every_row_of_the_classification_table_through_the_router() {
 }
 
 #[tokio::test]
-async fn discover_and_an_empty_tool_list_have_the_2026_shapes() {
+async fn discover_and_the_tool_list_have_the_2026_shapes() {
     let h = mcp_harness().await;
     let t = admin_mcp(&h).await;
     let (status, headers, body) =
@@ -436,15 +436,26 @@ async fn discover_and_an_empty_tool_list_have_the_2026_shapes() {
     );
     let (status, _, body) = send(&h.app, mcp_modern(&t, 2, "tools/list", json!({}))).await;
     assert_eq!(status, 200);
+    let list = rpc(&body);
+    assert_eq!((&list["jsonrpc"], &list["id"]), (&json!("2.0"), &json!(2)));
+    let result = &list["result"];
+    // What the tools are is the snapshot test's business; here, the envelope around them.
+    assert!(
+        result["tools"]
+            .as_array()
+            .is_some_and(|tools| !tools.is_empty())
+    );
+    assert_eq!(result["resultType"], "complete");
+    assert_eq!(result["ttlMs"], 300000);
+    assert_eq!(result["cacheScope"], "public");
     assert_eq!(
-        rpc(&body),
-        json!({"jsonrpc": "2.0", "id": 2, "result": {
-            "resultType": "complete",
-            "tools": [],
-            "ttlMs": 300000,
-            "cacheScope": "public",
-            "_meta": {"io.modelcontextprotocol/serverInfo": server_info()}
-        }})
+        result["_meta"],
+        json!({"io.modelcontextprotocol/serverInfo": server_info()})
+    );
+    assert_eq!(
+        result.as_object().unwrap().len(),
+        5,
+        "no other field: {result}"
     );
     // Deliberately not implemented in 2026-07-28: no list changes at run time, and that revision has no ping.
     for method in ["subscriptions/listen", "ping", "initialize"] {
@@ -494,13 +505,14 @@ async fn the_legacy_handshake_is_served_without_a_session() {
     list.headers_mut()
         .insert("mcp-session-id", "abc".parse().unwrap());
     let (status, headers, body) = send(&h.app, list).await;
+    let answer = rpc(&body);
+    assert_eq!(status, 200);
     assert_eq!(
-        (status, rpc(&body)),
-        (
-            200,
-            json!({"jsonrpc": "2.0", "id": 3, "result": {"tools": []}})
-        )
+        answer["result"].as_object().unwrap().len(),
+        1,
+        "only `tools`: {answer}"
     );
+    assert!(answer["result"]["tools"].is_array());
     assert!(!headers.contains_key("mcp-session-id"));
 }
 
@@ -552,10 +564,10 @@ async fn a_protocol_header_sent_twice_or_not_as_text_is_a_header_mismatch() {
         status == 400
             && serde_json::from_str::<Value>(body).is_ok_and(|v| v["error"]["code"] == -32020)
     };
-    // The control: the request these are made from passes every check.
+    // The control: the request these are made from passes every check and reaches the tool.
     let call = || mcp_modern(&t, 1, "tools/call", json!({"name": "get_story"}));
     let (s, _, b) = send(&h.app, call()).await;
-    assert!(passed(s, &b), "{s} {b}");
+    assert!(s == 200 && rpc(&b)["result"].is_object(), "{s} {b}");
     for name in ["mcp-protocol-version", "mcp-method", "mcp-name"] {
         let mut twice = call();
         let value = twice.headers()[name].clone();
@@ -721,4 +733,390 @@ async fn a_request_refused_before_step_5_never_has_its_body_read() {
         .insert("origin", "https://evil.example".parse().unwrap());
     assert_eq!(send(&h.app, unread(foreign)).await.0, 403);
     assert_eq!(send(&h.app, unread(knock(None, None))).await.0, 401);
+}
+
+/// A story with `comments` comments under a ready epic, created through the API as the admin; returns its key.
+async fn story_with_comments(h: &Harness, comments: usize) -> String {
+    let epic = ready_epic(h, "mcp-e1").await;
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "mcp-s1", "title": "Booking", "kind": "story", "epic": epic, "criteria": ["works"], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    let key = story["value"]["key"].as_str().unwrap().to_string();
+    for n in 1..=comments {
+        let (st, c) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            &format!("/api/v1/stories/{key}/comments"),
+            Some(json!({"body": format!("comment {n}")})),
+        )
+        .await;
+        assert_eq!(st, 200, "{c}");
+    }
+    key
+}
+
+/// The `value` of `GET /api/v1/stories/{key}/context`: what `reeve story context --json` prints.
+async fn api_context(h: &Harness, key: &str) -> Value {
+    let (st, v) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        &format!("/api/v1/stories/{key}/context"),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{v}");
+    v["value"].clone()
+}
+
+/// `tools/call get_story` over 2026-07-28: the status and the JSON-RPC answer.
+async fn call_get_story(h: &Harness, token: &str, arguments: Value) -> (u16, Value) {
+    let params = json!({"name": "get_story", "arguments": arguments});
+    let (status, _, body) = send(&h.app, mcp_modern(token, 9, "tools/call", params)).await;
+    (status, rpc(&body))
+}
+
+fn has_ref(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => m.contains_key("$ref") || m.values().any(has_ref),
+        Value::Array(a) => a.iter().any(has_ref),
+        _ => false,
+    }
+}
+
+/// The tool list is a deliberate interface (kb/ADR-0029 R12): accept a change with UPDATE_SNAPSHOTS=1, as for the
+/// OpenAPI snapshot. The harness's key prefix (TST) is in the snapshot's examples.
+#[tokio::test]
+async fn the_tool_list_matches_its_snapshot_and_every_schema_is_a_self_contained_object() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 1, "tools/list", json!({}))).await;
+    assert_eq!(status, 200, "{body}");
+    let result = rpc(&body)["result"].clone();
+    let tools = result["tools"].as_array().unwrap();
+    let get_story = tools
+        .iter()
+        .find(|tool| tool["name"] == "get_story")
+        .unwrap_or_else(|| panic!("no get_story in {result}"));
+    assert_eq!(get_story["title"], "Read a story");
+    assert_eq!(get_story["annotations"]["readOnlyHint"], true);
+    assert_eq!(get_story["annotations"]["openWorldHint"], false);
+    for tool in tools {
+        assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
+        assert!(!has_ref(&tool["inputSchema"]), "{tool}");
+        assert!(
+            tool["description"].as_str().is_some_and(|d| !d.is_empty()),
+            "{tool}"
+        );
+        assert!(
+            tool["title"].as_str().is_some_and(|t| !t.is_empty()),
+            "{tool}"
+        );
+        for hint in [
+            "readOnlyHint",
+            "destructiveHint",
+            "idempotentHint",
+            "openWorldHint",
+        ] {
+            assert!(tool["annotations"][hint].is_boolean(), "{hint}: {tool}");
+        }
+        assert!(tool.get("outputSchema").is_none(), "{tool}");
+    }
+    assert_eq!(
+        (&result["resultType"], &result["cacheScope"]),
+        (&json!("complete"), &json!("public"))
+    );
+    // 2025-11-25 lists the same tools, without the 2026 fields.
+    let (_, _, body) = send(&h.app, mcp_legacy(&t, Some(2), "tools/list", json!({}))).await;
+    assert_eq!(rpc(&body)["result"], json!({"tools": tools}));
+
+    let doc = serde_json::to_string_pretty(&result["tools"]).unwrap();
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/mcp_tools.json");
+    if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
+        std::fs::write(&path, &doc).unwrap();
+        return;
+    }
+    let stored =
+        std::fs::read_to_string(&path).expect("snapshot exists; run with UPDATE_SNAPSHOTS=1 once");
+    assert_eq!(
+        stored, doc,
+        "the MCP tool list changed; if intended, rerun with UPDATE_SNAPSHOTS=1"
+    );
+}
+
+#[tokio::test]
+async fn get_story_answers_what_the_api_answers_in_both_revisions() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let key = story_with_comments(&h, 2).await;
+    let mut want = api_context(&h, &key).await;
+    assert_eq!(want["comments"].as_array().unwrap().len(), 2, "the control");
+    want["comments_omitted"] = json!(0);
+
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 200, "{answer}");
+    let result = &answer["result"];
+    assert_eq!(result["structuredContent"], want);
+    assert_eq!(result["isError"], false);
+    assert_eq!(result["resultType"], "complete");
+    let content = result["content"].as_array().unwrap();
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["type"], "text");
+    let text = content[0]["text"].as_str().unwrap();
+    assert_eq!(rpc(text), want, "the text block is the same JSON");
+    assert!(!text.contains('\n'), "compact");
+
+    let params = json!({"name": "get_story", "arguments": {"key": key}});
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(4), "tools/call", params)).await;
+    let legacy = rpc(&body)["result"].clone();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(legacy["structuredContent"], want);
+    assert_eq!(legacy["content"], result["content"]);
+    assert!(
+        legacy.get("resultType").is_none() && legacy.get("_meta").is_none(),
+        "{legacy}"
+    );
+}
+
+#[tokio::test]
+async fn get_story_sends_the_twenty_most_recent_comments_and_counts_the_rest() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let key = story_with_comments(&h, 25).await;
+    let api = api_context(&h, &key).await;
+    let all = api["comments"].as_array().unwrap();
+    assert_eq!(all.len(), 25, "the control: the API sends every comment");
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 200, "{answer}");
+    let sent = &answer["result"]["structuredContent"];
+    assert_eq!(sent["comments_omitted"], 5);
+    let kept = sent["comments"].as_array().unwrap();
+    assert_eq!(
+        &kept[..],
+        &all[5..],
+        "the twenty most recent, in the API's order"
+    );
+    assert_eq!(kept[19]["body"], "comment 25");
+    assert_eq!(kept[0]["author"], "dan@example.com");
+    assert!(kept[0]["at"].is_string());
+}
+
+#[tokio::test]
+async fn a_tool_failure_is_a_result_the_model_can_read_and_a_malformed_call_is_a_protocol_error() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let key = story_with_comments(&h, 0).await;
+
+    let (status, answer) = call_get_story(&h, &t, json!({"key": "TST-999999"})).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["result"]["isError"], true);
+    assert_eq!(
+        answer["result"]["content"][0]["text"],
+        "No story with key TST-999999. Keys look like TST-123."
+    );
+    assert!(answer["result"].get("structuredContent").is_none());
+
+    for (arguments, names) in [
+        (json!({"key": 5}), "key"),
+        (json!({"key": key, "extra": true}), "extra"),
+        (json!({}), "key"),
+        // `arguments` must be a JSON object: a string and an array are argument errors, not protocol errors.
+        (json!("TST-1"), "JSON object"),
+        (json!(["TST-1"]), "JSON object"),
+    ] {
+        let (status, answer) = call_get_story(&h, &t, arguments.clone()).await;
+        assert_eq!(status, 200, "{arguments}: {answer}");
+        assert_eq!(answer["result"]["isError"], true, "{arguments}");
+        let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(names), "{arguments}: {text}");
+        // The message carries the tool's input schema as `tools/list` shows it, with this instance's example.
+        assert!(text.contains("TST-596"), "{arguments}: {text}");
+    }
+    // 2025-11-25 answers an argument failure the same way: a tool result, HTTP 200.
+    let bad = json!({"name": "get_story", "arguments": {"key": 5}});
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(6), "tools/call", bad)).await;
+    let legacy = rpc(&body)["result"].clone();
+    assert_eq!((status, &legacy["isError"]), (200, &json!(true)), "{body}");
+    let text = legacy["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("TST-596"), "{text}");
+    assert!(legacy.get("resultType").is_none(), "{legacy}");
+    // `arguments` left out altogether reads as no arguments.
+    let (status, _, body) = send(
+        &h.app,
+        mcp_modern(&t, 1, "tools/call", json!({"name": "get_story"})),
+    )
+    .await;
+    assert_eq!(
+        (status, &rpc(&body)["result"]["isError"]),
+        (200, &json!(true))
+    );
+
+    // Protocol errors: an unknown tool, and a call without a name, in either revision.
+    let unknown = json!({"name": "nope", "arguments": {}});
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 1, "tools/call", unknown)).await;
+    let answer = rpc(&body);
+    assert_eq!(
+        (status, answer["error"]["code"].as_i64()),
+        (400, Some(-32602)),
+        "{body}"
+    );
+    assert_eq!(answer["error"]["message"], "Unknown tool: nope");
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 1, "tools/call", json!({}))).await;
+    assert_eq!(
+        (status, rpc(&body)["error"]["code"].as_i64()),
+        (400, Some(-32602)),
+        "{body}"
+    );
+    // 2025-11-25 carries the same JSON-RPC errors in an ordinary answer: HTTP 200.
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(1), "tools/call", json!({}))).await;
+    assert_eq!(
+        (status, rpc(&body)["error"]["code"].as_i64()),
+        (200, Some(-32602)),
+        "{body}"
+    );
+    let unknown = json!({"name": "nope", "arguments": {}});
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(1), "tools/call", unknown)).await;
+    assert_eq!(
+        (status, rpc(&body)["error"]["code"].as_i64()),
+        (200, Some(-32602)),
+        "{body}"
+    );
+}
+
+/// The planner limits no text. The tool cuts the story's own description at 10 000 characters and every other text
+/// (each acceptance criterion, the epic's and the initiative's brief, a blocker's description, a comment's body) at
+/// 2 000, and says how many characters it removed. The API route still answers every text whole.
+#[tokio::test]
+async fn get_story_cuts_long_text_and_the_api_route_does_not() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let initiative_brief = "é".repeat(2_003);
+    let epic_brief = "ø".repeat(2_002);
+    let criterion = "ñ".repeat(2_004);
+    let (st, initiative) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key": "mcp-i2", "title": "Long", "horizon": "Now", "brief": initiative_brief})),
+    )
+    .await;
+    assert_eq!(st, 200, "{initiative}");
+    let (st, epic) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/epics",
+        Some(json!({"idempotency_key": "mcp-e2", "title": "Long", "initiative": initiative["value"]["key"], "brief": epic_brief})),
+    )
+    .await;
+    assert_eq!(st, 200, "{epic}");
+    let epic = epic["value"]["key"].as_str().unwrap().to_string();
+    // Two-byte characters: a cut that counted bytes would stop at half of them.
+    let description = "å".repeat(10_010);
+    let blocker_description = "ü".repeat(2_005);
+    let mut keys = Vec::new();
+    for (idem, text) in [("mcp-s2", &description), ("mcp-s3", &blocker_description)] {
+        let (st, story) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            "/api/v1/stories",
+            Some(json!({"idempotency_key": idem, "title": "Long", "kind": "story", "epic": epic, "description": text, "criteria": ["works", criterion], "labels": []})),
+        )
+        .await;
+        assert_eq!(st, 200, "{story}");
+        keys.push(story["value"]["key"].as_str().unwrap().to_string());
+    }
+    let (key, blocker) = (&keys[0], &keys[1]);
+    let (st, edge) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/stories/{key}/blocks"),
+        Some(json!({"blocker": blocker})),
+    )
+    .await;
+    assert_eq!(st, 200, "{edge}");
+    let body = "ö".repeat(2_001);
+    for text in ["short", body.as_str()] {
+        let (st, c) = call(
+            &h.app,
+            Some(&h.admin_token),
+            "POST",
+            &format!("/api/v1/stories/{key}/comments"),
+            Some(json!({"body": text})),
+        )
+        .await;
+        assert_eq!(st, 200, "{c}");
+    }
+
+    // The control: the API route answers every one of them whole.
+    let api = api_context(&h, key).await;
+    assert_eq!(api["story"]["description"], json!(description));
+    assert_eq!(api["comments"][1]["body"], json!(body));
+    assert_eq!(
+        api["blockers"][0]["description"],
+        json!(blocker_description)
+    );
+    assert_eq!(api["epic"]["brief"], json!(epic_brief));
+    assert_eq!(api["initiative"]["brief"], json!(initiative_brief));
+    assert_eq!(api["story"]["criteria"][1]["text"], json!(criterion));
+
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 200);
+    let sent = &answer["result"]["structuredContent"];
+    assert_eq!(
+        sent["story"]["description"],
+        json!(format!("{}[cut: 10 more characters]", "å".repeat(10_000)))
+    );
+    assert_eq!(sent["comments"][0]["body"], "short");
+    assert_eq!(
+        sent["comments"][1]["body"],
+        json!(format!("{}[cut: 1 more characters]", "ö".repeat(2_000)))
+    );
+    assert_eq!(
+        sent["blockers"][0]["description"],
+        json!(format!("{}[cut: 5 more characters]", "ü".repeat(2_000)))
+    );
+    assert_eq!(
+        sent["epic"]["brief"],
+        json!(format!("{}[cut: 2 more characters]", "ø".repeat(2_000)))
+    );
+    assert_eq!(
+        sent["initiative"]["brief"],
+        json!(format!("{}[cut: 3 more characters]", "é".repeat(2_000)))
+    );
+    assert_eq!(sent["story"]["criteria"][0]["text"], "works");
+    assert_eq!(
+        sent["story"]["criteria"][1]["text"],
+        json!(format!("{}[cut: 4 more characters]", "ñ".repeat(2_000)))
+    );
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(&rpc(text), sent, "the text block carries the same cut text");
+}
+
+#[tokio::test]
+async fn an_internal_error_in_a_tool_is_500_without_detail() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let key = story_with_comments(&h, 0).await;
+    sqlx::query("ALTER TABLE comments RENAME TO comments_gone")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 500);
+    assert_eq!(
+        answer,
+        json!({"jsonrpc": "2.0", "id": 9, "error": {"code": -32603, "message": "Internal error"}})
+    );
 }
