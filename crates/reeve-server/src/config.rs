@@ -226,6 +226,10 @@ pub struct McpConfig {
     /// client can connect. Each is a host name in lower case: no scheme, port, path or address.
     #[serde(default)]
     pub client_hosts: Vec<String>,
+    /// The instance's privacy statement, linked from the approval page. Unset (the default): no link. An https
+    /// address without credentials or a fragment.
+    #[serde(default)]
+    pub privacy_url: Option<String>,
 }
 
 /// The GitHub pull-request webhook (`POST /webhooks/github`).
@@ -496,6 +500,23 @@ impl ServerConfig {
             if !ok {
                 anyhow::bail!(
                     "[mcp] redirect_uris entry {r:?} must be an https address without a fragment, such as https://claude.ai/api/mcp/auth_callback"
+                );
+            }
+        }
+        if let Some(p) = &self.mcp.privacy_url {
+            let ok = url::Url::parse(p).is_ok_and(|u| {
+                u.fragment().is_none()
+                    && u.username().is_empty()
+                    && u.password().is_none()
+                    && u.host_str().is_some_and(|h| !h.is_empty())
+                    && (u.scheme() == "https"
+                        || (on_loopback
+                            && u.scheme() == "http"
+                            && is_loopback(u.host_str().unwrap_or(""))))
+            });
+            if !ok {
+                anyhow::bail!(
+                    "[mcp] privacy_url {p:?} must be an https address without credentials or a fragment, such as https://example.com/privacy"
                 );
             }
         }
@@ -1238,14 +1259,67 @@ mod tests {
         }
     }
 
+    /// Catches a privacy address the approval page would link without it being an https page of its own: a
+    /// relative path, plain http, a fragment, credentials.
+    #[test]
+    fn mcp_privacy_url_is_absent_by_default_and_must_be_an_https_address() {
+        assert_eq!(
+            cfg(&format!("{GOOGLE}[mcp]")).unwrap().mcp.privacy_url,
+            None
+        );
+        let c = cfg(&format!(
+            "{GOOGLE}[mcp]\nprivacy_url = \"https://example.com/privacy\""
+        ))
+        .unwrap();
+        assert_eq!(
+            c.mcp.privacy_url.as_deref(),
+            Some("https://example.com/privacy")
+        );
+        for bad in [
+            "http://example.com/privacy",
+            "/privacy",
+            "example.com/privacy",
+            "https://example.com/privacy#mcp",
+            "https://user:secret@example.com/privacy",
+            "https://user@example.com/privacy",
+            "mailto:privacy@example.com",
+        ] {
+            let e = cfg(&format!("{GOOGLE}[mcp]\nprivacy_url = \"{bad}\"")).unwrap_err();
+            assert!(e.to_string().contains("[mcp] privacy_url"), "{bad}: {e}");
+        }
+    }
+
+    /// As with a redirect address, only the static provider admits http, and only on loopback.
+    #[cfg(feature = "static-oidc")]
+    #[test]
+    fn only_the_static_provider_admits_an_http_loopback_privacy_url() {
+        const STATIC: &str = "public_url = \"http://127.0.0.1:7474\"\n[oidc]\nprovider = \"static\"\nstatic_email = \"dan@example.com\"\n";
+        assert!(
+            cfg(&format!(
+                "{STATIC}[mcp]\nprivacy_url = \"http://127.0.0.1:7474/privacy\""
+            ))
+            .is_ok()
+        );
+        let e = cfg(&format!(
+            "{STATIC}[mcp]\nprivacy_url = \"http://example.com/privacy\""
+        ))
+        .unwrap_err();
+        assert!(e.to_string().contains("[mcp] privacy_url"), "{e}");
+    }
+
     /// The example's two lists are real values: uncommented, they load.
     #[test]
     fn the_example_mcp_lists_load_once_uncommented() {
         let text = include_str!("../../../reeve.example.toml")
             .replace("# [mcp]", "[mcp]")
             .replace("# redirect_uris", "redirect_uris")
-            .replace("# client_hosts", "client_hosts");
+            .replace("# client_hosts", "client_hosts")
+            .replace("# privacy_url", "privacy_url");
         let c = ServerConfig::parse(&text).unwrap();
+        assert_eq!(
+            c.mcp.privacy_url.as_deref(),
+            Some("https://example.com/privacy")
+        );
         assert_eq!(
             c.mcp.redirect_uris,
             ["https://claude.ai/api/mcp/auth_callback"]
