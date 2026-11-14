@@ -4,17 +4,17 @@ use crate::domain::decision::RequiredDecision;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
-use crate::domain::queue::{QueueEntry, QueueStory, QueueSummary};
+use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
-    DecisionQueueSummaryDto, DemoStoryDto, DiscoveryGateDto, DiscoveryMarkDto, EpicDto,
-    EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto, InitiativeDto, Key,
-    PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto,
-    RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState,
-    SprintViewDto, StoryDto, StoryPromiseDto,
+    DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
+    EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto,
+    InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
+    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -152,6 +152,22 @@ impl From<&QueueStory> for AffectedStoryDto {
     }
 }
 
+impl From<&DiscoveryRow> for DiscoveryEntryDto {
+    fn from(r: &DiscoveryRow) -> Self {
+        Self {
+            key: r.key.clone(),
+            level: r.level,
+            title: r.title.clone(),
+            also: r.also.clone(),
+            lane: r.lane,
+            needed_in_reason: r.needed_in_reason.clone(),
+            blocks: r.held.iter().map(AffectedStoryDto::from).collect(),
+            under_way: r.under_way.iter().map(AffectedStoryDto::from).collect(),
+            at: r.at,
+        }
+    }
+}
+
 impl From<&QueueEntry> for DecisionQueueEntryDto {
     fn from(e: &QueueEntry) -> Self {
         Self {
@@ -163,7 +179,7 @@ impl From<&QueueEntry> for DecisionQueueEntryDto {
             next_step: e.next_step.clone(),
             blocks: e.held.iter().map(AffectedStoryDto::from).collect(),
             under_way: e.under_way.iter().map(AffectedStoryDto::from).collect(),
-            under: None,
+            under: e.under.clone(),
         }
     }
 }

@@ -420,7 +420,8 @@ async fn goals_of_stories(
 }
 
 /// Each item's lineage, nearest first, in one statement: an epic, then its initiative; an initiative alone; a story
-/// starts at its epic (never itself). Each row carries the initiative's horizon (an epic without one: None).
+/// starts at its epic (never itself). Each row carries the item's title and its initiative's horizon and target month
+/// (an epic without one: None).
 async fn decision_lineage(
     tx: Tx<'_, '_>,
     items: &[Key],
@@ -428,13 +429,13 @@ async fn decision_lineage(
     let keys: Vec<String> = items.iter().map(|k| k.to_string()).collect();
     let rows = sqlx::query(
         "WITH k AS (SELECT unnest($1::text[]) AS key) \
-         SELECT k.key AS item, x.key, x.level, x.marked, x.horizon FROM k \
+         SELECT k.key AS item, x.key, x.level, x.title, x.horizon, x.target_month FROM k \
          JOIN LATERAL ( \
-           SELECT e.key, 'epic' AS level, e.discovery_at IS NOT NULL AS marked, i.horizon, 0 AS ord \
+           SELECT e.key, 'epic' AS level, e.title, i.horizon, i.target_month, 0 AS ord \
              FROM epics e LEFT JOIN initiatives i ON i.key = e.initiative_key \
             WHERE e.key = k.key OR e.key = (SELECT s.epic_key FROM stories s WHERE s.key = k.key) \
            UNION ALL \
-           SELECT i.key, 'initiative', i.discovery_at IS NOT NULL, i.horizon, 1 \
+           SELECT i.key, 'initiative', i.title, i.horizon, i.target_month, 1 \
              FROM initiatives i \
             WHERE i.key = k.key \
                OR i.key = (SELECT e.initiative_key FROM epics e WHERE e.key = k.key) \
@@ -457,8 +458,9 @@ async fn decision_lineage(
             .push(LineageItem {
                 key: key(r.get("key")),
                 level,
-                discovery_marked: r.get("marked"),
+                title: r.get("title"),
                 initiative_horizon: r.get("horizon"),
+                initiative_target_month: r.get("target_month"),
             });
     }
     Ok(out)

@@ -21,7 +21,7 @@ pub use domain::{
         StoryPromise, story_promise,
     },
     pull_request::{PrChange, PullRequest},
-    queue::{LineageItem, QueueEntry, QueueStory, QueueSummary},
+    queue::{DiscoveryRow, LineageItem, QueueEntry, QueueStory, QueueSummary},
     readiness::{AncestorFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
         DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates, GoalLink, GoalProgress, Sprint,

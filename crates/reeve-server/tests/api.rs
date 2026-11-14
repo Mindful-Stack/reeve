@@ -2160,8 +2160,8 @@ async fn the_decision_queue_groups_orders_and_scopes() {
     // the satisfied one is never counted
     assert_eq!(
         b["value"]["summary"],
-        // all three sit under a first-bucket initiative still in discovery, so each is needed next sprint
-        json!({"open":3,"blocking":3,"blocked_stories":3,"overdue":0,"review":0,"this_sprint":0,"next_sprint":3})
+        // all three sit under a first-bucket initiative still in discovery, needed by no goal: Now, no sprint lane
+        json!({"open":3,"blocking":3,"blocked_stories":3,"overdue":0,"review":0,"this_sprint":0,"next_sprint":0})
     );
 
     let (st, b) = get("?include_closed=true".into()).await;

@@ -5231,21 +5231,48 @@ async fn decision_queue_costs_the_same_for_few_and_many() {
     };
     q().await; // warm up: prepared statements, catalog caches
     let few = common::statements(&pool, q).await;
-    assert!(few > 5, "the counter measured {few} statements");
+    // Measured before the readiness queue (GRA-611): discovery rows add no statement (spec §5).
+    assert_eq!(few, 18, "the counter measured {few} statements");
     seed_board(&h, "b", 9, 100).await;
     seed_board(&h, "c", 4, 200).await;
     let many = common::statements(&pool, q).await;
     assert_eq!(few, many);
 }
 
-/// End to end over real readiness. Epic E has todo stories S1, S2 and an in-progress S3; decision D1 is on E and D2 on
-/// S1. D1 blocks S1 and S2, not S3; D2 blocks S1; the summary counts S1 once (blocked_stories 2). Accepting D1's
-/// record moves it to satisfied with no blocks. Scoped by `On(S1)` the queue lists only D2; scoped by `Initiative(I)`
-/// it lists D1 and D2 and a decision on another initiative is absent. Catches counting active stories, a stale group
-/// after acceptance and a scope that leaks.
+/// End to end over real readiness (spec §1, §2, §5). Initiative I (Now) and its epics E and E2 have no discovery mark;
+/// E holds todo S1, S2 and in-progress S3, E2 holds todo S4; an active goal serves S1 and S4. D1 is on E, D2 on S1, D3
+/// on initiative I2 (no stories). A marked epic EM under a marked initiative holds S5, with DM on EM. Epic EL under a
+/// Later initiative holds goal-less S6. Rows: E (this sprint, also I, S3 under way) with D1 nested, then E2; EL is left
+/// out; EM and its initiative are no rows. The summary counts S1 once and not S4, which no decision holds. Accepting
+/// D1's record moves it to satisfied. Scoped by `On(S1)` the queue lists D2 and no row; by `Initiative(I)` D1 and D2 with
+/// E's and E2's rows; D1's context is nested under E in the All queue's lane. Catches counting active stories, a stale
+/// group after acceptance, a scope that leaks, a left-out row emitted, a marked item made a row, and a context that
+/// disagrees with the page.
 #[tokio::test]
 async fn decision_queue_over_real_readiness() {
-    use reeve_protocol::QueueGroup;
+    use reeve_protocol::{NeededInReason, QueueGroup, QueueLane};
+    async fn story_in(
+        h: &Handlers,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        epic: &reeve_protocol::Key,
+    ) -> Story {
+        h.create_story(
+            c,
+            idem,
+            title,
+            Kind::Story,
+            Some(epic.clone()),
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    }
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
@@ -5257,26 +5284,14 @@ async fn decision_queue_over_real_readiness() {
         .create_epic(&dan, "q-e", "E", Some(ini.key().clone()), "", None)
         .await
         .unwrap();
-    let mut stories = Vec::new();
-    for n in 1..=3 {
-        let s = h
-            .create_story(
-                &dan,
-                &format!("q-s{n}"),
-                &format!("S{n}"),
-                Kind::Story,
-                Some(epic.key().clone()),
-                "",
-                vec!["works".into()],
-                vec![],
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        stories.push(s);
-    }
-    let (s1, s2, s3) = (&stories[0], &stories[1], &stories[2]);
+    let s1 = story_in(&h, &dan, "q-s1", "S1", epic.key()).await;
+    let s2 = story_in(&h, &dan, "q-s2", "S2", epic.key()).await;
+    let s3 = story_in(&h, &dan, "q-s3", "S3", epic.key()).await;
+    let epic2 = h
+        .create_epic(&dan, "q-e2", "E2", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    let s4 = story_in(&h, &dan, "q-s4", "S4", epic2.key()).await;
     let d1 = h
         .require_decision(
             &dan,
@@ -5309,7 +5324,7 @@ async fn decision_queue_over_real_readiness() {
         .create_initiative(&dan, "q-i2", "I2", "", "Now", None, None, None)
         .await
         .unwrap();
-    let d_i2 = h
+    let d3 = h
         .require_decision(
             &dan,
             "q-d3",
@@ -5321,47 +5336,115 @@ async fn decision_queue_over_real_readiness() {
         )
         .await
         .unwrap();
-
-    let ids = |q: &[QueueEntry]| q.iter().map(|e| e.decision.id()).collect::<Vec<_>>();
-    let (all, summary) = h
-        .decision_queue(
-            &DecisionScope::All {
-                include_closed: false,
-            },
-            dan.now,
-        )
+    let (marked, ms) = marked_epic_with_stories(&h, &dan, "q-m", 1).await;
+    let dm = h
+        .require_decision(&dan, "q-dm", &marked, "DM", "dan@example.com", None, None)
         .await
         .unwrap();
+    let later = h
+        .create_initiative(&dan, "q-il", "IL", "", "Later", None, None, None)
+        .await
+        .unwrap();
+    let el = h
+        .create_epic(&dan, "q-el", "EL", Some(later.key().clone()), "", None)
+        .await
+        .unwrap();
+    story_in(&h, &dan, "q-s6", "S6", el.key()).await;
+    let (ga, _) = sprints_serving(&h, &dan, "q", &[s1.key().clone(), s4.key().clone()], &[]).await;
+
+    let all = DecisionScope::All {
+        include_closed: false,
+    };
+    let ids = |q: &[QueueEntry]| q.iter().map(|e| e.decision.id()).collect::<Vec<_>>();
+    let keys = |ss: &[QueueStory]| ss.iter().map(|s| s.key.clone()).collect::<Vec<_>>();
+    let (es, rows, summary) = h.decision_queue(&all, dan.now).await.unwrap();
     assert_eq!(
-        all.iter()
-            .map(|e| (e.group, e.decision.id()))
+        es.iter()
+            .map(|e| (e.group, e.lane, e.decision.id(), e.under.clone()))
             .collect::<Vec<_>>(),
         vec![
-            (QueueGroup::Blocking, d1.id()),
-            (QueueGroup::Blocking, d2.id()),
-            (QueueGroup::Open, d_i2.id())
+            (
+                QueueGroup::Blocking,
+                QueueLane::ThisSprint,
+                d1.id(),
+                Some(epic.key().clone())
+            ),
+            (QueueGroup::Blocking, QueueLane::ThisSprint, d2.id(), None),
+            (QueueGroup::Blocking, QueueLane::Beyond, dm.id(), None),
+            (QueueGroup::Open, QueueLane::Open, d3.id(), None),
         ]
     );
-    let keys = |e: &QueueEntry| e.held.iter().map(|b| b.key.clone()).collect::<Vec<_>>();
-    assert_eq!(keys(&all[0]), vec![s1.key().clone(), s2.key().clone()]);
-    assert_eq!(all[0].held[0].title, "S1");
-    assert_eq!(keys(&all[1]), vec![s1.key().clone()]);
-    assert!(all[2].held.is_empty());
+    assert_eq!(keys(&es[0].held), vec![s1.key().clone(), s2.key().clone()]);
+    assert_eq!(es[0].held[0].title, "S1");
+    assert_eq!(keys(&es[1].held), vec![s1.key().clone()]);
+    assert_eq!(keys(&es[2].held), vec![ms[0].key().clone()]);
+    let goal = Some(NeededInReason::Goal {
+        goal_id: ga,
+        outcome: "active outcome".into(),
+    });
     assert_eq!(
-        (summary.open, summary.blocking, summary.blocked_stories),
-        (3, 2, 2)
+        rows.iter()
+            .map(|r| (
+                r.key.clone(),
+                r.lane,
+                r.also.clone(),
+                r.needed_in_reason.clone(),
+                keys(&r.held),
+                keys(&r.under_way),
+                r.at
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                epic.key().clone(),
+                QueueLane::ThisSprint,
+                Some(ini.key().clone()),
+                goal.clone(),
+                vec![s1.key().clone(), s2.key().clone()],
+                vec![s3.key().clone()],
+                0
+            ),
+            (
+                epic2.key().clone(),
+                QueueLane::ThisSprint,
+                Some(ini.key().clone()),
+                goal,
+                vec![s4.key().clone()],
+                vec![],
+                1
+            ),
+        ]
+    );
+    assert_eq!(
+        (
+            summary.open,
+            summary.blocking,
+            summary.blocked_stories,
+            summary.this_sprint,
+            summary.next_sprint
+        ),
+        (4, 3, 3, 2, 0)
     );
 
-    let (on_s1, _) = h
+    let (on_s1, on_rows, _) = h
         .decision_queue(&DecisionScope::On(s1.key().clone()), dan.now)
         .await
         .unwrap();
-    assert_eq!(ids(&on_s1), vec![d2.id()]);
-    let (under_i, _) = h
+    assert_eq!((ids(&on_s1), on_rows.len()), (vec![d2.id()], 0));
+    let (under_i, i_rows, _) = h
         .decision_queue(&DecisionScope::Initiative(ini.key().clone()), dan.now)
         .await
         .unwrap();
     assert_eq!(ids(&under_i), vec![d1.id(), d2.id()]);
+    assert_eq!(
+        i_rows
+            .iter()
+            .map(|r| (r.key.clone(), r.at))
+            .collect::<Vec<_>>(),
+        vec![(epic.key().clone(), 0), (epic2.key().clone(), 1)]
+    );
+    let c1 = h.decision_context(d1.id(), dan.now).await.unwrap();
+    assert_eq!((c1.under, c1.lane), (Some(epic.key().clone()), es[0].lane));
 
     let linked = h
         .link_record(
@@ -5387,26 +5470,18 @@ async fn decision_queue_over_real_readiness() {
     )
     .await
     .unwrap();
-    let (all, summary) = h
-        .decision_queue(
-            &DecisionScope::All {
-                include_closed: false,
-            },
-            dan.now,
-        )
-        .await
-        .unwrap();
-    let e1 = all.iter().find(|e| e.decision.id() == d1.id()).unwrap();
-    assert_eq!(e1.group, QueueGroup::Satisfied);
+    let (es, _, summary) = h.decision_queue(&all, dan.now).await.unwrap();
+    let e1 = es.iter().find(|e| e.decision.id() == d1.id()).unwrap();
+    assert_eq!((e1.group, e1.under.clone()), (QueueGroup::Satisfied, None));
     assert!(e1.held.is_empty());
-    let e2 = all.iter().find(|e| e.decision.id() == d2.id()).unwrap();
+    let e2 = es.iter().find(|e| e.decision.id() == d2.id()).unwrap();
     assert_eq!(
-        (e2.group, keys(e2)),
+        (e2.group, keys(&e2.held)),
         (QueueGroup::Blocking, vec![s1.key().clone()])
     );
     assert_eq!(
         (summary.open, summary.blocking, summary.blocked_stories),
-        (2, 1, 1)
+        (3, 2, 2)
     );
 }
 
@@ -5503,14 +5578,16 @@ async fn marked_epic_with_stories(
 }
 
 async fn queue_all(h: &Handlers, c: &Ctx) -> (Vec<QueueEntry>, QueueSummary) {
-    h.decision_queue(
-        &DecisionScope::All {
-            include_closed: false,
-        },
-        c.now,
-    )
-    .await
-    .unwrap()
+    let (es, _, s) = h
+        .decision_queue(
+            &DecisionScope::All {
+                include_closed: false,
+            },
+            c.now,
+        )
+        .await
+        .unwrap();
+    (es, s)
 }
 
 /// D1 on S1 (active goal) and D2 on S2 (draft goal) land in this_sprint and next_sprint with the goal as the reason, and
@@ -5566,20 +5643,17 @@ async fn queue_needed_in_from_active_and_draft_goals() {
     assert_eq!((summary.this_sprint, summary.next_sprint), (1, 1));
 }
 
-/// A decision on an initiative in discovery under the first bucket, with no stories, lands in next_sprint; under the
-/// second bucket it stays open. Catches the counted-but-no-lane case end to end.
+/// A decision on an initiative without its discovery mark under the first bucket, with no stories, is open with no
+/// reason: only goals and promises put work in a sprint lane, and an item without unfinished stories is no row (spec
+/// §2). Catches the old discovery candidate surviving end to end.
 #[tokio::test]
-async fn queue_discovery_decision_counts_in_next_sprint_lane() {
-    use reeve_protocol::{NeededInReason, QueueLane};
+async fn queue_decision_on_an_unmarked_item_without_stories_is_open() {
+    use reeve_protocol::QueueLane;
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool);
     let dan = ctx("dan@example.com", false);
     let now_ini = h
         .create_initiative(&dan, "i-now", "I", "", "Now", None, None, None)
-        .await
-        .unwrap();
-    let later_ini = h
-        .create_initiative(&dan, "i-later", "I2", "", "Later", None, None, None)
         .await
         .unwrap();
     let d1 = h
@@ -5594,30 +5668,22 @@ async fn queue_discovery_decision_counts_in_next_sprint_lane() {
         )
         .await
         .unwrap();
-    let d2 = h
-        .require_decision(
-            &dan,
-            "d2",
-            later_ini.key(),
-            "D2",
-            "dan@example.com",
-            None,
-            None,
+    let (es, rows, summary) = h
+        .decision_queue(
+            &DecisionScope::All {
+                include_closed: false,
+            },
+            dan.now,
         )
         .await
         .unwrap();
-    let (es, summary) = queue_all(&h, &dan).await;
-    let of = |id: i64| es.iter().find(|e| e.decision.id() == id).unwrap();
-    assert_eq!(of(d1.id()).lane, QueueLane::NextSprint);
+    let e = es.iter().find(|e| e.decision.id() == d1.id()).unwrap();
     assert_eq!(
-        of(d1.id()).needed_in_reason,
-        Some(NeededInReason::Discovery {
-            key: now_ini.key().clone(),
-            level: reeve_protocol::ItemType::Initiative
-        })
+        (e.lane, e.needed_in_reason.clone()),
+        (QueueLane::Open, None)
     );
-    assert_eq!(of(d2.id()).lane, QueueLane::Open);
-    assert_eq!(summary.next_sprint, 1);
+    assert_eq!(summary.next_sprint, 0);
+    assert!(rows.is_empty());
 }
 
 /// A started story still counts: D is on epic E, S (in progress by override) serves an active goal. Catches

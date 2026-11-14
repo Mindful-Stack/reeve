@@ -3025,7 +3025,8 @@ async fn draft_goals_of_stories_reads_only_the_draft_sprint() {
 }
 
 /// The lineage runs nearest first and never includes the item's own story. Catches a level skipped, the horizon read
-/// from the wrong row, a story listed in its own lineage and a missing key invented.
+/// from the wrong row, a story listed in its own lineage, a missing key invented and a title or target month read
+/// from the wrong row.
 #[tokio::test]
 async fn decision_lineage_in_walks_story_epic_initiative() {
     use reeve_planning::LineageItem;
@@ -3044,7 +3045,16 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
     let s = story(&h, "s", Kind::Story, Some(epic.key()), &["c"]).await;
     // A second tree with another horizon, so a wrong join would pick up the wrong row.
     let ini2 = h
-        .create_initiative(&c, "i2", "I2", "", "Now", None, None, None)
+        .create_initiative(
+            &c,
+            "i2",
+            "I2",
+            "",
+            "Now",
+            Some("2026-12".into()),
+            None,
+            None,
+        )
         .await
         .unwrap();
     let epic2 = h
@@ -3075,14 +3085,16 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
     let e_row = LineageItem {
         key: epic.key().clone(),
         level: ItemType::Epic,
-        discovery_marked: true,
+        title: "E".into(),
         initiative_horizon: Some("Later".into()),
+        initiative_target_month: None,
     };
     let i_row = LineageItem {
         key: ini.key().clone(),
         level: ItemType::Initiative,
-        discovery_marked: false,
+        title: "I".into(),
         initiative_horizon: Some("Later".into()),
+        initiative_target_month: None,
     };
     assert_eq!(got[s.key()], vec![e_row.clone(), i_row.clone()]);
     assert_eq!(got[epic.key()], vec![e_row, i_row.clone()]);
@@ -3092,25 +3104,29 @@ async fn decision_lineage_in_walks_story_epic_initiative() {
         vec![LineageItem {
             key: lone.key().clone(),
             level: ItemType::Epic,
-            discovery_marked: false,
+            title: "E2".into(),
             initiative_horizon: None,
+            initiative_target_month: None,
         }]
     );
     assert!(!got.contains_key(&missing));
+    // The epic carries its initiative's target month; each row its own title.
     assert_eq!(
         got[epic2.key()],
         vec![
             LineageItem {
                 key: epic2.key().clone(),
                 level: ItemType::Epic,
-                discovery_marked: false,
+                title: "E3".into(),
                 initiative_horizon: Some("Now".into()),
+                initiative_target_month: Some("2026-12".into()),
             },
             LineageItem {
                 key: ini2.key().clone(),
                 level: ItemType::Initiative,
-                discovery_marked: false,
+                title: "I2".into(),
                 initiative_horizon: Some("Now".into()),
+                initiative_target_month: Some("2026-12".into()),
             }
         ]
     );
