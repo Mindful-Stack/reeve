@@ -390,11 +390,7 @@ fn discovery_rows(
         let (lane, needed_in_reason) = match w {
             NeededIn::ThisSprint => (QueueLane::ThisSprint, reason),
             NeededIn::NextSprint => (QueueLane::NextSprint, reason),
-            _ if inp.first_bucket.is_some()
-                && me.initiative_horizon.as_deref() == inp.first_bucket =>
-            {
-                (QueueLane::Beyond, None)
-            }
+            _ if in_first_bucket(inp, &key) => (QueueLane::Beyond, None),
             _ => continue,
         };
         let (held, under_way): (Vec<&AffectedStory>, Vec<&AffectedStory>) = stories
@@ -470,7 +466,7 @@ fn now_cmp(a: &NowFacts, b: &NowFacts) -> Ordering {
         .then_with(|| b.held.cmp(&a.held))
 }
 
-/// The target month of `key`'s initiative when it is `YYYY-MM` naming a real month (text order then sorts by date);
+/// The target month of `key`'s initiative when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12 (text order then sorts by date);
 /// any other value ranks as none.
 fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
     let m = inp
@@ -479,8 +475,12 @@ fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
         .first()?
         .initiative_target_month
         .as_deref()?;
-    (m.len() == 7 && NaiveDate::parse_from_str(&format!("{m}-01"), "%Y-%m-%d").is_ok())
-        .then(|| m.to_string())
+    let b = m.as_bytes();
+    let real = b.len() == 7
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[4] == b'-'
+        && matches!(&b[5..], [b'0', b'1'..=b'9'] | [b'1', b'0'..=b'2']);
+    real.then(|| m.to_string())
 }
 
 /// `d`'s due date and id when it is on or before `limit` (overdue included).
@@ -489,11 +489,12 @@ fn near_due(d: &RequiredDecision, limit: NaiveDate) -> Option<(NaiveDate, i64)> 
 }
 
 /// The page order (spec §2): this sprint, next sprint, Now (`beyond` under the first bucket), Later (other `beyond`),
-/// Open, Accepted, Closed. In this sprint, next sprint and Later, discovery rows first (more held stories, then key
-/// number), then standalone decisions in `entry_order`; in Now, the Now ranking over rows and standalone decisions, a
-/// full tie putting rows first, then key number or id, and each gets the reason of the first rule that holds for it
-/// (nested decisions keep their own); each row is directly followed by its nested decisions in `entry_order`, and its
-/// `at` is set. Rows come first because the discovery is what their decisions wait on.
+/// Open, Accepted, Closed. In this sprint and next sprint, discovery rows first (more held stories, then key number),
+/// then standalone decisions in `entry_order`; Later never holds a row. In Now, the Now ranking over rows and
+/// standalone decisions, a full tie putting rows first, then key number or id, and each gets the reason of the first
+/// rule that holds for it (nested decisions keep their own). Each row is directly followed by its nested decisions in
+/// `entry_order`, and its `at` is set. Rows lead the sprint lanes because the discovery is what their decisions wait
+/// on.
 fn arrange(
     mut entries: Vec<QueueEntry>,
     mut rows: Vec<DiscoveryRow>,
@@ -510,7 +511,9 @@ fn arrange(
         .checked_add_days(Days::new(inp.sprint_length_days.into()))
         .unwrap_or(NaiveDate::MAX);
     let section = |t: Top| -> u8 {
+        // A row is only ever `beyond` under the first bucket, so there it is Now by construction.
         let (lane, item) = match t {
+            Top::Row(i) if rows[i].lane == QueueLane::Beyond => return NOW,
             Top::Row(i) => (rows[i].lane, &rows[i].key),
             Top::Entry(i) => (entries[i].lane, entries[i].decision.on()),
         };
@@ -525,6 +528,12 @@ fn arrange(
             QueueLane::Review => 7, // never produced
         }
     };
+    let mut nested: HashMap<Key, Vec<usize>> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        if let Some(k) = &e.under {
+            nested.entry(k.clone()).or_default().push(i);
+        }
+    }
     let facts = |t: Top| -> NowFacts {
         match t {
             Top::Row(i) => {
@@ -532,10 +541,11 @@ fn arrange(
                 NowFacts {
                     urgent: inp.urgency.sources(&r.key).first().cloned(),
                     month: target_month(inp, &r.key),
-                    due: entries
-                        .iter()
-                        .filter(|e| e.under.as_ref() == Some(&r.key))
-                        .filter_map(|e| near_due(&e.decision, limit))
+                    due: nested
+                        .get(&r.key)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|&j| near_due(&entries[j].decision, limit))
                         .min(),
                     held: r.held.len(),
                 }
@@ -588,12 +598,6 @@ fn arrange(
                 Top::Row(i) => rows[i].needed_in_reason = Some(f.reason()),
                 Top::Entry(i) => entries[i].needed_in_reason = Some(f.reason()),
             }
-        }
-    }
-    let mut nested: HashMap<Key, Vec<usize>> = HashMap::new();
-    for (i, e) in entries.iter().enumerate() {
-        if let Some(k) = &e.under {
-            nested.entry(k.clone()).or_default().push(i);
         }
     }
     for v in nested.values_mut() {
@@ -1209,10 +1213,10 @@ mod tests {
     /// (2027-01, due 5 Nov), and 2026-12 sorts before 2027-01 across the year; with no month, G (overdue, 30 Oct), row
     /// R (its nested D111 due 10 Nov), D122 and D121 (both due 12 Nov: the larger id holds more and goes first, so the
     /// date alone decides rule 3) and E (due 17 Nov, the boundary) rank by due, before F (18 Nov, one day out, holding
-    /// 3); then by held: F 3, H 2 (month "2026-13" ranks as none), row Y (key 140) and decision D131 1 each (a full
+    /// 3); then by held: F 3, H 2 (months "2026-13" and, on F, "2026- 1" rank as none), row Y (key 140) and decision D131 1 each (a full
     /// tie: the row first, although its key is larger than the decision's id), row Z holding none (one story under
-    /// way). Every row's reason is the first rule that holds for it; D111, nested, keeps its own (none). Catches a rule out of order, an exclusive or off-by-one boundary, a malformed month
-    /// ranked as a month, a row ignoring its nested decision's due, a decision before a row on a full tie (or a
+    /// way). Every row's reason is the first rule that holds for it; D111, nested, keeps its own (none). Catches a rule out of order, an exclusive or off-by-one boundary, a malformed
+    /// month ranked as a month, a row ignoring its nested decision's due, a decision before a row on a full tie (or a
     /// key compared with an id), a due compared beyond the date (ids deciding before held), and an input-order sort.
     #[test]
     fn now_ranking_orders_and_says_which_rule_placed_each_row() {
@@ -1287,7 +1291,7 @@ mod tests {
             item(103, Some("2026-12")),
             item(104, Some("2027-01")),
             item(105, None),
-            item(106, None),
+            item(106, Some("2026- 1")),
             item(107, None),
             item(108, Some("2026-13")),
             item(121, None),
@@ -1962,7 +1966,6 @@ mod tests {
                     r.needed_in_reason.clone(),
                     keys(&r.held),
                     keys(&r.under_way),
-                    r.at,
                 )
             })
             .collect();
@@ -1978,8 +1981,7 @@ mod tests {
                     ThisSprint,
                     Some(goal(7, "G7")),
                     vec![13],
-                    vec![],
-                    0
+                    vec![]
                 ),
                 (
                     8,
@@ -1989,8 +1991,7 @@ mod tests {
                     ThisSprint,
                     Some(promise_reason(17, ItemType::Story, nov(1).unwrap(), true)),
                     vec![17],
-                    vec![],
-                    0
+                    vec![]
                 ),
                 (
                     2,
@@ -2000,8 +2001,7 @@ mod tests {
                     NextSprint,
                     Some(goal(9, "G9")),
                     vec![11],
-                    vec![12],
-                    0
+                    vec![12]
                 ),
                 (
                     7,
@@ -2011,8 +2011,7 @@ mod tests {
                     NextSprint,
                     Some(promise_reason(16, ItemType::Story, nov(20).unwrap(), false)),
                     vec![],
-                    vec![16],
-                    0
+                    vec![16]
                 ),
             ]
         );
@@ -2039,12 +2038,34 @@ mod tests {
             vec![adi(2), unchecked(1), adi(1), unchecked(5), unchecked(3)],
         );
         s22.draft_goals = vec![(9, "G9".into())];
+        // E9's row has its own next-sprint promise (S91); D7 on E9 has an equal window from a draft goal (S92).
+        let mut s91 = story(91, DeliveryState::Todo, vec![adi(9)]);
+        s91.promise = own_promise(91, nov(20).unwrap(), NeededIn::NextSprint, false);
+        let mut s92 = story(92, DeliveryState::Todo, vec![unchecked(7)]);
+        s92.draft_goals = vec![(8, "G8".into())];
+        // E10's row has no window of its own; its three candidates: D11 next sprint, D12 and D13 this sprint.
+        let mut s111 = story(111, DeliveryState::Todo, vec![unchecked(11)]);
+        s111.draft_goals = vec![(5, "G5".into())];
+        let mut s112 = story(112, DeliveryState::Todo, vec![unchecked(12)]);
+        s112.active_goals = vec![(6, "G6".into())];
+        let mut s113 = story(113, DeliveryState::Todo, vec![unchecked(13)]);
+        s113.active_goals = vec![(7, "G7".into())];
         let stories = [
             s21,
             s22,
-            story(41, DeliveryState::Todo, vec![adi(1), unchecked(5)]),
+            story(
+                41,
+                DeliveryState::Todo,
+                vec![adi(1), unchecked(5), unchecked(4)],
+            ),
             story(61, DeliveryState::Todo, vec![adi(6), adi(5), unchecked(6)]),
             story(81, DeliveryState::Todo, vec![adi(8), adi(7), unchecked(2)]),
+            s91,
+            s92,
+            story(101, DeliveryState::Todo, vec![adi(10)]),
+            s111,
+            s112,
+            s113,
         ];
         let (now, later) = (Some("Now"), Some("Later"));
         let e2 = || vec![li(2, ItemType::Epic, now), li(1, ItemType::Initiative, now)];
@@ -2065,6 +2086,8 @@ mod tests {
                 8,
                 vec![li(8, ItemType::Epic, now), li(7, ItemType::Initiative, now)],
             ),
+            (9, vec![li(9, ItemType::Epic, None)]),
+            (10, vec![li(10, ItemType::Epic, None)]),
         ]);
         let on = |id: i64, n: u64| {
             full(
@@ -2083,6 +2106,11 @@ mod tests {
             on(6, 6),
             on(5, 1),
             on(3, 22),
+            on(13, 10),
+            on(12, 10),
+            on(11, 10),
+            on(7, 9),
+            on(4, 1),
             on(2, 7),
             on(1, 2),
         ];
@@ -2094,8 +2122,13 @@ mod tests {
                 .map(|e| (e.decision.id(), e.lane, e.under.as_ref().map(Key::number)))
                 .collect::<Vec<_>>(),
             vec![
+                (11, ThisSprint, Some(10)),
+                (12, ThisSprint, Some(10)),
+                (13, ThisSprint, Some(10)),
                 (1, NextSprint, Some(2)),
                 (5, NextSprint, Some(1)),
+                (4, NextSprint, Some(1)),
+                (7, NextSprint, Some(9)),
                 (3, NextSprint, None),
                 (2, Beyond, None),
                 (6, Beyond, None),
@@ -2106,40 +2139,35 @@ mod tests {
             rows.iter()
                 .map(|r| (r.key.number(), r.lane, r.at))
                 .collect::<Vec<_>>(),
-            vec![(2, NextSprint, 0), (1, NextSprint, 1), (8, Beyond, 3)]
+            vec![
+                (10, ThisSprint, 0),
+                (2, NextSprint, 3),
+                (1, NextSprint, 4),
+                (9, NextSprint, 6),
+                (8, Beyond, 8)
+            ]
         );
         // I1 has no window of its own: lane and reason are D5's. D1 keeps its own window and reason.
-        assert_eq!(rows[1].needed_in_reason, Some(goal(9, "G9")));
+        let (row10, row2, row1, row9) = (&rows[0], &rows[1], &rows[2], &rows[3]);
+        assert_eq!(row1.needed_in_reason, Some(goal(9, "G9")));
+        let d1 = es.iter().find(|e| e.decision.id() == 1).unwrap();
         assert_eq!(
-            (es[0].needed_in, es[0].needed_in_reason.clone()),
+            (d1.needed_in, d1.needed_in_reason.clone()),
             (NeededIn::NextSprint, Some(goal(9, "G9")))
         );
-        // Nested decisions count in their lane.
-        assert_eq!((s.this_sprint, s.next_sprint), (0, 3));
-    }
-
-    /// A decision nested under a row takes the row's lane but keeps its own window (spec §2). Row ABC-1 is in this
-    /// sprint through story 11's active goal; decision 1 on ABC-1 affects only goal-less story 12, so its own window is
-    /// beyond. Catches the nested decision staying in its own lane and the summary missing it.
-    #[test]
-    fn a_nested_decision_takes_the_rows_lane_and_keeps_its_window() {
-        let mut s11 = story(11, DeliveryState::Todo, vec![adi(1)]);
-        s11.active_goals = vec![(7, "G7".into())];
-        let s12 = story(12, DeliveryState::Todo, vec![adi(1), unchecked(1)]);
-        let l = lineage(vec![(1, vec![li(1, ItemType::Epic, Some("Now"))])]);
-        let stories = [s11, s12];
-        let r = repos();
-        let (es, rows, sum) = order(
-            vec![dec(1, None, oct(1))],
-            &inputs(&stories, &l, Some("Now"), &r),
-            today(),
-        );
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].lane, QueueLane::ThisSprint);
+        assert_eq!(row2.lane, NextSprint);
+        // D4 on I1 affects only goal-less S41: its own window is beyond, its lane the row's.
+        let d4 = es.iter().find(|e| e.decision.id() == 4).unwrap();
+        assert_eq!((d4.needed_in, d4.lane), (NeededIn::Beyond, NextSprint));
+        // An equal window: the row's own reason (S91's promise) wins over D7's draft goal.
         assert_eq!(
-            (es[0].lane, es[0].needed_in, es[0].under.clone()),
-            (QueueLane::ThisSprint, NeededIn::Beyond, Some(key(1)))
+            row9.needed_in_reason,
+            Some(promise_reason(91, ItemType::Story, nov(20).unwrap(), false))
         );
-        assert_eq!(sum.this_sprint, 1);
+        // Two candidates with the earlier window: the lower id (D12, not D13) gives the reason; D11 (next sprint)
+        // loses to both.
+        assert_eq!(row10.needed_in_reason, Some(goal(6, "G6")));
+        // Nested decisions count in their lane.
+        assert_eq!((s.this_sprint, s.next_sprint), (3, 5));
     }
 }

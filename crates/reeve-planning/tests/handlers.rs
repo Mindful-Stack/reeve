@@ -5431,6 +5431,18 @@ async fn decision_queue_over_real_readiness() {
         .await
         .unwrap();
     assert_eq!((ids(&on_s1), on_rows.len()), (vec![d2.id()], 0));
+    // One item's own row only: E's, with the decisions on E.
+    let (on_e, e_rows, _) = h
+        .decision_queue(&DecisionScope::On(epic.key().clone()), dan.now)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            ids(&on_e),
+            e_rows.iter().map(|r| r.key.clone()).collect::<Vec<_>>()
+        ),
+        (vec![d1.id()], vec![epic.key().clone()])
+    );
     let (under_i, i_rows, _) = h
         .decision_queue(&DecisionScope::Initiative(ini.key().clone()), dan.now)
         .await
@@ -5482,6 +5494,114 @@ async fn decision_queue_over_real_readiness() {
     assert_eq!(
         (summary.open, summary.blocking, summary.blocked_stories),
         (3, 2, 2)
+    );
+}
+
+/// Why each Now item sits where it does, through the real wiring (spec §3, kb/ADR-0024 R5). All three are in the first
+/// bucket with no goal or promise. Epic EU (unmarked) holds S1 and its initiative IU, not the row's own item, is
+/// marked urgent: its reason is `urgent` naming IU (lineage). Epic ET's initiative has target month 2026-11 and
+/// nothing is urgent under it: `target_month`. A marked epic's story has a decision due within the sprint length
+/// (today 26 Oct, due 2 Nov): that decision's reason is `decision_due`. Order: urgent, month, due. Catches the
+/// urgency read off the row's own key only, the initiative's month not reaching a row, and a due date not read.
+#[tokio::test]
+async fn decision_queue_now_reasons_over_real_readiness() {
+    use reeve_protocol::NeededInReason;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let epic_with_story = |tag: &'static str, month: Option<&'static str>| {
+        let (h, dan) = (h.clone(), dan.clone());
+        async move {
+            let ini = h
+                .create_initiative(
+                    &dan,
+                    &format!("{tag}-i"),
+                    "I",
+                    "",
+                    "Now",
+                    month.map(String::from),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let epic = h
+                .create_epic(
+                    &dan,
+                    &format!("{tag}-e"),
+                    "E",
+                    Some(ini.key().clone()),
+                    "",
+                    None,
+                )
+                .await
+                .unwrap();
+            h.create_story(
+                &dan,
+                &format!("{tag}-s"),
+                "S",
+                Kind::Story,
+                Some(epic.key().clone()),
+                "",
+                vec!["works".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            (ini.key().clone(), epic.key().clone())
+        }
+    };
+    let (iu, eu) = epic_with_story("u", None).await;
+    let (_it, et) = epic_with_story("t", Some("2026-11")).await;
+    h.mark_urgent(&dan, ItemType::Initiative, &iu, None)
+        .await
+        .unwrap();
+    let (_marked, ms) = marked_epic_with_stories(&h, &dan, "d", 1).await;
+    let due = h
+        .require_decision(
+            &dan,
+            "d-dec",
+            ms[0].key(),
+            "D",
+            "dan@example.com",
+            chrono::NaiveDate::from_ymd_opt(2026, 11, 2),
+            None,
+        )
+        .await
+        .unwrap();
+    let all = DecisionScope::All {
+        include_closed: false,
+    };
+    let (es, rows, _) = h.decision_queue(&all, dan.now).await.unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|r| (r.key.clone(), r.lane, r.needed_in_reason.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                eu,
+                reeve_protocol::QueueLane::Beyond,
+                Some(NeededInReason::Urgent {
+                    key: iu,
+                    level: ItemType::Initiative
+                })
+            ),
+            (
+                et,
+                reeve_protocol::QueueLane::Beyond,
+                Some(NeededInReason::TargetMonth {
+                    month: "2026-11".into()
+                })
+            ),
+        ]
+    );
+    assert_eq!(
+        es.iter()
+            .map(|e| (e.decision.id(), e.needed_in_reason.clone()))
+            .collect::<Vec<_>>(),
+        vec![(due.id(), Some(NeededInReason::DecisionDue { id: due.id() }))]
     );
 }
 

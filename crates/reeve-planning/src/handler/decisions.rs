@@ -503,12 +503,10 @@ impl Handlers {
         rows.retain(|r| match scope {
             DecisionScope::All { .. } => true,
             DecisionScope::On(k) => &r.key == k,
-            DecisionScope::Initiative(k) => {
-                &r.key == k
-                    || lineage
-                        .get(&r.key)
-                        .is_some_and(|l| l.iter().any(|x| &x.key == k))
-            }
+            // A row's lineage starts at itself.
+            DecisionScope::Initiative(k) => lineage
+                .get(&r.key)
+                .is_some_and(|l| l.iter().any(|x| &x.key == k)),
         });
         Ok((entries, rows, summary))
     }
