@@ -3,6 +3,7 @@
 mod common;
 use axum::{body::Body, http::Request};
 use common::*;
+use serde_json::{Value, json};
 
 const PROTECTED_RESOURCE: &str = "/.well-known/oauth-protected-resource/mcp";
 const AUTHORIZATION_SERVER: &str = "/.well-known/oauth-authorization-server";
@@ -59,5 +60,84 @@ async fn off_nothing_under_oauth_or_well_known_answers_and_none_is_the_web_page(
                 "{method} {path}: {content_type}"
             );
         }
+    }
+}
+
+/// The whole document, compared with text written out here and not built from the configuration: clients keep
+/// these values, so a changed field, name or address must fail a test.
+#[tokio::test]
+async fn the_protected_resource_document_is_exactly_this() {
+    let h = mcp_harness().await;
+    let (status, headers, body) = send(&h.app, request("GET", PROTECTED_RESOURCE)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(headers["content-type"], "application/json");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({
+            "resource": "http://127.0.0.1:7474/mcp",
+            "authorization_servers": ["http://127.0.0.1:7474"],
+            "scopes_supported": ["read", "write"],
+            "bearer_methods_supported": ["header"]
+        })
+    );
+}
+
+#[tokio::test]
+async fn the_authorization_server_document_is_exactly_this() {
+    let h = mcp_harness().await;
+    let (status, headers, body) = send(&h.app, request("GET", AUTHORIZATION_SERVER)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(headers["content-type"], "application/json");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({
+            "issuer": "http://127.0.0.1:7474",
+            "authorization_endpoint": "http://127.0.0.1:7474/oauth/authorize",
+            "token_endpoint": "http://127.0.0.1:7474/oauth/token",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "client_id_metadata_document_supported": true,
+            "authorization_response_iss_parameter_supported": true,
+            "scopes_supported": ["read", "write"]
+        })
+    );
+}
+
+/// A read answers; anything else is 405 in plain text with `Allow`, never the API's JSON envelope (which the
+/// router's own 405 would be).
+#[tokio::test]
+async fn the_documents_answer_reads_only_and_never_in_the_api_envelope() {
+    let h = mcp_harness().await;
+    for path in [PROTECTED_RESOURCE, AUTHORIZATION_SERVER] {
+        assert_eq!(send(&h.app, request("HEAD", path)).await.0, 200, "{path}");
+        for method in ["POST", "PUT", "DELETE"] {
+            let (status, headers, _) = send(&h.app, request(method, path)).await;
+            assert_eq!(status, 405, "{method} {path}");
+            assert_eq!(headers["allow"], "GET, HEAD", "{method} {path}");
+            assert!(
+                headers["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("text/plain"),
+                "{method} {path}"
+            );
+        }
+    }
+}
+
+/// On, an unknown path under either prefix is still a 404: only the two documents answer.
+#[tokio::test]
+async fn on_only_the_two_documents_answer_under_the_prefixes() {
+    let h = mcp_harness().await;
+    for path in [
+        "/oauth/nope",
+        "/.well-known/nope",
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp/more",
+        "/.well-known/openid-configuration",
+    ] {
+        assert_eq!(send(&h.app, request("GET", path)).await.0, 404, "{path}");
     }
 }
