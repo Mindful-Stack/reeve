@@ -14,7 +14,8 @@
 	let loadError = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
-	// Whose "Connected apps" an admin has opened: a person's connections are asked for only then.
+	// Whose "Connected apps" an admin has open: a person's connections are asked for only then, and a closed one's list
+	// goes with its timers.
 	let opened = $state<Record<string, boolean>>({});
 
 	async function reload() {
@@ -146,12 +147,7 @@
 						{/if}
 					</span>
 					{#if u.email !== session.me?.email}
-						<details
-							class="apps"
-							ontoggle={(e) => {
-								if (e.currentTarget.open) opened[u.email] = true;
-							}}
-						>
+						<details class="apps" ontoggle={(e) => (opened[u.email] = e.currentTarget.open)}>
 							<summary>Connected apps</summary>
 							{#if opened[u.email]}<ConnectedApps owner={u.email} />{/if}
 						</details>
