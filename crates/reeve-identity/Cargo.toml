@@ -28,7 +28,7 @@ base64 = { workspace = true, optional = true }
 [features]
 # Test-only: the static provider, the fake OpenID issuer and the Google adapter's test factory. The Dockerfile never
 # enables it.
-static-oidc = ["dep:axum", "dep:rsa", "dep:base64", "tokio/net"]
+static-oidc = ["dep:axum", "dep:rsa", "dep:base64"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }

@@ -1,8 +1,8 @@
-//! The HTTP adapter of `ClientDocumentFetcher` (kb/ADR-0029 R3): a client's metadata document is fetched only
-//! over https from a public address, without redirects or a proxy, within 64 KiB and 5 seconds, at most four at
-//! once. Two factories build it: the production one and, under `static-oidc`, one that fetches only http from a
+//! The HTTP adapter of `ClientDocumentFetcher` (kb/ADR-0029 R3): the bytes of a client's metadata document are
+//! fetched only over https from a host name at a public address, without redirects or a proxy, within 64 KiB and
+//! 5 seconds, at most four at once. What a client id and the document must say is `clients.rs`'s. Two factories build it: the production one and, under `static-oidc`, one that fetches only http from a
 //! loopback IP literal, as `oidc.rs` has `ProviderHttp::production` and `loopback_only`.
-use crate::clients::{ClientDocument, ClientDocumentFetcher, ClientRefusal};
+use crate::clients::{ClientDocumentFetcher, ClientRefusal};
 use async_trait::async_trait;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -12,7 +12,8 @@ use std::time::Duration;
 const MAX_DOCUMENT_BYTES: usize = 64 * 1024;
 /// The limit on one fetch, from the start of connecting (resolving included) to the end of the body.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
-/// How many fetches run at once in the process; one more is refused, not queued.
+/// How many fetches one fetcher runs at once; one more is refused, not queued. The server builds one fetcher and
+/// shares it, so this is the server's limit.
 const MAX_CONCURRENT_FETCHES: usize = 4;
 
 /// RFC 6890's IPv4 special-purpose blocks, and multicast, as (network, prefix length). 240.0.0.0/4 holds the
@@ -109,9 +110,9 @@ impl reqwest::dns::Resolve for PublicOnly {
     }
 }
 
-/// Which client ids a fetcher admits.
+/// Which addresses a fetcher fetches from.
 #[derive(Debug, Clone, Copy)]
-enum IdRules {
+enum Transport {
     /// https, a host that is a name, no port.
     Production,
     /// http on a loopback IP literal: the test factory's.
@@ -119,12 +120,12 @@ enum IdRules {
     LoopbackOnly,
 }
 
-/// The client id as a URL, or why it is refused. Nothing has been sent when this returns.
-fn check_client_id(raw: &str, rules: IdRules) -> Result<url::Url, ClientRefusal> {
+/// Whether `url`, which already keeps the rules of a client id, is one this transport fetches. Nothing has been
+/// sent when this returns.
+fn check_transport(url: &url::Url, transport: Transport) -> Result<(), ClientRefusal> {
     let bad = ClientRefusal::BadClientId;
-    let url = url::Url::parse(raw).map_err(|_| bad("it is not a URL"))?;
-    match rules {
-        IdRules::Production => {
+    match transport {
+        Transport::Production => {
             if url.scheme() != "https" {
                 return Err(bad("it must be https"));
             }
@@ -137,40 +138,21 @@ fn check_client_id(raw: &str, rules: IdRules) -> Result<url::Url, ClientRefusal>
             }
         }
         #[cfg(feature = "static-oidc")]
-        IdRules::LoopbackOnly => {
-            if !crate::oidc::is_loopback_http(raw) {
+        Transport::LoopbackOnly => {
+            if !crate::oidc::is_loopback_http(url.as_str()) {
                 return Err(bad(
                     "the test fetcher fetches only http from a loopback IP address",
                 ));
             }
         }
     }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(bad("it carries user information"));
-    }
-    if url.path() == "/" {
-        return Err(bad("it has no path"));
-    }
-    if url.query().is_some() {
-        return Err(bad("it has a query"));
-    }
-    if url.fragment().is_some() {
-        return Err(bad("it has a fragment"));
-    }
-    // The parser removes dot segments, lowercases the host and drops a default port. An id is compared as a
-    // string and fetched as written, so one that changes when parsed is refused.
-    if url.as_str() != raw {
-        return Err(bad(
-            "it is not in its normal form (dot segments, upper case or a default port)",
-        ));
-    }
-    Ok(url)
+    Ok(())
 }
 
-/// The one adapter. Production and the tests differ only in the client the factory builds and in `rules`.
+/// The one adapter. Production and the tests differ only in the client the factory builds and in `transport`.
 pub(crate) struct HttpClientFetcher {
     http: reqwest::Client,
-    rules: IdRules,
+    transport: Transport,
     permits: tokio::sync::Semaphore,
 }
 
@@ -185,10 +167,10 @@ fn builder(timeout: Duration) -> reqwest::ClientBuilder {
 }
 
 impl HttpClientFetcher {
-    fn new(http: reqwest::Client, rules: IdRules) -> Self {
+    fn new(http: reqwest::Client, transport: Transport) -> Self {
         HttpClientFetcher {
             http,
-            rules,
+            transport,
             permits: tokio::sync::Semaphore::new(MAX_CONCURRENT_FETCHES),
         }
     }
@@ -198,7 +180,7 @@ impl HttpClientFetcher {
             .https_only(true)
             .dns_resolver(Arc::new(PublicOnly))
             .build()?;
-        Ok(Self::new(http, IdRules::Production))
+        Ok(Self::new(http, Transport::Production))
     }
 
     /// `timeout` is a parameter so that one test can see the fetcher give up without waiting five seconds.
@@ -207,7 +189,7 @@ impl HttpClientFetcher {
         let http = builder(timeout)
             .dns_resolver(Arc::new(crate::oidc::NoNames))
             .build()?;
-        Ok(Self::new(http, IdRules::LoopbackOnly))
+        Ok(Self::new(http, Transport::LoopbackOnly))
     }
 
     /// The body at `url`: status 200, at most `MAX_DOCUMENT_BYTES`, counted as it arrives (reqwest's `stream`
@@ -239,23 +221,18 @@ impl HttpClientFetcher {
 
 #[async_trait]
 impl ClientDocumentFetcher for HttpClientFetcher {
-    fn admit(&self, client_id: &str) -> Result<url::Url, ClientRefusal> {
-        check_client_id(client_id, self.rules)
-    }
-
-    async fn fetch(&self, client_id: &str) -> Result<ClientDocument, ClientRefusal> {
-        let url = self.admit(client_id)?;
+    async fn fetch(&self, client_id: &url::Url) -> Result<Vec<u8>, ClientRefusal> {
+        check_transport(client_id, self.transport)?;
         // Not queued: a request beyond the limit is refused, and the permit is given back when this returns.
         let _permit = self
             .permits
             .try_acquire()
             .map_err(|_| ClientRefusal::Busy)?;
-        let body = self.body(&url).await?;
-        ClientDocument::parse(client_id, &body)
+        self.body(client_id).await
     }
 }
 
-/// The production fetcher: https only, names resolved through `PublicOnly`, client ids by the production rules.
+/// The production fetcher: https only, from a host name without a port, names resolved through `PublicOnly`.
 pub fn make_client_fetcher() -> anyhow::Result<Arc<dyn ClientDocumentFetcher>> {
     Ok(Arc::new(HttpClientFetcher::production()?))
 }
@@ -397,69 +374,40 @@ mod tests {
         );
     }
 
-    /// Each row is refused and none is fetched. The reasons may be reworded; no row may be accepted. Catches a
-    /// rule that is missing, above all the address literal (which would bypass the resolver) and the dot segments
-    /// (which the URL parser hides).
-    #[test]
-    fn the_production_rules_refuse_every_client_id_that_breaks_one() {
-        let rules = IdRules::Production;
+    /// The production transport: each row is refused before anything is sent. Catches a rule that is missing,
+    /// above all the address literal, which would bypass the resolver. The last block is the same through the
+    /// factory: a refusal there returns without a request, so nothing leaves this machine.
+    #[tokio::test]
+    async fn the_production_transport_refuses_every_address_that_breaks_a_rule() {
+        let url = |text: &str| url::Url::parse(text).unwrap();
+        let production = Transport::Production;
         for accepted in [
             "https://claude.ai/oauth/claude-code-client-metadata",
             "https://chatgpt.com/a/b.json",
         ] {
-            let url = check_client_id(accepted, rules).unwrap();
-            assert_eq!(url.as_str(), accepted);
+            assert_eq!(check_transport(&url(accepted), production), Ok(()));
         }
-        let normal_form =
-            "it is not in its normal form (dot segments, upper case or a default port)";
         let address = "its host must be a name, not an address";
-        for (refused, why) in [
-            ("", "it is not a URL"),
-            ("claude.ai/client.json", "it is not a URL"),
+        let rows = [
             ("http://claude.ai/client.json", "it must be https"),
             ("ftp://claude.ai/client.json", "it must be https"),
+            ("http://127.0.0.1:4000/client.json", "it must be https"),
             ("https://160.79.104.10/client.json", address),
             ("https://127.0.0.1/client.json", address),
             ("https://[2606:4700::1111]/client.json", address),
+            ("https://[::1]/client.json", address),
             ("https://claude.ai:8443/client.json", "it names a port"),
-            (
-                "https://user@claude.ai/client.json",
-                "it carries user information",
-            ),
-            (
-                "https://user:pw@claude.ai/client.json",
-                "it carries user information",
-            ),
-            ("https://claude.ai", "it has no path"),
-            ("https://claude.ai/", "it has no path"),
-            ("https://claude.ai/client.json?v=1", "it has a query"),
-            ("https://claude.ai/client.json?", "it has a query"),
-            ("https://claude.ai/client.json#x", "it has a fragment"),
-            ("https://claude.ai:443/client.json", normal_form),
-            ("https://Claude.ai/client.json", normal_form),
-            ("https://claude.ai/a/../client.json", normal_form),
-            ("https://claude.ai/a/./client.json", normal_form),
-            ("https://claude.ai/a/%2e%2e/client.json", normal_form),
-            ("https://claude.ai/a/%2E/client.json", normal_form),
-            ("https://claude.ai/a/client.json/..", normal_form),
-        ] {
+        ];
+        let fetcher = make_client_fetcher().unwrap();
+        for (refused, why) in rows {
+            let refusal = Err(ClientRefusal::BadClientId(why));
             assert_eq!(
-                check_client_id(refused, rules).unwrap_err(),
-                ClientRefusal::BadClientId(why),
+                check_transport(&url(refused), production),
+                refusal.clone().map(|_: Vec<u8>| ()),
                 "{refused}"
             );
+            assert_eq!(fetcher.fetch(&url(refused)).await, refusal, "{refused}");
         }
-        // The production factory uses these rules.
-        let fetcher = make_client_fetcher().unwrap();
-        assert!(
-            fetcher
-                .admit("https://claude.ai/oauth/claude-code-client-metadata")
-                .is_ok()
-        );
-        assert_eq!(
-            fetcher.admit("http://127.0.0.1:4000/client.json"),
-            Err(ClientRefusal::BadClientId("it must be https"))
-        );
     }
 
     #[cfg(feature = "static-oidc")]
@@ -467,33 +415,13 @@ mod tests {
         use super::*;
         use crate::fake_client_host::{FakeAnswer, FakeClientHost};
 
-        /// The test factory's rules reach nothing but loopback. Catches a test fetcher that could be pointed at
-        /// the internet.
-        #[test]
-        fn the_loopback_rules_admit_only_http_on_a_loopback_ip_literal() {
-            let rules = IdRules::LoopbackOnly;
-            assert!(check_client_id("http://127.0.0.1:4000/client.json", rules).is_ok());
-            for refused in [
-                "https://claude.ai/client.json",
-                "http://claude.ai/client.json",
-                "http://localhost:4000/client.json",
-                "https://127.0.0.1:4000/client.json",
-                "http://192.168.1.1/client.json",
-                "http://127.0.0.1:4000/",
-                "http://127.0.0.1:4000/client.json?v=1",
-                "http://127.0.0.1:4000/a/../client.json",
-            ] {
-                assert!(check_client_id(refused, rules).is_err(), "{refused}");
-            }
-        }
-
         /// With all four permits held, a fetch is refused at once and nothing reaches the host; with them free,
         /// five fetches one after another all succeed, so each gave its permit back. Catches a missing limit, a
         /// limit that waits, and a permit that leaks.
         #[tokio::test]
         async fn a_fetch_beyond_four_is_refused_and_permits_come_back() {
             let host = FakeClientHost::start().await;
-            let id = host.publish("/client.json", "Example App", &[]);
+            let id = url::Url::parse(&host.publish("/client.json", "Example App", &[])).unwrap();
             let fetcher = HttpClientFetcher::loopback(FETCH_TIMEOUT).unwrap();
             let held = fetcher.permits.try_acquire_many(4).unwrap();
             assert_eq!(fetcher.fetch(&id).await, Err(ClientRefusal::Busy));
@@ -516,7 +444,7 @@ mod tests {
             let host = FakeClientHost::start().await;
             host.answer("/never.json", FakeAnswer::Never);
             let fetcher = HttpClientFetcher::loopback(Duration::from_millis(1000)).unwrap();
-            let id = host.client_id("/never.json");
+            let id = url::Url::parse(&host.client_id("/never.json")).unwrap();
             let outcome = tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&id))
                 .await
                 .expect("the fetcher gives up by itself");

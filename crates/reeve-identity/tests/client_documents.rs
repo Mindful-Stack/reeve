@@ -1,6 +1,6 @@
-//! Client metadata documents, fetched and resolved through the loopback-only fetcher against the fake client
-//! host. Compiled only with `static-oidc`. The production fetcher's own rules are table tests in
-//! `src/client_fetch.rs`; nothing here says anything about them.
+//! The bytes of client metadata documents, fetched through the loopback-only fetcher against the fake client
+//! host, and one client resolved over real HTTP. Compiled only with `static-oidc`. The production transport's
+//! rules are a table test in `src/client_fetch.rs`; nothing here says anything about them.
 #![cfg(feature = "static-oidc")]
 use reeve_identity::{
     ClientDocumentFetcher, ClientPolicy, ClientRefusal, FakeAnswer, FakeClientHost,
@@ -16,9 +16,13 @@ fn fetcher() -> Arc<dyn ClientDocumentFetcher> {
     make_loopback_client_fetcher().unwrap()
 }
 
-/// A valid document for `client_id` whose JSON text is exactly `total` bytes.
-fn padded(client_id: &str, total: usize) -> serde_json::Value {
-    let document = |pad: String| json!({"client_id": client_id, "client_name": "Padded", "redirect_uris": [CALLBACK], "pad": pad});
+fn url(text: &str) -> url::Url {
+    url::Url::parse(text).unwrap()
+}
+
+/// A JSON document whose text is exactly `total` bytes.
+fn padded(total: usize) -> serde_json::Value {
+    let document = |pad: String| json!({"client_name": "Padded", "pad": pad});
     let unpadded = document(String::new()).to_string().len();
     let value = document("x".repeat(total - unpadded));
     assert_eq!(
@@ -29,22 +33,29 @@ fn padded(client_id: &str, total: usize) -> serde_json::Value {
     value
 }
 
-/// Catches a fetcher that cannot fetch at all (every refusal test below would then pass for the wrong reason).
+/// Catches a fetcher that cannot fetch at all (every refusal test below would then pass for the wrong reason),
+/// one that returns anything but the bytes the host sent, and a fake whose published document is not what its
+/// arguments describe or whose count of requests does not move.
 #[tokio::test]
-async fn a_published_document_is_fetched_and_validated() {
+async fn a_published_document_is_fetched_as_its_bytes() {
     let host = FakeClientHost::start().await;
+    assert_eq!(host.host(), "127.0.0.1");
     let id = host.publish("/client.json", "Example App", &[CALLBACK]);
-    let document = fetcher().fetch(&id).await.unwrap();
-    assert_eq!(
-        (document.client_id(), document.client_name()),
-        (id.as_str(), "Example App")
-    );
-    assert_eq!(document.redirect_uris(), [CALLBACK]);
+    assert_eq!(id, host.client_id("/client.json"));
+    assert!(id.starts_with("http://127.0.0.1:"), "{id}");
+    let expected = json!({
+        "client_id": id,
+        "client_name": "Example App",
+        "redirect_uris": [CALLBACK],
+        "token_endpoint_auth_method": "none"
+    });
+    assert_eq!(host.hits("/client.json"), 0);
+    let body = fetcher().fetch(&url(&id)).await.unwrap();
+    assert_eq!(String::from_utf8(body).unwrap(), expected.to_string());
     assert_eq!(host.hits("/client.json"), 1);
 }
 
-/// Catches a client that follows the redirect: it would request `/real.json`, and fail on the document's id
-/// instead of the status.
+/// Catches a client that follows the redirect: it would request `/real.json` and return its body.
 #[tokio::test]
 async fn a_redirect_is_not_followed() {
     let host = FakeClientHost::start().await;
@@ -57,7 +68,7 @@ async fn a_redirect_is_not_followed() {
         },
     );
     assert_eq!(
-        fetcher().fetch(&host.client_id("/moved.json")).await,
+        fetcher().fetch(&url(&host.client_id("/moved.json"))).await,
         Err(ClientRefusal::Status(302))
     );
     assert_eq!((host.hits("/moved.json"), host.hits("/real.json")), (1, 0));
@@ -68,9 +79,12 @@ async fn a_redirect_is_not_followed() {
 async fn a_status_other_than_200_is_refused() {
     let host = FakeClientHost::start().await;
     assert_eq!(
-        fetcher().fetch(&host.client_id("/missing.json")).await,
+        fetcher()
+            .fetch(&url(&host.client_id("/missing.json")))
+            .await,
         Err(ClientRefusal::Status(404))
     );
+    assert_eq!(host.hits("/missing.json"), 1);
     host.answer(
         "/broken.json",
         FakeAnswer::Status {
@@ -79,7 +93,7 @@ async fn a_status_other_than_200_is_refused() {
         },
     );
     assert_eq!(
-        fetcher().fetch(&host.client_id("/broken.json")).await,
+        fetcher().fetch(&url(&host.client_id("/broken.json"))).await,
         Err(ClientRefusal::Status(500))
     );
 }
@@ -89,44 +103,30 @@ async fn a_status_other_than_200_is_refused() {
 #[tokio::test]
 async fn a_document_of_64_kib_is_read_and_one_byte_more_is_refused() {
     let host = FakeClientHost::start().await;
-    let exact = host.client_id("/exact.json");
-    host.answer("/exact.json", FakeAnswer::Json(padded(&exact, LIMIT)));
-    assert_eq!(fetcher().fetch(&exact).await.unwrap().client_id(), exact);
-    let over = host.client_id("/over.json");
-    host.answer("/over.json", FakeAnswer::Json(padded(&over, LIMIT + 1)));
-    assert_eq!(fetcher().fetch(&over).await, Err(ClientRefusal::TooLarge));
-}
-
-/// Catches a fetcher that returns the bytes without validating them against the address it fetched.
-#[tokio::test]
-async fn a_fetched_document_whose_id_differs_is_refused() {
-    let host = FakeClientHost::start().await;
-    let other = host.client_id("/other.json");
-    host.answer(
-        "/differs.json",
-        FakeAnswer::Json(
-            json!({"client_id": other, "client_name": "X", "redirect_uris": [CALLBACK]}),
-        ),
-    );
+    host.answer("/exact.json", FakeAnswer::Json(padded(LIMIT)));
+    let exact = fetcher().fetch(&url(&host.client_id("/exact.json"))).await;
+    assert_eq!(exact.unwrap().len(), LIMIT);
+    host.answer("/over.json", FakeAnswer::Json(padded(LIMIT + 1)));
     assert_eq!(
-        fetcher().fetch(&host.client_id("/differs.json")).await,
-        Err(ClientRefusal::BadDocument(
-            "its client_id is not the address it was fetched from"
-        ))
+        fetcher().fetch(&url(&host.client_id("/over.json"))).await,
+        Err(ClientRefusal::TooLarge)
     );
 }
 
 /// The loopback fetcher is what the static provider and every test get. Catches one that would fetch from
-/// anywhere else.
+/// anywhere else: a name (`localhost` included), https, or an address that is not loopback.
 #[tokio::test]
 async fn the_loopback_fetcher_fetches_from_nowhere_but_loopback() {
     for id in [
         "https://claude.ai/oauth/claude-code-client-metadata",
         "http://claude.ai/client.json",
         "http://localhost:9/client.json",
+        "https://127.0.0.1:9/client.json",
+        "http://192.168.1.1/client.json",
+        "http://[::ffff:127.0.0.1]:9/client.json",
     ] {
         assert_eq!(
-            fetcher().fetch(id).await,
+            fetcher().fetch(&url(id)).await,
             Err(ClientRefusal::BadClientId(
                 "the test fetcher fetches only http from a loopback IP address"
             )),
@@ -135,35 +135,38 @@ async fn the_loopback_fetcher_fetches_from_nowhere_but_loopback() {
     }
 }
 
-/// The seam against a real fetch. Catches a host or an address the instance has not enabled causing a request
-/// (the host is there and would answer), and a resolved client that is not what the document says.
+/// The seam over real HTTP, in this crate: the bytes that were fetched are judged against the address they were
+/// fetched from, and a client that keeps every rule resolves. Catches a `resolve_client` that trusts what the
+/// document says of itself, and one that hands the fetcher another address than the client id. (The order of the
+/// checks is the unit test's in `clients.rs`; the configured lists are the server's `tests/client_documents.rs`.)
 #[tokio::test]
-async fn a_client_resolves_only_once_the_instance_has_enabled_it() {
+async fn a_fetched_document_is_judged_against_the_address_it_came_from() {
     let host = FakeClientHost::start().await;
     let fetcher = fetcher();
-    let id = host.publish(
-        "/client.json",
-        "Example App",
-        &[CALLBACK, "https://other.example/cb"],
-    );
-    let enabled = ClientPolicy {
+    let policy = ClientPolicy {
         client_hosts: vec![host.host().to_string()],
         redirect_uris: vec![CALLBACK.to_string()],
     };
-    let nobody = ClientPolicy {
-        client_hosts: vec![],
-        redirect_uris: vec![CALLBACK.to_string()],
-    };
-    let refused = resolve_client(&*fetcher, &nobody, &id, CALLBACK)
-        .await
-        .unwrap_err();
-    assert!(refused == ClientRefusal::HostNotListed && refused.not_enabled());
-    let refused = resolve_client(&*fetcher, &enabled, &id, "https://other.example/cb")
-        .await
-        .unwrap_err();
-    assert!(refused == ClientRefusal::RedirectNotEnabled && refused.not_enabled());
-    assert_eq!(host.hits("/client.json"), 0);
-    let client = resolve_client(&*fetcher, &enabled, &id, CALLBACK)
+    let other = host.client_id("/other.json");
+    host.answer(
+        "/differs.json",
+        FakeAnswer::Json(
+            json!({"client_id": other, "client_name": "X", "redirect_uris": [CALLBACK]}),
+        ),
+    );
+    let differs = host.client_id("/differs.json");
+    assert_eq!(
+        resolve_client(&*fetcher, &policy, &differs, CALLBACK).await,
+        Err(ClientRefusal::BadDocument(
+            "its client_id is not the address it was fetched from"
+        ))
+    );
+    assert_eq!(
+        (host.hits("/differs.json"), host.hits("/other.json")),
+        (1, 0)
+    );
+    let id = host.publish("/client.json", "Example App", &[CALLBACK]);
+    let client = resolve_client(&*fetcher, &policy, &id, CALLBACK)
         .await
         .unwrap();
     assert_eq!(

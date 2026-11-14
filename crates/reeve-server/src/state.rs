@@ -32,7 +32,7 @@ pub struct AppState {
     /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
     /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
     pub repo_urls: Arc<HashMap<String, String>>,
-    /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route resolves a client with
+    /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route will resolve a client with
     /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
 }

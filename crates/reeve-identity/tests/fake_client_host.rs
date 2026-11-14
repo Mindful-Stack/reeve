@@ -1,8 +1,8 @@
 //! The fake client host itself, through a plain HTTP client: the fetch tests here and the authorize tests in the
-//! server stand on these answers. Compiled only with `static-oidc`.
+//! server stand on these answers. Compiled only with `static-oidc`. What it publishes and how it counts requests
+//! is asserted where it is used, in `tests/client_documents.rs`.
 #![cfg(feature = "static-oidc")]
 use reeve_identity::{FakeAnswer, FakeClientHost};
-use serde_json::json;
 
 /// A plain client: no proxy, no redirects followed, nothing of the code under test.
 fn http() -> reqwest::Client {
@@ -11,30 +11,6 @@ fn http() -> reqwest::Client {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap()
-}
-
-/// Catches a JSON body that is not the value's own text, a published document that is not what its arguments
-/// describe, a hit not counted, and an unknown path that answers.
-#[tokio::test]
-async fn it_serves_what_was_published_and_counts_requests() {
-    let host = FakeClientHost::start().await;
-    assert_eq!(host.host(), "127.0.0.1");
-    let id = host.publish("/app.json", "Example App", &["https://example.test/cb"]);
-    assert_eq!(id, host.client_id("/app.json"));
-    assert!(id.starts_with("http://127.0.0.1:"), "{id}");
-    let expected = json!({
-        "client_id": id,
-        "client_name": "Example App",
-        "redirect_uris": ["https://example.test/cb"],
-        "token_endpoint_auth_method": "none"
-    });
-    let answer = http().get(&id).send().await.unwrap();
-    assert_eq!(answer.status(), 200);
-    assert_eq!(answer.text().await.unwrap(), expected.to_string());
-    assert_eq!((host.hits("/app.json"), host.hits("/other")), (1, 0));
-    let missing = http().get(host.client_id("/other")).send().await.unwrap();
-    assert_eq!(missing.status(), 404);
-    assert_eq!(host.hits("/other"), 1);
 }
 
 /// Catches a "redirect" with nothing to follow and a status not sent as given.

@@ -23,8 +23,7 @@ pub use client_fetch::make_client_fetcher;
 #[cfg(feature = "static-oidc")]
 pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
-    ClientDocument, ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient,
-    resolve_client,
+    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
 };
 pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
