@@ -61,8 +61,8 @@ To connect an AI app such as Claude to a running instance, see
 [docs/connecting-an-ai-app.md](docs/connecting-an-ai-app.md); this section is for developers.
 
 The MCP endpoint (`/mcp`) is off unless `[mcp] enabled = true`. The quickest way to try it locally is a token a
-developer mints (connecting a real app is in `deploy/README.md`). Both need a binary built with the test sign-in
-feature:
+developer mints. That token, and the static sign-in provider below, need a binary built with the test sign-in
+feature; connecting a real app to a deployed instance does not (`deploy/README.md`):
 
 1. In `reeve.toml`, keep `bind` and `public_url` on loopback and add:
 
@@ -142,11 +142,11 @@ an `Origin` header that is not in `[mcp] allowed_origins` (by default only `publ
 `http://localhost:6274` for the inspector's browser page); `404` with the text
 `MCP is not enabled on this instance ([mcp] enabled)` when the switch is off.
 
-**Warning.** claude.ai cannot connect yet: a custom connector signs in with OAuth, which this endpoint does not
-offer before the sign-in stories land. Do not put a local instance behind a tunnel to try it: the static sign-in
-provider signs in anyone who reaches `/auth/callback`. If a tunnel is needed (to see in the server's log which
-protocol revision a client sends), forward only the path `/mcp` through a local reverse proxy that answers 404 for
-everything else.
+**Warning.** Do not put a local instance behind a tunnel to try claude.ai against it: the static sign-in provider
+signs in anyone who reaches `/auth/callback`, and that person could then approve a connection. claude.ai connects to
+a deployed instance with real sign-in (`deploy/README.md`, "Turning it on"). If a tunnel is needed (to see in the
+server's log which protocol revision a client sends), forward only the path `/mcp` through a local reverse proxy
+that answers 404 for everything else.
 
 ## Layout
 
