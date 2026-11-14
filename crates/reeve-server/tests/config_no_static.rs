@@ -49,3 +49,28 @@ fn mcp_token_issue_does_not_exist_without_the_feature() {
     assert!(stderr.contains("unrecognized subcommand"), "{stderr}");
     assert!(stderr.contains("mcp-token-issue"), "{stderr}");
 }
+
+/// A production build has no configuration under which a client document is fetched from loopback or a person is
+/// sent back over http: the exception for both exists only with the static provider, which this build cannot
+/// parse. This is what pins that production fetches through `make_client_fetcher` from real hosts only.
+#[test]
+fn a_production_build_refuses_a_loopback_client_host_and_an_http_redirect() {
+    const BASE: &str = "database_url = \"postgres://x\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\npublic_url = \"https://reeve.example.com\"\n[oidc]\nprovider = \"google\"\nclient_id = \"i\"\nclient_secret = \"s\"\n[mcp]\nenabled = true\n";
+    for (line, names) in [
+        ("client_hosts = [\"127.0.0.1\"]", "[mcp] client_hosts"),
+        (
+            "redirect_uris = [\"http://127.0.0.1:6274/cb\"]",
+            "[mcp] redirect_uris",
+        ),
+    ] {
+        let err = reeve_server::ServerConfig::parse(&format!("{BASE}{line}\n")).unwrap_err();
+        assert!(err.to_string().contains(names), "{line}: {err}");
+    }
+    // The control: the same configuration with real values loads.
+    assert!(
+        reeve_server::ServerConfig::parse(&format!(
+            "{BASE}client_hosts = [\"claude.ai\"]\nredirect_uris = [\"https://claude.ai/api/mcp/auth_callback\"]\n"
+        ))
+        .is_ok()
+    );
+}

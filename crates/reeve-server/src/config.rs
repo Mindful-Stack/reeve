@@ -217,6 +217,15 @@ pub struct McpConfig {
     /// no path and no trailing slash.
     #[serde(default)]
     pub allowed_origins: Option<Vec<String>>,
+    /// The addresses a client may be sent back to once a person has answered, compared exactly with the text
+    /// here (kb/ADR-0029 R3). Empty (the default): no client can connect. Each is an https address without a
+    /// fragment.
+    #[serde(default)]
+    pub redirect_uris: Vec<String>,
+    /// The hosts a client's metadata document may be fetched from, compared exactly. Empty (the default): no
+    /// client can connect. Each is a host name in lower case: no scheme, port, path or address.
+    #[serde(default)]
+    pub client_hosts: Vec<String>,
 }
 
 /// The GitHub pull-request webhook (`POST /webhooks/github`).
@@ -316,6 +325,16 @@ fn is_jira_prefix(p: &str) -> bool {
     let mut chars = p.chars();
     chars.next().is_some_and(|c| c.is_ascii_uppercase())
         && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+/// A host name as a parsed URL holds it: lower-case letters, digits, `-` and `.`, not ending in a dot, and not an
+/// IP address (the URL parser reads a host that ends in a number as one).
+fn is_host_name(h: &str) -> bool {
+    !h.is_empty()
+        && !h.ends_with('.')
+        && h.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        && matches!(url::Host::parse(h), Ok(url::Host::Domain(d)) if d == h)
 }
 
 fn is_loopback(host: &str) -> bool {
@@ -460,6 +479,36 @@ impl ServerConfig {
                 );
             }
         }
+        // Only the static provider (tests and local development, loopback only) may name a client on loopback
+        // and a redirect over http; `build_state` gives it the loopback-only fetcher by the same test.
+        #[cfg(feature = "static-oidc")]
+        let on_loopback = matches!(self.oidc, Some(OidcSection::Static { .. }));
+        #[cfg(not(feature = "static-oidc"))]
+        let on_loopback = false;
+        for r in &self.mcp.redirect_uris {
+            let ok = url::Url::parse(r).is_ok_and(|u| {
+                u.fragment().is_none()
+                    && (u.scheme() == "https"
+                        || (on_loopback
+                            && u.scheme() == "http"
+                            && is_loopback(u.host_str().unwrap_or(""))))
+            });
+            if !ok {
+                anyhow::bail!(
+                    "[mcp] redirect_uris entry {r:?} must be an https address without a fragment, such as https://claude.ai/api/mcp/auth_callback"
+                );
+            }
+        }
+        for h in &self.mcp.client_hosts {
+            let loopback_literal = on_loopback
+                && h.parse::<std::net::Ipv4Addr>()
+                    .is_ok_and(|ip| ip.is_loopback());
+            if !is_host_name(h) && !loopback_literal {
+                anyhow::bail!(
+                    "[mcp] client_hosts entry {h:?} must be a host name in lower case, such as claude.ai: no scheme, port, path or address"
+                );
+            }
+        }
         if let Some(g) = &self.github {
             if g.webhook_secret.len() < 16 {
                 anyhow::bail!("[github] webhook_secret must be at least 16 characters");
@@ -566,6 +615,14 @@ impl ServerConfig {
             anyhow::bail!("public_url must be https, or http on a loopback host");
         }
         Ok(u)
+    }
+    /// The instance's rules for MCP clients, as `reeve_identity::resolve_client` takes them: `[mcp] client_hosts`
+    /// and `[mcp] redirect_uris`.
+    pub fn client_policy(&self) -> reeve_identity::ClientPolicy {
+        reeve_identity::ClientPolicy {
+            client_hosts: self.mcp.client_hosts.clone(),
+            redirect_uris: self.mcp.redirect_uris.clone(),
+        }
     }
     pub fn identity(&self) -> reeve_identity::IdentityConfig {
         reeve_identity::IdentityConfig {
@@ -1113,6 +1170,87 @@ mod tests {
                 "{bad}: {e}"
             );
         }
+    }
+
+    /// Catches a list that is not empty by default, an entry stored other than as written, and each kind of entry
+    /// that could never match a real request. With the Google provider an http redirect and an address as a client
+    /// host are refused even on loopback.
+    #[test]
+    fn mcp_redirect_uris_and_client_hosts_default_to_empty_and_are_validated() {
+        let c = cfg(&format!("{GOOGLE}[mcp]\nenabled = true")).unwrap();
+        assert!(c.mcp.redirect_uris.is_empty() && c.mcp.client_hosts.is_empty());
+        let c = cfg(&format!(
+            "{GOOGLE}[mcp]\nredirect_uris = [\"https://claude.ai/api/mcp/auth_callback\"]\nclient_hosts = [\"claude.ai\", \"chatgpt.com\"]"
+        ))
+        .unwrap();
+        assert_eq!(
+            c.mcp.redirect_uris,
+            ["https://claude.ai/api/mcp/auth_callback"]
+        );
+        assert_eq!(c.mcp.client_hosts, ["claude.ai", "chatgpt.com"]);
+        for bad in [
+            "",
+            "claude.ai/api/mcp/auth_callback",
+            "http://claude.ai/api/mcp/auth_callback",
+            "https://claude.ai/api/mcp/auth_callback#x",
+            "ftp://127.0.0.1/cb",
+            "http://127.0.0.1:6274/cb",
+            "http://localhost/callback",
+        ] {
+            let e = cfg(&format!("{GOOGLE}[mcp]\nredirect_uris = [\"{bad}\"]")).unwrap_err();
+            assert!(e.to_string().contains("[mcp] redirect_uris"), "{bad}: {e}");
+        }
+        for bad in [
+            "",
+            "https://claude.ai",
+            "claude.ai:443",
+            "claude.ai/",
+            "claude.ai.",
+            "Claude.ai",
+            "*.claude.ai",
+            "127.0.0.1",
+            "[::1]",
+        ] {
+            let e = cfg(&format!("{GOOGLE}[mcp]\nclient_hosts = [\"{bad}\"]")).unwrap_err();
+            assert!(e.to_string().contains("[mcp] client_hosts"), "{bad}: {e}");
+        }
+    }
+
+    /// The exception is the static provider's alone and reaches no further than loopback. Catches an exception
+    /// that admits any http address or any IP address.
+    #[cfg(feature = "static-oidc")]
+    #[test]
+    fn only_the_static_provider_admits_a_loopback_client_host_and_an_http_loopback_redirect() {
+        const STATIC: &str = "public_url = \"http://127.0.0.1:7474\"\n[oidc]\nprovider = \"static\"\nstatic_email = \"dan@example.com\"\n";
+        let c = cfg(&format!(
+            "{STATIC}[mcp]\nenabled = true\nredirect_uris = [\"http://127.0.0.1:6274/cb\", \"https://claude.ai/api/mcp/auth_callback\"]\nclient_hosts = [\"127.0.0.1\", \"claude.ai\"]"
+        ))
+        .unwrap();
+        assert_eq!(c.mcp.client_hosts, ["127.0.0.1", "claude.ai"]);
+        assert_eq!(c.mcp.redirect_uris.len(), 2);
+        for bad in ["http://claude.ai/cb", "http://192.168.1.1/cb"] {
+            let e = cfg(&format!("{STATIC}[mcp]\nredirect_uris = [\"{bad}\"]")).unwrap_err();
+            assert!(e.to_string().contains("[mcp] redirect_uris"), "{bad}: {e}");
+        }
+        for bad in ["192.168.1.1", "10.0.0.1", "160.79.104.10"] {
+            let e = cfg(&format!("{STATIC}[mcp]\nclient_hosts = [\"{bad}\"]")).unwrap_err();
+            assert!(e.to_string().contains("[mcp] client_hosts"), "{bad}: {e}");
+        }
+    }
+
+    /// The example's two lists are real values: uncommented, they load.
+    #[test]
+    fn the_example_mcp_lists_load_once_uncommented() {
+        let text = include_str!("../../../reeve.example.toml")
+            .replace("# [mcp]", "[mcp]")
+            .replace("# redirect_uris", "redirect_uris")
+            .replace("# client_hosts", "client_hosts");
+        let c = ServerConfig::parse(&text).unwrap();
+        assert_eq!(
+            c.mcp.redirect_uris,
+            ["https://claude.ai/api/mcp/auth_callback"]
+        );
+        assert_eq!(c.mcp.client_hosts, ["claude.ai"]);
     }
 
     /// Catches an issuer that keeps the trailing slash the URL parser adds, one built from the text as typed

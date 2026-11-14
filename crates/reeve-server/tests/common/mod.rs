@@ -2,6 +2,9 @@
 use reeve_server::*;
 use testcontainers_modules::{postgres::Postgres, testcontainers::ContainerAsync};
 
+#[cfg(feature = "static-oidc")]
+pub mod clients;
+
 /// The `[github] webhook_secret` of the standard harness.
 pub const WEBHOOK_SECRET: &str = "0123456789abcdef0123";
 
