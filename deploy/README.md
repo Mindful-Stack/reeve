@@ -141,12 +141,12 @@ proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy
 
 ## MCP sign-in at the reverse proxy
 
-With `[mcp] enabled = true` the server answers two documents without a caller, which an MCP client reads to find where to sign in (kb/ADR-0029 R2, R11):
+With `[mcp] enabled = true` the server answers, without a caller, two documents which an MCP client reads to find where to sign in, and the authorize route they name (kb/ADR-0029 R2, R11). The documents:
 
 - `GET /.well-known/oauth-protected-resource/mcp`
 - `GET /.well-known/oauth-authorization-server`
 
-The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, these two answer 404 as well.
+The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents and `/oauth/authorize` answer 404 as well.
 
 The addresses in the documents are built from `public_url` as the server parses it (lower-case host, no default port), without its trailing slash, followed by the path: `public_url = "https://reeve.example.com/"` gives the MCP endpoint `https://reeve.example.com/mcp`. A client compares them with the address the person typed, as text, so that is the address to give people.
 
@@ -166,7 +166,23 @@ Limit both documents at the proxy. A chat provider's users all arrive from a few
 
 When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is that proxy's address and every caller shares one limit. Make nginx use the real client address first (`set_real_ip_from <the CDN's ranges>;` and `real_ip_header X-Forwarded-For;`, module `ngx_http_realip_module`), or key the zone on the header your CDN sets.
 
-The sign-in routes the documents name, `/oauth/authorize` and `/oauth/token`, are not served yet; their limits are added here when they are.
+### The authorize route
+
+`GET /oauth/authorize` is where an app sends a person's browser to connect. It answers without a caller, and each accepted request is held in memory for ten minutes; the server keeps at most 1 000. When it is full it drops the oldest request nobody has opened, and only when every request has been opened does it answer the app `temporarily_unavailable`. (Pending sign-ins, `/auth/login`, refuse instead of dropping: there every entry is a person halfway through signing in. Here an anonymous caller can open requests without end, since an app's client id and redirect address are public, so the ones nobody is looking at are the ones to give up.) A flood can therefore cost a person a second Connect, never a request they are looking at. Each request for an app the instance lists also makes the server fetch that app's metadata document. A restart of the server loses the requests it holds: a person who was on the approval page connects again from the app.
+
+Limit it per client address, as `/auth/login` is: here the caller is a person's own browser, not a provider's shared address. For nginx, 10 requests a minute per address:
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_authorize:10m rate=10r/m;
+
+    # in the server block, before the general proxy location
+    location = /oauth/authorize {
+        limit_req zone=reeve_authorize burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+The approval page, `/connect`, is a page of the web client and needs no rule of its own. `/oauth/token` is not served yet; its limit is added here when it is. Until then an app can bring a person to the approval page and be sent back with a code, but nothing exchanges the code: keep `[mcp]` off in production.
 
 ### Which apps may connect
 
