@@ -200,6 +200,8 @@ The approval page, `/connect`, is a page of the web client and needs no rule of 
 
 The route reads at most 16 KiB, answers within one database transaction and makes no outbound request (Claude waits ten seconds for it). A refresh token works once: if an answer is lost on the way, or an app sends two refreshes at once, the next attempt with the old token revokes the connection and the person connects again. Each such case is a `connection_revoked` entry with reason `refresh_token_reused` in the activity log, and a `warn` line `token request refused`, which never holds a code, a token or anything else the caller sent.
 
+A person can now connect an app, but cannot yet list or revoke their connections (kb/ADR-0029 R9; a later release adds it): only disabling the user or `reeve-server connections-revoke-all` ends one. Keep `[mcp]` off in production until then.
+
 ### Which apps may connect
 
 An app (an MCP client) is known by the https address of a metadata document it publishes; that address is its client id. Two lists in `[mcp]` decide which apps can connect, and both are empty by default, which means none:
@@ -468,7 +470,7 @@ Anything written after the dump is lost; the restored activity log's last entry 
 
    It prints `restored data matches` when the restored instance holds the same data as the export taken with the dump. An entry written between the dump and its export shows up as a difference. If `export` refuses with "run `reeve-server migrate` first", the image is newer than the dump: run step 6 first, then this check, and expect only the fields the newer server adds. The comparison needs only `grep` and `diff`; `jq` is not required.
 6. `docker compose run --rm --no-deps server migrate` (a newer image applies only the migrations newer than the dump; the same image applies nothing).
-7. End every MCP connection, with the server still stopped: `docker compose run --rm --no-deps server connections-revoke-all`. A restore rewinds refresh tokens: one that was used after the dump is unused again, and the newer one the app holds is unknown. The command revokes every live connection, writes a `connection_revoked` entry for each (reason `restored`, by `operator`) and prints `revoked <n> connections`. People connect their apps again; each sees its old connection under "Connected apps" as ended by a restore. It needs a server image with MCP sign-in; an older image has no such command and no connections to end.
+7. End every MCP connection, with the server still stopped: `docker compose run --rm --no-deps server connections-revoke-all`. A restore rewinds refresh tokens: one that was used after the dump is unused again, and the newer one the app holds is unknown. The command revokes every live connection, writes a `connection_revoked` entry for each (reason `restored`, by `operator`) and prints `revoked <n> connections`. People connect their apps again; each ended connection is a `connection_revoked` entry with reason `restored` in the activity log. It needs a server image with MCP sign-in; an older image has no such command and no connections to end.
 8. `docker compose start server`.
 9. Once the restored instance is confirmed (people sign in, the board shows the expected stories), drop the kept copy: `docker compose exec -T postgres dropdb -U reeve reeve_before_restore`, and start the decision check again: `sudo systemctl start reeve-decision-check.timer`.
 
