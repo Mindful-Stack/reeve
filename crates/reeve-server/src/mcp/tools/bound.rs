@@ -217,6 +217,24 @@ mod tests {
         assert_eq!(fit(&mut none, 0), 0);
     }
 
+    /// The budget is bytes, not characters: forty rows of 1 000 two-byte characters are 40 121 characters, which
+    /// would fit, and 80 121 bytes, which do not.
+    #[test]
+    fn a_list_within_the_budget_in_characters_but_not_in_bytes_is_fitted_by_bytes() {
+        let mut rows: Vec<String> = vec!["å".repeat(1_000); 40];
+        let json = serde_json::to_string(&rows).unwrap();
+        assert!(
+            json.chars().count() <= MAX_ANSWER && json.len() > MAX_ANSWER,
+            "the control: {} characters, {} bytes",
+            json.chars().count(),
+            json.len()
+        );
+        // A row is 2 002 bytes and its comma or bracket: 1 + 29 x 2 003 = 58 088 fits, a thirtieth row does not.
+        assert_eq!(fit(&mut rows, 0), 11);
+        assert_eq!(rows.len(), 29);
+        assert!(serde_json::to_string(&rows).unwrap().len() <= MAX_ANSWER);
+    }
+
     #[test]
     fn the_first_are_kept_and_the_rest_counted() {
         // Exactly the cap: all kept, none left out.

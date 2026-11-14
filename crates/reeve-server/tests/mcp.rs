@@ -850,6 +850,33 @@ async fn an_answer_too_large_to_send_is_a_tool_error_and_an_echoed_key_is_bounde
         "{text}"
     );
 
+    // The guard counts bytes, not characters: twenty criteria of 2 000 two-byte characters are about 41 000
+    // characters, under the limit, and about 81 000 bytes, over it.
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "mcp-wide", "title": "Wide", "kind": "story", "criteria": vec!["å".repeat(2_000); 20], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    let key = story["value"]["key"].as_str().unwrap();
+    let whole = api_context(&h, key).await.to_string();
+    assert!(
+        whole.chars().count() < 70_000 && whole.len() > 70_000,
+        "the control: {} characters, {} bytes",
+        whole.chars().count(),
+        whole.len()
+    );
+    let (_, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(answer["result"]["isError"], true, "{answer}");
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("The answer is too large to send (8"),
+        "{text}"
+    );
+
     // A key of 300 characters comes back as its first 200.
     let (_, answer) = call_get_story(&h, &t, json!({"key": "k".repeat(300)})).await;
     assert_eq!(
