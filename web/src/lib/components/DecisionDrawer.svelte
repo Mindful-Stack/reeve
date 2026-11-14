@@ -6,7 +6,7 @@
 	import { api, ApiError, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, DecisionQueueEntry, NeededIn } from '#lib/api/types.ts';
 	import { COLUMN_LABEL } from '#lib/board.ts';
-	import { dateLine, isNowReason, neededLabel, nextStepText, REVERSIBILITY_TEXT, shortSha, today } from '#lib/decisions.ts';
+	import { dateLine, neededLabel, nextStepText, REVERSIBILITY_TEXT, shortSha, today } from '#lib/decisions.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
@@ -93,7 +93,7 @@
 
 	/** An open, unsatisfied decision no goal, discovery or promise waits on yet: the strip says so instead of staying empty. */
 	function notNeeded(e: DecisionQueueEntry): boolean {
-		return e.needed_in === 'none' && !e.decision.closed && e.decision.check.kind !== 'accepted';
+		return (e.lane === 'open' || e.lane === 'review') && !e.decision.closed && e.decision.check.kind !== 'accepted';
 	}
 
 	const list = $derived(entry ? [entry.decision] : []);
@@ -158,22 +158,17 @@
 			>
 		{/if}
 
-		{#if e.needed_in !== 'none' || notNeeded(e) || next}
+		{@const label = neededLabel(e)}
+		{@const reason = e.needed_in_reason}
+		{#if label || reason || notNeeded(e) || next}
 			<div class="strip" data-testid="strip">
-				{#if e.needed_in !== 'none'}
-					{@const reason = e.needed_in_reason}
+				{#if label || reason}
 					{@const row = { kind: 'decision' as const, entry: e }}
 					<p class="needed">
-						{#if reason && isNowReason(reason)}
-							<NeededInReason {reason} {row} />
-						{:else}
-							<strong>{neededLabel(e.needed_in)}</strong>
-							{#if reason}{' · '}<NeededInReason {reason} {row} />{/if}
-						{/if}
-						{#if e.under}{' · '}under {e.under}, in discovery{/if}
+						{#if label}<strong>{label}</strong>{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} {row} />{/if}
 					</p>
 				{:else if notNeeded(e)}
-					<p class="needed"><strong>{neededLabel('none')}</strong></p>
+					<p class="needed"><strong>Not needed yet</strong></p>
 				{/if}
 				{#if next}
 					<p class="next-step">

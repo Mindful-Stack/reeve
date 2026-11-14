@@ -9,10 +9,10 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import NeededInReason from '#lib/components/NeededInReason.svelte';
-	import { filterDecisions, itemHref, LANE_ANCHOR, LANE_LABEL, LANE_ORDER, queueRows, type DiscoveryRow, type PageLane, type QueueRow } from '#lib/decisions.ts';
+	import { filterDecisions, holdsLabel, itemHref, LANE_ANCHOR, LANE_LABEL, LANE_ORDER, queueRows, type DiscoveryRow, type PageLane, type QueueRow } from '#lib/decisions.ts';
 	import { decisionHref } from '#lib/drawer.ts';
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
-	import { age, errorMessage, plural } from '#lib/format.ts';
+	import { age, errorMessage } from '#lib/format.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { itemRoute } from '#lib/urgency.ts';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -92,8 +92,6 @@
 		return (
 			[
 				[s.review, 'to review'],
-				[s.this_sprint, 'this sprint'],
-				[s.next_sprint, 'next sprint'],
 				[s.overdue, 'overdue']
 			] as const
 		)
@@ -188,8 +186,7 @@
 
 {#snippet discovery(r: DiscoveryRow)}
 	{@const d = r.row}
-	{@const held = d.blocks.length}
-	{@const holds = held ? `Holds ${plural(held, 'story', 'stories')}${d.under_way.length ? ` · ${d.under_way.length} under way` : ''}` : `${d.under_way.length} under way`}
+	{@const holds = holdsLabel(d.blocks, d.under_way)}
 	{@const open = storiesOpen.has(d.key)}
 	<div class="discovery" data-discovery={d.key}>
 		<h3 class="cell headline"><a class="item" href={itemRoute({ item: d.level, key: d.key }, page.url)}><Glyph level={d.level} /><span class="key">{d.key}</span> <span class="title">{d.title}</span></a></h3>
@@ -203,7 +200,9 @@
 				onclick={() => (open ? storiesOpen.delete(d.key) : storiesOpen.add(d.key))}>{holds} <span aria-hidden="true">{open ? '▾' : '▸'}</span></button
 			></span
 		>
-		<span class="cell status"><StatusDot tone="warn" label={d.also ? `in discovery · with ${d.also}` : 'in discovery'} /></span>
+		<span class="cell status"
+			><StatusDot tone="warn" label="in discovery" />{#if d.also}{' · with '}<a class="key" href={itemRoute({ item: 'initiative', key: d.also }, page.url)}>{d.also}</a>{/if}</span
+		>
 		{#if d.needed_in_reason}<p class="reason" data-testid="reason"><NeededInReason reason={d.needed_in_reason} row={r} /></p>{/if}
 		{#if open}
 			<ul class="stories" id="discovery-{d.key}-stories">

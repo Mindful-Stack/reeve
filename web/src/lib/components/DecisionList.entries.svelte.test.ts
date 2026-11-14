@@ -72,7 +72,7 @@ describe('DecisionList entries', () => {
 		] as const) {
 			const d = decision(PR);
 			const { row } = mountWith(d, {
-				entries: entryFor(d, { needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
+				entries: entryFor(d, { lane: 'next_sprint', needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
 			});
 			expect(row.querySelector('.needed a')?.getAttribute('href')).toBe(href);
 			expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 GRA-12 is in discovery');
@@ -80,6 +80,12 @@ describe('DecisionList entries', () => {
 			app = null;
 			document.body.innerHTML = '';
 		}
+	});
+
+	it("labels a nested decision by its row's lane with \"in discovery\", although it has no window of its own", () => {
+		const d = decision(PR);
+		const { row } = mountWith(d, { entries: entryFor(d, { lane: 'this_sprint', needed_in: 'none', under: 'ABC-2' }) });
+		expect(row.querySelector('.needed')?.textContent).toBe('Needed this sprint \u00b7 in discovery');
 	});
 
 	it('links the promised item: a story opens its drawer over the lane it is in, an epic its page', () => {
@@ -90,6 +96,7 @@ describe('DecisionList entries', () => {
 			const d = decision(PR);
 			const { row } = mountWith(d, {
 				entries: entryFor(d, {
+					lane: 'next_sprint',
 					needed_in: 'next_sprint',
 					needed_in_reason: { kind: 'promise', key, level, on: '2026-12-01', overdue: false }
 				})
@@ -109,6 +116,7 @@ describe('DecisionList entries', () => {
 		const { row } = mountWith(d, {
 			entries: entryFor(d, {
 				next_step: { kind: 'review_record', pr_url: PR },
+				lane: 'next_sprint',
 				needed_in: 'next_sprint',
 				needed_in_reason: { kind: 'goal', goal_id: 3, outcome: 'Ship tiers' },
 				blocks: [blockedStory({ key: 'ABC-31' }), blockedStory({ key: 'ABC-32' })],
@@ -118,7 +126,7 @@ describe('DecisionList entries', () => {
 		const step = row.querySelector('.next-step')!;
 		expect(step.textContent?.trim()).toBe('Linked PR \u00b7 not accepted yet');
 		expect(step.querySelector('a')?.getAttribute('href')).toBe(PR);
-		// The label stays beside the reason, so a row in the review lane still says which sprint it is for.
+		// The label stays beside the reason, so a row still says which sprint its lane is.
 		expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 for goal: Ship tiers');
 		expect(row.querySelector('[data-field="blocks"]')?.textContent).toContain('Holds 2 stories \u00b7 1 under way');
 		// On the queue page the label goes: a row's line is its reason alone, a Now line reads off the row, and a

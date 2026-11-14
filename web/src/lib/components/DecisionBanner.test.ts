@@ -19,14 +19,10 @@ const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, ' ').trim(
 const found = (lane: QueueLane, n: number) => Array.from({ length: n }, (_, i) => discoveryEntry({ key: `ABC-${i + 1}`, lane }));
 
 describe('DecisionBanner', () => {
-	it('names discoveries and decisions per window, each part one link to its lane', () => {
-		const nav = show({ this_sprint: 1, review: 4 }, [...found('this_sprint', 2), ...found('next_sprint', 2), ...found('beyond', 3)]);
-		expect(text(nav)).toBe('⚑ 2 in discovery and 1 decision needed this sprint · 2 in discovery needed next sprint');
+	it('names discoveries and decisions per window with the number form, each part one link to its lane', () => {
+		const nav = show({ this_sprint: 1, next_sprint: 3, review: 4 }, [...found('this_sprint', 2), ...found('next_sprint', 2), ...found('beyond', 3)]);
+		expect(text(nav)).toBe('⚑ 2 in discovery and 1 decision needed this sprint · 2 in discovery and 3 decisions needed next sprint');
 		expect([...nav!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/decisions#this-sprint', '/decisions#next-sprint']);
-	});
-
-	it('leaves out a zero kind within a part, and picks the number form', () => {
-		expect(text(show({ this_sprint: 1, next_sprint: 3 }))).toBe('⚑ 1 decision needed this sprint · 3 decisions needed next sprint');
 	});
 
 	it('is a labelled nav, with the flag hidden from assistive technology', () => {

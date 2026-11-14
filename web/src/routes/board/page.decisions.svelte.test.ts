@@ -106,7 +106,7 @@ describe('board decisions', () => {
 		await mounted();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Could not load readiness · Retry');
+			expect(text(q('.queue-note'))).toBe('Could not load the readiness queue · Retry');
 		});
 		queue = { entries: [], discoveries: [], summary: queueSummary() };
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
@@ -128,7 +128,7 @@ describe('board decisions', () => {
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Readiness counts may be out of date · Retry');
+			expect(text(q('.queue-note'))).toBe('Readiness queue counts may be out of date · Retry');
 		});
 		expect(q('nav.decision-banner')).toBeNull();
 		queue = { entries: [], discoveries: [], summary: queueSummary({ this_sprint: 2 }) };
@@ -193,7 +193,7 @@ describe('board decisions', () => {
 		await mounted();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Could not load readiness · Retry');
+			expect(text(q('.queue-note'))).toBe('Could not load the readiness queue · Retry');
 		});
 		expect(q('nav.decision-banner')).toBeNull();
 		expect(q('[data-testid="card-ABC-2"]')).not.toBeNull();
@@ -213,7 +213,7 @@ describe('board decisions', () => {
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('.queue-note'))).toBe('Readiness counts may be out of date · Retry');
+			expect(text(q('.queue-note'))).toBe('Readiness queue counts may be out of date · Retry');
 		});
 		expect(text(q('nav.decision-banner'))).toBe('⚑ 2 decisions needed this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();

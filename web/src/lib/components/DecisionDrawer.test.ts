@@ -116,7 +116,7 @@ describe('DecisionDrawer', () => {
 	});
 
 	it('says an open decision nothing waits on is not needed yet, and that it holds nothing yet', async () => {
-		const drawer = await open(entry({ needed_in: 'none', needed_in_reason: null, next_step: null }));
+		const drawer = await open(entry({ lane: 'open', needed_in: 'none', needed_in_reason: null, next_step: null }));
 		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet dan decides · Due today');
 		const held = drawer.querySelector('.held')!;
 		expect(words(held)).toBe('Held work Holds nothing yet');
@@ -134,7 +134,13 @@ describe('DecisionDrawer', () => {
 		app = null;
 		document.body.innerHTML = '';
 		const nested = await open(entry({ under: 'ABC-1' }));
-		expect(words(nested.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 for goal: Ship tiers \u00b7 under ABC-1, in discovery');
+		expect(words(nested.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 in discovery \u00b7 for goal: Ship tiers');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		// Nested with no window of its own, the label still follows the row's lane.
+		const bare = await open(entry({ under: 'ABC-1', needed_in: 'none', needed_in_reason: null }));
+		expect(words(bare.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 in discovery');
 	});
 
 	it('says a closed or accepted decision holds nothing, without "yet"', async () => {
@@ -284,7 +290,7 @@ describe('DecisionDrawer', () => {
 			['epic', '/epics/GRA-12']
 		] as const) {
 			const drawer = await open(
-				entry({ needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
+				entry({ lane: 'next_sprint', needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
 			);
 			const a = drawer.querySelector<HTMLAnchorElement>('.strip .needed a');
 			expect(a?.getAttribute('href')).toBe(href);
@@ -319,6 +325,7 @@ describe('DecisionDrawer', () => {
 					closed: { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'decided' }
 				}),
 				next_step: null,
+				lane: 'closed',
 				needed_in: 'none',
 				needed_in_reason: null
 			})

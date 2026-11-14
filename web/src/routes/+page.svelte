@@ -129,7 +129,7 @@
 			<section aria-labelledby="home-decisions">
 				<div class="head">
 					<h2 id="home-decisions">Decisions you decide</h2>
-					<a href="/decisions?mine=1">Decisions →</a>
+					<a href="/decisions?mine=1">Readiness →</a>
 				</div>
 				{#if listed.length > 0}
 					<DecisionList

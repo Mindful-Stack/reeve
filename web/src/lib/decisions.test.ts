@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DecisionQueueEntry, NeededInReason, QueueLane, RequiredDecision } from '#lib/api/types.ts';
-import { discoveryEntry, queueEntry } from '#lib/test/fixtures.ts';
+import { blockedStory, discoveryEntry, queueEntry } from '#lib/test/fixtures.ts';
 import {
 	LANE_LABEL,
 	LANE_ORDER,
@@ -14,11 +14,10 @@ import {
 	type PageLane,
 	type QueueRow,
 	reasonHref,
-	reasonParts,
 	decisionStatus,
 	filterDecisions,
 	itemHref,
-	neededInText,
+	holdsLabel,
 	neededLabel,
 	nextStepText,
 	overdue,
@@ -200,66 +199,56 @@ describe('next step and needed-in wording', () => {
 		expect(nextStepText({ kind: 'await_check', checked_at: '2026-11-10T09:00:00Z' }, null, now)).toBe('Waiting for the check (last ran 3h ago)');
 	});
 
-	it('reads the Now rules: links for urgent and decision_due, nothing more without the row', () => {
+	it('reads every reason kind off a decision row and a discovery row: its line and where it links', () => {
 		const board = new URL('https://reeve.test/board');
-		const rules: NeededInReason[] = [
-			{ kind: 'urgent', key: 'ABC-5', level: 'epic' },
-			{ kind: 'urgent', key: 'ABC-6', level: 'story' },
-			{ kind: 'target_month', month: '2026-11' },
-			{ kind: 'decision_due', id: 20 },
-			{ kind: 'held' }
-		];
-		expect(reasonHref(rules[0], board)).toBe('/epics/ABC-5');
-		expect(reasonHref(rules[1], board)).toBe('/board?story=ABC-6');
-		expect(reasonHref(rules[3], board)).toBe('/board?decision=20');
-		expect(reasonHref(rules[2], board)).toBeNull();
-		expect(reasonHref(rules[4], board)).toBeNull();
-		for (const r of rules) {
-			expect(neededInText(r)).toBe('needed (reason not shown)');
-			expect(reasonParts(r)).toBeNull();
-		}
-	});
-
-	it('says why a decision is needed and in which sprint', () => {
-		expect(neededInText({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBe('for goal: Ship X');
-		expect(neededInText({ kind: 'discovery', key: 'GRA-12', level: 'initiative' })).toBe('GRA-12 is in discovery');
-		const board = new URL('https://reeve.test/board');
-		expect(reasonHref({ kind: 'discovery', key: 'GRA-12', level: 'initiative' }, board)).toBe('/initiatives/GRA-12');
-		expect(reasonHref({ kind: 'discovery', key: 'GRA-13', level: 'epic' }, board)).toBe('/epics/GRA-13');
-		expect(reasonHref({ kind: 'goal', goal_id: 1, outcome: 'Ship X' }, board)).toBeNull();
-		expect(neededInText({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false })).toBe(
-			'promised by 20 Nov: ABC-12'
-		);
-		expect(neededInText({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-10', overdue: true })).toBe(
-			'promised by 10 Nov, overdue: ABC-12'
-		);
-		expect(neededInText({ kind: 'unknown' })).toBe('needed (reason not shown)');
-		expect(reasonHref({ kind: 'unknown' }, board)).toBeNull();
+		const due = queueEntry({ decision: dec(4, { due: '2026-11-17' }), blocks: [blockedStory()], under_way: [] });
+		const dRow: QueueRow = { kind: 'decision', entry: due };
+		const nested: QueueRow = { kind: 'discovery', row: discoveryEntry({ key: 'ABC-2', blocks: [], under_way: [blockedStory(), blockedStory()] }), nested: [due] };
+		const line = (r: NeededInReason, row: QueueRow) => {
+			const p = reasonLine(r, row);
+			return [p.before + (p.key && `<${p.key}>`) + p.after, reasonHref(r, board)];
+		};
+		const goal = { kind: 'goal', goal_id: 1, outcome: 'Ship X' } as const;
+		const promise = { kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false } as const;
 		// A kind newer than the generated types still reads safely at run time.
 		const future = { kind: 'future_thing' } as never;
-		expect(neededInText(future)).toBe('needed (reason not shown)');
-		expect(reasonHref(future, board)).toBeNull();
-		expect(reasonParts(future)).toBeNull();
-		// The phrase split around the key a view links.
-		expect(reasonParts({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-10', overdue: true })).toEqual({
-			before: 'promised by 10 Nov, overdue: ',
-			key: 'ABC-12',
-			after: ''
-		});
-		expect(reasonParts({ kind: 'discovery', key: 'GRA-12', level: 'epic' })).toEqual({ before: '', key: 'GRA-12', after: ' is in discovery' });
-		expect(reasonParts({ kind: 'goal', goal_id: 1, outcome: 'Ship X' })).toBeNull();
-		expect(reasonParts({ kind: 'unknown' })).toBeNull();
-		// A story's promise opens its drawer over the current page; an epic's opens the epic page.
-		expect(reasonHref({ kind: 'promise', key: 'ABC-12', level: 'story', on: '2026-11-20', overdue: false }, board)).toBe(
-			'/board?story=ABC-12'
-		);
-		expect(reasonHref({ kind: 'promise', key: 'ABC-5', level: 'epic', on: '2026-11-20', overdue: false }, board)).toBe(
-			'/epics/ABC-5'
-		);
-		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
-		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
-		expect(neededLabel('beyond')).toBe('Needed later');
-		expect(neededLabel('none')).toBe('Not needed yet');
+		const table: [string, NeededInReason, QueueRow, string, string | null][] = [
+			['goal', goal, dRow, 'for goal: Ship X', null],
+			['discovery', { kind: 'discovery', key: 'GRA-12', level: 'initiative' }, dRow, '<GRA-12> is in discovery', '/initiatives/GRA-12'],
+			['discovery epic', { kind: 'discovery', key: 'GRA-13', level: 'epic' }, dRow, '<GRA-13> is in discovery', '/epics/GRA-13'],
+			['promise story', promise, dRow, 'promised by 20 Nov: <ABC-12>', '/board?story=ABC-12'],
+			['promise overdue epic', { ...promise, key: 'ABC-5', level: 'epic', on: '2026-11-10', overdue: true }, dRow, 'promised by 10 Nov, overdue: <ABC-5>', '/epics/ABC-5'],
+			['urgent epic', { kind: 'urgent', key: 'ABC-5', level: 'epic' }, dRow, 'Now · urgent via <ABC-5>', '/epics/ABC-5'],
+			['urgent story', { kind: 'urgent', key: 'ABC-6', level: 'story' }, nested, 'Now · urgent via <ABC-6>', '/board?story=ABC-6'],
+			['target month', { kind: 'target_month', month: '2026-11' }, dRow, 'Now · target Nov 2026', null],
+			['due, a decision', { kind: 'decision_due', id: 4 }, dRow, 'Now · due 17 Nov', '/board?decision=4'],
+			['due, a row', { kind: 'decision_due', id: 4 }, nested, 'Now · <decision #4> due 17 Nov', '/board?decision=4'],
+			['held, a decision', { kind: 'held' }, dRow, 'Now · holds 1', null],
+			['held, a row holding none', { kind: 'held' }, nested, 'Now · holds none, 2 under way', null],
+			['unknown', { kind: 'unknown' }, dRow, 'needed (reason not shown)', null],
+			['a future kind', future, dRow, 'needed (reason not shown)', null]
+		];
+		expect(table.map(([name, r, row]) => [name, ...line(r, row)])).toEqual(table.map(([name, , , text, href]) => [name, text, href]));
+	});
+
+	it('labels when a decision is needed by its lane, and a nested one as in discovery', () => {
+		const e = (more: Partial<DecisionQueueEntry>) => queueEntry(more);
+		expect(neededLabel(e({ lane: 'this_sprint', needed_in: 'beyond' }))).toBe('Needed this sprint');
+		expect(neededLabel(e({ lane: 'next_sprint' }))).toBe('Needed next sprint');
+		expect(neededLabel(e({ lane: 'beyond' }))).toBe('Needed later');
+		// Now says so in its reason; open, accepted and closed decisions are needed nowhere.
+		expect(neededLabel(e({ lane: 'beyond', needed_in_reason: { kind: 'held' } }))).toBeNull();
+		for (const lane of ['open', 'satisfied', 'closed'] as const) expect(neededLabel(e({ lane }))).toBeNull();
+		// Nested: the row's lane, "in discovery" even with no window of its own; under a Now row it is not Later.
+		expect(neededLabel(e({ lane: 'next_sprint', needed_in: 'none', under: 'ABC-2' }))).toBe('Needed next sprint \u00b7 in discovery');
+		expect(neededLabel(e({ lane: 'beyond', under: 'ABC-2' }))).toBe('in discovery');
+	});
+
+	it('says what a row holds, and only the stories under way when it holds none', () => {
+		const some = [blockedStory({ key: 'ABC-1' }), blockedStory({ key: 'ABC-2' })];
+		expect(holdsLabel(some, [])).toBe('Holds 2 stories');
+		expect(holdsLabel(some.slice(0, 1), some)).toBe('Holds 1 story \u00b7 2 under way');
+		expect(holdsLabel([], some)).toBe('2 under way');
 	});
 
 	it('orders and labels every lane', () => {
@@ -311,6 +300,10 @@ describe('queueRows', () => {
 			open: [6],
 			closed: [7]
 		});
+	});
+
+	it("reads an older server's review lane as open", () => {
+		expect(shape(queueRows({ entries: [e(1, 'review')], discoveries: [] }))).toEqual({ open: [1] });
 	});
 
 	it('puts a row whose `at` is the end after every entry', () => {

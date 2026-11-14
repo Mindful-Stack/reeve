@@ -7,7 +7,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
-	import { closeActions, dateLine, decisionStatus, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
+	import { closeActions, dateLine, decisionStatus, holdsLabel, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
 	import { age, errorMessage, short } from '#lib/format.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
@@ -615,7 +615,7 @@
 	{@const entry = entries?.get(d.id)}
 	{@const underWay = entry?.under_way ?? []}
 	{@const work = blocked.length + underWay.length > 0}
-	{@const holds = entry ? `Holds ${stories(blocked.length)}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
+	{@const holds = entry ? holdsLabel(blocked, underWay) : `Blocks ${stories(blocked.length)}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
@@ -675,11 +675,12 @@
 		{#if entry && !d.closed}
 			{@const next = entry.next_step}
 			{@const reason = entry.needed_in_reason}
-			{@const showNeeded = inQueue ? !!reason && !entry.under : entry.needed_in !== 'none'}
+			{@const label = inQueue ? null : neededLabel(entry)}
+			{@const showNeeded = inQueue ? !!reason && !entry.under : !!label || !!reason}
 			{#if next || showNeeded}
 				<div class="lines">
 					{#if showNeeded}
-						<p class="needed" data-testid="needed">{#if !inQueue}{neededLabel(entry.needed_in)}{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} row={{ kind: 'decision', entry }} />{/if}</p>
+						<p class="needed" data-testid="needed">{#if label}{label}{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} row={{ kind: 'decision', entry }} />{/if}</p>
 					{/if}
 					{#if next}
 						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}

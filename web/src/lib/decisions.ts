@@ -4,7 +4,6 @@ import type {
 	DecisionQueue,
 	DecisionQueueEntry,
 	DiscoveryEntry,
-	NeededIn,
 	NeededInReason,
 	NextStep,
 	QueueLane,
@@ -157,16 +156,10 @@ export const LANE_LABEL: Record<PageLane, string> = {
 /** The anchors of the lanes that have one on the queue page. */
 export const LANE_ANCHOR: Partial<Record<PageLane, string>> = { this_sprint: 'this-sprint', next_sprint: 'next-sprint' };
 
-const NOW_KINDS: ReadonlySet<NeededInReason['kind']> = new Set<NeededInReason['kind']>(['urgent', 'target_month', 'decision_due', 'held']);
-
-/** A Now-kind reason (the four rules of spec §3). */
-export function isNowReason(r: NeededInReason | null | undefined): boolean {
-	return !!r && NOW_KINDS.has(r.kind);
-}
-
-/** The page lane of a wire lane and its reason. `review` is no longer sent; an older server's reads as Open. */
+/** The page lane of a wire lane and its reason: `beyond` is Now when it carries a reason (Later never does, a server
+ *  invariant). `review` is no longer sent; an older server's reads as Open. */
 export function pageLane(lane: QueueLane, reason: NeededInReason | null | undefined): PageLane {
-	if (lane === 'beyond') return isNowReason(reason) ? 'now' : 'later';
+	if (lane === 'beyond') return reason != null ? 'now' : 'later';
 	return lane === 'review' ? 'open' : lane;
 }
 
@@ -176,10 +169,11 @@ export type QueueRow = { kind: 'decision'; entry: DecisionQueueEntry } | Discove
 export type DiscoveryRow = { kind: 'discovery'; row: DiscoveryEntry; nested: DecisionQueueEntry[] };
 
 /** The page's top-level rows per lane, in server order (nothing is re-sorted): each discovery row goes before
- *  `entries[at]` (`discoveries` arrive in ascending `at`, as the server emits them), a decision with `under` goes inside the row it names (one the response lacks leaves it standing
- *  alone), and `beyond` splits into Now and Later. With `me`, a standalone decision is kept when `me` decides it and a
- *  row when it nests a decision `me` decides; a kept row keeps its whole nested list (the list renders only the
- *  decisions the page passes it), so its reason can name any of them. Closed and satisfied decisions never nest. */
+ *  `entries[at]` (`discoveries` arrive in ascending `at`, as the server emits them), a decision with `under` goes inside
+ *  the row it names (one the response lacks leaves it standing alone), and `beyond` splits into Now and Later. With
+ *  `me`, a standalone decision is kept when `me` decides it and a row when it nests a decision `me` decides; a kept row
+ *  keeps its whole nested list (the list renders only the decisions the page passes it), so its reason can name any of
+ *  them. Closed and satisfied decisions never nest. */
 export function queueRows(q: Pick<DecisionQueue, 'entries' | 'discoveries'>, f: { me?: string } = {}): Map<PageLane, QueueRow[]> {
 	const out = new Map<PageLane, QueueRow[]>();
 	const lane = (l: PageLane): QueueRow[] => {
@@ -205,8 +199,8 @@ export function queueRows(q: Pick<DecisionQueue, 'entries' | 'discoveries'>, f: 
 		else if (mine(e)) lane(pageLane(e.lane, e.needed_in_reason)).push({ kind: 'decision', entry: e });
 	});
 	rowsBefore(Infinity);
-	if (f.me) for (const rows of out.values()) rows.splice(0, rows.length, ...rows.filter((r) => r.kind === 'decision' || r.nested.some(mine)));
-	return out;
+	if (!f.me) return out;
+	return new Map([...out].map(([l, rows]) => [l, rows.filter((r) => r.kind === 'decision' || r.nested.some(mine))]));
 }
 
 /** What an open, unsatisfied decision needs next, as one line. `reversibility` decides whether closing is offered. */
@@ -225,71 +219,24 @@ export function nextStepText(s: NextStep, reversibility: Reversibility | null | 
 	}
 }
 
-type KeyedReason = Extract<NeededInReason, { kind: 'discovery' | 'promise' }>;
 /** A reason phrase split around the item key it names, so a view can make the key a link. */
 export type ReasonParts = { before: string; key: string; after: string };
 
-function keyedParts(r: KeyedReason): ReasonParts {
-	return r.kind === 'discovery'
-		? { before: '', key: r.key, after: ' is in discovery' }
-		: { before: `promised by ${dayLabel(r.on)}${r.overdue ? ', overdue' : ''}: `, key: r.key, after: '' };
-}
-
-/** `neededInText` split around the key of the item it names (in discovery, or holding a promise); null for a reason
- *  that names no item (a goal, a Now rule, or one this client does not know). A Now rule reads off its queue row. */
-export function reasonParts(r: NeededInReason): ReasonParts | null {
-	switch (r.kind) {
-		case 'discovery':
-		case 'promise':
-			return keyedParts(r);
-		case 'goal':
-		case 'urgent':
-		case 'target_month':
-		case 'decision_due':
-		case 'held':
-		case 'unknown':
-			return null;
-		default: {
-			// A kind newer than the generated types: compile-time exhaustive, harmless at run time.
-			r satisfies never;
-			return null;
-		}
-	}
-}
-
-/** Why the decision is needed when it is: the goal's outcome, the discovery that waits on it, or the promise of an
- *  affected story (the item holding it, the effective date, and whether it is overdue). A reason added after this
- *  client was built reads `unknown`, and so does any kind the generated types do not list. */
-export function neededInText(r: NeededInReason): string {
-	switch (r.kind) {
-		case 'goal':
-			return `for goal: ${r.outcome}`;
-		case 'discovery':
-		case 'promise': {
-			const p = keyedParts(r);
-			return p.before + p.key + p.after;
-		}
-		// A Now rule reads off its queue row (what it holds, a decision's date): without the row it says nothing more.
-		case 'urgent':
-		case 'target_month':
-		case 'decision_due':
-		case 'held':
-		case 'unknown':
-			return 'needed (reason not shown)';
-		default: {
-			r satisfies never;
-			return 'needed (reason not shown)';
-		}
-	}
-}
-
-/** A queue row's reason as one line: a Now reason (spec §3) reads off its row (what it holds, the date of the decision
- *  it names) after "Now · "; any other is its phrase (`reasonParts`, else `neededInText`). `key` is what the line links
- *  (`reasonHref`), empty when it links nothing. */
+/** A queue row's reason as one line, split around the key it links (`reasonHref`; `key` is empty when it links
+ *  nothing). A Now reason (spec §3) reads off its row (what it holds, the date of the decision it names) after
+ *  "Now · "; the others name the goal's outcome, the discovery that waits on a decision, or the promise of an affected
+ *  story (the item holding it, the effective date, and whether it is overdue). A reason added after this client was
+ *  built reads `unknown`, and so does any kind the generated types do not list. */
 export function reasonLine(r: NeededInReason, row: QueueRow): ReasonParts {
 	const text = (before: string): ReasonParts => ({ before, key: '', after: '' });
 	const lists = row.kind === 'decision' ? row.entry : row.row;
 	switch (r.kind) {
+		case 'goal':
+			return text(`for goal: ${r.outcome}`);
+		case 'discovery':
+			return { before: '', key: r.key, after: ' is in discovery' };
+		case 'promise':
+			return { before: `promised by ${dayLabel(r.on)}${r.overdue ? ', overdue' : ''}: `, key: r.key, after: '' };
 		case 'urgent':
 			return { before: 'Now · urgent via ', key: r.key, after: '' };
 		case 'target_month':
@@ -299,14 +246,19 @@ export function reasonLine(r: NeededInReason, row: QueueRow): ReasonParts {
 			const own = row.kind === 'decision';
 			const d = own ? row.entry.decision : row.nested.find((e) => e.decision.id === r.id)?.decision;
 			const when = d?.due ? ` due ${dayLabel(d.due)}` : '';
-			return own ? text(when ? `Now ·${when}` : 'Now') : { before: 'Now · ', key: `decision #${r.id}`, after: when };
+			return own ? text(`Now ·${when}`) : { before: 'Now · ', key: `decision #${r.id}`, after: when };
 		}
 		case 'held': {
 			const held = lists.blocks.length;
 			return text(held ? `Now · holds ${held}` : `Now · holds none, ${lists.under_way.length} under way`);
 		}
-		default:
-			return reasonParts(r) ?? text(neededInText(r));
+		case 'unknown':
+			return text('needed (reason not shown)');
+		default: {
+			// A kind newer than the generated types: compile-time exhaustive, harmless at run time.
+			r satisfies never;
+			return text('needed (reason not shown)');
+		}
 	}
 }
 
@@ -332,16 +284,20 @@ export function reasonHref(r: NeededInReason, url: { readonly href: string }): s
 	}
 }
 
-/** The sprint a decision is needed in, shown beside `neededInText` outside the queue page (Home, item pages, the drawer). */
-export function neededLabel(n: NeededIn): string {
-	switch (n) {
-		case 'this_sprint':
-			return 'Needed this sprint';
-		case 'next_sprint':
-			return 'Needed next sprint';
-		case 'beyond':
-			return 'Needed later';
-		case 'none':
-			return 'Not needed yet';
-	}
+/** The sprint a decision is needed in outside the queue page (Home, item pages, the drawer), read off its lane, which
+ *  is what the page, the banner and Home count, not off its own window; a decision nested under a discovery row adds
+ *  "in discovery" (no key: the header already links the item). Null when its lane says nothing of a sprint (Now says
+ *  it in its reason). */
+export function neededLabel(e: Pick<DecisionQueueEntry, 'lane' | 'needed_in_reason' | 'under'>): string | null {
+	const sprint = { this_sprint: 'Needed this sprint', next_sprint: 'Needed next sprint' } as const;
+	// A nested decision on a `beyond` row sits in Now (rows never sit in Later), whatever its own window says.
+	const later = e.lane === 'beyond' && !e.under && pageLane(e.lane, e.needed_in_reason) === 'later';
+	const base = e.lane === 'this_sprint' || e.lane === 'next_sprint' ? sprint[e.lane] : later ? 'Needed later' : null;
+	return [base, e.under ? 'in discovery' : null].filter(Boolean).join(' · ') || null;
+}
+
+/** What a queue row holds: "Holds N stories · M under way", or "M under way" when it holds none. */
+export function holdsLabel(blocks: readonly unknown[], underWay: readonly unknown[]): string {
+	const away = `${underWay.length} under way`;
+	return blocks.length ? `Holds ${plural(blocks.length, 'story', 'stories')}${underWay.length ? ` · ${away}` : ''}` : away;
 }
