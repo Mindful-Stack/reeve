@@ -87,7 +87,7 @@ async fn pending(requests: &AuthorizationRequests) -> (String, String, String, F
 #[tokio::test]
 async fn approving_writes_the_entry_and_returns_the_requests_code() {
     let (_db, pool) = common::pg().await;
-    let requests = AuthorizationRequests::new();
+    let requests = AuthorizationRequests::default();
     let (id, approval, client_id, _host) = pending(&requests).await;
     let who = dan(TokenKind::Interactive);
     let log = MemActivity(Mutex::new(vec![]));
@@ -167,7 +167,7 @@ async fn approving_writes_the_entry_and_returns_the_requests_code() {
 #[tokio::test]
 async fn an_approval_whose_entry_cannot_be_written_returns_no_code() {
     let (_db, pool) = common::pg().await;
-    let requests = AuthorizationRequests::new();
+    let requests = AuthorizationRequests::default();
     let (id, approval, _, _host) = pending(&requests).await;
     let who = dan(TokenKind::Interactive);
     let failed = approve_request(
@@ -193,7 +193,7 @@ async fn an_approval_whose_entry_cannot_be_written_returns_no_code() {
 #[tokio::test]
 async fn an_automation_token_can_neither_read_nor_approve_nor_refuse() {
     let (_db, pool) = common::pg().await;
-    let requests = AuthorizationRequests::new();
+    let requests = AuthorizationRequests::default();
     let (id, approval, _, _host) = pending(&requests).await;
     let bot = dan(TokenKind::Automation);
     let log = MemActivity(Mutex::new(vec![]));

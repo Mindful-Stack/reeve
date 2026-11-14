@@ -40,7 +40,18 @@ pub(crate) fn resource_metadata_url(config: &ServerConfig) -> String {
 pub(crate) struct Params(Vec<(String, String)>);
 
 /// A percent escape that is not two hex digits, or a name or value that is not UTF-8 once decoded.
+#[derive(Debug)]
 pub(crate) struct Malformed;
+
+/// The value of one hex digit; `None` for any other byte.
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
 
 /// `application/x-www-form-urlencoded` decoding of one name or value: `+` is a space, `%XX` a byte.
 fn decode(raw: &str) -> Result<String, Malformed> {
@@ -51,12 +62,8 @@ fn decode(raw: &str) -> Result<String, Malformed> {
         match bytes[i] {
             b'+' => out.push(b' '),
             b'%' => {
-                let hex = bytes.get(i + 1..i + 3).ok_or(Malformed)?;
-                if !hex.iter().all(u8::is_ascii_hexdigit) {
-                    return Err(Malformed);
-                }
-                let text = std::str::from_utf8(hex).map_err(|_| Malformed)?;
-                out.push(u8::from_str_radix(text, 16).map_err(|_| Malformed)?);
+                let digit = |at: usize| bytes.get(at).copied().and_then(hex_digit).ok_or(Malformed);
+                out.push(digit(i + 1)? * 16 + digit(i + 2)?);
                 i += 2;
             }
             byte => out.push(byte),
@@ -204,9 +211,7 @@ mod tests {
     /// decoded, and a malformed or non-UTF-8 escape accepted (the standard decoder replaces such bytes silently).
     #[test]
     fn parameters_are_decoded_strictly_and_counted() {
-        let p = Params::parse("a=1&b=&a=2&c=x%20y+z&d&e=%C3%A9&f=1&f=")
-            .ok()
-            .unwrap();
+        let p = Params::parse("a=1&b=&a=2&c=x%20y+z&d&e=%C3%A9&f=1&f=").unwrap();
         assert_eq!(p.repeated(&["b", "a", "f"]), Some("a"));
         assert_eq!(
             p.repeated(&["f", "a"]),
@@ -225,7 +230,7 @@ mod tests {
             ),
             (Some("1"), None, Some("x y z"), None, Some("é"), None)
         );
-        assert!(Params::parse("").ok().unwrap().get("a").is_none());
+        assert!(Params::parse("").unwrap().get("a").is_none());
         for bad in ["a=%", "a=%2", "a=%zz", "a=%+1", "a=%ff", "%ff=1", "a=%C3"] {
             assert!(Params::parse(bad).is_err(), "{bad}");
         }

@@ -33,7 +33,6 @@ static-oidc = ["dep:axum", "dep:futures-util", "dep:rsa"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }
-base64 = "0.22"
 reeve-testdb.workspace = true
 async-trait.workspace = true
 tracing-subscriber.workspace = true

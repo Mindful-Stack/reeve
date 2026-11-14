@@ -19,13 +19,12 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use reeve_identity::{CodeChallenge, hash_secret, resolve_client};
 
-/// Binds an authorization request to the browser that started it; holds the SHA-256 of the request's id, never
-/// the id. This is the name on an http instance (local development).
+/// Binds an authorization request to the browser that started it; holds the SHA-256 of the request's id. That is
+/// no secret from anyone who has the id, which can compute it; what protects a person is that another browser has
+/// no such cookie. This is the name on an http instance (local development).
 pub const CONNECT_COOKIE: &str = "reeve_connect";
 /// The name on an https instance: browsers accept the prefix only with `Secure`, `Path=/` and no `Domain`.
 pub const HOST_CONNECT_COOKIE: &str = "__Host-reeve_connect";
-/// As long as a request lives.
-const CONNECT_MINUTES: i64 = 10;
 /// The longest `state` held for a client. kb/ADR-0029 R11 caps the number of requests; this caps what each holds.
 const MAX_STATE: usize = 2048;
 /// Every parameter this route reads. Each may be sent once.
@@ -56,7 +55,8 @@ pub(crate) fn connect_cookie(value: String, https: bool) -> Cookie<'static> {
         .same_site(SameSite::Lax)
         .path("/")
         .secure(https)
-        .max_age(time::Duration::minutes(CONNECT_MINUTES))
+        // As long as a request lives.
+        .max_age(time::Duration::minutes(reeve_identity::REQUEST_MINUTES))
         .build()
 }
 

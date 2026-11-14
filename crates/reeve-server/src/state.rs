@@ -311,7 +311,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         mcp_tools,
         client_fetcher,
         clock: Clock::default(),
-        authorization_requests: Arc::new(reeve_identity::AuthorizationRequests::new()),
+        authorization_requests: Arc::new(reeve_identity::AuthorizationRequests::default()),
     })
 }
 

@@ -1,5 +1,4 @@
-//! MCP connections on the wire (kb/ADR-0029): what an app may do, the approval page's request and answers, and
-//! the connections list.
+//! MCP connections on the wire (kb/ADR-0029): what an app may do, and the approval page's request and answers.
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

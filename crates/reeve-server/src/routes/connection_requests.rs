@@ -55,11 +55,7 @@ fn host_of(address: &str) -> String {
 }
 
 /// The answer to an answered request: the connect cookie is cleared, and the page is told where to go.
-fn answered(
-    s: &AppState,
-    jar: CookieJar,
-    redirect_to: String,
-) -> (CookieJar, Json<Response<ConnectionAnswerDto>>) {
+fn answered(s: &AppState, jar: CookieJar, redirect_to: String) -> impl IntoResponse + use<> {
     (
         jar.add(removal(connect_cookie(String::new(), s.config.https()))),
         ok(ConnectionAnswerDto { redirect_to }),
@@ -97,7 +93,7 @@ async fn approve(
     headers: HeaderMap,
     ApiPath(id): ApiPath<String>,
     ApiJson(b): ApiJson<ApproveConnection>,
-) -> Result<(CookieJar, Json<Response<ConnectionAnswerDto>>), AppError> {
+) -> Result<impl IntoResponse, AppError> {
     bound(&s, &headers, &id)?;
     let log: Arc<dyn reeve_identity::IdentityActivity> = s.activity.clone();
     let (back, code) = reeve_identity::approve_request(
@@ -131,7 +127,7 @@ async fn refuse(
     headers: HeaderMap,
     ApiPath(id): ApiPath<String>,
     ApiJson(b): ApiJson<RefuseConnection>,
-) -> Result<(CookieJar, Json<Response<ConnectionAnswerDto>>), AppError> {
+) -> Result<impl IntoResponse, AppError> {
     bound(&s, &headers, &id)?;
     let back =
         reeve_identity::refuse_request(&s.authorization_requests, &c.0, &id, &b.approval, c.1)?

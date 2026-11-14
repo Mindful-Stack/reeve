@@ -21,8 +21,9 @@ pub use access::{
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
 pub use authorization::{
-    AuthorizationRequests, CodeChallenge, CodeGrant, MAX_AUTHORIZATION_REQUESTS, RedeemRefusal,
-    RequestView, RequestsFull, ReturnAddress, approve_request, read_request, refuse_request,
+    AuthorizationRequests, CodeChallenge, CodeGrant, MAX_AUTHORIZATION_REQUESTS, REQUEST_MINUTES,
+    RedeemRefusal, RequestView, RequestsFull, ReturnAddress, approve_request, read_request,
+    refuse_request,
 };
 pub use client_fetch::make_client_fetcher;
 #[cfg(feature = "static-oidc")]

@@ -22,7 +22,8 @@ fn raw(query: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// Catches a request id in the cookie (it must be the id's SHA-256, so the cookie alone opens nothing), a cookie
+/// Catches a request id in the cookie (it must be the id's SHA-256: anyone with the id can compute that, and what
+/// binds the request to this browser is that no other browser has the cookie), a cookie
 /// a script can read or that outlives the request, an answer a cache may keep, and an authorize that does not
 /// fetch the client's document.
 #[tokio::test]
@@ -49,7 +50,7 @@ async fn a_valid_request_is_held_and_the_browser_goes_to_the_page() {
     }
     assert!(
         !cookie.contains(id),
-        "the cookie holds the hash, never the id"
+        "the cookie holds the id's hash, not the id"
     );
     assert_eq!(f.host.hits("/client.json"), 1);
     let view =

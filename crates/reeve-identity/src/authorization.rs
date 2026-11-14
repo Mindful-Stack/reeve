@@ -18,8 +18,8 @@ use std::sync::{Mutex, MutexGuard};
 
 /// At most this many requests are held, codes included: a code is part of its request (kb/ADR-0029 R11).
 pub const MAX_AUTHORIZATION_REQUESTS: usize = 1000;
-/// How long a request lives from authorize.
-const REQUEST_MINUTES: i64 = 10;
+/// How long a request lives from authorize; the connect cookie lives as long.
+pub const REQUEST_MINUTES: i64 = 10;
 /// How long a code lives from the approval (kb/ADR-0029 R4: at most one minute).
 const CODE_SECONDS: i64 = 60;
 
@@ -160,10 +160,6 @@ pub struct AuthorizationRequests {
 }
 
 impl AuthorizationRequests {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     fn entries(&self) -> MutexGuard<'_, HashMap<String, Entry>> {
         self.entries.lock().expect("the request store's lock")
     }
@@ -535,7 +531,7 @@ mod tests {
     /// not what was opened.
     #[test]
     fn a_request_is_read_while_pending_for_ten_minutes() {
-        let store = AuthorizationRequests::new();
+        let store = AuthorizationRequests::default();
         let id = open_at(&store, t0());
         assert_eq!(id.len(), 48, "24 random bytes in hex: {id}");
         let view = store.read(&id, TOKEN_ID, after(599)).unwrap();
@@ -566,7 +562,7 @@ mod tests {
     /// of "the first answer wins".
     #[test]
     fn an_answer_needs_the_current_value_from_the_token_that_read_it_and_is_given_once() {
-        let store = AuthorizationRequests::new();
+        let store = AuthorizationRequests::default();
         let id = open_at(&store, t0());
         let try_approve = |value: &str, token_id: i64, now| {
             store.approve(&id, value, token_id, DAN, Scope::Write, now)
@@ -613,7 +609,7 @@ mod tests {
     /// works twice, a grant that is not what was approved, and a forgotten request whose code still works.
     #[test]
     fn a_code_is_checked_before_it_is_spent_and_works_once() {
-        let store = AuthorizationRequests::new();
+        let store = AuthorizationRequests::default();
         let (_, code) = approved(&store);
         let at = after(30);
         let invalid = Err(RedeemRefusal::InvalidGrant);
@@ -683,7 +679,7 @@ mod tests {
     /// loses part of its minute to the request's ten.
     #[test]
     fn a_code_needs_no_redirect_or_resource_and_lives_one_minute() {
-        let store = AuthorizationRequests::new();
+        let store = AuthorizationRequests::default();
         let (_, code) = approved(&store); // approved at 1 s
         assert!(
             store
@@ -728,7 +724,7 @@ mod tests {
     /// could go, one that keeps expired requests, and one that keeps an approved request whose code has expired.
     #[test]
     fn a_full_store_drops_the_oldest_unread_request_and_never_a_read_one() {
-        let store = AuthorizationRequests::new();
+        let store = AuthorizationRequests::default();
         let mut ids = vec![];
         for i in 0..MAX_AUTHORIZATION_REQUESTS {
             // One millisecond apart: each has its own instant, so "the oldest" is one request.
