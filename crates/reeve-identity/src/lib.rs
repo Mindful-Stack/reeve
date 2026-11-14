@@ -2,6 +2,7 @@
 mod access;
 mod access_handler;
 mod access_repo;
+mod client_fetch;
 mod clients;
 mod domain;
 #[cfg(feature = "static-oidc")]
@@ -18,6 +19,9 @@ pub use access::{
 };
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
+pub use client_fetch::make_client_fetcher;
+#[cfg(feature = "static-oidc")]
+pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
     ClientDocument, ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient,
     resolve_client,

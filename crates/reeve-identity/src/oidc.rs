@@ -48,7 +48,7 @@ fn check_verifier(v: &str) -> Result<(), OidcError> {
 
 /// An error and its whole cause chain, joined with ": ". The oauth2 and openidconnect errors never print secrets,
 /// codes, nonces or verifiers, so the chain is safe to carry in `OidcError` and to log.
-fn chain(e: &dyn std::error::Error) -> String {
+pub(crate) fn chain(e: &dyn std::error::Error) -> String {
     let mut out = e.to_string();
     let mut cur = e.source();
     while let Some(s) = cur {
@@ -254,7 +254,7 @@ impl<'c> openidconnect::AsyncHttpClient<'c> for ProviderHttp {
 /// `http` with a host that is a loopback IP literal (127.0.0.0/8 or ::1). Hostnames, `localhost` included, and
 /// IPv4-mapped IPv6 addresses are not.
 #[cfg(feature = "static-oidc")]
-fn is_loopback_http(url: &str) -> bool {
+pub(crate) fn is_loopback_http(url: &str) -> bool {
     let Ok(u) = url::Url::parse(url) else {
         return false;
     };
@@ -268,7 +268,7 @@ fn is_loopback_http(url: &str) -> bool {
 
 /// Defence in depth behind the guard: the test client resolves no hostnames at all.
 #[cfg(feature = "static-oidc")]
-struct NoNames;
+pub(crate) struct NoNames;
 
 #[cfg(feature = "static-oidc")]
 impl reqwest::dns::Resolve for NoNames {
