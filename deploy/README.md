@@ -168,6 +168,15 @@ When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is 
 
 The sign-in routes the documents name, `/oauth/authorize` and `/oauth/token`, are not served yet; their limits are added here when they are.
 
+### Which apps may connect
+
+An app (an MCP client) is known by the https address of a metadata document it publishes; that address is its client id. Two lists in `[mcp]` decide which apps can connect, and both are empty by default, which means none:
+
+- `client_hosts`: the hosts such a document may be fetched from, compared exactly (`claude.ai`, not `*.claude.ai`).
+- `redirect_uris`: the https addresses an app may be sent back to once a person has answered, compared exactly. An app is refused unless its redirect address is in this list and in its own document.
+
+An app whose host or redirect address is not listed is refused without any request leaving the server. For a listed one the server fetches the document itself at each connect, over HTTPS on port 443, directly from the listed host: it must be able to reach those hosts, and it does not use an HTTP proxy for this (`HTTPS_PROXY` is ignored). It follows no redirect, reads at most 64 KiB within 5 seconds, refuses a host that resolves to any address that is not public, and fetches at most four documents at once. A refusal is one `warn` line, `mcp client refused`, with the app's host and the reason.
+
 ## GitHub webhook
 
 Pull requests whose branch names a story (`ABC-12-fix-login`, `feature/abc-12`; the key starts the branch's last path segment, any case) show on that story with their status: draft, open, merged or closed. The status is informational only: a merged pull request never moves a story. Branches named after a Jira key from before the import (`SCRUM-11-old`) resolve to the story imported from that key when `SCRUM` is listed in `legacy_prefixes`: list the Jira delivery project key (stories, bugs, tasks), not the discovery project, whose ideas import as initiatives.
