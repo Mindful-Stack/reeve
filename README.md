@@ -57,8 +57,9 @@ needs a Lorekeeper checkout next to this repository, or `LOREKEEPER_DIR`).
 
 ## Trying the MCP endpoint locally
 
-The MCP endpoint (`/mcp`) is off unless `[mcp] enabled = true`, and until sign-in for MCP clients exists the only
-tokens it accepts are ones a developer mints. Both need a binary built with the test sign-in feature:
+The MCP endpoint (`/mcp`) is off unless `[mcp] enabled = true`. The quickest way to try it locally is a token a
+developer mints (connecting a real app is in `deploy/README.md`). Both need a binary built with the test sign-in
+feature:
 
 1. In `reeve.toml`, keep `bind` and `public_url` on loopback and add:
 
