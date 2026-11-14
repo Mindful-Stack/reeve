@@ -170,7 +170,7 @@ async fn the_401_points_at_the_metadata_and_says_invalid_token_only_for_a_refuse
     let h = mcp_harness().await;
     let live = issue_mcp_token(&h, "dan@example.com").await.secret;
     let expired = issue_mcp_token(&h, "e@example.com").await.secret;
-    sqlx::query("UPDATE tokens SET expires_at = now() - interval '1 minute' WHERE owner = $1")
+    sqlx::query("UPDATE tokens SET created_at = now() - interval '61 minutes', expires_at = now() - interval '1 minute' WHERE owner = $1")
         .bind("e@example.com")
         .execute(&h.state.pool)
         .await

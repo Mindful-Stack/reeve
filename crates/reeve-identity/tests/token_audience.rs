@@ -280,7 +280,8 @@ async fn the_table_refuses_an_mcp_token_of_kind_automation_and_an_unknown_audien
     .fetch_one(&pool)
     .await
     .unwrap();
-    let insert = "INSERT INTO tokens (owner, kind, audience, hash, created_at, connection_id) VALUES ('dan@example.com', $1, $2, $3, now(), $4)";
+    // An MCP row also gets an expiry an hour on (migration 2005).
+    let insert = "INSERT INTO tokens (owner, kind, audience, hash, created_at, connection_id, expires_at) VALUES ('dan@example.com', $1, $2, $3, now(), $4, CASE WHEN $2 = 'mcp' THEN now() + interval '1 hour' END)";
     // The controls: the three legal pairs are accepted.
     for (kind, audience) in [
         ("interactive", "api"),

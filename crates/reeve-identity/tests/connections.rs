@@ -229,8 +229,9 @@ async fn the_tables_refuse_what_the_rules_forbid() {
         "ends_at must be after approved_at"
     );
 
-    // A token: `mcp` exactly when it has a connection, and the connection is its owner's.
-    let token = "INSERT INTO tokens (owner, kind, audience, hash, created_at, connection_id) VALUES ($1, $2, $3, $4, $5, $6)";
+    // A token: `mcp` exactly when it has a connection, and the connection is its owner's. An MCP row gets the
+    // longest expiry allowed, so a refusal below is its own rule's and not the expiry rule's.
+    let token = "INSERT INTO tokens (owner, kind, audience, hash, created_at, connection_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)";
     let try_token = |owner: &'static str,
                      kind: &'static str,
                      audience: &'static str,
@@ -245,6 +246,7 @@ async fn the_tables_refuse_what_the_rules_forbid() {
                 .bind(hash)
                 .bind(now())
                 .bind(conn)
+                .bind((audience == "mcp").then(|| now() + Duration::hours(1)))
                 .execute(&pool)
                 .await
         }
@@ -299,6 +301,35 @@ async fn the_tables_refuse_what_the_rules_forbid() {
             .await
             .unwrap_err();
         assert_eq!(db_code(&err), code, "{what}: {err}");
+    }
+
+    // An MCP token expires, after it is created and at most one hour after (kb/ADR-0029 R5); `ok-mcp` above, at
+    // exactly one hour, is the control.
+    for (what, expires) in [
+        ("an MCP token without an expiry", None),
+        (
+            "an MCP token that expires in two hours",
+            Some(now() + Duration::hours(2)),
+        ),
+        ("an MCP token that expires as it is created", Some(now())),
+    ] {
+        let err = sqlx::query(token)
+            .bind("dan@example.com")
+            .bind("interactive")
+            .bind("mcp")
+            .bind("bad-expiry")
+            .bind(now())
+            .bind(Some(dans))
+            .bind(expires)
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        let constraint = err.as_database_error().and_then(|d| d.constraint());
+        assert_eq!(
+            (db_code(&err).as_str(), constraint),
+            ("23514", Some("tokens_mcp_expires_within_an_hour")),
+            "{what}: {err}"
+        );
     }
 
     // One live refresh token per connection; used ones do not count.

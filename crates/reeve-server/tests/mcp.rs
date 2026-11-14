@@ -173,7 +173,7 @@ async fn only_a_live_mcp_token_in_the_bearer_header_is_accepted() {
         (
             "expired",
             "e@example.com",
-            "UPDATE tokens SET expires_at = now() - interval '1 minute' WHERE owner = $1",
+            "UPDATE tokens SET created_at = now() - interval '61 minutes', expires_at = now() - interval '1 minute' WHERE owner = $1",
         ),
         (
             "owner disabled",

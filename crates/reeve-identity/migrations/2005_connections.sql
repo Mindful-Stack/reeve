@@ -14,11 +14,14 @@ CREATE TABLE connections (
   owner          TEXT NOT NULL REFERENCES users(email),
   client_id      TEXT NOT NULL,
   client_name    TEXT NOT NULL,               -- as approved
-  scope          TEXT NOT NULL CHECK (scope IN ('read', 'write')),   -- write includes read
+  scope          TEXT NOT NULL,               -- write includes read
   approved_at    TIMESTAMPTZ NOT NULL,
   ends_at        TIMESTAMPTZ NOT NULL,
   revoked_at     TIMESTAMPTZ,
-  revoked_reason TEXT CHECK (revoked_reason IN ('revoked', 'refresh_token_reused', 'user_disabled', 'restored')),
+  revoked_reason TEXT,
+  CONSTRAINT connections_scope_known CHECK (scope IN ('read', 'write')),
+  CONSTRAINT connections_reason_known
+    CHECK (revoked_reason IN ('revoked', 'refresh_token_reused', 'user_disabled', 'restored')),
   CONSTRAINT connections_end_after_approval CHECK (ends_at > approved_at),
   CONSTRAINT connections_revoked_together CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL)),
   -- The target of tokens' two-column foreign key: a token's owner is its connection's owner.
@@ -31,6 +34,11 @@ ALTER TABLE tokens ADD CONSTRAINT tokens_connection_fk
   FOREIGN KEY (connection_id, owner) REFERENCES connections (id, owner) ON DELETE CASCADE;
 ALTER TABLE tokens ADD CONSTRAINT tokens_mcp_has_connection
   CHECK ((audience = 'mcp') = (connection_id IS NOT NULL));
+-- kb/ADR-0029 R5: an MCP token expires, after it is created and at most one hour after. (IS NOT NULL is needed:
+-- a CHECK that is NULL passes.)
+ALTER TABLE tokens ADD CONSTRAINT tokens_mcp_expires_within_an_hour
+  CHECK (audience <> 'mcp' OR (expires_at IS NOT NULL AND expires_at > created_at
+                               AND expires_at <= created_at + interval '1 hour'));
 CREATE INDEX tokens_connection_idx ON tokens (connection_id);
 
 CREATE TABLE refresh_tokens (
