@@ -16,27 +16,6 @@ fn disable_bob_request(h: &Harness) -> Request<Body> {
         .unwrap()
 }
 
-async fn revoked(h: &Harness, connection_id: i64) -> Option<String> {
-    sqlx::query_scalar("SELECT revoked_reason FROM connections WHERE id = $1")
-        .bind(connection_id)
-        .fetch_one(&h.state.pool)
-        .await
-        .unwrap()
-}
-
-async fn revocations(h: &Harness) -> Vec<Value> {
-    let (status, body) = call(
-        &h.app,
-        Some(&h.admin_token),
-        "GET",
-        "/api/v1/activity?action=connection_revoked",
-        None,
-    )
-    .await;
-    assert_eq!(status, 200, "{body}");
-    body["value"].as_array().unwrap().clone()
-}
-
 /// kb/ADR-0029 R9: "disabling the user MUST revoke it". Catches a connection that survives the disable (it would
 /// work again once the person is enabled), a token that still answers, a missing entry or one that does not name
 /// who disabled, and another person's connection revoked with it.

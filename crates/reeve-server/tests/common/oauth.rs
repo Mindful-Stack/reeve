@@ -497,3 +497,26 @@ pub async fn rows_of(h: &Harness, c: &Connected) -> (i64, i64) {
         .await,
     )
 }
+
+/// The connection's `revoked_reason`; `None` while it is not revoked.
+pub async fn revoked(h: &Harness, connection_id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT revoked_reason FROM connections WHERE id = $1")
+        .bind(connection_id)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+/// Every `connection_revoked` entry in the activity log, as the admin reads it.
+pub async fn revocations(h: &Harness) -> Vec<Value> {
+    let (status, body) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/activity?action=connection_revoked",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    body["value"].as_array().unwrap().clone()
+}

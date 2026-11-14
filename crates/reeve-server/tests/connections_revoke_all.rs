@@ -3,7 +3,7 @@
 //! `static-oidc` (the connections come from the flow harness; the command itself is in every build).
 #![cfg(feature = "static-oidc")]
 mod common;
-use common::{oauth::*, *};
+use common::oauth::*;
 use serde_json::json;
 
 async fn run(cfg: &std::path::Path) -> std::process::Output {
@@ -79,17 +79,8 @@ async fn it_ends_every_live_connection_with_an_entry_each_and_a_second_run_does_
             (cut.connection_id, Some("refresh_token_reused".to_string())),
         ]
     );
-    let (_, log) = call(
-        &h.app,
-        Some(&h.admin_token),
-        "GET",
-        "/api/v1/activity?action=connection_revoked",
-        None,
-    )
-    .await;
-    let mut restored: Vec<(String, String, String, i64)> = log["value"]
-        .as_array()
-        .unwrap()
+    let mut restored: Vec<(String, String, String, i64)> = revocations(h)
+        .await
         .iter()
         .filter(|e| e["payload"]["reason"] == "restored")
         .map(|e| {

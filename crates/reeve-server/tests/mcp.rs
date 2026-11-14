@@ -663,38 +663,6 @@ async fn a_malformed_meta_is_refused_or_read_as_absent() {
     }
 }
 
-/// What the code logged while the guard is alive, as text.
-#[derive(Clone, Default)]
-struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-impl std::io::Write for Logs {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
-    type Writer = Logs;
-    fn make_writer(&'a self) -> Logs {
-        self.clone()
-    }
-}
-impl Logs {
-    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
-        let logs = Logs::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_ansi(false)
-            .finish();
-        (logs, tracing::subscriber::set_default(subscriber))
-    }
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
-}
-
 #[tokio::test]
 async fn a_refused_token_is_logged_once_and_never_with_its_secret() {
     let h = mcp_harness().await;

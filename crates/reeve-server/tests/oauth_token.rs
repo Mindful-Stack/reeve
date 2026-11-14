@@ -502,28 +502,6 @@ async fn the_token_route_answers_post_only_and_nothing_when_off() {
     );
 }
 
-/// The connection's `revoked_reason`; `None` while it is not revoked.
-async fn revoked(h: &Harness, connection_id: i64) -> Option<String> {
-    sqlx::query_scalar("SELECT revoked_reason FROM connections WHERE id = $1")
-        .bind(connection_id)
-        .fetch_one(&h.state.pool)
-        .await
-        .unwrap()
-}
-
-async fn revocations(h: &Harness) -> Vec<Value> {
-    let (status, body) = call(
-        &h.app,
-        Some(&h.admin_token),
-        "GET",
-        "/api/v1/activity?action=connection_revoked",
-        None,
-    )
-    .await;
-    assert_eq!(status, 200, "{body}");
-    body["value"].as_array().unwrap().clone()
-}
-
 /// kb/ADR-0029 R5: a refresh token rotates on use. Catches a refresh that needs `client_id` (the standards make
 /// it optional here), one that hands back the same refresh token, one that leaves two live refresh tokens, one
 /// that changes the scope, and one that revokes the previous access token (the design keeps it until its hour
@@ -825,38 +803,6 @@ async fn a_refresh_deletes_the_connections_expired_token_rows() {
         1,
         "another connection's rows are not this refresh's"
     );
-}
-
-/// What the code logged while the guard is alive, as text (as in `tests/mcp.rs`).
-#[derive(Clone, Default)]
-struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-impl std::io::Write for Logs {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
-    type Writer = Logs;
-    fn make_writer(&'a self) -> Logs {
-        self.clone()
-    }
-}
-impl Logs {
-    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
-        let logs = Logs::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_ansi(false)
-            .finish();
-        (logs, tracing::subscriber::set_default(subscriber))
-    }
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
 }
 
 /// The operator gets one `warn` line per refusal and never a secret (the design, section 5). Catches a refusal
