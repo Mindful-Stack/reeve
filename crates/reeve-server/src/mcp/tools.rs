@@ -14,7 +14,7 @@ mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
 use futures_util::future::BoxFuture;
-use reeve_protocol::KeyRef;
+use reeve_protocol::{KeyRef, Scope};
 use serde_json::{Value, json};
 
 /// The sentence every tool that returns people's text ends its description with. It lowers the exposure to
@@ -84,6 +84,15 @@ pub(crate) struct Tool {
     pub run: Run,
 }
 
+impl Tool {
+    /// Whether a connection of `scope` may see and call this tool (kb/ADR-0029 R7): a tool that changes anything
+    /// needs `write`, and a tool changes something exactly when it is not read-only. There is no scope field to
+    /// keep in step with the hint.
+    pub(crate) fn allowed(&self, scope: Scope) -> bool {
+        self.annotations.read_only || scope == Scope::Write
+    }
+}
+
 /// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions.
 pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
     vec![
@@ -100,9 +109,11 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
 }
 
 /// `tools/list`'s `tools` array. The field names are the same in the 2026-07-28 and the 2025-11-25 schema.
-pub(crate) fn list(tools: &[Tool]) -> Vec<Value> {
+/// Only the tools a connection of `scope` may call.
+pub(crate) fn list(tools: &[Tool], scope: Scope) -> Vec<Value> {
     tools
         .iter()
+        .filter(|t| t.allowed(scope))
         .map(|t| {
             json!({
                 "name": t.name,
@@ -241,6 +252,85 @@ mod tests {
             ToolError::Internal(_) => None,
             ToolError::Arguments(message) => panic!("an argument error: {message}"),
         }
+    }
+
+    fn nothing<'a>(
+        _: &'a AppState,
+        _: &'a Acting<'a>,
+        _: Value,
+    ) -> BoxFuture<'a, Result<Value, ToolError>> {
+        Box::pin(async { Ok(json!({})) })
+    }
+
+    /// A tool that takes nothing and does nothing, read-only or not: for the scope rule alone.
+    fn a_tool(name: &'static str, read_only: bool) -> Tool {
+        Tool {
+            name,
+            title: "A tool",
+            description: "A tool.".into(),
+            input_schema: json!({"type": "object"}),
+            annotations: Annotations {
+                read_only,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+            run: nothing,
+        }
+    }
+
+    /// kb/ADR-0029 R7, as one truth table: the scope a tool needs follows from `read_only` and from nothing else.
+    #[test]
+    fn a_tool_that_changes_anything_needs_the_write_scope() {
+        use reeve_protocol::Scope::{Read, Write};
+        let (reads, writes) = (a_tool("reads", true), a_tool("writes", false));
+        assert_eq!(
+            [
+                reads.allowed(Read),
+                reads.allowed(Write),
+                writes.allowed(Read),
+                writes.allowed(Write)
+            ],
+            [true, true, false, true]
+        );
+        let both = [reads, writes];
+        let names = |scope| -> Vec<Value> {
+            list(&both, scope)
+                .into_iter()
+                .map(|tool| tool["name"].clone())
+                .collect()
+        };
+        assert_eq!(names(Read), vec![json!("reads")]);
+        assert_eq!(names(Write), vec![json!("reads"), json!("writes")]);
+    }
+
+    /// kb/ADR-0029 R10: the tools are these and no others, and each is knowingly on one side of the scope rule.
+    /// A new tool does not pass until someone adds its name to one of the two lists, and a tool outside R10's set
+    /// needs an observation on the record first.
+    #[test]
+    fn the_registry_is_the_read_tools_and_nothing_else_yet() {
+        const READ: [&str; 9] = [
+            "search_items",
+            "list_stories",
+            "get_story",
+            "list_epics",
+            "get_epic",
+            "list_initiatives",
+            "get_initiative",
+            "list_decisions",
+            "get_sprint",
+        ];
+        const WRITE: [&str; 0] = [];
+        let tools = registry("TST");
+        let named = |read_only: bool| -> Vec<&str> {
+            tools
+                .iter()
+                .filter(|t| t.annotations.read_only == read_only)
+                .map(|t| t.name)
+                .collect()
+        };
+        assert_eq!(named(true), READ);
+        assert_eq!(named(false), WRITE);
     }
 
     #[test]
