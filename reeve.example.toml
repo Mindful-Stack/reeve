@@ -54,9 +54,16 @@ admins = ["admin@example.com"]
 # developer command that exists only in builds with `--features reeve-server/static-oidc`. Leave [mcp] off in
 # production until sign-in is complete. allowed_origins lists the Origin header values accepted (a request without
 # an Origin header always passes); unset, only public_url's own origin.
+# Which apps may connect is two more lists, both empty by default, and empty means none. In redirect_uris, the
+# https addresses an app may be sent back to once a person has answered, compared exactly: an app is refused unless
+# its redirect address is here and in its own metadata document. In client_hosts, the hosts an app's metadata
+# document may be fetched from (an app's client id is the https address of that document), compared exactly. The
+# values below are claude.ai's.
 # [mcp]
 # enabled = true
 # allowed_origins = ["https://claude.ai"]
+# redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+# client_hosts = ["claude.ai"]
 
 # The board's done column shows only stories done within this many days (1 to 3650); older ones stay one `?done=all` away.
 # [board]
