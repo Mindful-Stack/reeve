@@ -77,7 +77,7 @@
 		{:else if problem || view === 'invalid'}
 			<p role="alert">This connection request was not valid. Nothing was shared.</p>
 		{:else if view === 'loading'}
-			<p class="muted">Loading…</p>
+			<p class="muted" role="status">Loading…</p>
 		{:else if view === 'expired'}
 			<p role="alert">This connection request has expired or was opened in another browser. Go back to the app and connect again.</p>
 		{:else if view === 'unreachable'}
@@ -91,7 +91,7 @@
 				<button type="button" class="link" onclick={signOut}>Sign out</button>, then connect again from the app.
 			</p>
 			<fieldset>
-				<legend>What may it do?</legend>
+				<legend id="scope-legend">What may it do?</legend>
 				<label><input type="radio" name="scope" value="read" bind:group={scope} /> Read: everything you can see in {instance}</label>
 				<label><input type="radio" name="scope" value="write" bind:group={scope} /> Read and change: also create, edit, comment on and move stories as you</label>
 			</fieldset>
@@ -108,7 +108,8 @@
 				<p role="alert">Could not reach {instance}. Try again.</p>
 			{/if}
 			<div class="actions">
-				<button type="button" class="primary" disabled={busy || scope === null} onclick={() => answer(true)}>Approve</button>
+				<!-- Disabled until a scope is chosen: the legend says what it waits for. -->
+				<button type="button" class="primary" aria-describedby="scope-legend" disabled={busy || scope === null} onclick={() => answer(true)}>Approve</button>
 				<button type="button" disabled={busy} onclick={() => answer(false)}>Refuse</button>
 			</div>
 		{/if}

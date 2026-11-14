@@ -83,6 +83,9 @@ describe('the approval page', () => {
 		expect(radio('read').checked).toBe(false);
 		expect(radio('write').checked).toBe(false);
 		expect(button('Approve')!.disabled).toBe(true);
+		// A screen reader is told why: the disabled button is described by the choice it waits for.
+		const describedBy = button('Approve')!.getAttribute('aria-describedby');
+		expect(describedBy && document.getElementById(describedBy)?.textContent).toBe('What may it do?');
 		expect(button('Refuse')!.disabled).toBe(false);
 		radio('write').click();
 		flushSync();
@@ -148,6 +151,13 @@ describe('the approval page', () => {
 		button('Refuse')!.click();
 		await vi.waitFor(() => expect(assign).toHaveBeenCalled());
 		expect(writes()).toHaveLength(2);
+	});
+
+	// Catches a loading message a screen reader is not told about.
+	it('announces that it is loading', async () => {
+		net.read = () => new Promise(() => {});
+		await open();
+		expect(document.querySelector('[role="status"]')?.textContent).toBe('Loading…');
 	});
 
 	// Catches a failed read shown as "expired" (the person would give up on a request that is still good).
