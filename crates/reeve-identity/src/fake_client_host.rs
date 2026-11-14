@@ -9,6 +9,7 @@ use axum::{
     http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -19,8 +20,9 @@ pub enum FakeAnswer {
     Json(serde_json::Value),
     /// This status with an empty body, and a `Location` header when given.
     Status { code: u16, location: Option<String> },
-    /// The request is received and counted and no answer is ever sent.
-    Never,
+    /// `200` without a `Content-Length`, then `after` bytes of body (the byte `x`), then nothing more: the body
+    /// is left open and never ends.
+    Stalls { after: usize },
 }
 
 struct Shared {
@@ -120,6 +122,13 @@ async fn serve(State(shared): State<Arc<Shared>>, uri: Uri) -> Response {
                 None => status.into_response(),
             }
         }
-        Some(FakeAnswer::Never) => std::future::pending::<Response>().await,
+        Some(FakeAnswer::Stalls { after }) => {
+            let sent = futures_util::stream::once(async move {
+                Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(vec![b'x'; after]))
+            });
+            // A stream has no known length, so the answer is chunked; `pending` never yields and never ends.
+            axum::body::Body::from_stream(sent.chain(futures_util::stream::pending()))
+                .into_response()
+        }
     }
 }

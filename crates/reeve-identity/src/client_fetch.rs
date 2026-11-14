@@ -434,27 +434,52 @@ mod tests {
             assert_eq!(fetcher.permits.available_permits(), 4);
         }
 
-        /// The standing test of the timeout. The host receives the request and never answers; a fetcher built
-        /// with a 1000 ms limit gives up by itself, as `Unreachable`, and frees its permit. Catches the timeout
-        /// missing from the client: the fetch would then never return, and the ten-second guard (reached only in
-        /// that case) fails the test. Both factories build through `builder(timeout)`, and the production value
-        /// is pinned below.
+        /// The bound is applied as the body arrives. The host sends one byte more than the limit and then
+        /// leaves the body open, so the answer never ends: the fetch is refused as `TooLarge` at once and gives
+        /// its permit back. Catches a fetcher that reads the whole body before it counts: it would wait for an
+        /// end that never comes and give up at its timeout, as `Unreachable`.
         #[tokio::test]
-        async fn a_fetch_that_gets_no_answer_ends_at_the_fetchers_timeout() {
+        async fn a_body_over_the_limit_is_refused_before_it_ends() {
             let host = FakeClientHost::start().await;
-            host.answer("/never.json", FakeAnswer::Never);
-            let fetcher = HttpClientFetcher::loopback(Duration::from_millis(1000)).unwrap();
-            let id = url::Url::parse(&host.client_id("/never.json")).unwrap();
+            host.answer(
+                "/endless.json",
+                FakeAnswer::Stalls {
+                    after: MAX_DOCUMENT_BYTES + 1,
+                },
+            );
+            let fetcher = HttpClientFetcher::loopback(FETCH_TIMEOUT).unwrap();
+            let id = url::Url::parse(&host.client_id("/endless.json")).unwrap();
             let outcome = tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&id))
                 .await
                 .expect("the fetcher gives up by itself");
+            assert_eq!(outcome, Err(ClientRefusal::TooLarge));
+            assert_eq!(host.hits("/endless.json"), 1);
+            assert_eq!(fetcher.permits.available_permits(), 4);
+        }
+
+        /// The standing test of the timeout, which covers the body. The host answers 200, sends a few bytes
+        /// and stalls; a fetcher built with a one-second limit gives up by itself, as `Unreachable`, and frees
+        /// its permit. Catches the timeout missing from the client (the fetch would never return, and the
+        /// ten-second guard, reached only then, fails the test), one that ends at the headers, and a fetcher
+        /// that ignores the duration it was built with for the production five seconds (the four-second bound).
+        #[tokio::test]
+        async fn a_body_that_stalls_ends_at_the_fetchers_timeout() {
+            let host = FakeClientHost::start().await;
+            host.answer("/stalls.json", FakeAnswer::Stalls { after: 8 });
+            let fetcher = HttpClientFetcher::loopback(Duration::from_secs(1)).unwrap();
+            let id = url::Url::parse(&host.client_id("/stalls.json")).unwrap();
+            let started = std::time::Instant::now();
+            let outcome = tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&id))
+                .await
+                .expect("the fetcher gives up by itself");
+            let took = started.elapsed();
             assert!(
                 matches!(outcome, Err(ClientRefusal::Unreachable(_))),
                 "{outcome:?}"
             );
-            assert_eq!(host.hits("/never.json"), 1);
+            assert!(took < Duration::from_secs(4), "it took {took:?}");
+            assert_eq!(host.hits("/stalls.json"), 1);
             assert_eq!(fetcher.permits.available_permits(), 4);
-            assert_eq!(FETCH_TIMEOUT, Duration::from_secs(5));
         }
     }
 }
