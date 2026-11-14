@@ -186,13 +186,14 @@ pub(crate) async fn create_story(
     who: &Acting<'_>,
     b: CreateStory,
 ) -> Result<(StoryDto, bool), AppError> {
+    let idem = who.write_key(&b.idempotency_key)?;
     let epic = resolve_opt(&state.handlers, b.epic.as_ref(), ItemType::Epic).await?;
     let owner = allowed_owner(who.policy, b.owner)?;
     let (story, created) = state
         .handlers
         .create_story_attaching(
             &who.ctx,
-            &b.idempotency_key,
+            &idem,
             &b.title,
             b.kind,
             epic,

@@ -1,5 +1,6 @@
 #![allow(dead_code)] // each test binary uses a different subset of the helpers
 use reeve_server::*;
+use serde_json::{Value, json};
 use testcontainers_modules::{postgres::Postgres, testcontainers::ContainerAsync};
 
 #[cfg(feature = "static-oidc")]
@@ -395,4 +396,54 @@ impl Logs {
     pub fn text(&self) -> String {
         String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
     }
+}
+
+/// `tools/call` over 2026-07-28 as the token's person: the JSON-RPC `result`. The HTTP status must be 200.
+pub async fn tool(h: &Harness, token: &str, name: &str, arguments: Value) -> Value {
+    let params = json!({"name": name, "arguments": arguments});
+    let (status, _, body) = send(&h.app, mcp_modern(token, 1, "tools/call", params)).await;
+    assert_eq!(status, 200, "{name}: {body}");
+    serde_json::from_str::<Value>(&body).unwrap()["result"].clone()
+}
+
+/// A successful call's `structuredContent`. The text block must carry the same JSON.
+pub async fn answer(h: &Harness, token: &str, name: &str, arguments: Value) -> Value {
+    let result = tool(h, token, name, arguments).await;
+    assert_eq!(result["isError"], false, "{name}: {result}");
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(text).unwrap(),
+        result["structuredContent"],
+        "{name}: the text block is the same JSON"
+    );
+    result["structuredContent"].clone()
+}
+
+/// A failed call's message: a result with `isError: true` and no `structuredContent`.
+pub async fn refusal(h: &Harness, token: &str, name: &str, arguments: Value) -> String {
+    let result = tool(h, token, name, arguments).await;
+    assert_eq!(result["isError"], true, "{name}: {result}");
+    assert!(
+        result.get("structuredContent").is_none(),
+        "{name}: {result}"
+    );
+    result["content"][0]["text"].as_str().unwrap().to_string()
+}
+
+/// The `value` of a `GET` on the API as the token's person.
+pub async fn api(h: &Harness, token: &str, path: &str) -> Value {
+    let (status, body) = call(&h.app, Some(token), "GET", path, None).await;
+    assert_eq!(status, 200, "{path}: {body}");
+    body["value"].clone()
+}
+
+/// The `value` of a `POST` on the API as the admin.
+pub async fn post(h: &Harness, path: &str, body: Value) -> Value {
+    let (status, answer) = call(&h.app, Some(&h.admin_token), "POST", path, Some(body)).await;
+    assert_eq!(status, 200, "{path}: {answer}");
+    answer["value"].clone()
+}
+
+pub fn key(item: &Value) -> String {
+    item["key"].as_str().unwrap().to_string()
 }

@@ -18,7 +18,7 @@ mod search;
 mod sprints;
 mod stories;
 
-use crate::state::AppState;
+use crate::{error::AppError, state::AppState};
 use chrono::{DateTime, Utc};
 pub(crate) use decisions::{
     DecisionQuery, decision_dto, decision_scope, list_decisions, resolve_on,
@@ -34,10 +34,11 @@ pub(crate) use stories::{
 };
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
-/// timestamp, and the client when the call came through MCP) and the access policy the request was authenticated with, which owner validation needs and which
-/// cannot be recovered from an input.
+/// timestamp, and the client when the call came through MCP) and the access policy the request was authenticated
+/// with, which owner validation needs and which cannot be recovered from an input.
 ///
-/// `policy` is private to `actions`, so an `Acting` is built in one place, `Acting::new`.
+/// `policy` is private to `actions`, so an `Acting` is built in one place, `Acting::new`. A caller with no client
+/// is an API caller (the API, the CLI, the web client): `write_key` reads it so.
 pub(crate) struct Acting<'a> {
     pub(crate) ctx: reeve_planning::Ctx,
     policy: &'a AccessPolicy,
@@ -61,6 +62,45 @@ impl<'a> Acting<'a> {
             },
             policy,
         }
+    }
+}
+
+/// What the idempotency key of every MCP caller starts with. Reserved: `write_key` refuses it to an API caller.
+const MCP_KEYS: &str = "mcp:";
+
+impl Acting<'_> {
+    /// The idempotency key a write is stored under. Keys are unique across the instance and blind to who sent
+    /// them, and a chat model invents short ones (`create-story-1`), so an MCP caller's key is stored as
+    /// `mcp:<the caller's email>:<key>`: one person's chats share a key space, and no other person's chat can get
+    /// their item back. An API caller's key is stored as it is, and may not start with `mcp:`, so that space cannot
+    /// be written from the API either. An MCP caller is the one with a client (`McpCaller::acting`); a caller with
+    /// no client is an API caller.
+    ///
+    /// The stored key is unambiguous only while the email has no colon (`a@example.com` with key `x:k` would
+    /// otherwise equal `a@example.com:x` with key `k`). Identity does not forbid one in a domain, so no key is
+    /// built for such an address; the sign-in providers cannot produce one.
+    pub(crate) fn write_key(&self, raw: &str) -> Result<String, AppError> {
+        if self.ctx.client.is_none() {
+            return if raw.starts_with(MCP_KEYS) {
+                Err(AppError::Validation(
+                    "an idempotency key must not start with mcp: (reserved for MCP clients)".into(),
+                ))
+            } else {
+                Ok(raw.to_string())
+            };
+        }
+        if !(1..=100).contains(&raw.chars().count()) || raw.chars().any(char::is_control) {
+            return Err(AppError::Validation(
+                "idempotency_key must be 1 to 100 characters, without control characters".into(),
+            ));
+        }
+        let email = reeve_protocol::normalise_email(&self.ctx.actor);
+        if email.contains(':') {
+            return Err(AppError::Validation(
+                "an idempotency key cannot be kept for an email address that contains a colon: it would not be this person's alone".into(),
+            ));
+        }
+        Ok(format!("{MCP_KEYS}{email}:{raw}"))
     }
 }
 
@@ -124,5 +164,93 @@ pub(crate) async fn resolve_filter(
         Ok(None) => Ok(FilterRef::Unset),
         Err(reeve_planning::HandlerError::NotFound) => Ok(FilterRef::Nothing),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy() -> AccessPolicy {
+        AccessPolicy::floor_only(&reeve_identity::IdentityConfig {
+            allowed_domains: vec!["example.com".into()],
+            allowed_emails: vec![],
+            admins: vec![],
+        })
+    }
+
+    /// The key `email` stores `raw` under, through `client` (none: an API caller).
+    fn stored(email: &str, client: Option<&str>, raw: &str) -> Result<String, String> {
+        let policy = policy();
+        let who = Acting::new(
+            email,
+            Via::Interactive,
+            Utc::now(),
+            &policy,
+            client.map(str::to_string),
+        );
+        who.write_key(raw).map_err(|e| match e {
+            AppError::Validation(message) => message,
+            other => panic!("not a validation error: {other:?}"),
+        })
+    }
+
+    fn ok(key: &str) -> Result<String, String> {
+        Ok(key.to_string())
+    }
+
+    fn refused(message: &str) -> Result<String, String> {
+        Err(message.to_string())
+    }
+
+    #[test]
+    fn an_mcp_callers_key_is_stored_under_the_callers_email_and_an_api_callers_as_it_is() {
+        assert_eq!(
+            stored("Dan@Example.com", Some("claude.ai"), "k1"),
+            ok("mcp:dan@example.com:k1")
+        );
+        assert_eq!(stored("dan@example.com", None, "k1"), ok("k1"));
+        // An API caller's key has no length rule of this function's, and may not be in the MCP callers' space.
+        assert_eq!(
+            stored("dan@example.com", None, ""),
+            ok(""),
+            "the handler's rule, not this one's"
+        );
+        assert_eq!(
+            stored("dan@example.com", None, "mcp:bob@example.com:k1"),
+            refused("an idempotency key must not start with mcp: (reserved for MCP clients)")
+        );
+        // An MCP caller may send any text of 1 to 100 characters, a leading `mcp:` included: it is stored inside
+        // the caller's own space.
+        assert_eq!(
+            stored(
+                "dan@example.com",
+                Some("claude.ai"),
+                "mcp:bob@example.com:k1"
+            ),
+            ok("mcp:dan@example.com:mcp:bob@example.com:k1")
+        );
+        let rule =
+            refused("idempotency_key must be 1 to 100 characters, without control characters");
+        for bad in [String::new(), "k".repeat(101), "k\n1".to_string()] {
+            assert_eq!(stored("dan@example.com", Some("claude.ai"), &bad), rule);
+        }
+        assert!(stored("dan@example.com", Some("claude.ai"), &"å".repeat(100)).is_ok());
+    }
+
+    /// Two people can never produce one stored key. With a colon in an email the format would be ambiguous
+    /// (`a@example.com` + `x:k` against `a@example.com:x` + `k`), so no key is built for such an address.
+    #[test]
+    fn no_key_is_built_for_an_email_with_a_colon_so_two_people_cannot_collide() {
+        let one = stored("a@example.com", Some("claude.ai"), "x:k");
+        assert_eq!(one, ok("mcp:a@example.com:x:k"));
+        let other = stored("a@example.com:x", Some("claude.ai"), "k");
+        assert_ne!(other, one, "the collision");
+        assert_eq!(
+            other,
+            refused(
+                "an idempotency key cannot be kept for an email address that contains a colon: it would not be this person's alone"
+            )
+        );
     }
 }
