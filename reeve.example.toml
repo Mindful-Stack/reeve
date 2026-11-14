@@ -44,6 +44,15 @@ admins = ["admin@example.com"]
 # [import]
 # enabled = true
 
+# The MCP endpoint at <public_url>/mcp, for MCP clients such as claude.ai and ChatGPT (kb/ADR-0029). Off by default:
+# /mcp answers 404. It needs [oidc]; the server refuses to start with [mcp] enabled and no sign-in. Until the sign-in
+# stories land, no client can sign in: only tokens minted by `reeve-server mcp-token-issue` work, a developer command
+# that exists only in builds with `--features reeve-server/static-oidc`. allowed_origins lists the Origin header
+# values accepted (a request without an Origin header always passes); unset, only public_url's own origin.
+# [mcp]
+# enabled = true
+# allowed_origins = ["https://claude.ai"]
+
 # The board's done column shows only stories done within this many days (1 to 3650); older ones stay one `?done=all` away.
 # [board]
 # done_window_days = 14

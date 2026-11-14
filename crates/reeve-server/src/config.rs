@@ -61,6 +61,9 @@ pub struct ServerConfig {
     pub sprints: SprintsConfig,
     #[serde(default)]
     pub events: EventsConfig,
+    /// The MCP endpoint; off by default.
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 /// `[board]`: board-only settings.
@@ -146,6 +149,7 @@ impl std::fmt::Debug for ServerConfig {
             board,
             sprints,
             events,
+            mcp,
         } = self;
         f.debug_struct("ServerConfig")
             .field("database_url", &redacted_database_url(database_url))
@@ -164,6 +168,7 @@ impl std::fmt::Debug for ServerConfig {
             .field("board", board)
             .field("sprints", sprints)
             .field("events", events)
+            .field("mcp", mcp)
             .finish()
     }
 }
@@ -198,6 +203,20 @@ fn redacted_database_url(raw: &str) -> String {
 pub struct ImportConfig {
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// `[mcp]`: the MCP endpoint at `/mcp` (kb/ADR-0029). Off (the default), `/mcp` answers 404. It can be on only with
+/// `[oidc]`: an instance without sign-in answers 404 there (kb/ADR-0029 R2).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// The `Origin` header values `/mcp` accepts; a request without the header always passes. Unset: only the
+    /// origin of `public_url`. Each entry is an origin as a browser sends it: scheme, host and a non-default port,
+    /// no path and no trailing slash.
+    #[serde(default)]
+    pub allowed_origins: Option<Vec<String>>,
 }
 
 /// The GitHub pull-request webhook (`POST /webhooks/github`).
@@ -427,6 +446,20 @@ impl ServerConfig {
                 "public_url is required when [oidc] is configured: browser sign-in redirects to <public_url>/auth/callback"
             );
         }
+        if self.mcp.enabled && self.oidc.is_none() {
+            anyhow::bail!(
+                "[mcp] enabled = true requires [oidc]: an instance without sign-in answers 404 on /mcp (kb/ADR-0029 R2)"
+            );
+        }
+        for o in self.mcp.allowed_origins.iter().flatten() {
+            let is_origin =
+                url::Url::parse(o).is_ok_and(|u| u.origin().ascii_serialization() == *o);
+            if !is_origin {
+                anyhow::bail!(
+                    "[mcp] allowed_origins entry {o:?} must be an origin such as https://claude.ai: scheme, host and optional port, no path and no trailing slash"
+                );
+            }
+        }
         if let Some(g) = &self.github {
             if g.webhook_secret.len() < 16 {
                 anyhow::bail!("[github] webhook_secret must be at least 16 characters");
@@ -487,6 +520,14 @@ impl ServerConfig {
     /// string prefix.
     pub fn https(&self) -> bool {
         self.public_url().scheme() == "https"
+    }
+    /// Whether `/mcp` accepts this `Origin` header value: one of `[mcp] allowed_origins`, or the origin of
+    /// `public_url` when the list is unset. The comparison is exact, as origins are.
+    pub fn mcp_origin_allowed(&self, origin: &str) -> bool {
+        match &self.mcp.allowed_origins {
+            Some(list) => list.iter().any(|allowed| allowed == origin),
+            None => self.public_url().origin().ascii_serialization() == origin,
+        }
     }
     fn try_public_url(&self) -> anyhow::Result<url::Url> {
         let raw = match &self.public_url {
@@ -1002,6 +1043,60 @@ mod tests {
                 "bind = \"{bind}\"\npublic_url = \"{public}\"\n[oidc]\nprovider = \"static\"\nstatic_email = \"dan@example.com\""
             ));
             assert!(c.is_ok(), "{bind} {public}: {:?}", c.err());
+        }
+    }
+
+    const GOOGLE: &str = "public_url = \"https://reeve.example.com\"\n[oidc]\nprovider = \"google\"\nclient_id = \"i\"\nclient_secret = \"s\"\n";
+
+    #[test]
+    fn mcp_is_off_by_default_and_needs_sign_in_to_be_turned_on() {
+        assert!(!cfg("").unwrap().mcp.enabled);
+        assert!(!cfg("[mcp]\nenabled = false").unwrap().mcp.enabled);
+        let e = cfg("[mcp]\nenabled = true").unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("[mcp] enabled = true requires [oidc]"),
+            "{e}"
+        );
+        assert!(
+            cfg(&format!("{GOOGLE}[mcp]\nenabled = true"))
+                .unwrap()
+                .mcp
+                .enabled
+        );
+    }
+
+    #[test]
+    fn mcp_refuses_unknown_keys() {
+        let e = cfg("[mcp]\nsurprise = 1").unwrap_err();
+        assert!(e.to_string().contains("unknown field"), "{e}");
+    }
+
+    #[test]
+    fn mcp_origins_default_to_the_public_origin_and_entries_must_be_origins() {
+        let c = cfg(&format!("{GOOGLE}[mcp]\nenabled = true")).unwrap();
+        assert!(c.mcp_origin_allowed("https://reeve.example.com"));
+        assert!(!c.mcp_origin_allowed("https://claude.ai"));
+        assert!(!c.mcp_origin_allowed("https://reeve.example.com/"));
+        // An explicit list replaces the default.
+        let c = cfg(&format!(
+            "{GOOGLE}[mcp]\nallowed_origins = [\"https://claude.ai\", \"http://localhost:6274\"]"
+        ))
+        .unwrap();
+        assert!(c.mcp_origin_allowed("https://claude.ai"));
+        assert!(c.mcp_origin_allowed("http://localhost:6274"));
+        assert!(!c.mcp_origin_allowed("https://reeve.example.com"));
+        for bad in [
+            "https://claude.ai/",
+            "claude.ai",
+            "https://claude.ai/path",
+            "*",
+        ] {
+            let e = cfg(&format!("{GOOGLE}[mcp]\nallowed_origins = [\"{bad}\"]")).unwrap_err();
+            assert!(
+                e.to_string().contains("[mcp] allowed_origins"),
+                "{bad}: {e}"
+            );
         }
     }
 }
