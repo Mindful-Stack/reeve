@@ -21,7 +21,8 @@ pub(crate) const PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-r
 pub(crate) const AUTHORIZATION_SERVER_PATH: &str = "/.well-known/oauth-authorization-server";
 pub(crate) const AUTHORIZE_PATH: &str = "/oauth/authorize";
 pub(crate) const TOKEN_PATH: &str = "/oauth/token";
-/// The two scopes on the wire (kb/ADR-0029 R7). `offline_access` is accepted at authorize and never advertised.
+/// The two scopes on the wire (kb/ADR-0029 R7). A refresh token is always issued; `offline_access` is accepted at
+/// authorize and ignored, so it is not advertised.
 pub(crate) const SCOPES: [&str; 2] = ["read", "write"];
 
 /// The resource an MCP token is issued for: the endpoint's address, `<issuer>/mcp`. Clients send it as the
@@ -70,7 +71,7 @@ fn document(s: &AppState, method: &Method, build: fn(&ServerConfig) -> Value) ->
         return (
             StatusCode::METHOD_NOT_ALLOWED,
             [(header::ALLOW, "GET, HEAD")],
-            "this address answers GET only",
+            "this address answers GET and HEAD only",
         )
             .into_response();
     }

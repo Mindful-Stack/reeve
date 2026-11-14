@@ -45,6 +45,7 @@ async fn off_nothing_under_oauth_or_well_known_answers_and_none_is_the_web_page(
         "/.well-known/",
         "/.well-known/nope",
         "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp/more",
         "/.well-known/openid-configuration",
     ] {
         for method in ["GET", "POST"] {
@@ -111,7 +112,13 @@ async fn the_authorization_server_document_is_exactly_this() {
 async fn the_documents_answer_reads_only_and_never_in_the_api_envelope() {
     let h = mcp_harness().await;
     for path in [PROTECTED_RESOURCE, AUTHORIZATION_SERVER] {
-        assert_eq!(send(&h.app, request("HEAD", path)).await.0, 200, "{path}");
+        let (_, get_headers, _) = send(&h.app, request("GET", path)).await;
+        let (status, headers, body) = send(&h.app, request("HEAD", path)).await;
+        assert_eq!((status, body.as_str()), (200, ""), "HEAD {path}");
+        assert_eq!(
+            headers["content-type"], get_headers["content-type"],
+            "HEAD {path}"
+        );
         for method in ["POST", "PUT", "DELETE"] {
             let (status, headers, _) = send(&h.app, request(method, path)).await;
             assert_eq!(status, 405, "{method} {path}");
@@ -127,7 +134,9 @@ async fn the_documents_answer_reads_only_and_never_in_the_api_envelope() {
     }
 }
 
-/// On, an unknown path under either prefix is still a 404: only the two documents answer.
+/// On, an unknown path under either prefix is still a 404: only the two documents answer. The off test cannot
+/// show this: with the switch off a route that matched too much (the root form, a longer path) would answer 404
+/// from its handler all the same.
 #[tokio::test]
 async fn on_only_the_two_documents_answer_under_the_prefixes() {
     let h = mcp_harness().await;
@@ -171,6 +180,13 @@ async fn the_401_points_at_the_metadata_and_says_invalid_token_only_for_a_refuse
     for (what, authorization, expected) in [
         ("no Authorization header", None, &plain),
         ("another scheme", Some(format!("Basic {live}")), &plain),
+        // A bearer header without a token presents none, so there is no token to call invalid.
+        ("an empty bearer token", Some("Bearer ".to_string()), &plain),
+        (
+            "a bearer token of spaces",
+            Some("Bearer    ".to_string()),
+            &plain,
+        ),
         (
             "an unknown token",
             Some("Bearer reeve_0000".to_string()),
@@ -219,4 +235,85 @@ async fn the_address_the_401_names_serves_the_document_for_this_endpoint() {
     assert_eq!(status, 200, "{path}: {body}");
     let document: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(document["resource"], "http://127.0.0.1:7474/mcp");
+}
+
+/// A real file of the web build under `/.well-known/` (a `security.txt`, say) is served as any file is; only what
+/// would otherwise fall back to the page is refused.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_real_file_under_well_known_is_served_and_an_unknown_path_there_is_not() {
+    let h = harness().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("index.html"), INDEX).unwrap();
+    std::fs::create_dir_all(dir.path().join(".well-known")).unwrap();
+    std::fs::write(
+        dir.path().join(".well-known/security.txt"),
+        "Contact: mailto:security@example.com",
+    )
+    .unwrap();
+    let app = h.app_with_assets(dir.path());
+    let (status, headers, body) = send(&app, request("GET", "/.well-known/security.txt")).await;
+    assert_eq!(
+        (status, body.as_str()),
+        (200, "Contact: mailto:security@example.com")
+    );
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/plain")
+    );
+    for (method, path) in [
+        ("GET", "/.well-known/other.txt"),
+        ("GET", "/.well-known/security"),
+        ("GET", "/.well-known/"),
+        // The file answers reads only, and a path that climbs out of the directory is never looked up.
+        ("POST", "/.well-known/security.txt"),
+        ("GET", "/.well-known/../.well-known/security.txt"),
+    ] {
+        let (status, _, body) = send(&app, request(method, path)).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (404, "not found"),
+            "{method} {path}"
+        );
+    }
+}
+
+/// Every address follows the configured `public_url`, here another host and port than the default the bind gives,
+/// written with a trailing slash. The expectations are text written here: an address built from anything but the
+/// configuration (the bind, a constant) fails.
+#[tokio::test]
+async fn every_address_follows_the_configured_public_url() {
+    let h = harness_patched(|c| {
+        c.public_url = Some("https://reeve.example.com:8443/".into());
+        c.mcp.enabled = true;
+    })
+    .await;
+    let (status, _, body) = send(&h.app, request("GET", PROTECTED_RESOURCE)).await;
+    assert_eq!(status, 200, "{body}");
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(document["resource"], "https://reeve.example.com:8443/mcp");
+    assert_eq!(
+        document["authorization_servers"],
+        json!(["https://reeve.example.com:8443"])
+    );
+    let (status, _, body) = send(&h.app, request("GET", AUTHORIZATION_SERVER)).await;
+    assert_eq!(status, 200, "{body}");
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(document["issuer"], "https://reeve.example.com:8443");
+    assert_eq!(
+        document["authorization_endpoint"],
+        "https://reeve.example.com:8443/oauth/authorize"
+    );
+    assert_eq!(
+        document["token_endpoint"],
+        "https://reeve.example.com:8443/oauth/token"
+    );
+    let (status, headers, _) = send(&h.app, post_mcp(None)).await;
+    assert_eq!(status, 401);
+    assert_eq!(
+        headers["www-authenticate"],
+        r#"Bearer resource_metadata="https://reeve.example.com:8443/.well-known/oauth-protected-resource/mcp""#
+    );
 }

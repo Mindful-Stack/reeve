@@ -244,8 +244,9 @@ async fn admit(
         return Err(McpError::OriginNotAllowed);
     }
     // 4. The caller, before every protocol check: an unauthenticated call gets the 401 whatever else is wrong.
-    // Whether a bearer token was presented decides the 401's `error`; whether it is accepted is identity's.
-    let presented = matches!(crate::auth::bearer_secret(headers), Ok(Some(_)));
+    // Whether a bearer token was presented decides the 401's `error`; whether it is accepted is identity's. A bearer
+    // header with nothing after the scheme presents no token.
+    let presented = matches!(crate::auth::bearer_secret(headers), Ok(Some(secret)) if !secret.trim().is_empty());
     let caller = McpCaller::from_headers(s, headers)
         .await
         .map_err(|e| match e {

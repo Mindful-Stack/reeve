@@ -146,21 +146,25 @@ pub async fn serve(State(s): State<AppState>, method: Method, uri: Uri) -> Respo
     {
         return AppError::NotFound.into_response();
     }
-    // The OAuth addresses (kb/ADR-0029 R11) are never pages either. The routes under them answer for themselves;
-    // any other path there is a 404 in plain text, whatever the method, so a client that probes for metadata is
+    let read = method == Method::GET || method == Method::HEAD;
+    // Traversal is refused before the filesystem is touched (hyper does not normalise `..`); rust-embed checks this
+    // itself, the directory override must do it here.
+    let traversal =
+        path.split('/').any(|seg| seg == "..") || path.contains('\\') || path.contains('\0');
+    // The OAuth addresses (kb/ADR-0029 R11) are never pages either. The routes under them answer for themselves, and
+    // a real file of the build there (a `security.txt` under `.well-known/`) is served below as any file is. Whatever
+    // else is asked for there is a 404 in plain text, whatever the method, so a client that probes for metadata is
     // never handed index.html, and never the API's envelope.
-    if matches!(trimmed, "oauth" | ".well-known")
+    let oauth = matches!(trimmed, "oauth" | ".well-known")
         || path.starts_with("oauth/")
-        || path.starts_with(".well-known/")
-    {
+        || path.starts_with(".well-known/");
+    if oauth && (!read || traversal || s.assets.file(path).is_none()) {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
-    if method != Method::GET && method != Method::HEAD {
+    if !read {
         return AppError::MethodNotAllowed.into_response();
     }
-    // Reject traversal before touching the filesystem (hyper does not normalise `..`); rust-embed checks this itself,
-    // the directory override must do it here.
-    if path.split('/').any(|seg| seg == "..") || path.contains('\\') || path.contains('\0') {
+    if traversal {
         return AppError::NotFound.into_response();
     }
     if let Some((bytes, mime)) = s.assets.file(path) {
