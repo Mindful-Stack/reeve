@@ -11,6 +11,7 @@ mod mcp;
 pub mod ops;
 pub mod routes;
 pub mod state;
+mod text;
 pub use atomic_file::write_atomically;
 pub use auth::routes::MAX_PENDING;
 pub use config::ServerConfig;

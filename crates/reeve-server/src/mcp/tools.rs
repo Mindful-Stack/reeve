@@ -17,7 +17,6 @@ mod move_story;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
-pub(crate) use bound::echo;
 use futures_util::future::BoxFuture;
 use reeve_protocol::{KeyRef, Scope};
 use serde_json::{Value, json};

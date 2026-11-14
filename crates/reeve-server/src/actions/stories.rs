@@ -164,7 +164,7 @@ pub(crate) async fn story_context(
 }
 
 /// A story's owner must be an allowed user (allowed by the floor or a database entry): an owner nobody can sign
-/// in as would hold work no one can pick up. The refusal repeats the owner bounded (`mcp::echo`), so however long
+/// in as would hold work no one can pick up. The refusal repeats the owner bounded (`text::echo`), so however long
 /// it is, the words after it are still said.
 fn allowed_owner(
     policy: &reeve_identity::AccessPolicy,
@@ -174,7 +174,7 @@ fn allowed_owner(
         Some(o) if !policy.is_allowed(&o) => {
             Err(reeve_planning::HandlerError::Validation(format!(
                 "{} is not an allowed user",
-                crate::mcp::echo(&normalise_email(&o))
+                crate::text::echo(&normalise_email(&o))
             ))
             .into())
         }
