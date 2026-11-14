@@ -52,7 +52,6 @@ pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]
 pub use oidc::{GoogleOidcTestOptions, TestClock, make_google_oidc_for_tests, make_static_oidc};
 pub use ports::{IdentityActivity, IdentityEvent};
-pub use reeve_protocol::RevokedReason;
 pub use reeve_protocol::Scope;
 pub use reeve_protocol::Via;
 pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};

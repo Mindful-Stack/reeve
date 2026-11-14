@@ -206,6 +206,8 @@ pub async fn exchange_code(
 
 /// Who acts when no person does (a reused refresh token). The webhook's entries name `github` the same way.
 pub(crate) const SYSTEM: &str = "system";
+/// Who acts in an operator command, as the other operator commands name it.
+const OPERATOR: &str = "operator";
 
 /// One `connection_revoked` entry per connection in `revoked`: the one writer of that action, for every way a
 /// connection is revoked. Called last in its transaction.
@@ -364,8 +366,8 @@ pub async fn refresh_tokens(
     Ok(pair)
 }
 
-/// Revokes every live connection of every person, with one `connection_revoked` entry each: what an operator
-/// runs after a restore, which rewinds refresh-token rotation (reason `Restored`). In each transaction the
+/// Revokes every live connection of every person, with one `connection_revoked` entry each, by the operator via
+/// the system: what an operator runs after a restore, which rewinds refresh-token rotation (reason `Restored`). In each transaction the
 /// owners' rows are locked first, in order, and the entries are written last. The owners are read before the
 /// transaction that locks them, so the read is repeated after each commit until no live connection is left: a
 /// connection made in between, by a server that was not stopped, ends as well. Returns how many were revoked.
@@ -373,11 +375,9 @@ pub async fn revoke_all_connections(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
-    actor: &str,
-    via: Via,
-    reason: RevokedReason,
     now: DateTime<Utc>,
 ) -> Result<usize, sqlx::Error> {
+    let reason = RevokedReason::Restored;
     let mut count = 0;
     loop {
         let owners = store.live_connection_owners(now).await?;
@@ -401,8 +401,8 @@ pub async fn revoke_all_connections(
             record_revocations(
                 activity,
                 &mut tx,
-                actor,
-                via,
+                OPERATOR,
+                Via::System,
                 owner,
                 connections,
                 reason,

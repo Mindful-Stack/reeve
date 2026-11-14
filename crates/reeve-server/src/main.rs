@@ -288,16 +288,9 @@ async fn main() -> anyhow::Result<()> {
             let store = reeve_identity::make_token_store(pool.clone());
             let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> =
                 reeve_activity::make_activity_store(pool.clone());
-            let n = reeve_identity::revoke_all_connections(
-                &pool,
-                &*store,
-                &*log,
-                "operator",
-                reeve_protocol::Via::System,
-                reeve_identity::RevokedReason::Restored,
-                chrono::Utc::now(),
-            )
-            .await?;
+            let n =
+                reeve_identity::revoke_all_connections(&pool, &*store, &*log, chrono::Utc::now())
+                    .await?;
             println!("revoked {n} connections");
         }
         Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
