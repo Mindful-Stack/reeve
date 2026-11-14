@@ -53,6 +53,28 @@ pub(crate) fn kind_from(s: &str) -> Option<TokenKind> {
     }
 }
 
+/// Where a token works (kb/ADR-0029 R5, R6). Not a token kind (kb/ADR-0015 R7): an MCP token is an interactive
+/// token whose audience is the MCP endpoint. Private to this crate (not exported from `lib.rs`): a caller of this
+/// crate never names an audience, it calls `issue_token` or `issue_mcp_token`, `authenticate_api` or
+/// `authenticate_mcp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    /// The API, the event stream, attachments and the session cookie.
+    Api,
+    /// The MCP endpoint only.
+    Mcp,
+}
+
+impl Audience {
+    /// The text stored in `tokens.audience`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Audience::Api => "api",
+            Audience::Mcp => "mcp",
+        }
+    }
+}
+
 pub fn hash_secret(secret: &str) -> String {
     hex::encode(Sha256::digest(secret.as_bytes()))
 }

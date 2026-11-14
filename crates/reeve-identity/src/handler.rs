@@ -31,7 +31,7 @@ pub struct IssuedToken {
     pub secret: String,
 }
 
-/// Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
+/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
 #[allow(clippy::too_many_arguments)]
 pub async fn issue_token(
     pool: &PgPool,
@@ -65,6 +65,7 @@ pub async fn issue_token(
             &mut tx,
             &email,
             kind,
+            Audience::Api,
             &hash_secret(&secret),
             label,
             expires_at,
@@ -81,6 +82,70 @@ pub async fn issue_token(
                 subject: email.clone(),
                 action: "token_issued",
                 payload: serde_json::json!({"kind": kind, "label": label, "token_id": id}),
+            },
+        )
+        .await?;
+    tx.commit().await?;
+    Ok(IssuedToken { id, secret })
+}
+
+/// Issues a token for the MCP endpoint (kb/ADR-0029 R5, R6): always interactive, always with an expiry, and the
+/// expiry at most one hour after `now`. There is no kind and no optional expiry to pass, so an automation MCP token
+/// and one that never expires cannot be written down. GRA-658 extends this function with the connection.
+#[allow(clippy::too_many_arguments)]
+pub async fn issue_mcp_token(
+    pool: &PgPool,
+    store: &dyn TokenStore,
+    activity: &dyn IdentityActivity,
+    policy: &AccessPolicy,
+    actor: &str,
+    via: Via,
+    email: &str,
+    label: &str,
+    expires_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<IssuedToken, AuthError> {
+    let email = normalise_email(email);
+    if !policy.is_allowed(&email) {
+        return Err(AuthError::NotAllowed);
+    }
+    if expires_at <= now {
+        return Err(AuthError::Validation(
+            "expires_at must be in the future".into(),
+        ));
+    }
+    if expires_at > now + chrono::Duration::hours(1) {
+        return Err(AuthError::Validation(
+            "an MCP token lives at most one hour".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    if store.ensure_user(&mut tx, &email, now).await? {
+        return Err(AuthError::Disabled);
+    }
+    let secret = new_secret();
+    let id = store
+        .insert_token(
+            &mut tx,
+            &email,
+            TokenKind::Interactive,
+            Audience::Mcp,
+            &hash_secret(&secret),
+            label,
+            Some(expires_at),
+            now,
+        )
+        .await?;
+    activity
+        .record(
+            &mut tx,
+            IdentityEvent {
+                at: now,
+                actor: actor.into(),
+                via,
+                subject: email.clone(),
+                action: "token_issued",
+                payload: serde_json::json!({"kind": TokenKind::Interactive, "audience": Audience::Mcp.as_str(), "label": label, "token_id": id}),
             },
         )
         .await?;
@@ -241,6 +306,7 @@ pub async fn sign_in(
             &mut tx,
             &email,
             TokenKind::Interactive,
+            Audience::Api,
             &hash_secret(&secret),
             SESSION_LABEL,
             Some(expires_at),

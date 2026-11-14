@@ -9,6 +9,8 @@ pub struct TokenRow {
     pub id: i64,
     pub owner: String,
     pub kind: String,
+    /// The stored audience text (`api` or `mcp`); parsed by the authenticate functions.
+    pub audience: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub owner_disabled: bool,
@@ -47,6 +49,7 @@ pub trait TokenStore: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         kind: TokenKind,
+        audience: Audience,
         hash: &str,
         label: &str,
         expires_at: Option<DateTime<Utc>>,
@@ -116,6 +119,7 @@ impl TokenStore for PgTokenStore {
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         kind: TokenKind,
+        audience: Audience,
         hash: &str,
         label: &str,
         expires_at: Option<DateTime<Utc>>,
@@ -125,11 +129,11 @@ impl TokenStore for PgTokenStore {
             TokenKind::Interactive => "interactive",
             TokenKind::Automation => "automation",
         };
-        sqlx::query_scalar("INSERT INTO tokens (owner, kind, hash, label, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
-            .bind(owner).bind(kind).bind(hash).bind(label).bind(now).bind(expires_at).fetch_one(&mut **tx).await
+        sqlx::query_scalar("INSERT INTO tokens (owner, kind, audience, hash, label, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id")
+            .bind(owner).bind(kind).bind(audience.as_str()).bind(hash).bind(label).bind(now).bind(expires_at).fetch_one(&mut **tx).await
     }
     async fn find_by_hash(&self, hash: &str) -> Result<Option<TokenRow>, sqlx::Error> {
-        sqlx::query_as("SELECT t.id, t.owner, t.kind, t.expires_at, t.revoked_at, u.disabled AS owner_disabled FROM tokens t JOIN users u ON u.email = t.owner WHERE t.hash = $1")
+        sqlx::query_as("SELECT t.id, t.owner, t.kind, t.audience, t.expires_at, t.revoked_at, u.disabled AS owner_disabled FROM tokens t JOIN users u ON u.email = t.owner WHERE t.hash = $1")
             .bind(hash).fetch_optional(&self.pool).await
     }
     async fn revoke_all_for(
