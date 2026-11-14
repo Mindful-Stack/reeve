@@ -25,6 +25,14 @@ const MAX_BODY: usize = 1024 * 1024;
 /// How long a client may keep `server/discover` and `tools/list` answers: neither changes while the process runs.
 const TTL_MS: u64 = 300_000;
 
+/// Every tool, built once with the state (`build_state`): building a tool generates its input schema, which is
+/// not work to repeat on every request.
+pub(crate) type Tools = std::sync::Arc<Vec<tools::Tool>>;
+
+pub(crate) fn build_tools(config: &crate::ServerConfig) -> Tools {
+    std::sync::Arc::new(tools::registry(&config.key_prefix))
+}
+
 fn capabilities() -> Value {
     // No `listChanged`: no list ever changes at run time, and `subscriptions/listen` is not implemented.
     json!({"tools": {}})
@@ -166,17 +174,17 @@ fn protocol_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a 
     }
 }
 
-/// The one line `serve` logs at startup about this endpoint.
-pub fn mcp_startup_line(config: &crate::ServerConfig) -> String {
-    if !config.mcp.enabled {
+/// The one line `serve` logs at startup about this endpoint, from the state as built.
+pub fn mcp_startup_line(state: &AppState) -> String {
+    if !state.config.mcp.enabled {
         return "mcp endpoint disabled".into();
     }
     format!(
         "mcp endpoint enabled at {} (protocol {} and {}, {} tools)",
-        crate::auth::oauth::resource(config),
+        crate::auth::oauth::resource(&state.config),
         protocol::MODERN,
         protocol::LEGACY,
-        tools::list(&config.key_prefix).len()
+        state.mcp_tools.len()
     )
 }
 
@@ -309,7 +317,7 @@ async fn answer(
         })),
         (Revision::Legacy, "ping") => Ok(json!({})),
         (_, "tools/list") => {
-            let result = json!({"tools": tools::list(&s.config.key_prefix)});
+            let result = json!({"tools": tools::list(&s.mcp_tools)});
             Ok(match revision {
                 Revision::Modern => modern(result),
                 Revision::Legacy => result,
@@ -353,8 +361,7 @@ async fn call_tool(
             "Invalid params: tools/call requires params.name".into(),
         ));
     };
-    let registry = tools::registry(&s.config.key_prefix);
-    let Some(tool) = registry.iter().find(|t| t.name == name) else {
+    let Some(tool) = s.mcp_tools.iter().find(|t| t.name == name) else {
         return Err(invalid(format!("Unknown tool: {name}")));
     };
     // `arguments` may be left out (no arguments); when present it must be a JSON object.
@@ -374,11 +381,18 @@ async fn call_tool(
     let failure =
         |message: String| json!({"content": [{"type": "text", "text": message}], "isError": true});
     let result = match outcome {
-        Ok(value) => json!({
-            "content": [{"type": "text", "text": value.to_string()}],
-            "structuredContent": value,
-            "isError": false
-        }),
+        Ok(value) => {
+            let text = value.to_string();
+            match tools::too_large(text.len()) {
+                // The last guard, for every tool: an answer no cut or cap kept small enough is not sent.
+                Some(message) => failure(message),
+                None => json!({
+                    "content": [{"type": "text", "text": text}],
+                    "structuredContent": value,
+                    "isError": false
+                }),
+            }
+        }
         // The schema is the one `tools/list` shows, with this instance's example, so the model can correct itself.
         Err(ToolError::Arguments(message)) => failure(format!(
             "Invalid arguments: {message}. The arguments must match this schema: {}",
@@ -392,22 +406,4 @@ async fn call_tool(
         Revision::Modern => complete(result),
         Revision::Legacy => result,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const BASE: &str = "database_url = \"postgres://x\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\npublic_url = \"https://reeve.example.com\"\n[oidc]\nprovider = \"google\"\nclient_id = \"i\"\nclient_secret = \"s\"\n";
-
-    #[test]
-    fn the_startup_line_says_whether_and_where_mcp_is_served() {
-        let off = crate::ServerConfig::parse(BASE).unwrap();
-        assert_eq!(mcp_startup_line(&off), "mcp endpoint disabled");
-        let on = crate::ServerConfig::parse(&format!("{BASE}[mcp]\nenabled = true\n")).unwrap();
-        assert_eq!(
-            mcp_startup_line(&on),
-            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)"
-        );
-    }
 }

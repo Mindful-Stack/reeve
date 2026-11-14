@@ -32,6 +32,9 @@ pub struct AppState {
     /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
     /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
     pub repo_urls: Arc<HashMap<String, String>>,
+    /// The MCP tools, built once here (`mcp::build_tools`); `tools/list`, `tools/call` and the startup line read
+    /// this one list.
+    pub(crate) mcp_tools: crate::mcp::Tools,
     /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route will resolve a client with
     /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
@@ -255,6 +258,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
     #[cfg(not(debug_assertions))]
     let assets = crate::assets::Assets::Embedded;
     let repo_urls = Arc::new(browsable_repo_urls(&config));
+    let mcp_tools = crate::mcp::build_tools(&config);
     Ok(AppState {
         handlers,
         tokens: reeve_identity::make_token_store(pool.clone()),
@@ -267,6 +271,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         logins: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assets,
         repo_urls,
+        mcp_tools,
         client_fetcher,
     })
 }

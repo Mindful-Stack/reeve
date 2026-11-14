@@ -13,7 +13,7 @@ async fn list(
     State(s): State<AppState>,
     c: Caller,
 ) -> Result<Json<Response<Vec<InitiativeDto>>>, AppError> {
-    Ok(ok(s.handlers.list_initiatives(c.ctx().now).await?))
+    Ok(ok(crate::actions::list_initiatives(&s, &c.acting()).await?))
 }
 #[utoipa::path(post, path = "/initiatives", request_body = CreateInitiative, responses((status = 200, body = Response<InitiativeDto>)))]
 async fn create(
@@ -43,8 +43,9 @@ async fn get(
     c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Initiative).await?;
-    Ok(ok(s.handlers.initiative_dto(&key, c.ctx().now).await?))
+    Ok(ok(
+        crate::actions::get_initiative(&s, &c.acting(), &key).await?
+    ))
 }
 #[utoipa::path(patch, path = "/initiatives/{key}", params(("key" = String, Path)), request_body = EditItem, responses((status = 200, body = Response<InitiativeDto>)))]
 async fn edit(

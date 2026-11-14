@@ -90,6 +90,7 @@ Lorekeeper's skills already depend on this list (F5).
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-12 (kb/ADR-0025): R2's story-list parameters grow by `promised` (`reeve story ls --promised`; additive, R3). R4 applies to it: `promised` is evaluated in the same snapshot as the rows, on the promise computed for each row, and `any` is frozen as "open or overdue". No trigger fired; the decision holds.
 - 2026-11-14 (GRA-667): the story list can now be read a page at a time (`limit` and `offset`). The consequence "the list has no pagination; adding it would need `ready`, `goal` and `urgent` moved into one read … or pages would come back short" no longer holds as written: a page is cut from the list after every filter has run, so no page comes back short and the three filters stay where they are. This bounds what is sent, not what is read: the whole filtered list is still built for every page. The trigger "a typical backlog response exceeds 1,000 stories or 500 ms" has not fired; when it does, moving the filters into one read is still what it asks for. The decision holds.
+- 2026-11-14 (GRA-660): `StoryQuery`, the source F3 and F6 name, now lives in `crates/reeve-server/src/actions/stories.rs`. Both facts hold as written. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0001, kb/ADR-0005, kb/ADR-0017, kb/ADR-0018.

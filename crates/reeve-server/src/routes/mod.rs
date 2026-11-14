@@ -22,40 +22,6 @@ pub mod users;
 pub mod war_room;
 pub mod webhooks;
 
-/// An optional key input (a parent, a filter, `before`) resolved through `Handlers::resolve_ref`.
-pub(crate) async fn resolve_opt(
-    h: &reeve_planning::Handlers,
-    r: Option<&reeve_protocol::KeyRef>,
-    item: reeve_protocol::ItemType,
-) -> Result<Option<reeve_protocol::Key>, reeve_planning::HandlerError> {
-    match r {
-        Some(r) => Ok(Some(h.resolve_ref(r.as_str(), item).await?)),
-        None => Ok(None),
-    }
-}
-
-/// A list filter naming an item. A filter is a query, not an address: a reference that matches nothing (an external
-/// reference not imported yet) selects nothing, exactly as an unknown instance key does, so it is `Nothing` (200, empty
-/// list) and not `NotFound`. Path parameters and body fields keep 404, where naming a missing item is an error.
-pub(crate) enum FilterRef {
-    Unset,
-    Is(reeve_protocol::Key),
-    Nothing,
-}
-
-pub(crate) async fn resolve_filter(
-    h: &reeve_planning::Handlers,
-    r: Option<&reeve_protocol::KeyRef>,
-    item: reeve_protocol::ItemType,
-) -> Result<FilterRef, reeve_planning::HandlerError> {
-    match resolve_opt(h, r, item).await {
-        Ok(Some(k)) => Ok(FilterRef::Is(k)),
-        Ok(None) => Ok(FilterRef::Unset),
-        Err(reeve_planning::HandlerError::NotFound) => Ok(FilterRef::Nothing),
-        Err(e) => Err(e),
-    }
-}
-
 /// An edit's parent: `None` leaves it alone, `Some(None)` clears it, `Some(Some(r))` resolves `r`.
 pub(crate) async fn resolve_edit(
     h: &reeve_planning::Handlers,
@@ -63,7 +29,9 @@ pub(crate) async fn resolve_edit(
     item: reeve_protocol::ItemType,
 ) -> Result<Option<Option<reeve_protocol::Key>>, reeve_planning::HandlerError> {
     match r {
-        Some(r) => Ok(Some(resolve_opt(h, r.as_ref(), item).await?)),
+        Some(r) => Ok(Some(
+            crate::actions::resolve_opt(h, r.as_ref(), item).await?,
+        )),
         None => Ok(None),
     }
 }

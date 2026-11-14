@@ -80,7 +80,7 @@ tokens it accepts are ones a developer mints. Both need a binary built with the 
    cargo run -p reeve-server --features reeve-server/static-oidc -- serve
    ```
 
-   It logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)`.
+   It logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 9 tools)`.
 
    In a second shell, mint a token. It is valid for one hour and is printed once:
 
@@ -99,6 +99,20 @@ tokens it accepts are ones a developer mints. Both need a binary built with the 
      -H 'Mcp-Name: get_story' \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_story","arguments":{"key":"ABC-1"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
    ```
+
+   A list tool takes its filters as arguments. "What is on my plate" is the caller's open stories:
+
+   ```bash
+   curl -sS http://127.0.0.1:7474/mcp \
+     -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -H 'MCP-Protocol-Version: 2026-07-28' \
+     -H 'Mcp-Method: tools/call' \
+     -H 'Mcp-Name: list_stories' \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_stories","arguments":{"mine":true,"open":true},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+   ```
+
+   `tools/list` (the inspector line below) shows all nine tools with their arguments.
 
 4. The MCP inspector, from the command line (it speaks revision 2025-11-25):
 

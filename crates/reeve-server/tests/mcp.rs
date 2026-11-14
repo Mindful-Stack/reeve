@@ -794,6 +794,100 @@ async fn call_get_story(h: &Harness, token: &str, arguments: Value) -> (u16, Val
     (status, rpc(&body))
 }
 
+/// The startup line counts the tools `tools/list` answers, from the same built state; and says so only when the
+/// endpoint is on.
+#[tokio::test]
+async fn the_startup_line_says_whether_and_where_mcp_is_served_and_counts_the_listed_tools() {
+    let off = harness().await;
+    assert_eq!(
+        reeve_server::mcp_startup_line(&off.state),
+        "mcp endpoint disabled"
+    );
+
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 1, "tools/list", json!({}))).await;
+    assert_eq!(status, 200, "{body}");
+    let listed = rpc(&body)["result"]["tools"].as_array().unwrap().len();
+    assert!(listed > 1, "the control: {listed} tools are listed");
+    assert_eq!(
+        reeve_server::mcp_startup_line(&h.state),
+        format!(
+            "mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, {listed} tools)"
+        )
+    );
+}
+
+/// The last guard and the bounded echo, through the dispatch: neither is a tool's own doing.
+#[tokio::test]
+async fn an_answer_too_large_to_send_is_a_tool_error_and_an_echoed_key_is_bounded() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    // Forty-five criteria of exactly 2 000 characters: none is cut, and together they are 90 000.
+    let criterion = "a".repeat(2_000);
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "mcp-big", "title": "Big", "kind": "story", "criteria": vec![criterion; 45], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    let key = story["value"]["key"].as_str().unwrap();
+    // The control: the API route answers it, whole.
+    let api = api_context(&h, key).await;
+    assert_eq!(api["story"]["criteria"].as_array().unwrap().len(), 45);
+
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["result"]["isError"], true);
+    assert!(answer["result"].get("structuredContent").is_none());
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("The answer is too large to send (9")
+            && text.ends_with(" bytes). For a list, ask for a narrower one. A single item this large cannot be read here."),
+        "{text}"
+    );
+
+    // The guard counts bytes, not characters: twenty criteria of 2 000 two-byte characters are about 41 000
+    // characters, under the limit, and about 81 000 bytes, over it.
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "mcp-wide", "title": "Wide", "kind": "story", "criteria": vec!["å".repeat(2_000); 20], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    let key = story["value"]["key"].as_str().unwrap();
+    let whole = api_context(&h, key).await.to_string();
+    assert!(
+        whole.chars().count() < 70_000 && whole.len() > 70_000,
+        "the control: {} characters, {} bytes",
+        whole.chars().count(),
+        whole.len()
+    );
+    let (_, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(answer["result"]["isError"], true, "{answer}");
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("The answer is too large to send (8"),
+        "{text}"
+    );
+
+    // A key of 300 characters comes back as its first 200.
+    let (_, answer) = call_get_story(&h, &t, json!({"key": "k".repeat(300)})).await;
+    assert_eq!(
+        answer["result"]["content"][0]["text"],
+        json!(format!(
+            "No story with key \"{}[cut: 100 more characters]\". Keys look like TST-123.",
+            "k".repeat(200)
+        ))
+    );
+}
+
 fn has_ref(v: &Value) -> bool {
     match v {
         Value::Object(m) => m.contains_key("$ref") || m.values().any(has_ref),
@@ -931,7 +1025,7 @@ async fn a_tool_failure_is_a_result_the_model_can_read_and_a_malformed_call_is_a
     assert_eq!(answer["result"]["isError"], true);
     assert_eq!(
         answer["result"]["content"][0]["text"],
-        "No story with key TST-999999. Keys look like TST-123."
+        "No story with key \"TST-999999\". Keys look like TST-123."
     );
     assert!(answer["result"].get("structuredContent").is_none());
 
@@ -1078,6 +1172,7 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
         api["blockers"][0]["description"],
         json!(blocker_description)
     );
+    assert_eq!(api["blockers"][0]["criteria"][1]["text"], json!(criterion));
     assert_eq!(api["epic"]["brief"], json!(epic_brief));
     assert_eq!(api["initiative"]["brief"], json!(initiative_brief));
     assert_eq!(api["story"]["criteria"][1]["text"], json!(criterion));
@@ -1097,6 +1192,11 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
     assert_eq!(
         sent["blockers"][0]["description"],
         json!(format!("{}[cut: 5 more characters]", "ü".repeat(2_000)))
+    );
+    assert_eq!(sent["blockers"][0]["criteria"][0]["text"], "works");
+    assert_eq!(
+        sent["blockers"][0]["criteria"][1]["text"],
+        json!(format!("{}[cut: 4 more characters]", "ñ".repeat(2_000)))
     );
     assert_eq!(
         sent["epic"]["brief"],

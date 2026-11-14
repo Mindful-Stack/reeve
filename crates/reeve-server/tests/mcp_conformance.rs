@@ -26,6 +26,21 @@ fn config(url: &str, token: &str) -> StreamableHttpClientTransportConfig {
     StreamableHttpClientTransportConfig::with_uri(url.to_string()).auth_header(token)
 }
 
+/// The tool names in the committed snapshot, in its order. `tests/mcp.rs` proves that `tools/list` equals that
+/// file; here the SDK's client must see the same names in the same order.
+fn snapshot_names() -> Vec<String> {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/mcp_tools.json");
+    let tools: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_sdk_client_discovers_and_lists_tools_over_2026_07_28() {
     let h = mcp_harness().await;
@@ -51,8 +66,11 @@ async fn the_sdk_client_discovers_and_lists_tools_over_2026_07_28() {
         .await
         .expect("tools/list is answered");
     assert_eq!(
-        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
-        vec!["get_story"]
+        tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<String>>(),
+        snapshot_names()
     );
     client.cancel().await.unwrap();
 }
@@ -75,8 +93,11 @@ async fn the_sdk_client_shakes_hands_and_lists_tools_over_2025_11_25() {
         .await
         .expect("tools/list is answered");
     assert_eq!(
-        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
-        vec!["get_story"]
+        tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<String>>(),
+        snapshot_names()
     );
     client.cancel().await.unwrap();
 }
@@ -102,8 +123,15 @@ fn get_story_call(key: &str) -> CallToolRequestParams {
     CallToolRequestParams::new("get_story").with_arguments(arguments)
 }
 
+fn list_stories_call() -> CallToolRequestParams {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("open".into(), json!(true));
+    arguments.insert("limit".into(), json!(5));
+    CallToolRequestParams::new("list_stories").with_arguments(arguments)
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answer() {
+async fn the_sdk_client_calls_a_read_and_a_list_tool_in_both_revisions_and_gets_the_same_answers() {
     let h = mcp_harness().await;
     let token = issue_mcp_token(&h, "dan@example.com").await.secret;
     let key = a_story(&h).await;
@@ -118,8 +146,12 @@ async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answ
         )
         .await
         .expect("server/discover is answered");
-    let over_modern = modern
+    let story_over_modern = modern
         .call_tool(get_story_call(&key))
+        .await
+        .expect("tools/call is answered");
+    let list_over_modern = modern
+        .call_tool(list_stories_call())
         .await
         .expect("tools/call is answered");
     modern.cancel().await.unwrap();
@@ -130,13 +162,17 @@ async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answ
         )))
         .await
         .expect("initialize is answered");
-    let over_legacy = legacy
+    let story_over_legacy = legacy
         .call_tool(get_story_call(&key))
+        .await
+        .expect("tools/call is answered");
+    let list_over_legacy = legacy
+        .call_tool(list_stories_call())
         .await
         .expect("tools/call is answered");
     legacy.cancel().await.unwrap();
 
-    for result in [&over_modern, &over_legacy] {
+    for result in [&story_over_modern, &story_over_legacy] {
         assert_eq!(result.is_error, Some(false));
         let structured = result
             .structured_content
@@ -146,8 +182,23 @@ async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answ
         assert_eq!(structured["comments_omitted"], 0);
     }
     assert_eq!(
-        over_modern.structured_content,
-        over_legacy.structured_content
+        story_over_modern.structured_content,
+        story_over_legacy.structured_content
+    );
+
+    for result in [&list_over_modern, &list_over_legacy] {
+        assert_eq!(result.is_error, Some(false));
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("structuredContent");
+        assert_eq!(structured["stories"].as_array().map(Vec::len), Some(1));
+        assert_eq!(structured["stories"][0]["key"], json!(key));
+        assert!(structured["next_offset"].is_null());
+    }
+    assert_eq!(
+        list_over_modern.structured_content,
+        list_over_legacy.structured_content
     );
 }
 

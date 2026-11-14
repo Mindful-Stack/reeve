@@ -204,8 +204,8 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Migrate => {}
         Cmd::Serve => {
             let bind = config.bind.clone();
-            tracing::info!("{}", mcp_startup_line(&config));
             let state = build_state(config, pool).await?;
+            tracing::info!("{}", mcp_startup_line(&state));
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             tracing::info!(%bind, "reeve-server listening");
             axum::serve(listener, app(state)).await?;

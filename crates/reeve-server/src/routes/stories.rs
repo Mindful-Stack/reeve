@@ -1,11 +1,11 @@
 use crate::{
+    actions::{StoryQuery, resolve_opt},
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{GoalFilter, StoryFilter};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -25,144 +25,13 @@ fn allowed_owner(
     }
 }
 
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct StoryQuery {
-    /// An epic key or external reference. A reference that matches nothing yields an empty list, not 404.
-    pub epic: Option<KeyRef>,
-    pub owner: Option<String>,
-    pub delivery: Option<DeliveryState>,
-    /// Items of any kind with no epic that are not done (kb/ADR-0027 R4).
-    #[serde(default)]
-    pub untriaged: bool,
-    pub label: Option<String>,
-    #[serde(default)]
-    pub ready: bool,
-    /// `recent`: done stories only when they entered done within `[board] done_window_days`; `none`: no done
-    /// stories; default `all`.
-    #[serde(default)]
-    pub done: DoneFilter,
-    /// Stories serving the active sprint's goals: a goal id, `any` (serving some goal) or `none` (upkeep). Combines
-    /// with every other filter.
-    pub goal: Option<String>,
-    /// Text, 1 to 200 characters after trimming: a case-insensitive substring of the title, description or external
-    /// reference; a key-shaped text (`12`, `#12`, `abc-12`) also matches that key exactly. The length bounds count
-    /// characters of the trimmed text, so padding around 200 characters is accepted.
-    #[param(min_length = 1, max_length = 200)]
-    pub q: Option<String>,
-    pub kind: Option<Kind>,
-    /// An initiative key or external reference: stories whose epic belongs to it. A reference that matches nothing,
-    /// or an initiative with no epics, yields an empty list, not 404.
-    pub initiative: Option<KeyRef>,
-    /// Only stories shown as urgent (non-empty `urgent_sources`).
-    #[serde(default)]
-    pub urgent: bool,
-    /// Only stories whose promise (kb/ADR-0025 R5) is:
-    /// - `this_sprint`: overdue, or open and due this sprint;
-    /// - `next_sprint`: open and due next sprint;
-    /// - `overdue`: overdue;
-    /// - `any`: open or overdue.
-    ///
-    /// Kept, late and dropped promises never match. Combines with every other filter.
-    pub promised: Option<PromisedFilter>,
-    /// `rank` (default: delivery state, rank, key number) or `relevance` (needs `q`): the story whose key or external
-    /// reference equals `q` first, then title matches, then the rest, each in `rank` order.
-    #[serde(default)]
-    pub sort: StorySort,
-    /// One page of the list: at most this many stories, 1 to 100, starting at `offset`, cut after every filter and in
-    /// the list's order. Without it the whole list is answered. A page of exactly `limit` stories means there may be
-    /// more.
-    #[param(minimum = 1, maximum = 100)]
-    pub limit: Option<u32>,
-    /// Stories to skip before the page, 0 or more; refused without `limit`. An offset at or past the end answers an
-    /// empty list.
-    #[param(format = Int64, minimum = 0, maximum = 4294967295u32)]
-    pub offset: Option<u32>,
-}
-
-/// `goal=<id>|any|none`.
-fn goal_filter(raw: Option<&str>) -> Result<Option<GoalFilter>, AppError> {
-    Ok(match raw {
-        None => None,
-        Some("any") => Some(GoalFilter::Any),
-        Some("none") => Some(GoalFilter::None),
-        Some(id) => Some(GoalFilter::Id(id.parse().map_err(|_| {
-            reeve_planning::HandlerError::Validation("goal must be any, none or a goal id".into())
-        })?)),
-    })
-}
-
-/// `limit` and `offset` as the slice to cut from the list, `(skip, take)`; `None` is the whole list. `limit` is 1 to
-/// 100 and `offset` is valid only with it.
-fn page(limit: Option<u32>, offset: Option<u32>) -> Result<Option<(usize, usize)>, AppError> {
-    match (limit, offset) {
-        (None, None) => Ok(None),
-        (None, Some(_)) => Err(AppError::Validation("offset needs limit".into())),
-        (Some(l), _) if !(1..=100).contains(&l) => {
-            Err(AppError::Validation("limit must be 1..=100".into()))
-        }
-        (Some(l), o) => Ok(Some((o.unwrap_or(0) as usize, l as usize))),
-    }
-}
-
 #[utoipa::path(get, path = "/stories", params(StoryQuery), responses((status = 200, body = Response<Vec<StoryWithReadiness>>)))]
 async fn list(
     State(s): State<AppState>,
     c: Caller,
     ApiQuery(q): ApiQuery<StoryQuery>,
 ) -> Result<Json<Response<Vec<StoryWithReadiness>>>, AppError> {
-    let page = page(q.limit, q.offset)?;
-    let goal = goal_filter(q.goal.as_deref())?;
-    // A reference that names nothing lists nothing, through the handler, so validation still runs (kb/ADR-0021).
-    let mut epics = None;
-    let epic = match super::resolve_filter(&s.handlers, q.epic.as_ref(), ItemType::Epic).await? {
-        super::FilterRef::Nothing => {
-            epics = Some(Vec::new());
-            None
-        }
-        super::FilterRef::Is(k) => Some(k),
-        super::FilterRef::Unset => None,
-    };
-    let initiative =
-        match super::resolve_filter(&s.handlers, q.initiative.as_ref(), ItemType::Initiative)
-            .await?
-        {
-            super::FilterRef::Nothing => {
-                epics = Some(Vec::new());
-                None
-            }
-            super::FilterRef::Is(k) => Some(k),
-            super::FilterRef::Unset => None,
-        };
-    let f = StoryFilter {
-        epic,
-        owner: q.owner,
-        delivery: q.delivery,
-        untriaged: q.untriaged,
-        label: q.label,
-        goal,
-        text: None,
-        kind: q.kind,
-        epics,
-        urgent: q.urgent,
-        promised: q.promised,
-        sort: q.sort,
-    };
-    let stories = s
-        .handlers
-        .list_stories(
-            &f,
-            q.q.as_deref(),
-            initiative.as_ref(),
-            q.ready,
-            q.done,
-            c.ctx().now,
-        )
-        .await?;
-    Ok(ok(match page {
-        Some((skip, take)) => stories.into_iter().skip(skip).take(take).collect(),
-        None => stories,
-    }))
+    Ok(ok(crate::actions::list_stories(&s, &c.acting(), &q).await?))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]
 async fn create(
@@ -177,7 +46,7 @@ async fn create(
             &b.idempotency_key,
             &b.title,
             b.kind,
-            super::resolve_opt(&s.handlers, b.epic.as_ref(), ItemType::Epic).await?,
+            resolve_opt(&s.handlers, b.epic.as_ref(), ItemType::Epic).await?,
             b.description.as_deref().unwrap_or(""),
             b.criteria,
             b.labels,
@@ -273,7 +142,7 @@ async fn rank(
             &c.ctx(),
             &key,
             b.version,
-            super::resolve_opt(&s.handlers, b.before.as_ref(), ItemType::Story)
+            resolve_opt(&s.handlers, b.before.as_ref(), ItemType::Story)
                 .await?
                 .as_ref(),
         )
