@@ -161,8 +161,16 @@
 		{#if e.needed_in !== 'none' || notNeeded(e) || next}
 			<div class="strip" data-testid="strip">
 				{#if e.needed_in !== 'none'}
+					{@const reason = e.needed_in_reason}
+					{@const row = { kind: 'decision' as const, entry: e }}
 					<p class="needed">
-						{#if e.needed_in_reason && isNowReason(e.needed_in_reason)}<NeededInReason reason={e.needed_in_reason} row={{ kind: 'decision', entry: e }} />{:else}<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}<NeededInReason reason={e.needed_in_reason} row={{ kind: 'decision', entry: e }} />{/if}{/if}{#if e.under}{' · '}under {e.under}, in discovery{/if}
+						{#if reason && isNowReason(reason)}
+							<NeededInReason {reason} {row} />
+						{:else}
+							<strong>{neededLabel(e.needed_in)}</strong>
+							{#if reason}{' · '}<NeededInReason {reason} {row} />{/if}
+						{/if}
+						{#if e.under}{' · '}under {e.under}, in discovery{/if}
 					</p>
 				{:else if notNeeded(e)}
 					<p class="needed"><strong>{neededLabel('none')}</strong></p>

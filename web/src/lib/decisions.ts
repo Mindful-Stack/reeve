@@ -159,7 +159,7 @@ export type PageLane = 'this_sprint' | 'next_sprint' | 'now' | 'later' | 'open' 
 
 const NOW_KINDS: ReadonlySet<NeededInReason['kind']> = new Set<NeededInReason['kind']>(['urgent', 'target_month', 'decision_due', 'held']);
 
-/** A rule of the Now ranking: the server sends one exactly on a standalone row in Now. */
+/** A Now-kind reason (the four rules of spec §3). */
 export function isNowReason(r: NeededInReason | null | undefined): boolean {
 	return !!r && NOW_KINDS.has(r.kind);
 }
@@ -174,7 +174,7 @@ export function pageLane(lane: QueueLane, reason: NeededInReason | null | undefi
 export type QueueRow = { kind: 'decision'; entry: DecisionQueueEntry } | { kind: 'discovery'; row: DiscoveryEntry; nested: DecisionQueueEntry[] };
 
 /** The page's top-level rows per lane, in server order (nothing is re-sorted): each discovery row goes before
- *  `entries[at]`, a decision with `under` goes inside the row it names (one the response lacks leaves it standing
+ *  `entries[at]` (`discoveries` arrive in ascending `at`, as the server emits them), a decision with `under` goes inside the row it names (one the response lacks leaves it standing
  *  alone), and `beyond` splits into Now and Later. With `me`, a standalone decision is kept when `me` decides it and a
  *  row when it nests a decision `me` decides; a kept row keeps its whole nested list (the list renders only the
  *  decisions the page passes it), so its reason can name any of them. Closed and satisfied decisions never nest. */
@@ -203,7 +203,7 @@ export function queueRows(q: Pick<DecisionQueue, 'entries' | 'discoveries'>, f: 
 		else if (mine(e)) lane(pageLane(e.lane, e.needed_in_reason)).push({ kind: 'decision', entry: e });
 	});
 	rowsBefore(Infinity);
-	if (f.me) for (const [l, rows] of out) out.set(l, rows.filter((r) => r.kind === 'decision' || r.nested.some(mine)));
+	if (f.me) for (const rows of out.values()) rows.splice(0, rows.length, ...rows.filter((r) => r.kind === 'decision' || r.nested.some(mine)));
 	return out;
 }
 
@@ -297,7 +297,7 @@ export function reasonLine(r: NeededInReason, row: QueueRow): ReasonParts {
 			const own = row.kind === 'decision';
 			const d = own ? row.entry.decision : row.nested.find((e) => e.decision.id === r.id)?.decision;
 			const when = d?.due ? ` due ${dayLabel(d.due)}` : '';
-			return own ? text(`Now ·${when}`) : { before: 'Now · ', key: `decision #${r.id}`, after: when };
+			return own ? text(when ? `Now ·${when}` : 'Now') : { before: 'Now · ', key: `decision #${r.id}`, after: when };
 		}
 		case 'held': {
 			const held = lists.blocks.length;

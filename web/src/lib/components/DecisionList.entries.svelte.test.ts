@@ -134,7 +134,7 @@ describe('DecisionList entries', () => {
 		const due = { ...decision(PR), due: '2026-11-17' };
 		const now = mountWith(due, {
 			inQueue: true,
-			entries: entryFor(due, { lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'decision_due', id: 1 }, blocks: [blockedStory({ key: 'ABC-31' })] })
+			entries: entryFor(due, { lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'decision_due', id: due.id }, blocks: [blockedStory({ key: 'ABC-31' })] })
 		});
 		expect(now.row.querySelector('.needed')?.textContent).toBe('Now \u00b7 due 17 Nov');
 		unmount(app!);
