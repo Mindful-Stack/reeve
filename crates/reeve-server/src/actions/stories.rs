@@ -1,9 +1,9 @@
-use super::{Acting, FilterRef, resolve_filter};
+use super::{Acting, FilterRef, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
 use reeve_planning::{GoalFilter, StoryFilter};
 use reeve_protocol::{
-    DeliveryState, DoneFilter, ItemType, KeyRef, Kind, PromisedFilter, StoryContextDto, StorySort,
-    StoryWithReadiness,
+    CreateStory, DeliveryState, DoneFilter, EditItem, ItemType, KeyRef, Kind, MoveStory,
+    PromisedFilter, StoryContextDto, StoryDto, StorySort, StoryWithReadiness, normalise_email,
 };
 use serde::Deserialize;
 
@@ -161,4 +161,131 @@ pub(crate) async fn story_context(
         super::browse(state, d);
     }
     Ok(context)
+}
+
+/// A story's owner must be an allowed user (allowed by the floor or a database entry): an owner nobody can sign
+/// in as would hold work no one can pick up.
+fn allowed_owner(
+    policy: &reeve_identity::AccessPolicy,
+    owner: Option<String>,
+) -> Result<Option<String>, AppError> {
+    match owner {
+        Some(o) if !policy.is_allowed(&o) => Err(reeve_planning::HandlerError::Validation(
+            format!("{} is not an allowed user", normalise_email(&o)),
+        )
+        .into()),
+        other => Ok(other),
+    }
+}
+
+/// `reeve story create`. Shared by `POST /api/v1/stories` and the MCP tool `create_story`. `b` is what the route
+/// takes: its body. Answers the story and whether this call created it (false: the idempotency key already had
+/// one, and nothing was written).
+pub(crate) async fn create_story(
+    state: &AppState,
+    who: &Acting<'_>,
+    b: CreateStory,
+) -> Result<(StoryDto, bool), AppError> {
+    let epic = resolve_opt(&state.handlers, b.epic.as_ref(), ItemType::Epic).await?;
+    let owner = allowed_owner(who.policy, b.owner)?;
+    let (story, created) = state
+        .handlers
+        .create_story_attaching(
+            &who.ctx,
+            &b.idempotency_key,
+            &b.title,
+            b.kind,
+            epic,
+            b.description.as_deref().unwrap_or(""),
+            b.criteria,
+            b.labels,
+            b.external_ref,
+            owner,
+            &b.attachments,
+        )
+        .await?;
+    Ok((
+        state.handlers.story_dto(story.key(), who.ctx.now).await?,
+        created,
+    ))
+}
+
+/// `reeve story show <KEY>`: the story as the API shows it. Shared by `GET /api/v1/stories/{key}` and the MCP tool
+/// `edit_story`, which reads the story to merge its criteria and labels into. (The tool `get_story` is
+/// `story_context`, not this.) `key` is what the route takes: its path parameter, a story's key or external
+/// reference.
+pub(crate) async fn read_story(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+) -> Result<StoryDto, AppError> {
+    let key = state.handlers.resolve_ref(key, ItemType::Story).await?;
+    Ok(state.handlers.story_dto(&key, who.ctx.now).await?)
+}
+
+/// `reeve story edit <KEY>`. Shared by `PATCH /api/v1/stories/{key}` and the MCP tool `edit_story`. `key` and `b`
+/// are what the route takes: its path parameter and its body.
+pub(crate) async fn edit_story(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+    b: EditItem,
+) -> Result<StoryDto, AppError> {
+    let key = state.handlers.resolve_ref(key, ItemType::Story).await?;
+    let criteria = b.criteria.map(|v| {
+        v.into_iter()
+            .map(|c| reeve_planning::Criterion {
+                text: c.text,
+                done: c.done,
+            })
+            .collect()
+    });
+    let epic = resolve_edit(&state.handlers, b.epic, ItemType::Epic).await?;
+    let owner = match b.owner {
+        Some(Some(o)) => Some(allowed_owner(who.policy, Some(o))?),
+        other => other,
+    };
+    let story = state
+        .handlers
+        .edit_story_attaching(
+            &who.ctx,
+            &key,
+            b.version,
+            b.title,
+            b.description,
+            b.kind,
+            epic,
+            criteria,
+            owner,
+            b.labels,
+            b.rank,
+            b.external_ref,
+            &b.attachments,
+        )
+        .await?;
+    Ok(state.handlers.story_dto(story.key(), who.ctx.now).await?)
+}
+
+/// `reeve story mv <KEY>`. Shared by `POST /api/v1/stories/{key}/move` and the MCP tool `move_story`. `key` and `b`
+/// are what the route takes: its path parameter and its body. The route passes the override reason an interactive
+/// caller sent; the tool's adapter always passes none (kb/ADR-0029 R10).
+pub(crate) async fn move_story(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+    b: MoveStory,
+) -> Result<StoryDto, AppError> {
+    let key = state.handlers.resolve_ref(key, ItemType::Story).await?;
+    let story = state
+        .handlers
+        .move_story(
+            &who.ctx,
+            &key,
+            b.version,
+            b.to,
+            b.resolution,
+            b.override_reason,
+        )
+        .await?;
+    Ok(state.handlers.story_dto(story.key(), who.ctx.now).await?)
 }

@@ -162,7 +162,8 @@ mod attachment_handlers {
                 &[newer],
             )
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         w.h.comment_story_attaching(&c, s.key(), "see", None, &[older])
             .await
             .unwrap();
@@ -324,7 +325,8 @@ mod attachment_handlers {
                 &[s],
             )
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(
             owner(&w, a).await,
             Some((ItemType::Initiative, ini.key().clone()))
@@ -454,6 +456,7 @@ mod attachment_handlers {
                 )
                 .await
                 .unwrap()
+                .0
             }
         };
         let s = mk(vec![first]).await;

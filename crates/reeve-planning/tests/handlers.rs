@@ -3631,7 +3631,8 @@ async fn story_context_reads_one_snapshot() {
     let with_att = h
         .comment_story_attaching(&dan, &s, "see", None, &[att])
         .await
-        .unwrap();
+        .unwrap()
+        .0;
 
     let mut lock = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE required_decisions IN ACCESS EXCLUSIVE MODE")
@@ -9468,4 +9469,99 @@ async fn own_unmerged_work_blocks_others_but_not_its_owner() {
             owner: Some("mia@example.com".into()),
         }]
     );
+}
+
+/// What `created` must mean: this call inserted the row. It is atomic by construction: the flag is the insert's own
+/// `ON CONFLICT DO NOTHING` answer inside the handler's transaction, never the lookup before it. This test does not
+/// force the race (nothing makes both lookups finish before either write); it checks that of two creates with one
+/// key, run concurrently on separate pool connections, exactly one reports that it created, whichever order the
+/// database serves them in.
+#[tokio::test]
+async fn a_create_reports_whether_it_inserted_also_when_two_run_at_once() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let create = || {
+        h.create_story_attaching(
+            &dan,
+            "race-1",
+            "Booking flow",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+            &[],
+        )
+    };
+    let (first, second) = tokio::join!(create(), create());
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_eq!(first.0.key(), second.0.key(), "one story");
+    assert_eq!(
+        [first.1, second.1]
+            .iter()
+            .filter(|created| **created)
+            .count(),
+        1,
+        "exactly one call inserted it"
+    );
+    // A later repeat finds it and says so.
+    let (again, created) = create().await.unwrap();
+    assert_eq!((again.key(), created), (first.0.key(), false));
+    assert_eq!(
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == "created")
+            .count(),
+        1,
+        "one activity entry"
+    );
+}
+
+#[tokio::test]
+async fn a_comment_reports_whether_it_inserted() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let story = h
+        .create_story(
+            &dan,
+            "cr-s1",
+            "Booking flow",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let first = h
+        .comment_story_attaching(&dan, story.key(), "hello", Some("cr-c1"), &[])
+        .await
+        .unwrap();
+    let repeat = h
+        .comment_story_attaching(&dan, story.key(), "hello again", Some("cr-c1"), &[])
+        .await
+        .unwrap();
+    assert_eq!((first.1, repeat), (true, (first.0, false)));
+    // Without a key every comment is new.
+    let unkeyed = h
+        .comment_item_attaching(&dan, ItemType::Story, story.key(), "no key", None, &[])
+        .await
+        .unwrap();
+    assert!(unkeyed.1 && unkeyed.0 != first.0);
+    // An epic's and a decision's comment report the same way.
+    let epic = ready_epic(&h, &dan).await;
+    let on_epic = |body: &'static str| {
+        h.comment_item_attaching(&dan, ItemType::Epic, &epic, body, Some("cr-c2"), &[])
+    };
+    let (first, repeat) = (on_epic("one").await.unwrap(), on_epic("two").await.unwrap());
+    assert_eq!((first.1, repeat), (true, (first.0, false)));
 }

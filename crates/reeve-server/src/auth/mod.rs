@@ -142,7 +142,7 @@ impl Caller {
             reeve_protocol::TokenKind::Interactive => reeve_protocol::Via::Interactive,
             reeve_protocol::TokenKind::Automation => reeve_protocol::Via::Automation,
         };
-        crate::actions::Acting::new(&self.0.email, via, self.0.role, self.1, &self.3)
+        crate::actions::Acting::new(&self.0.email, via, self.1, &self.3)
     }
 
     pub fn ctx(&self) -> reeve_planning::Ctx {
@@ -199,7 +199,6 @@ impl McpCaller {
         crate::actions::Acting::new(
             &self.principal.email,
             reeve_protocol::Via::Interactive,
-            self.principal.role,
             self.now,
             &self.policy,
         )

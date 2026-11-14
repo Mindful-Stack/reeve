@@ -61,7 +61,7 @@ async fn edit(
             b.version,
             b.title,
             b.brief,
-            super::resolve_edit(&s.handlers, b.initiative, ItemType::Initiative).await?,
+            crate::actions::resolve_edit(&s.handlers, b.initiative, ItemType::Initiative).await?,
             b.external_ref,
             &b.attachments,
         )

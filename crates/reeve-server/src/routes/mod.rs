@@ -24,20 +24,6 @@ pub mod users;
 pub mod war_room;
 pub mod webhooks;
 
-/// An edit's parent: `None` leaves it alone, `Some(None)` clears it, `Some(Some(r))` resolves `r`.
-pub(crate) async fn resolve_edit(
-    h: &reeve_planning::Handlers,
-    r: Option<Option<reeve_protocol::KeyRef>>,
-    item: reeve_protocol::ItemType,
-) -> Result<Option<Option<reeve_protocol::Key>>, reeve_planning::HandlerError> {
-    match r {
-        Some(r) => Ok(Some(
-            crate::actions::resolve_opt(h, r.as_ref(), item).await?,
-        )),
-        None => Ok(None),
-    }
-}
-
 /// Declares the bearer scheme and applies it to every operation; shared error responses are attached the same way.
 struct Security;
 impl utoipa::Modify for Security {
