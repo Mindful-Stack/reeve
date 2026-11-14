@@ -32,6 +32,7 @@ pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
     ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
 };
+pub use connections::{ExchangeRequest, GrantError, Issuing, TokenPair, exchange_code};
 pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
     normalise_email,

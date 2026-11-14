@@ -1,5 +1,5 @@
 //! The MCP sign-in flow for tests, step by step through the real router (`static-oidc` only): authorize with a
-//! client published on the fake client host, the approval page's three API calls, and (GRA-658) the token route.
+//! client published on the fake client host, the approval page's three API calls, and the token route.
 //! The harness is on a fixed clock: time moves only by `f.h.state.clock.advance`.
 //!
 //! Not reproduced: a browser. The connect cookie is copied from the `Set-Cookie` the server sent and the session
@@ -285,4 +285,134 @@ pub async fn https_flow() -> Flow {
         host,
         client_id,
     }
+}
+
+/// `POST /oauth/token` with a form body.
+pub fn token_request(form: &[(&str, &str)]) -> Request<Body> {
+    raw_token_request(
+        &url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish(),
+    )
+}
+
+/// The same with the body as given: for what a form serialiser would never write.
+pub fn raw_token_request(body: &str) -> Request<Body> {
+    Request::post("/oauth/token")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+pub async fn token(f: &Flow, form: &[(&str, &str)]) -> (u16, axum::http::HeaderMap, Value) {
+    answer_of(&f.h.app, token_request(form)).await
+}
+
+/// The form of a correct exchange of `code`, as an OAuth 2.0 client sends it (with `redirect_uri`) and with the
+/// `resource` MCP asks clients to send.
+pub fn code_form<'a>(f: &'a Flow, code: &'a str) -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", f.client_id.as_str()),
+        ("code_verifier", VERIFIER),
+        ("redirect_uri", CALLBACK),
+        ("resource", RESOURCE),
+    ]
+}
+
+/// A refresh as a client sends it: without `client_id`, which the standards make optional here.
+pub fn refresh_form(refresh_token: &str) -> Vec<(&str, &str)> {
+    vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ]
+}
+
+/// `form` with `name` set to `value` (replacing it), or removed when `value` is `None`.
+pub fn form_with<'a>(
+    mut form: Vec<(&'a str, &'a str)>,
+    name: &'a str,
+    value: Option<&'a str>,
+) -> Vec<(&'a str, &'a str)> {
+    form.retain(|(k, _)| *k != name);
+    if let Some(value) = value {
+        form.push((name, value));
+    }
+    form
+}
+
+/// An approved request's code: authorize, read and approve as `session`, each of which must succeed.
+pub async fn code_for(f: &Flow, session: &str, scope: &str) -> String {
+    param(&approved(f, session, scope).await, "code").expect("an approval answers a code")
+}
+
+/// What a client holds after connecting.
+pub struct Connected {
+    pub access_token: String,
+    pub refresh_token: String,
+    /// The connection's id, read from the database by the access token's hash.
+    pub connection_id: i64,
+}
+
+/// The whole journey as `session` with `scope`, every step of which must succeed.
+pub async fn connect(f: &Flow, session: &str, scope: &str) -> Connected {
+    let code = code_for(f, session, scope).await;
+    let (status, _, body) = token(f, &code_form(f, &code)).await;
+    assert_eq!(status, 200, "{body}");
+    let access_token = body["access_token"].as_str().unwrap().to_string();
+    let connection_id: i64 = sqlx::query_scalar("SELECT connection_id FROM tokens WHERE hash = $1")
+        .bind(reeve_identity::hash_secret(&access_token))
+        .fetch_one(&f.h.state.pool)
+        .await
+        .unwrap();
+    Connected {
+        access_token,
+        refresh_token: body["refresh_token"].as_str().unwrap().to_string(),
+        connection_id,
+    }
+}
+
+/// The status `/mcp` answers a `server/discover` carrying `access_token`: 200 when the token is accepted.
+pub async fn mcp_status(f: &Flow, access_token: &str) -> u16 {
+    send(
+        &f.h.app,
+        mcp_modern(access_token, 1, "server/discover", serde_json::json!({})),
+    )
+    .await
+    .0
+}
+
+/// A person admitted by a database entry, not by the configured floor, with an interactive token: the one kind
+/// of person a test can take access away from. Returns the token's secret.
+pub async fn guest(h: &Harness) -> String {
+    set_guest_allowed(h, true).await;
+    let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
+    let policy = h.state.access.load(&h.state.identity).await.unwrap();
+    reeve_identity::issue_token(
+        &h.state.pool,
+        &*h.state.tokens,
+        &*log,
+        &policy,
+        "test",
+        reeve_protocol::Via::Interactive,
+        "guest@other.org",
+        reeve_protocol::TokenKind::Interactive,
+        "guest",
+        None,
+        h.started,
+    )
+    .await
+    .unwrap()
+    .secret
+}
+
+pub async fn set_guest_allowed(h: &Harness, allowed: bool) {
+    let query = if allowed {
+        sqlx::query("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email', 'guest@other.org', 'dan@example.com', $1)")
+            .bind(h.state.clock.now())
+    } else {
+        sqlx::query("DELETE FROM allowed_entries WHERE value = 'guest@other.org'")
+    };
+    query.execute(&h.state.pool).await.unwrap();
 }

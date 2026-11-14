@@ -85,6 +85,32 @@ pub trait TokenStore: Send + Sync {
         expires_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<i64, sqlx::Error>;
+    /// Locks the user's row until the transaction ends and says whether the user is disabled; `None` when there is
+    /// no such user. The first statement of every transaction that touches a person's connections, MCP tokens
+    /// or refresh tokens: whoever holds it is alone with them, so issuing can never slip past a disable or a
+    /// revocation.
+    async fn lock_user(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        email: &str,
+    ) -> Result<Option<bool>, sqlx::Error>;
+    /// A new, unused refresh token of the connection, stored as its hash.
+    async fn insert_refresh_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        connection_id: i64,
+        hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error>;
+    /// Deletes the owner's connections that ended or were revoked before `before`, their tokens and refresh tokens
+    /// with them (the foreign keys cascade). This is what bounds the rows of spent refresh tokens. The caller
+    /// holds the owner's `users` row lock.
+    async fn delete_ended_connections(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        before: DateTime<Utc>,
+    ) -> Result<u64, sqlx::Error>;
     async fn find_by_hash(&self, hash: &str) -> Result<Option<TokenRow>, sqlx::Error>;
     async fn revoke_all_for(
         &self,
@@ -212,6 +238,48 @@ impl TokenStore for PgTokenStore {
         .bind(owner).bind(hash).bind(label).bind(now).bind(expires_at).bind(connection_id)
         .fetch_one(&mut **tx)
         .await
+    }
+    async fn lock_user(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        email: &str,
+    ) -> Result<Option<bool>, sqlx::Error> {
+        // FOR UPDATE conflicts with every row-level lock mode (PostgreSQL 16, table 13.3), so it waits for a
+        // disable in progress and then reads the committed flag.
+        sqlx::query_scalar("SELECT disabled FROM users WHERE email = $1 FOR UPDATE")
+            .bind(email)
+            .fetch_optional(&mut **tx)
+            .await
+    }
+    async fn insert_refresh_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        connection_id: i64,
+        hash: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO refresh_tokens (connection_id, hash, created_at) VALUES ($1, $2, $3)",
+        )
+        .bind(connection_id)
+        .bind(hash)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+    async fn delete_ended_connections(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        before: DateTime<Utc>,
+    ) -> Result<u64, sqlx::Error> {
+        // A connection stopped at its end or at its revocation, whichever came first.
+        Ok(sqlx::query("DELETE FROM connections WHERE owner = $1 AND LEAST(ends_at, COALESCE(revoked_at, ends_at)) < $2")
+            .bind(owner).bind(before)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected())
     }
     async fn revoke_all_for(
         &self,
