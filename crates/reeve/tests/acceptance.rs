@@ -1622,4 +1622,66 @@ async fn flow() {
         now_free["value"]["owner"], "mia@example.com",
         "merged work blocks nobody"
     );
+
+    // Connections (GRA-669): one made as `reeve-server mcp-token-issue` makes it, listed and revoked by the CLI.
+    let floor = reeve_identity::AccessPolicy::floor_only(&identity);
+    let developer = reeve_identity::issue_mcp_token(
+        &pg.pool,
+        &*tokens,
+        &*ident_log,
+        &floor,
+        "operator",
+        reeve_protocol::Via::System,
+        "mia@example.com",
+        "mcp developer token",
+        chrono::Utc::now() + chrono::Duration::hours(1),
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap();
+    let listed = ok(reeve(&member)
+        .args(["auth", "connections"])
+        .output()
+        .unwrap());
+    let rows = listed["value"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{listed}");
+    assert_eq!(
+        (
+            &rows[0]["client_name"],
+            &rows[0]["scope"],
+            &rows[0]["revoked_at"]
+        ),
+        (
+            &serde_json::json!("Developer command"),
+            &serde_json::json!("write"),
+            &serde_json::Value::Null
+        )
+    );
+    let id = rows[0]["id"].as_i64().unwrap().to_string();
+    // The admin sees it by naming its owner, and a member cannot name someone else.
+    let seen = ok(reeve(&human)
+        .args(["auth", "connections", "--owner", "mia@example.com"])
+        .output()
+        .unwrap());
+    assert_eq!(seen["value"][0]["id"].as_i64().unwrap().to_string(), id);
+    let refused = reeve(&member)
+        .args(["auth", "connections", "--owner", "dan@example.com"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2), "forbidden exits 2");
+    ok(reeve(&member)
+        .args(["auth", "connections", "revoke", &id])
+        .output()
+        .unwrap());
+    let after = ok(reeve(&member)
+        .args(["auth", "connections"])
+        .output()
+        .unwrap());
+    assert_eq!(after["value"][0]["revoked_reason"], "revoked", "{after}");
+    // The token it carried is refused from now on.
+    assert!(
+        reeve_identity::authenticate_mcp(&*tokens, &floor, &developer.secret, chrono::Utc::now())
+            .await
+            .is_err()
+    );
 }
