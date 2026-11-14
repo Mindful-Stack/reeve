@@ -121,7 +121,7 @@ pub(crate) enum Revision {
     Legacy,
 }
 
-fn mismatch(why: String) -> RpcError {
+pub(crate) fn mismatch(why: String) -> RpcError {
     RpcError::new(
         StatusCode::BAD_REQUEST,
         HEADER_MISMATCH,

@@ -132,6 +132,25 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|v| v.to_str().ok())
 }
 
+/// A protocol header's value: `None` only when the header is absent. One sent twice, or one that is not text, is
+/// refused (-32020): read as absent or as its first value, it could move the request onto the other revision's
+/// path.
+fn protocol_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, RpcError> {
+    let mut values = headers.get_all(name).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(protocol::mismatch(format!(
+            "the {name} header must be sent once"
+        )));
+    }
+    match value.to_str() {
+        Ok(text) => Ok(Some(text)),
+        Err(_) => Err(protocol::mismatch(format!("the {name} header is not text"))),
+    }
+}
+
 /// The one line `serve` logs at startup about this endpoint.
 pub fn mcp_startup_line(config: &crate::ServerConfig) -> String {
     if !config.mcp.enabled {
@@ -188,11 +207,14 @@ async fn admit(
     if *method != Method::POST {
         return Err(McpError::MethodNotAllowed);
     }
-    // 3. An Origin header, when present, must be allowed; an absent one passes.
-    if let Some(origin) = headers.get(header::ORIGIN)
-        && !origin
-            .to_str()
-            .is_ok_and(|o| s.config.mcp_origin_allowed(o))
+    // 3. An Origin header, when present, must be one allowed value; an absent one passes. Two are refused whatever
+    // they say: which of them a browser or a proxy meant is not this server's to guess.
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    if let Some(origin) = origins.next()
+        && (origins.next().is_some()
+            || !origin
+                .to_str()
+                .is_ok_and(|o| s.config.mcp_origin_allowed(o)))
     {
         tracing::warn!(path = "/mcp", reason = "origin not allowed", origin = ?origin, "request refused");
         return Err(McpError::OriginNotAllowed);
@@ -231,15 +253,13 @@ async fn admit(
 /// Steps 7 to 11 for one parsed message: a request's result, or `Null` for an accepted notification.
 fn answer(headers: &HeaderMap, msg: &Message) -> Result<Value, McpError> {
     // 7 to 10, or the legacy classification in their place.
-    let revision = protocol::classify(
-        msg,
-        Headers {
-            protocol_version: header_text(headers, "mcp-protocol-version"),
-            method: header_text(headers, "mcp-method"),
-            name: header_text(headers, "mcp-name"),
-        },
-    )
-    .map_err(McpError::Rpc)?;
+    let headers = Headers {
+        protocol_version: protocol_header(headers, "mcp-protocol-version")
+            .map_err(McpError::Rpc)?,
+        method: protocol_header(headers, "mcp-method").map_err(McpError::Rpc)?,
+        name: protocol_header(headers, "mcp-name").map_err(McpError::Rpc)?,
+    };
+    let revision = protocol::classify(msg, headers).map_err(McpError::Rpc)?;
     // A notification that passed the checks is accepted; this endpoint acts on none.
     if msg.id.is_none() {
         return Ok(Value::Null);
@@ -264,8 +284,13 @@ fn answer(headers: &HeaderMap, msg: &Message) -> Result<Value, McpError> {
                 Revision::Legacy => result,
             })
         }
+        // 2026-07-28 answers an unknown method with 404. 2025-11-25's transport keeps 404 for an expired session
+        // and carries a JSON-RPC error in an ordinary answer.
         _ => Err(McpError::Rpc(RpcError::new(
-            StatusCode::NOT_FOUND,
+            match revision {
+                Revision::Modern => StatusCode::NOT_FOUND,
+                Revision::Legacy => StatusCode::OK,
+            },
             protocol::METHOD_NOT_FOUND,
             format!("Method not found: {}", msg.method),
         ))),

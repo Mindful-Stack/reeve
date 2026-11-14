@@ -319,7 +319,7 @@ async fn every_row_of_the_classification_table_through_the_router() {
         u16,
         Option<i64>,
     );
-    let rows: [Row; 13] = [
+    let rows: [Row; 14] = [
         (
             Some("2026-07-28"),
             Some("2026-07-28"),
@@ -348,9 +348,12 @@ async fn every_row_of_the_classification_table_through_the_router() {
             None,
             Some("2025-11-25"),
             "server/discover",
-            404,
+            200,
             Some(-32601),
         ),
+        // An unknown method on the legacy path: the JSON-RPC error in an ordinary answer (404 there means an
+        // expired session).
+        (None, Some("2025-11-25"), "prompts/list", 200, Some(-32601)),
         (None, None, "initialize", 200, None),
         (None, None, "tools/list", 400, Some(-32020)),
         (None, Some("2025-06-18"), "tools/list", 400, Some(-32022)),
@@ -527,4 +530,93 @@ async fn the_legacy_path_needs_an_mcp_token_like_the_modern_one() {
         .0,
         401
     );
+}
+
+#[tokio::test]
+async fn an_origin_that_is_not_one_allowed_value_is_403() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let (own, foreign) = ("http://127.0.0.1:7474", "https://evil.example");
+    // Two Origin headers are refused whichever comes first.
+    for (first, second) in [(own, foreign), (foreign, own)] {
+        let mut req = knock(Some(&t), None);
+        req.headers_mut().append("origin", first.parse().unwrap());
+        req.headers_mut().append("origin", second.parse().unwrap());
+        assert_eq!(send(&h.app, req).await.0, 403, "{first} then {second}");
+    }
+    for (what, value) in [
+        ("null", axum::http::HeaderValue::from_static("null")),
+        (
+            "not text",
+            axum::http::HeaderValue::from_bytes(b"http://127.0.0.1:7474\xff").unwrap(),
+        ),
+    ] {
+        let mut req = knock(Some(&t), None);
+        req.headers_mut().insert("origin", value);
+        assert_eq!(send(&h.app, req).await.0, 403, "{what}");
+    }
+    // The control: no Origin passes.
+    let (s, _, b) = send(&h.app, knock(Some(&t), None)).await;
+    assert!(passed(s, &b), "{s} {b}");
+}
+
+/// A protocol header sent twice or not as text is refused, never read as absent: read as absent, it would move the
+/// request onto the other revision's path.
+#[tokio::test]
+async fn a_protocol_header_sent_twice_or_not_as_text_is_a_header_mismatch() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let not_text = || axum::http::HeaderValue::from_bytes(b"\xff").unwrap();
+    let mismatch = |status: u16, body: &str| {
+        status == 400
+            && serde_json::from_str::<Value>(body).is_ok_and(|v| v["error"]["code"] == -32020)
+    };
+    // The control: the request these are made from passes every check.
+    let call = || mcp_modern(&t, 1, "tools/call", json!({"name": "get_story"}));
+    let (s, _, b) = send(&h.app, call()).await;
+    assert!(passed(s, &b), "{s} {b}");
+    for name in ["mcp-protocol-version", "mcp-method", "mcp-name"] {
+        let mut twice = call();
+        let value = twice.headers()[name].clone();
+        twice.headers_mut().append(name, value);
+        let (s, _, b) = send(&h.app, twice).await;
+        assert!(mismatch(s, &b), "{name} twice: {s} {b}");
+        let mut binary = call();
+        binary.headers_mut().insert(name, not_text());
+        let (s, _, b) = send(&h.app, binary).await;
+        assert!(mismatch(s, &b), "{name} not text: {s} {b}");
+    }
+    // A method that does not read Mcp-Name still refuses one that is not text.
+    let mut list = mcp_modern(&t, 2, "tools/list", json!({}));
+    list.headers_mut().insert("mcp-name", not_text());
+    let (s, _, b) = send(&h.app, list).await;
+    assert!(mismatch(s, &b), "{s} {b}");
+    // The handshake carries no version header; one that is not text is not "no header".
+    let init = json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}});
+    let mut handshake = mcp_legacy(&t, Some(3), "initialize", init.clone());
+    handshake
+        .headers_mut()
+        .insert("mcp-protocol-version", not_text());
+    let (s, _, b) = send(&h.app, handshake).await;
+    assert!(mismatch(s, &b), "{s} {b}");
+    assert_eq!(rpc(&b)["id"], 3);
+    // The caller check still comes first.
+    let mut unauthenticated = mcp_legacy(&t, Some(3), "initialize", init);
+    unauthenticated.headers_mut().remove("authorization");
+    unauthenticated
+        .headers_mut()
+        .insert("mcp-protocol-version", not_text());
+    assert_eq!(send(&h.app, unauthenticated).await.0, 401);
+}
+
+#[tokio::test]
+async fn an_authorization_header_that_is_not_bearer_is_401() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let mut req = knock(Some(&t), None);
+    req.headers_mut()
+        .insert("authorization", format!("Basic {t}").parse().unwrap());
+    let (status, headers, _) = send(&h.app, req).await;
+    assert_eq!(status, 401);
+    assert_eq!(headers["www-authenticate"], "Bearer");
 }
