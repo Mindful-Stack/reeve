@@ -4,7 +4,7 @@
 //! together with `[oidc]` (`ServerConfig::validate`), so an instance without sign-in answers 404 here as well.
 //!
 //! This file holds the two metadata documents and what the OAuth routes share. `/oauth/authorize` is in
-//! `authorize.rs`; `/oauth/token` (GRA-658) is added to `router()` by that story.
+//! `authorize.rs`; `/oauth/token` is in `token.rs`.
 use crate::{config::ServerConfig, state::AppState};
 use axum::{
     Json, Router,
@@ -197,6 +197,7 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route(PROTECTED_RESOURCE_PATH, any(protected_resource_metadata))
         .route(AUTHORIZE_PATH, any(super::authorize::authorize))
+        .route(TOKEN_PATH, any(super::token::token))
         .route(
             AUTHORIZATION_SERVER_PATH,
             any(authorization_server_metadata),

@@ -1,11 +1,14 @@
 use crate::{
     access::AccessPolicy,
+    connections::{
+        ACCESS_TOKEN_HOURS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations,
+    },
     domain::*,
     ports::*,
-    repo::{TokenStore, TokenSummary, UserRow},
+    repo::{TokenRow, TokenStore, TokenSummary, UserRow},
 };
 use chrono::{DateTime, Utc};
-use reeve_protocol::Via;
+use reeve_protocol::{RevokedReason, Scope, Via};
 use sqlx::PgPool;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,41 +34,10 @@ pub struct IssuedToken {
     pub secret: String,
 }
 
-/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
-#[allow(clippy::too_many_arguments)]
-pub async fn issue_token(
-    pool: &PgPool,
-    store: &dyn TokenStore,
-    activity: &dyn IdentityActivity,
-    policy: &AccessPolicy,
-    actor: &str,
-    via: Via,
-    email: &str,
-    kind: TokenKind,
-    label: &str,
-    expires_at: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> Result<IssuedToken, AuthError> {
-    issue(
-        pool,
-        store,
-        activity,
-        policy,
-        actor,
-        via,
-        email,
-        kind,
-        Audience::Api,
-        label,
-        expires_at,
-        now,
-    )
-    .await
-}
-
-/// Issues a token for the MCP endpoint (kb/ADR-0029 R5, R6): always interactive, always with an expiry, and the
-/// expiry at most one hour after `now`. There is no kind and no optional expiry to pass, so an automation MCP token
-/// and one that never expires cannot be written down. GRA-658 extends this function with the connection.
+/// Issues a token for the MCP endpoint without an approval: the developer command's path. It makes a connection of
+/// its own (the developer client, scope write, ending when its token expires) and one access token in it: always interactive,
+/// always with an expiry at most one hour after `now` (kb/ADR-0029 R5, R6). No refresh token. A person's
+/// connection is made by `exchange_code` instead.
 #[allow(clippy::too_many_arguments)]
 pub async fn issue_mcp_token(
     pool: &PgPool,
@@ -79,33 +51,72 @@ pub async fn issue_mcp_token(
     expires_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Result<IssuedToken, AuthError> {
-    if expires_at > now + chrono::Duration::hours(1) {
+    if expires_at > now + chrono::Duration::hours(ACCESS_TOKEN_HOURS) {
         return Err(AuthError::Validation(
             "an MCP token lives at most one hour".into(),
         ));
     }
-    issue(
-        pool,
-        store,
-        activity,
-        policy,
-        actor,
-        via,
-        email,
-        TokenKind::Interactive,
-        Audience::Mcp,
-        label,
-        Some(expires_at),
-        now,
-    )
-    .await
+    let email = normalise_email(email);
+    if !policy.is_allowed(&email) {
+        return Err(AuthError::NotAllowed);
+    }
+    if expires_at <= now {
+        return Err(AuthError::Validation(
+            "expires_at must be in the future".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    // `ensure_user` locks the user's row (its ON CONFLICT DO UPDATE does): the user first, the entry last.
+    if store.ensure_user(&mut tx, &email, now).await? {
+        return Err(AuthError::Disabled);
+    }
+    let connection = store
+        .insert_connection(
+            &mut tx,
+            &email,
+            DEVELOPER_CLIENT_ID,
+            DEVELOPER_CLIENT_NAME,
+            Scope::Write,
+            now,
+            // The connection ends with its one token: it has no refresh token to outlive it.
+            expires_at,
+        )
+        .await?;
+    let secret = new_secret();
+    let id = store
+        .insert_mcp_token(
+            &mut tx,
+            &email,
+            connection,
+            &hash_secret(&secret),
+            label,
+            expires_at,
+            now,
+        )
+        .await?;
+    activity
+        .record(
+            &mut tx,
+            IdentityEvent {
+                at: now,
+                actor: actor.into(),
+                via,
+                subject: email.clone(),
+                action: "token_issued",
+                payload: serde_json::json!({"kind": TokenKind::Interactive, "label": label, "token_id": id, "audience": "mcp"}),
+            },
+        )
+        .await?;
+    tx.commit().await?;
+    Ok(IssuedToken { id, secret })
 }
 
-/// The one issuing path behind `issue_token` and `issue_mcp_token`: the allowlist, an expiry in the future, then in
-/// one transaction the user row (a disabled user is refused), the token, and the `token_issued` activity entry
-/// last. The entry names the audience only for an MCP token, so an API token's entry is what it always was.
+/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
+///
+/// The one issuing path of an API token: the allowlist, an expiry in the future, then in one transaction the user
+/// row (a disabled user is refused), the token, and the `token_issued` activity entry last.
 #[allow(clippy::too_many_arguments)]
-async fn issue(
+pub async fn issue_token(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
@@ -114,7 +125,6 @@ async fn issue(
     via: Via,
     email: &str,
     kind: TokenKind,
-    audience: Audience,
     label: &str,
     expires_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
@@ -138,17 +148,13 @@ async fn issue(
             &mut tx,
             &email,
             kind,
-            audience,
             &hash_secret(&secret),
             label,
             expires_at,
             now,
         )
         .await?;
-    let mut payload = serde_json::json!({"kind": kind, "label": label, "token_id": id});
-    if audience == Audience::Mcp {
-        payload["audience"] = audience.as_str().into();
-    }
+    let payload = serde_json::json!({"kind": kind, "label": label, "token_id": id});
     activity
         .record(
             &mut tx,
@@ -166,7 +172,7 @@ async fn issue(
     Ok(IssuedToken { id, secret })
 }
 
-/// Resolves a bearer or session secret to its owner, its kind and the token's id, for the audience `want`. Every
+/// Resolves a bearer or session secret to its owner, its kind and the token's row, for the audience `want`. Every
 /// refusal is logged at `warn` with its reason, the token id and owner when a row was found, and the first eight hex digits of the
 /// secret's hash (never the secret), so a 401 can be told apart afterwards: not found, revoked, owner disabled,
 /// expired, owner not allowed, bad kind, bad audience, wrong audience.
@@ -176,7 +182,7 @@ async fn resolve(
     secret: &str,
     now: DateTime<Utc>,
     want: Audience,
-) -> Result<(String, TokenKind, i64), AuthError> {
+) -> Result<(String, TokenKind, TokenRow), AuthError> {
     let hash = hash_secret(secret);
     let hash_prefix = &hash[..8];
     let Some(row) = store.find_by_hash(&hash).await? else {
@@ -216,7 +222,7 @@ async fn resolve(
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, audience = %row.audience, "authentication refused");
         return Err(AuthError::Unauthenticated);
     }
-    Ok((owner, kind, row.id))
+    Ok((owner, kind, row))
 }
 
 /// The caller of the API, the event stream, attachments and the session cookie: an API token only. An MCP token is
@@ -227,59 +233,51 @@ pub async fn authenticate_api(
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<Principal, AuthError> {
-    let (owner, token_kind, token_id) = resolve(store, policy, secret, now, Audience::Api).await?;
+    let (owner, token_kind, row) = resolve(store, policy, secret, now, Audience::Api).await?;
     Ok(Principal {
         role: policy.role_for(&owner),
         email: owner,
         token_kind,
-        token_id,
+        token_id: row.id,
     })
 }
 
-/// The caller of the MCP endpoint: an MCP token only. An API token is `Unauthenticated` here (kb/ADR-0029 R6).
+/// The caller of the MCP endpoint: an MCP token only, and only while its connection is live. This is the check
+/// every MCP call passes (kb/ADR-0029 R8); nothing of it is cached. An API token is `Unauthenticated` here (R6).
 pub async fn authenticate_mcp(
     store: &dyn TokenStore,
     policy: &AccessPolicy,
     secret: &str,
     now: DateTime<Utc>,
 ) -> Result<McpPrincipal, AuthError> {
-    let (owner, _, _) = resolve(store, policy, secret, now, Audience::Mcp).await?;
+    let (owner, _, row) = resolve(store, policy, secret, now, Audience::Mcp).await?;
+    let refuse = |reason: &'static str| {
+        tracing::warn!(token_id = row.id, %owner, reason, "authentication refused");
+        AuthError::Unauthenticated
+    };
+    // The table gives every MCP token a connection; a row that says otherwise is refused, not trusted.
+    let (Some(connection_id), Some(client_id), Some(scope), Some(ends_at)) = (
+        row.connection_id,
+        row.connection_client_id.clone(),
+        row.connection_scope.as_deref().and_then(scope_from),
+        row.connection_ends_at,
+    ) else {
+        return Err(refuse("no connection"));
+    };
+    if !is_live(ends_at, row.connection_revoked_at, now) {
+        return Err(refuse("the connection is revoked or has ended"));
+    }
     Ok(McpPrincipal {
         role: policy.role_for(&owner),
         email: owner,
+        connection_id,
+        client_id,
+        scope,
     })
 }
 
-pub async fn revoke_all_for(
-    pool: &PgPool,
-    store: &dyn TokenStore,
-    activity: &dyn IdentityActivity,
-    actor: &str,
-    via: Via,
-    email: &str,
-    now: DateTime<Utc>,
-) -> Result<u64, AuthError> {
-    let email = normalise_email(email);
-    let mut tx = pool.begin().await?;
-    let n = store.revoke_all_for(&mut tx, &email, now).await?;
-    activity
-        .record(
-            &mut tx,
-            IdentityEvent {
-                at: now,
-                actor: actor.into(),
-                via,
-                subject: email,
-                action: "tokens_revoked",
-                payload: serde_json::json!({"count": n}),
-            },
-        )
-        .await?;
-    tx.commit().await?;
-    Ok(n)
-}
-
-/// Disable and revoke commit together (kb/ADR-0015 R6, kb/ADR-0010 R5). Works for a user not yet seen.
+/// Disable and revoke commit together: the user's connections and tokens (kb/ADR-0015 R6, kb/ADR-0029 R9,
+/// kb/ADR-0010 R5). Works for a user not yet seen.
 pub async fn disable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
@@ -291,8 +289,24 @@ pub async fn disable_user(
 ) -> Result<(), AuthError> {
     let email = normalise_email(email);
     let mut tx = pool.begin().await?;
+    // The user's row first (`set_disabled` locks it even when the flag does not change), the entries last.
+    // Disabling revokes every live connection (kb/ADR-0029 R9); enabling again revives none.
     store.set_disabled(&mut tx, &email, true, now).await?;
+    let connections = store
+        .revoke_connections(&mut tx, &email, None, RevokedReason::UserDisabled, now)
+        .await?;
     let n = store.revoke_all_for(&mut tx, &email, now).await?;
+    record_revocations(
+        activity,
+        &mut tx,
+        actor,
+        via,
+        &email,
+        &connections,
+        RevokedReason::UserDisabled,
+        now,
+    )
+    .await?;
     activity
         .record(
             &mut tx,
@@ -357,7 +371,6 @@ pub async fn sign_in(
             &mut tx,
             &email,
             TokenKind::Interactive,
-            Audience::Api,
             &hash_secret(&secret),
             SESSION_LABEL,
             Some(expires_at),

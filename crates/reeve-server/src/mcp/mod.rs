@@ -50,7 +50,8 @@ fn complete(mut result: Value) -> Value {
 }
 
 /// A 2026-07-28 result that a client may cache: a complete one with the caching hints. `cacheScope` is `public`
-/// while every caller sees the same list; it becomes `private` once scopes filter it (GRA-658).
+/// while every caller sees the same list; it becomes `private` once scopes filter it (GRA-661, with the
+/// first tool that needs `write`).
 fn modern(result: Value) -> Value {
     let mut result = complete(result);
     result["ttlMs"] = json!(TTL_MS);

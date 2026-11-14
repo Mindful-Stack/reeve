@@ -5,6 +5,7 @@ mod access_repo;
 mod authorization;
 mod client_fetch;
 mod clients;
+mod connections;
 mod domain;
 #[cfg(feature = "static-oidc")]
 mod fake_client_host;
@@ -31,9 +32,12 @@ pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
     ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
 };
+pub use connections::{
+    Connection, ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair, exchange_code,
+    refresh_tokens, revoke_all_connections,
+};
 pub use domain::{
-    Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
-    normalise_email,
+    IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret, normalise_email,
 };
 #[cfg(feature = "static-oidc")]
 pub use fake_client_host::{FakeAnswer, FakeClientHost};
@@ -42,7 +46,7 @@ pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
 pub use handler::{
     AuthError, IssuedToken, SESSION_LABEL, VerifiedIdentity, authenticate_api, authenticate_mcp,
     disable_user, enable_user, issue_mcp_token, issue_token, list_tokens, list_users,
-    list_users_in, revoke_all_for, revoke_token, sign_in,
+    list_users_in, revoke_token, sign_in,
 };
 pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]

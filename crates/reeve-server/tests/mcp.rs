@@ -173,7 +173,7 @@ async fn only_a_live_mcp_token_in_the_bearer_header_is_accepted() {
         (
             "expired",
             "e@example.com",
-            "UPDATE tokens SET expires_at = now() - interval '1 minute' WHERE owner = $1",
+            "UPDATE tokens SET created_at = now() - interval '61 minutes', expires_at = now() - interval '1 minute' WHERE owner = $1",
         ),
         (
             "owner disabled",
@@ -660,38 +660,6 @@ async fn a_malformed_meta_is_refused_or_read_as_absent() {
             (status, code),
             "{header:?}: {b}"
         );
-    }
-}
-
-/// What the code logged while the guard is alive, as text.
-#[derive(Clone, Default)]
-struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-impl std::io::Write for Logs {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
-    type Writer = Logs;
-    fn make_writer(&'a self) -> Logs {
-        self.clone()
-    }
-}
-impl Logs {
-    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
-        let logs = Logs::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_ansi(false)
-            .finish();
-        (logs, tracing::subscriber::set_default(subscriber))
-    }
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
     }
 }
 

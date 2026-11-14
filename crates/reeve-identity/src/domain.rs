@@ -1,3 +1,4 @@
+use reeve_protocol::{RevokedReason, Scope};
 pub use reeve_protocol::{Role, TokenKind};
 use sha2::{Digest, Sha256};
 
@@ -46,11 +47,54 @@ pub struct Principal {
 }
 
 /// Who is calling the MCP endpoint (kb/ADR-0029 R6). A type of its own, without a token kind: code that takes a
-/// `Principal` cannot be handed an MCP caller, and the MCP endpoint cannot be handed an API one.
+/// `Principal` cannot be handed an MCP caller, and the MCP endpoint cannot be handed an API one. It carries the
+/// connection the token belongs to, the client that connection was approved for, and what it may do (R5, R7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpPrincipal {
     pub email: String,
     pub role: Role,
+    pub connection_id: i64,
+    pub client_id: String,
+    pub scope: Scope,
+}
+
+/// The text stored in `connections.scope`.
+pub(crate) fn scope_text(scope: Scope) -> &'static str {
+    match scope {
+        Scope::Read => "read",
+        Scope::Write => "write",
+    }
+}
+
+/// The one parser for the stored scope; `None` for text no `Scope` writes.
+pub(crate) fn scope_from(s: &str) -> Option<Scope> {
+    match s {
+        "read" => Some(Scope::Read),
+        "write" => Some(Scope::Write),
+        _ => None,
+    }
+}
+
+/// The text stored in `connections.revoked_reason` and written in a `connection_revoked` entry.
+pub(crate) fn reason_text(reason: RevokedReason) -> &'static str {
+    match reason {
+        RevokedReason::Revoked => "revoked",
+        RevokedReason::RefreshTokenReused => "refresh_token_reused",
+        RevokedReason::UserDisabled => "user_disabled",
+        RevokedReason::Restored => "restored",
+    }
+}
+
+/// The one parser for the stored reason; `None` for text no `RevokedReason` writes.
+pub(crate) fn reason_from(s: &str) -> Option<RevokedReason> {
+    [
+        RevokedReason::Revoked,
+        RevokedReason::RefreshTokenReused,
+        RevokedReason::UserDisabled,
+        RevokedReason::Restored,
+    ]
+    .into_iter()
+    .find(|r| reason_text(*r) == s)
 }
 
 pub use reeve_protocol::normalise_email;
@@ -65,11 +109,10 @@ pub(crate) fn kind_from(s: &str) -> Option<TokenKind> {
 }
 
 /// Where a token works (kb/ADR-0029 R5, R6): the API or the MCP endpoint. Not a third token kind (kb/ADR-0015 R7):
-/// an MCP token is an interactive token whose audience is the MCP endpoint. Exported because the port `TokenStore`
-/// names it in `insert_token`; a caller outside this crate chooses an audience only by calling `issue_token` or
-/// `issue_mcp_token`.
+/// an MCP token is an interactive token whose audience is the MCP endpoint. A caller outside this crate chooses an
+/// audience only by calling `issue_token` or `issue_mcp_token`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Audience {
+pub(crate) enum Audience {
     /// The API, the event stream, attachments and the session cookie.
     Api,
     /// The MCP endpoint only.

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{Duration, TimeZone, Utc};
 use reeve_identity::{
     AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, Role, TokenKind, Via,
-    authenticate_api, disable_user, hash_secret, issue_token, revoke_all_for,
+    authenticate_api, disable_user, hash_secret, issue_token,
 };
 use std::sync::Mutex;
 
@@ -136,27 +136,6 @@ async fn refuses_unknown_secret_expired_revoked_and_disallowed() {
         .await,
         Err(AuthError::Unauthenticated)
     ));
-    revoke_all_for(
-        &pool,
-        &*store,
-        &log,
-        "operator",
-        Via::Interactive,
-        "dan@example.com",
-        now,
-    )
-    .await
-    .unwrap();
-    assert!(matches!(
-        authenticate_api(
-            &*store,
-            &AccessPolicy::floor_only(&cfg()),
-            &short.secret,
-            now
-        )
-        .await,
-        Err(AuthError::Unauthenticated)
-    ));
     assert!(matches!(
         issue_token(
             &pool,
@@ -227,25 +206,10 @@ async fn disable_normalises_email_revokes_and_records_events() {
         .await
         .unwrap();
     assert_eq!(live, 0);
-    revoke_all_for(
-        &pool,
-        &*store,
-        &log,
-        "operator",
-        Via::Automation,
-        "dan@example.com",
-        now,
-    )
-    .await
-    .unwrap();
     let ev = log.0.lock().unwrap();
     assert_eq!(
         (ev[1].action, ev[1].via, ev[1].subject.as_str()),
         ("user_disabled", Via::System, "dan@example.com")
-    );
-    assert_eq!(
-        (ev[2].action, ev[2].via),
-        ("tokens_revoked", Via::Automation)
     );
 }
 

@@ -273,8 +273,8 @@ pub fn cookies_of(res: &axum::http::Response<axum::body::Body>) -> Vec<String> {
 
 /// An MCP token for `email`, issued on demand by the real `reeve_identity::issue_mcp_token` under the access policy
 /// as a request would load it, expiring in one hour. Not issued in `build_on`: the standard harness's token and
-/// activity counts stay as they were. This is a developer-minted token; a token issued through sign-in, with a
-/// client and scopes, does not exist before GRA-658.
+/// activity counts stay as they were. This is a developer-minted token, in a `write` connection of the developer client;
+/// a token issued through sign-in comes from `oauth::connect`.
 pub async fn issue_mcp_token(h: &Harness, email: &str) -> reeve_identity::IssuedToken {
     let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
     let policy = h.state.access.load(&h.state.identity).await.unwrap();
@@ -363,4 +363,36 @@ pub async fn send(
     let (status, headers) = (res.status().as_u16(), res.headers().clone());
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+/// What the code logged while the guard is alive, as text.
+#[derive(Clone, Default)]
+pub struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+    fn make_writer(&'a self) -> Logs {
+        self.clone()
+    }
+}
+impl Logs {
+    pub fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .finish();
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
 }

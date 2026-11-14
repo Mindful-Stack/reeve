@@ -1,5 +1,5 @@
 //! The MCP sign-in flow for tests, step by step through the real router (`static-oidc` only): authorize with a
-//! client published on the fake client host, the approval page's three API calls, and (GRA-658) the token route.
+//! client published on the fake client host, the approval page's three API calls, and the token route.
 //! The harness is on a fixed clock: time moves only by `f.h.state.clock.advance`.
 //!
 //! Not reproduced: a browser. The connect cookie is copied from the `Set-Cookie` the server sent and the session
@@ -285,4 +285,238 @@ pub async fn https_flow() -> Flow {
         host,
         client_id,
     }
+}
+
+/// `POST /oauth/token` with a form body.
+pub fn token_request(form: &[(&str, &str)]) -> Request<Body> {
+    raw_token_request(
+        &url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish(),
+    )
+}
+
+/// The same with the body as given: for what a form serialiser would never write.
+pub fn raw_token_request(body: &str) -> Request<Body> {
+    Request::post("/oauth/token")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+pub async fn token(f: &Flow, form: &[(&str, &str)]) -> (u16, axum::http::HeaderMap, Value) {
+    answer_of(&f.h.app, token_request(form)).await
+}
+
+/// The form of a correct exchange of `code`, as an OAuth 2.0 client sends it (with `redirect_uri`) and with the
+/// `resource` MCP asks clients to send.
+pub fn code_form<'a>(f: &'a Flow, code: &'a str) -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("client_id", f.client_id.as_str()),
+        ("code_verifier", VERIFIER),
+        ("redirect_uri", CALLBACK),
+        ("resource", RESOURCE),
+    ]
+}
+
+/// A refresh as a client sends it: without `client_id`, which the standards make optional here.
+pub fn refresh_form(refresh_token: &str) -> Vec<(&str, &str)> {
+    vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ]
+}
+
+/// `form` with `name` set to `value` (replacing it), or removed when `value` is `None`.
+pub fn form_with<'a>(
+    mut form: Vec<(&'a str, &'a str)>,
+    name: &'a str,
+    value: Option<&'a str>,
+) -> Vec<(&'a str, &'a str)> {
+    form.retain(|(k, _)| *k != name);
+    if let Some(value) = value {
+        form.push((name, value));
+    }
+    form
+}
+
+/// An approved request's code: authorize, read and approve as `session`, each of which must succeed.
+pub async fn code_for(f: &Flow, session: &str, scope: &str) -> String {
+    param(&approved(f, session, scope).await, "code").expect("an approval answers a code")
+}
+
+/// What a client holds after connecting.
+pub struct Connected {
+    pub access_token: String,
+    pub refresh_token: String,
+    /// The connection's id, read from the database by the access token's hash.
+    pub connection_id: i64,
+}
+
+/// The whole journey as `session` with `scope`, every step of which must succeed.
+pub async fn connect(f: &Flow, session: &str, scope: &str) -> Connected {
+    let code = code_for(f, session, scope).await;
+    let (status, _, body) = token(f, &code_form(f, &code)).await;
+    assert_eq!(status, 200, "{body}");
+    let access_token = body["access_token"].as_str().unwrap().to_string();
+    let connection_id: i64 = sqlx::query_scalar("SELECT connection_id FROM tokens WHERE hash = $1")
+        .bind(reeve_identity::hash_secret(&access_token))
+        .fetch_one(&f.h.state.pool)
+        .await
+        .unwrap();
+    Connected {
+        access_token,
+        refresh_token: body["refresh_token"].as_str().unwrap().to_string(),
+        connection_id,
+    }
+}
+
+/// The status `/mcp` answers a `server/discover` carrying `access_token`: 200 when the token is accepted.
+pub async fn mcp_status(f: &Flow, access_token: &str) -> u16 {
+    send(
+        &f.h.app,
+        mcp_modern(access_token, 1, "server/discover", serde_json::json!({})),
+    )
+    .await
+    .0
+}
+
+/// A person admitted by a database entry, not by the configured floor, with an interactive token: the one kind
+/// of person a test can take access away from. Returns the token's secret.
+pub async fn guest(h: &Harness) -> String {
+    set_guest_allowed(h, true).await;
+    let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
+    let policy = h.state.access.load(&h.state.identity).await.unwrap();
+    reeve_identity::issue_token(
+        &h.state.pool,
+        &*h.state.tokens,
+        &*log,
+        &policy,
+        "test",
+        reeve_protocol::Via::Interactive,
+        "guest@other.org",
+        reeve_protocol::TokenKind::Interactive,
+        "guest",
+        None,
+        h.started,
+    )
+    .await
+    .unwrap()
+    .secret
+}
+
+pub async fn set_guest_allowed(h: &Harness, allowed: bool) {
+    let query = if allowed {
+        sqlx::query("INSERT INTO allowed_entries (kind, value, added_by, added_at) VALUES ('email', 'guest@other.org', 'dan@example.com', $1)")
+            .bind(h.state.clock.now())
+    } else {
+        sqlx::query("DELETE FROM allowed_entries WHERE value = 'guest@other.org'")
+    };
+    query.execute(&h.state.pool).await.unwrap();
+}
+
+pub type Answered = tokio::task::JoinHandle<(u16, axum::http::HeaderMap, Value)>;
+
+/// Starts a request against the router without waiting for its answer.
+pub fn start(f: &Flow, req: Request<Body>) -> Answered {
+    let app = f.h.app.clone();
+    tokio::spawn(async move { answer_of(&app, req).await })
+}
+
+/// Waits until `n` backends of this test's database wait for a lock. Bounded: when the request under test never
+/// waits for the lock the test holds, this panics instead of hanging.
+pub async fn until_waiting(h: &Harness, n: i64) {
+    let waiting = async {
+        loop {
+            let now: i64 = sqlx::query_scalar(
+                "SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()",
+            )
+            .fetch_one(&h.state.pool)
+            .await
+            .unwrap();
+            if now >= n {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), waiting)
+        .await
+        .expect("no request waited for the lock this test holds: the flow does not take it, or takes it later than the test assumes");
+}
+
+/// Whether another transaction holds a lock on the row `id` of `table`, asked without waiting.
+pub async fn locked(h: &Harness, table: &str, id: i64) -> bool {
+    let mut probe = h.state.pool.begin().await.unwrap();
+    let got = sqlx::query(&format!(
+        "SELECT 1 FROM {table} WHERE id = $1 FOR UPDATE NOWAIT"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *probe)
+    .await;
+    // Rolled back before answering: a probe that found the row free must not keep it locked.
+    probe.rollback().await.unwrap();
+    match got {
+        Ok(Some(_)) => false,
+        Ok(None) => panic!("{table} has no row {id}"),
+        Err(e) => {
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.into_owned());
+            assert_eq!(
+                code.as_deref(),
+                Some("55P03"),
+                "lock_not_available expected: {e}"
+            );
+            true
+        }
+    }
+}
+
+/// The ids of the token row and the refresh token row a client holds.
+pub async fn rows_of(h: &Harness, c: &Connected) -> (i64, i64) {
+    let id = |sql: &'static str, secret: &str| {
+        let (pool, hash) = (h.state.pool.clone(), reeve_identity::hash_secret(secret));
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .bind(hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    (
+        id("SELECT id FROM tokens WHERE hash = $1", &c.access_token).await,
+        id(
+            "SELECT id FROM refresh_tokens WHERE hash = $1",
+            &c.refresh_token,
+        )
+        .await,
+    )
+}
+
+/// The connection's `revoked_reason`; `None` while it is not revoked.
+pub async fn revoked(h: &Harness, connection_id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT revoked_reason FROM connections WHERE id = $1")
+        .bind(connection_id)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+/// Every `connection_revoked` entry in the activity log, as the admin reads it.
+pub async fn revocations(h: &Harness) -> Vec<Value> {
+    let (status, body) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/activity?action=connection_revoked",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    body["value"].as_array().unwrap().clone()
 }

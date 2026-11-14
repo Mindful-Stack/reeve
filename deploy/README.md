@@ -141,12 +141,12 @@ proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy
 
 ## MCP sign-in at the reverse proxy
 
-With `[mcp] enabled = true` the server answers, without a caller, two documents which an MCP client reads to find where to sign in, and the authorize route they name (kb/ADR-0029 R2, R11). The documents:
+With `[mcp] enabled = true` the server answers, without a caller, two documents which an MCP client reads to find where to sign in, and the two sign-in routes they name (kb/ADR-0029 R2, R11). The documents:
 
 - `GET /.well-known/oauth-protected-resource/mcp`
 - `GET /.well-known/oauth-authorization-server`
 
-The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents and `/oauth/authorize` answer 404 as well.
+The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` and `/oauth/token` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents, `/oauth/authorize` and `/oauth/token` answer 404 as well.
 
 The addresses in the documents are built from `public_url` as the server parses it (lower-case host, no default port), without its trailing slash, followed by the path: `public_url = "https://reeve.example.com/"` gives the MCP endpoint `https://reeve.example.com/mcp`. A client compares them with the address the person typed, as text, so that is the address to give people.
 
@@ -182,7 +182,25 @@ Limit it per client address, as `/auth/login` is: here the caller is a person's 
         proxy_pass http://127.0.0.1:7474;
     }
 
-The approval page, `/connect`, is a page of the web client and needs no rule of its own. `/oauth/token` is not served yet; its limit is added here when it is. Until then an app can bring a person to the approval page and be sent back with a code, but nothing exchanges the code: keep `[mcp]` off in production.
+The approval page, `/connect`, is a page of the web client and needs no rule of its own.
+
+### The token route
+
+`POST /oauth/token` is called by the app's servers, not by a person's browser: every Claude user's requests arrive from the same few addresses (`160.79.104.0/21`), once to connect and about once an hour per connected person to refresh. Limit it per address at a rate sized for many people behind one, as the two documents are. For nginx, five requests a second per address:
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_oauth_token:10m rate=5r/s;
+
+    # in the server block, before the general proxy location
+    location = /oauth/token {
+        limit_req zone=reeve_oauth_token burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+The route reads at most 16 KiB, answers within one database transaction and makes no outbound request (Claude waits ten seconds for it). A refresh token works once: if an answer is lost on the way, or an app sends two refreshes at once, the next attempt with the old token revokes the connection and the person connects again. Each such case is a `connection_revoked` entry with reason `refresh_token_reused` in the activity log, and a `warn` line `token request refused`, which never holds a code, a token or anything else the caller sent.
+
+A person can now connect an app, but cannot yet list or revoke their connections (kb/ADR-0029 R9; a later release adds it): only disabling the user or `reeve-server connections-revoke-all` ends one. Keep `[mcp]` off in production until then.
 
 ### Which apps may connect
 
@@ -404,6 +422,8 @@ it too, so the image from before this release cannot run against a database that
 past this release therefore restores the pre-release backup (see "Restore after an incident"), and every image
 uploaded since that backup is lost; the Markdown that showed them keeps links that answer 404 after the next upgrade.
 
+Migration 2005 adds MCP connections and refresh tokens and gives every MCP token a connection. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and every connection made since that backup is lost: people connect again.
+
 Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 
 ### Back up
@@ -432,11 +452,11 @@ Without compose, with a PostgreSQL 16 client and the password in `~/.pgpass` rat
 
 ### Restore after an incident
 
-Anything written after the dump is lost; the restored activity log's last entry says how far it reaches. Use a dump `scripts/backup.sh` published (exit status 0), and restore with the server image that took it: upgrade afterwards, as a separate step, so the check in step 5 compares like with like. The server stays stopped until step 7, so no request or webhook changes the restored data before it is checked. Pause the scheduled backup for the duration of the restore, so it does not take a dump of a half-restored database, and stop the scheduled decision check (step 2 to step 8), which writes to the planner every ten minutes: while the server is stopped each run fails, and once it starts again a run would write to the restored instance before it is confirmed. The dump holds the database only: `reeve.toml` (the OIDC secrets, the webhook secret, the database password) is not in it, so keep a copy of it separately as a secret; the configured admins decide the roles in the export, so a different `reeve.toml` makes the step 5 comparison differ. The same file is the access floor (see "Access"): a grant in the dump that the restored floor no longer allows is kept, marked `not allowed` and inert, until an admin revokes it. To get the image that took the dump, check out the commit that was deployed at the time and run `docker compose build`.
+Anything written after the dump is lost; the restored activity log's last entry says how far it reaches. Use a dump `scripts/backup.sh` published (exit status 0), and restore with the server image that took it: upgrade afterwards, as a separate step, so the check in step 5 compares like with like. The server stays stopped until step 8, so no request or webhook changes the restored data before it is checked. Pause the scheduled backup for the duration of the restore, so it does not take a dump of a half-restored database, and stop the scheduled decision check (step 2 to step 9), which writes to the planner every ten minutes: while the server is stopped each run fails, and once it starts again a run would write to the restored instance before it is confirmed. The dump holds the database only: `reeve.toml` (the OIDC secrets, the webhook secret, the database password) is not in it, so keep a copy of it separately as a secret; the configured admins decide the roles in the export, so a different `reeve.toml` makes the step 5 comparison differ. The same file is the access floor (see "Access"): a grant in the dump that the restored floor no longer allows is kept, marked `not allowed` and inert, until an admin revokes it. To get the image that took the dump, check out the commit that was deployed at the time and run `docker compose build`.
 
 1. Read the whole archive before anything is dropped: `docker compose exec -T postgres pg_restore -f /dev/null < reeve-<stamp>.dump` (a shell redirect or a pipe, the same) must exit 0. It reads every entry, table data included, into no database, and fails on a truncated or foreign file. (`pg_restore --list` is not enough: it reads only the header and the table of contents, and an archive cut in its table data passes it.)
 2. `sudo systemctl stop reeve-decision-check.timer` (and wait for a run in progress: wait while `systemctl is-active reeve-decision-check.service` says `activating`; once the run is over it says `inactive`, or `failed` if the last run failed, as it is likely to while the server is broken), then `docker compose stop server`.
-3. Keep the live database until the restore is confirmed: `docker compose exec -T postgres psql -U reeve -d postgres -c "ALTER DATABASE reeve RENAME TO reeve_before_restore"`, then `docker compose exec -T postgres createdb -U reeve -O reeve reeve`. The rename refuses while anything is connected, and when `reeve_before_restore` exists already (a leftover of an earlier restore: drop it first only if you are sure you no longer need it); `docker compose exec -T postgres psql -U reeve -d postgres -c "SELECT pid, application_name, client_addr FROM pg_stat_activity WHERE datname = 'reeve'"` shows who is connected. The kept copy needs disk for two databases until step 8.
+3. Keep the live database until the restore is confirmed: `docker compose exec -T postgres psql -U reeve -d postgres -c "ALTER DATABASE reeve RENAME TO reeve_before_restore"`, then `docker compose exec -T postgres createdb -U reeve -O reeve reeve`. The rename refuses while anything is connected, and when `reeve_before_restore` exists already (a leftover of an earlier restore: drop it first only if you are sure you no longer need it); `docker compose exec -T postgres psql -U reeve -d postgres -c "SELECT pid, application_name, client_addr FROM pg_stat_activity WHERE datname = 'reeve'"` shows who is connected. The kept copy needs disk for two databases until step 9.
 4. `docker compose exec -T postgres pg_restore -U reeve -d reeve --no-owner --exit-on-error < reeve-<stamp>.dump`. It stops at the first error instead of restoring part of the database. After a failure, drop only the new, half-restored database (`docker compose exec -T postgres dropdb -U reeve reeve`; `reeve_before_restore` stays) and go back to `createdb` in step 3: a second restore into a database that is no longer empty fails on the first table that exists. If the restore cannot be made to work, drop the new `reeve` and rename `reeve_before_restore` back to `reeve`.
 5. Check the restored data with the server still stopped: `docker compose run` starts a one-off server container that publishes no port and runs one command.
 
@@ -450,10 +470,11 @@ Anything written after the dump is lost; the restored activity log's last entry 
 
    It prints `restored data matches` when the restored instance holds the same data as the export taken with the dump. An entry written between the dump and its export shows up as a difference. If `export` refuses with "run `reeve-server migrate` first", the image is newer than the dump: run step 6 first, then this check, and expect only the fields the newer server adds. The comparison needs only `grep` and `diff`; `jq` is not required.
 6. `docker compose run --rm --no-deps server migrate` (a newer image applies only the migrations newer than the dump; the same image applies nothing).
-7. `docker compose start server`.
-8. Once the restored instance is confirmed (people sign in, the board shows the expected stories), drop the kept copy: `docker compose exec -T postgres dropdb -U reeve reeve_before_restore`, and start the decision check again: `sudo systemctl start reeve-decision-check.timer`.
+7. End every MCP connection, with the server still stopped: `docker compose run --rm --no-deps server connections-revoke-all`. A restore rewinds refresh tokens: one that was used after the dump is unused again, and the newer one the app holds is unknown. The command revokes every live connection, writes a `connection_revoked` entry for each (reason `restored`, by `operator`) and prints `revoked <n> connections`. People connect their apps again; each ended connection is a `connection_revoked` entry with reason `restored` in the activity log. It needs a server image with MCP sign-in; an older image has no such command and no connections to end.
+8. `docker compose start server`.
+9. Once the restored instance is confirmed (people sign in, the board shows the expected stories), drop the kept copy: `docker compose exec -T postgres dropdb -U reeve reeve_before_restore`, and start the decision check again: `sudo systemctl start reeve-decision-check.timer`.
 
-Without compose (a PostgreSQL 16 client; the password in `~/.pgpass`, and a `<database_url>` without it, so it stays out of the process list): read the whole archive with `pg_restore -f /dev/null < reeve-<stamp>.dump`, stop the server, `psql -d postgres -c "ALTER DATABASE <name> RENAME TO <name>_before_restore"` and `createdb -O <owner> <name>`, `pg_restore -d "<database_url>" --no-owner --exit-on-error < reeve-<stamp>.dump`, run `reeve-server --config <reeve.toml> export --out <fresh name>` and compare as in step 5, run `reeve-server migrate`, start the server, and drop `<name>_before_restore` once the restored instance is confirmed (it needs disk for two copies until then).
+Without compose (a PostgreSQL 16 client; the password in `~/.pgpass`, and a `<database_url>` without it, so it stays out of the process list): read the whole archive with `pg_restore -f /dev/null < reeve-<stamp>.dump`, stop the server, `psql -d postgres -c "ALTER DATABASE <name> RENAME TO <name>_before_restore"` and `createdb -O <owner> <name>`, `pg_restore -d "<database_url>" --no-owner --exit-on-error < reeve-<stamp>.dump`, run `reeve-server --config <reeve.toml> export --out <fresh name>` and compare as in step 5, run `reeve-server migrate`, run `reeve-server --config <reeve.toml> connections-revoke-all`, start the server, and drop `<name>_before_restore` once the restored instance is confirmed (it needs disk for two copies until then).
 
 ### Rehearse the restore
 

@@ -250,6 +250,17 @@ async fn seed(h: &Harness) -> Seeded {
     let res = call_raw(app, req).await;
     assert_eq!(res.status().as_u16(), 202);
     assert_eq!(body_json(res).await["result"], "linked");
+    // An MCP connection with its token (the developer command's path) and a refresh token (migration 2005). The
+    // refresh token is written with SQL: this harness has no client to exchange a code with, and the round trip
+    // compares rows, whoever wrote them.
+    let mcp = issue_mcp_token(h, "dan@example.com").await;
+    sqlx::query(
+        "INSERT INTO refresh_tokens (connection_id, hash, created_at) SELECT connection_id, 'backup-restore-refresh', created_at FROM tokens WHERE id = $1",
+    )
+    .bind(mcp.id)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
     Seeded { todo, active }
 }
 

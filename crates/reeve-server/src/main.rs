@@ -30,8 +30,8 @@ enum Cmd {
     },
     /// Developer command, only in builds with the `static-oidc` feature (the Dockerfile never enables it): issue an
     /// interactive token whose audience is the MCP endpoint for an allowlisted email, valid for one hour
-    /// (kb/ADR-0029 R5), and print the secret once. Until connections exist (GRA-669) such a token appears in no
-    /// listing and is revoked only by disabling its owner; its short life is the cleanup.
+    /// (kb/ADR-0029 R5), and print the secret once. It makes a connection of its own (client
+    /// `urn:reeve:developer-command`, scope write), which disabling its owner revokes.
     #[cfg(feature = "static-oidc")]
     McpTokenIssue {
         #[arg(long)]
@@ -58,11 +58,16 @@ enum Cmd {
         #[arg(long)]
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Disable a user and revoke their tokens.
+    /// Disable a user and revoke their tokens and MCP connections.
     UserDisable {
         #[arg(long)]
         email: String,
     },
+    /// Operator command, run on the host with database access while the server is stopped: revoke every live MCP
+    /// connection, with an activity entry each (reason `restored`). The restore procedure runs it before the
+    /// server starts: a dump rewinds refresh tokens, so every connection must end and people connect again
+    /// (deploy/README.md, "Restore after an incident"). Prints how many it revoked.
+    ConnectionsRevokeAll,
     /// Operator command: print who may sign in and who is admin, merged from the configuration and the database, one
     /// `kind<TAB>value<TAB>source<TAB>flag` line per entry (flag is `not allowed` or empty; control characters in
     /// value and source are escaped). Read-only: connects read-only, never migrates and refuses a database at another
@@ -278,6 +283,15 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
+        }
+        Cmd::ConnectionsRevokeAll => {
+            let store = reeve_identity::make_token_store(pool.clone());
+            let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> =
+                reeve_activity::make_activity_store(pool.clone());
+            let n =
+                reeve_identity::revoke_all_connections(&pool, &*store, &*log, chrono::Utc::now())
+                    .await?;
+            println!("revoked {n} connections");
         }
         Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
     }
