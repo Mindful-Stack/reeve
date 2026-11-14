@@ -90,14 +90,14 @@ We decided that the Reeve server is the OAuth authorization server for its own r
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
-- 2026-11-14 (GRA-653 sign-in design): three things the design adds or leaves out, none against a rule.
-  Dynamic registration is not built: both target clients document support for Client ID Metadata Documents
-  (source: https://claude.com/docs/connectors/building/authentication.md,
-  https://developers.openai.com/api/docs/guides/custom-mcp-server.md, read 2026-11-14), so R3's "or by dynamic
-  registration" and its cap and expiry have nothing to apply to; a client trial that shows otherwise reopens it.
-  Client documents are fetched only from hosts the instance lists, which narrows R3. An admin may list and revoke
-  any person's connections, beside the owner R9 names; it only reduces access, as disabling a user does
-  (kb/ADR-0015 R6). No trigger fired; the decision holds.
+- 2026-11-14 (GRA-653 sign-in design): two things the design adds or leaves out, none against a rule.
+  We deferred dynamic registration; we did not drop it. Both target clients document support for Client ID
+  Metadata Documents (source: https://claude.com/docs/connectors/building/authentication.md,
+  https://developers.openai.com/api/docs/guides/custom-mcp-server.md, read 2026-11-14), so the first build
+  identifies a client by its metadata document only, and R3's "or by dynamic registration" and its cap and expiry
+  have nothing to apply to yet. The registration trigger has not fired: how ChatGPT identifies itself is
+  unverified until its trial, and the parked registration story is decided then. We fetch client documents only
+  from hosts the instance lists, which narrows R3. The decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)
