@@ -58,6 +58,7 @@ We decided to make Lorekeeper's planning skills an optional capability that uses
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
 - 2026-11-04 (public copy, one-time edit): F1's source now names the public reeve-runner repository that holds the cited design. The cited material is not in this repository; the sources now describe it in words or point to the public reeve-runner repository that holds it. No fact, rule or decision changed; the decision holds.
+- 2026-11-14 (kb/ADR-0029): an MCP server is being added under R5 because part of the team works only in claude.ai or ChatGPT, clients that cannot run the `reeve` CLI (source: Daniel Thyselius, 2026-11-14). This is not the trigger named under *Assumptions and invalidation triggers* ("a skill needs streaming or long-lived state the CLI cannot provide"): the CLI is still an adequate surface for skills. R5 holds, since the MCP tools wrap the same commands (kb/ADR-0029 R1). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0004, kb/ADR-0002.
