@@ -8500,6 +8500,17 @@ export interface operations {
                  *     reference equals `q` first, then title matches, then the rest, each in `rank` order.
                  */
                 sort?: components["schemas"]["StorySort"];
+                /**
+                 * @description One page of the list: at most this many stories, 1 to 100, starting at `offset`, cut after every filter and in
+                 *     the list's order. Without it the whole list is answered. A page of exactly `limit` stories means there may be
+                 *     more.
+                 */
+                limit?: number;
+                /**
+                 * @description Stories to skip before the page, 0 or more; refused without `limit`. An offset at or past the end answers an
+                 *     empty list.
+                 */
+                offset?: number;
             };
             header?: never;
             path?: never;

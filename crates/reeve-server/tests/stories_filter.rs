@@ -307,3 +307,157 @@ async fn promised_parameter_reaches_the_handler() {
     assert_eq!(st, 400, "{b}");
     assert_eq!(b["code"], "validation", "{b}");
 }
+
+/// Pages are slices of the one ordered list: three pages of 40 over 101 stories are that list, every row once and in
+/// its order, although every todo story has the same rank. Without `limit` the whole list is answered, beyond the
+/// largest page. A page that starts at or past the end is empty.
+#[tokio::test]
+async fn pages_cover_a_list_with_tied_ranks_exactly_once() {
+    let h = harness().await;
+    let mut made = Vec::new();
+    for i in 0..101 {
+        made.push(
+            new_story(
+                &h,
+                &format!("page-{i}"),
+                json!({"title": format!("Story {i}")}),
+            )
+            .await,
+        );
+    }
+    // One story leaves todo, so the list's order is not the order of creation.
+    post(
+        &h,
+        &format!("/api/v1/stories/{}/move", made[3]),
+        json!({"version":1,"to":"in_progress","override_reason":"the test starts it"}),
+    )
+    .await;
+
+    let (st, whole) = get(&h, "").await;
+    assert_eq!(st, 200, "{whole}");
+    let all = whole["value"].as_array().unwrap().clone();
+    assert_eq!(
+        all.len(),
+        101,
+        "no limit: the whole list, longer than any page"
+    );
+    let todo_ranks: std::collections::HashSet<i64> = all
+        .iter()
+        .filter(|r| r["story"]["delivery"] == "todo")
+        .map(|r| r["story"]["rank"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        todo_ranks.len(),
+        1,
+        "the fixture must have ties in rank: {todo_ranks:?}"
+    );
+
+    let mut paged = Vec::new();
+    for (offset, rows) in [(0, 40), (40, 40), (80, 21)] {
+        let (st, b) = get(&h, &format!("limit=40&offset={offset}")).await;
+        assert_eq!(st, 200, "{b}");
+        assert_eq!(
+            b.as_object().unwrap().keys().collect::<Vec<_>>(),
+            whole.as_object().unwrap().keys().collect::<Vec<_>>(),
+            "the envelope has the fields it has without a limit"
+        );
+        let page = b["value"].as_array().unwrap().clone();
+        assert_eq!(page.len(), rows, "offset {offset}");
+        paged.extend(page);
+    }
+    assert_eq!(
+        paged, all,
+        "the pages are the list: every row once, in order"
+    );
+    let distinct: std::collections::HashSet<&str> = paged
+        .iter()
+        .map(|r| r["story"]["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(distinct.len(), 101);
+
+    // offset defaults to 0; 100 is the largest page
+    let (st, first) = get(&h, "limit=100").await;
+    assert_eq!(st, 200, "{first}");
+    assert_eq!(&first["value"].as_array().unwrap()[..], &all[..100]);
+    let (st, last) = get(&h, "limit=100&offset=100").await;
+    assert_eq!(st, 200, "{last}");
+    assert_eq!(&last["value"].as_array().unwrap()[..], &all[100..]);
+
+    // at the end and past it: an empty page, not an error
+    for query in [
+        "limit=40&offset=101",
+        "limit=40&offset=120",
+        "limit=1&offset=4294967295",
+    ] {
+        let (st, b) = get(&h, query).await;
+        assert_eq!(st, 200, "{query}: {b}");
+        assert_eq!(b["value"], json!([]), "{query}");
+    }
+}
+
+/// The page is cut from the filtered list, not before a filter that runs after the read (`urgent`, kb/ADR-0021 R4):
+/// the urgent stories are the second, fourth and sixth rows, so a cut taken first would keep fewer of them.
+#[tokio::test]
+async fn a_page_is_cut_after_every_filter() {
+    let h = harness().await;
+    let mut made = Vec::new();
+    for i in 0..6 {
+        made.push(
+            new_story(
+                &h,
+                &format!("cut-{i}"),
+                json!({"title": format!("Story {i}")}),
+            )
+            .await,
+        );
+    }
+    for key in [&made[1], &made[3], &made[5]] {
+        post(&h, &format!("/api/v1/stories/{key}/urgent"), json!({})).await;
+    }
+    let urgent = keys(&h, "urgent=true").await;
+    assert_eq!(urgent.len(), 3, "{urgent:?}");
+    assert_eq!(keys(&h, "urgent=true&limit=2").await, urgent[..2].to_vec());
+    assert_eq!(
+        keys(&h, "urgent=true&limit=2&offset=2").await,
+        urgent[2..].to_vec()
+    );
+}
+
+/// `limit` is 1 to 100 and `offset` needs `limit`: both are checked in the route, before anything is read, and
+/// answer a validation error. A value that is not a whole number of the right size is refused by the query
+/// extractor, as every other bad value is.
+#[tokio::test]
+async fn the_story_list_refuses_bad_paging_values() {
+    let h = harness().await;
+    new_story(&h, "one", json!({"title":"One"})).await;
+    for (query, says) in [
+        ("offset=0", "offset needs limit"),
+        ("offset=5", "offset needs limit"),
+        ("limit=0", "limit must be 1..=100"),
+        ("limit=101", "limit must be 1..=100"),
+        ("limit=0&offset=5", "limit must be 1..=100"),
+        ("epic=JPD-404&limit=0", "limit must be 1..=100"),
+    ] {
+        let (st, b) = get(&h, query).await;
+        assert_eq!(st, 400, "{query}: {b}");
+        assert_eq!(b["code"], "validation", "{query}: {b}");
+        assert_eq!(b["message"], says, "{query}: {b}");
+    }
+    for query in [
+        "limit=-1",
+        "limit=x",
+        "limit=4294967296",
+        "limit=5&offset=-1",
+        "limit=5&offset=x",
+    ] {
+        let (st, b) = get(&h, query).await;
+        assert_eq!(st, 400, "{query}: {b}");
+        assert_eq!(b["code"], "validation", "{query}: {b}");
+    }
+    // The control: the same parameters with good values are accepted.
+    for query in ["limit=1", "limit=100", "limit=5&offset=0"] {
+        let (st, b) = get(&h, query).await;
+        assert_eq!(st, 200, "{query}: {b}");
+        assert_eq!(b["value"].as_array().unwrap().len(), 1, "{query}: {b}");
+    }
+}

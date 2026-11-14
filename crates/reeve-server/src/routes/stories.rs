@@ -69,6 +69,15 @@ pub struct StoryQuery {
     /// reference equals `q` first, then title matches, then the rest, each in `rank` order.
     #[serde(default)]
     pub sort: StorySort,
+    /// One page of the list: at most this many stories, 1 to 100, starting at `offset`, cut after every filter and in
+    /// the list's order. Without it the whole list is answered. A page of exactly `limit` stories means there may be
+    /// more.
+    #[param(minimum = 1, maximum = 100)]
+    pub limit: Option<u32>,
+    /// Stories to skip before the page, 0 or more; refused without `limit`. An offset at or past the end answers an
+    /// empty list.
+    #[param(format = Int64, minimum = 0, maximum = 4294967295u32)]
+    pub offset: Option<u32>,
 }
 
 /// `goal=<id>|any|none`.
@@ -83,12 +92,26 @@ fn goal_filter(raw: Option<&str>) -> Result<Option<GoalFilter>, AppError> {
     })
 }
 
+/// `limit` and `offset` as the slice to cut from the list, `(skip, take)`; `None` is the whole list. `limit` is 1 to
+/// 100 and `offset` is valid only with it.
+fn page(limit: Option<u32>, offset: Option<u32>) -> Result<Option<(usize, usize)>, AppError> {
+    match (limit, offset) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(AppError::Validation("offset needs limit".into())),
+        (Some(l), _) if !(1..=100).contains(&l) => {
+            Err(AppError::Validation("limit must be 1..=100".into()))
+        }
+        (Some(l), o) => Ok(Some((o.unwrap_or(0) as usize, l as usize))),
+    }
+}
+
 #[utoipa::path(get, path = "/stories", params(StoryQuery), responses((status = 200, body = Response<Vec<StoryWithReadiness>>)))]
 async fn list(
     State(s): State<AppState>,
     c: Caller,
     ApiQuery(q): ApiQuery<StoryQuery>,
 ) -> Result<Json<Response<Vec<StoryWithReadiness>>>, AppError> {
+    let page = page(q.limit, q.offset)?;
     let goal = goal_filter(q.goal.as_deref())?;
     // A reference that names nothing lists nothing, through the handler, so validation still runs (kb/ADR-0021).
     let mut epics = None;
@@ -125,7 +148,7 @@ async fn list(
         promised: q.promised,
         sort: q.sort,
     };
-    Ok(ok(s
+    let stories = s
         .handlers
         .list_stories(
             &f,
@@ -135,7 +158,11 @@ async fn list(
             q.done,
             c.ctx().now,
         )
-        .await?))
+        .await?;
+    Ok(ok(match page {
+        Some((skip, take)) => stories.into_iter().skip(skip).take(take).collect(),
+        None => stories,
+    }))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]
 async fn create(
