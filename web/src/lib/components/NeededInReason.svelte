@@ -1,15 +1,14 @@
-<!-- web/src/lib/components/NeededInReason.svelte: why a decision is needed, as a phrase; the item it names (in discovery, or holding a promise) is a link: an initiative or epic page, or a story's drawer over this view. -->
+<!-- web/src/lib/components/NeededInReason.svelte: why a decision or discovery row is needed, as a phrase read off its queue row (reasonLine). The item or decision it names is a link: an initiative or epic page, or a story's or decision's drawer over this view. -->
 <script lang="ts">
 	import { page } from '$app/state';
 	import type { NeededInReason } from '#lib/api/types.ts';
-	import { neededInText, reasonHref, reasonParts } from '#lib/decisions.ts';
+	import { reasonHref, reasonLine, type QueueRow } from '#lib/decisions.ts';
 
-	let { reason }: { reason: NeededInReason } = $props();
-	const parts = $derived(reasonParts(reason));
+	let { reason, row }: { reason: NeededInReason; row: QueueRow } = $props();
+	const parts = $derived(reasonLine(reason, row));
 	const href = $derived(reasonHref(reason, page.url));
-	// A story opens its drawer over this view, which must not move (drawer.ts: storyHref); `reasonHref` routes by the
-	// same level, so the link and the attribute share one condition.
-	const drawer = $derived((reason.kind === 'discovery' || reason.kind === 'promise') && reason.level === 'story');
+	// A drawer opens over this view, which must not move (drawer.ts): a story's, or the decision a Now line names.
+	const drawer = $derived(('level' in reason && reason.level === 'story') || reason.kind === 'decision_due');
 </script>
 
-{#if parts && href}{parts.before}<a class="key" data-field="{reason.kind}-item" data-sveltekit-reset={drawer ? 'false' : undefined} {href}>{parts.key}</a>{parts.after}{:else}{neededInText(reason)}{/if}
+{parts.before}{#if parts.key && href}<a class="key" data-field="{reason.kind}-item" data-sveltekit-reset={drawer ? 'false' : undefined} {href}>{parts.key}</a>{:else}{parts.key}{/if}{parts.after}

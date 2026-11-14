@@ -1,6 +1,17 @@
 // Pure helpers for required decisions: the check label, the "mine" and "closed" filters, due dates and item links.
-import type { ClosureKind, NeededIn, NeededInReason, NextStep, QueueLane, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-import { age, dayLabel, plural } from '#lib/format.ts';
+import type {
+	ClosureKind,
+	DecisionQueue,
+	DecisionQueueEntry,
+	DiscoveryEntry,
+	NeededIn,
+	NeededInReason,
+	NextStep,
+	QueueLane,
+	RequiredDecision,
+	Reversibility
+} from '#lib/api/types.ts';
+import { age, dayLabel, month, plural } from '#lib/format.ts';
 import { decisionHref } from '#lib/drawer.ts';
 import { itemRoute } from '#lib/urgency.ts';
 
@@ -143,6 +154,59 @@ export const LANE_LABEL: Record<QueueLane, string> = {
 /** The anchors of the lanes that have one on the decisions page. */
 export const LANE_ANCHOR: Partial<Record<QueueLane, string>> = { review: 'review', this_sprint: 'this-sprint', next_sprint: 'next-sprint' };
 
+/** The queue page's lanes: the wire's `beyond` splits into Now (a Now reason) and Later. */
+export type PageLane = 'this_sprint' | 'next_sprint' | 'now' | 'later' | 'open' | 'satisfied' | 'closed';
+
+const NOW_KINDS: ReadonlySet<NeededInReason['kind']> = new Set<NeededInReason['kind']>(['urgent', 'target_month', 'decision_due', 'held']);
+
+/** A rule of the Now ranking: the server sends one exactly on a standalone row in Now. */
+export function isNowReason(r: NeededInReason | null | undefined): boolean {
+	return !!r && NOW_KINDS.has(r.kind);
+}
+
+/** The page lane of a wire lane and its reason. `review` is no longer sent; an older server's reads as Open. */
+export function pageLane(lane: QueueLane, reason: NeededInReason | null | undefined): PageLane {
+	if (lane === 'beyond') return isNowReason(reason) ? 'now' : 'later';
+	return lane === 'review' ? 'open' : lane;
+}
+
+/** One top-level row of the queue page: a standalone decision, or a discovery row with the decisions nested under it. */
+export type QueueRow = { kind: 'decision'; entry: DecisionQueueEntry } | { kind: 'discovery'; row: DiscoveryEntry; nested: DecisionQueueEntry[] };
+
+/** The page's top-level rows per lane, in server order (nothing is re-sorted): each discovery row goes before
+ *  `entries[at]`, a decision with `under` goes inside the row it names (one the response lacks leaves it standing
+ *  alone), and `beyond` splits into Now and Later. With `me`, a standalone decision is kept when `me` decides it and a
+ *  row when it nests a decision `me` decides; a kept row keeps its whole nested list (the list renders only the
+ *  decisions the page passes it), so its reason can name any of them. Closed and satisfied decisions never nest. */
+export function queueRows(q: Pick<DecisionQueue, 'entries' | 'discoveries'>, f: { me?: string } = {}): Map<PageLane, QueueRow[]> {
+	const out = new Map<PageLane, QueueRow[]>();
+	const lane = (l: PageLane): QueueRow[] => {
+		let rows = out.get(l);
+		if (!rows) out.set(l, (rows = []));
+		return rows;
+	};
+	const byKey = new Map<string, Extract<QueueRow, { kind: 'discovery' }>>();
+	const mine = (e: DecisionQueueEntry) => !f.me || sameEmail(e.decision.decider, f.me);
+	let next = 0;
+	const rowsBefore = (i: number) => {
+		for (; next < q.discoveries.length && q.discoveries[next].at <= i; next++) {
+			const d = q.discoveries[next];
+			const r = { kind: 'discovery' as const, row: d, nested: [] as DecisionQueueEntry[] };
+			byKey.set(d.key, r);
+			lane(pageLane(d.lane, d.needed_in_reason)).push(r);
+		}
+	};
+	q.entries.forEach((e, i) => {
+		rowsBefore(i);
+		const parent = e.under ? byKey.get(e.under) : undefined;
+		if (parent) parent.nested.push(e);
+		else if (mine(e)) lane(pageLane(e.lane, e.needed_in_reason)).push({ kind: 'decision', entry: e });
+	});
+	rowsBefore(Infinity);
+	if (f.me) for (const [l, rows] of out) out.set(l, rows.filter((r) => r.kind === 'decision' || r.nested.some(mine)));
+	return out;
+}
+
 /** What an open, unsatisfied decision needs next, as one line. `reversibility` decides whether closing is offered. */
 export function nextStepText(s: NextStep, reversibility: Reversibility | null | undefined, now: number = Date.now()): string {
 	switch (s.kind) {
@@ -217,6 +281,33 @@ export function neededInText(r: NeededInReason): string {
 	}
 }
 
+/** A queue row's reason as one line: a Now reason (spec §3) reads off its row (what it holds, the date of the decision
+ *  it names) after "Now · "; any other is its phrase (`reasonParts`, else `neededInText`). `key` is what the line links
+ *  (`reasonHref`), empty when it links nothing. */
+export function reasonLine(r: NeededInReason, row: QueueRow): ReasonParts {
+	const text = (before: string): ReasonParts => ({ before, key: '', after: '' });
+	const lists = row.kind === 'decision' ? row.entry : row.row;
+	switch (r.kind) {
+		case 'urgent':
+			return { before: 'Now · urgent via ', key: r.key, after: '' };
+		case 'target_month':
+			return text(`Now · target ${month(r.month)}`);
+		case 'decision_due': {
+			// A standalone decision's reason names itself; a row's names one of its nested decisions (kept whole under Mine).
+			const own = row.kind === 'decision';
+			const d = own ? row.entry.decision : row.nested.find((e) => e.decision.id === r.id)?.decision;
+			const when = d?.due ? ` due ${dayLabel(d.due)}` : '';
+			return own ? text(`Now ·${when}`) : { before: 'Now · ', key: `decision #${r.id}`, after: when };
+		}
+		case 'held': {
+			const held = lists.blocks.length;
+			return text(held ? `Now · holds ${held}` : `Now · holds none, ${lists.under_way.length} under way`);
+		}
+		default:
+			return reasonParts(r) ?? text(neededInText(r));
+	}
+}
+
 /** Where the item a reason names opens: an initiative or epic page, or a story's drawer over `url`'s page; for a Now
  *  `decision_due`, that decision's drawer over `url`'s page. Null for a reason that names nothing to open. */
 export function reasonHref(r: NeededInReason, url: { readonly href: string }): string | null {
@@ -239,7 +330,7 @@ export function reasonHref(r: NeededInReason, url: { readonly href: string }): s
 	}
 }
 
-/** The sprint a decision is needed in. Shown beside `neededInText`, so a row in the review lane still says which sprint. */
+/** The sprint a decision is needed in, shown beside `neededInText` outside the queue page (Home, item pages, the drawer). */
 export function neededLabel(n: NeededIn): string {
 	switch (n) {
 		case 'this_sprint':
@@ -247,7 +338,7 @@ export function neededLabel(n: NeededIn): string {
 		case 'next_sprint':
 			return 'Needed next sprint';
 		case 'beyond':
-			return 'Needed after next sprint';
+			return 'Needed later';
 		case 'none':
 			return 'Not needed yet';
 	}

@@ -6,7 +6,7 @@
 	import { api, ApiError, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, DecisionQueueEntry, NeededIn } from '#lib/api/types.ts';
 	import { COLUMN_LABEL } from '#lib/board.ts';
-	import { dateLine, neededLabel, nextStepText, REVERSIBILITY_TEXT, shortSha, today } from '#lib/decisions.ts';
+	import { dateLine, isNowReason, neededLabel, nextStepText, REVERSIBILITY_TEXT, shortSha, today } from '#lib/decisions.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { errorMessage, short } from '#lib/format.ts';
@@ -162,7 +162,7 @@
 			<div class="strip" data-testid="strip">
 				{#if e.needed_in !== 'none'}
 					<p class="needed">
-						<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}<NeededInReason reason={e.needed_in_reason} />{/if}
+						{#if e.needed_in_reason && isNowReason(e.needed_in_reason)}<NeededInReason reason={e.needed_in_reason} row={{ kind: 'decision', entry: e }} />{:else}<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}<NeededInReason reason={e.needed_in_reason} row={{ kind: 'decision', entry: e }} />{/if}{/if}{#if e.under}{' · '}under {e.under}, in discovery{/if}
 					</p>
 				{:else if notNeeded(e)}
 					<p class="needed"><strong>{neededLabel('none')}</strong></p>

@@ -122,6 +122,19 @@ describe('DecisionDrawer', () => {
 		expect(words(held)).toBe('Held work Holds nothing yet');
 		expect(held.getAttribute('aria-labelledby')).toBe(held.querySelector('h3')!.id);
 		expect(held.querySelector('ul')).toBeNull();
+		// A Now decision says its Now line in place of the needed label; a nested one adds the row it is under.
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const now = await open(
+			entry({ lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'held' }, blocks: [blockedStory({ key: 'ABC-31' }), blockedStory({ key: 'ABC-32' })] })
+		);
+		expect(words(now.querySelector('[data-testid="strip"] .needed'))).toBe('Now \u00b7 holds 2');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const nested = await open(entry({ under: 'ABC-1' }));
+		expect(words(nested.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 for goal: Ship tiers \u00b7 under ABC-1, in discovery');
 	});
 
 	it('says a closed or accepted decision holds nothing, without "yet"', async () => {

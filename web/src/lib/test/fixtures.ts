@@ -6,6 +6,7 @@ import type {
 	AffectedStory,
 	DecisionQueue,
 	DecisionQueueEntry,
+	DiscoveryEntry,
 	Comment,
 	Epic,
 	Goal,
@@ -247,6 +248,22 @@ export function queueEntry(over: Partial<DecisionQueueEntry> = {}): DecisionQueu
 		blocks: [],
 		under_way: [],
 		under: null,
+		...over
+	};
+}
+
+/** A discovery row of the readiness queue: an epic needed this sprint, holding nothing, at the top. */
+export function discoveryEntry(over: Partial<DiscoveryEntry> = {}): DiscoveryEntry {
+	return {
+		key: 'ABC-2',
+		level: 'epic',
+		title: 'An epic',
+		also: null,
+		lane: 'this_sprint',
+		needed_in_reason: null,
+		blocks: [],
+		under_way: [],
+		at: 0,
 		...over
 	};
 }

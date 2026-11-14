@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { NeededInReason, RequiredDecision } from '#lib/api/types.ts';
+import type { DecisionQueueEntry, NeededInReason, QueueLane, RequiredDecision } from '#lib/api/types.ts';
+import { discoveryEntry, queueEntry } from '#lib/test/fixtures.ts';
 import {
 	LANE_LABEL,
 	LANE_ORDER,
@@ -8,6 +9,10 @@ import {
 	closeActions,
 	dateLine,
 	pruneExpanded,
+	queueRows,
+	reasonLine,
+	type PageLane,
+	type QueueRow,
 	reasonHref,
 	reasonParts,
 	decisionStatus,
@@ -253,12 +258,79 @@ describe('next step and needed-in wording', () => {
 		);
 		expect(neededLabel('this_sprint')).toBe('Needed this sprint');
 		expect(neededLabel('next_sprint')).toBe('Needed next sprint');
-		expect(neededLabel('beyond')).toBe('Needed after next sprint');
+		expect(neededLabel('beyond')).toBe('Needed later');
 		expect(neededLabel('none')).toBe('Not needed yet');
 	});
 
 	it('orders and labels every lane', () => {
 		expect(LANE_ORDER).toEqual(['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed']);
 		for (const l of LANE_ORDER) expect(LANE_LABEL[l]).toBeTruthy();
+	});
+});
+
+describe('queueRows', () => {
+	const e = (id: number, lane: QueueLane, more: Partial<DecisionQueueEntry> = {}) => queueEntry({ lane, decision: dec(id), ...more });
+	const bob = (id: number, more: Partial<RequiredDecision> = {}) => dec(id, { decider: 'bob@x.se', ...more });
+	/** Each non-empty lane's rows: a decision by its id, a discovery row as KEY[nested ids]. */
+	const shape = (m: Map<PageLane, QueueRow[]>) =>
+		Object.fromEntries(
+			[...m]
+				.filter(([, rows]) => rows.length > 0)
+				.map(([l, rows]) => [
+					l,
+					rows.map((r) => (r.kind === 'decision' ? r.entry.decision.id : `${r.row.key}[${r.nested.map((n) => n.decision.id).join(',')}]`))
+				])
+		);
+	// Server page order: this sprint (row ABC-2 with D1, then D2); Now (D3, row ABC-5 with bob's D4 and ana's D8, its
+	// reason D4's due date, then row ABC-7 with bob's D9); Later; Open; Closed.
+	const q = {
+		entries: [
+			e(1, 'this_sprint', { under: 'ABC-2' }),
+			e(2, 'this_sprint'),
+			e(3, 'beyond', { needed_in_reason: { kind: 'held' }, decision: bob(3) }),
+			e(4, 'beyond', { under: 'ABC-5', decision: bob(4, { due: '2026-11-17' }) }),
+			e(8, 'beyond', { under: 'ABC-5' }),
+			e(9, 'beyond', { under: 'ABC-7', decision: bob(9) }),
+			e(5, 'beyond'),
+			e(6, 'open', { under: 'ABC-9' }),
+			e(7, 'closed')
+		],
+		discoveries: [
+			discoveryEntry({ key: 'ABC-2', lane: 'this_sprint', at: 0 }),
+			discoveryEntry({ key: 'ABC-5', lane: 'beyond', needed_in_reason: { kind: 'decision_due', id: 4 }, at: 3 }),
+			discoveryEntry({ key: 'ABC-7', lane: 'beyond', needed_in_reason: { kind: 'held' }, at: 5 })
+		]
+	};
+
+	it('puts each row before entries[at], nests by `under`, and splits beyond into Now and Later', () => {
+		expect(shape(queueRows(q))).toEqual({
+			this_sprint: ['ABC-2[1]', 2],
+			now: [3, 'ABC-5[4,8]', 'ABC-7[9]'],
+			later: [5],
+			// `under` naming a row the response does not carry: the decision stands alone.
+			open: [6],
+			closed: [7]
+		});
+	});
+
+	it('puts a row whose `at` is the end after every entry', () => {
+		expect(shape(queueRows({ entries: [e(2, 'this_sprint')], discoveries: [discoveryEntry({ key: 'ABC-3', lane: 'next_sprint', at: 1 })] }))).toEqual({
+			this_sprint: [2],
+			next_sprint: ['ABC-3[]']
+		});
+	});
+
+	it('Mine keeps my standalone decisions and a row that nests one of mine, whole, so its reason can name another decider', () => {
+		const mine = queueRows(q, { me: ' ANA@x.se ' });
+		expect(shape(mine)).toEqual({
+			this_sprint: ['ABC-2[1]', 2],
+			now: ['ABC-5[4,8]'],
+			later: [5],
+			open: [6],
+			closed: [7]
+		});
+		// The kept row's reason names bob's D4, and its date is found although D4 is not mine.
+		const row = mine.get('now')![0];
+		expect(reasonLine({ kind: 'decision_due', id: 4 }, row)).toEqual({ before: 'Now · ', key: 'decision #4', after: ' due 17 Nov' });
 	});
 });

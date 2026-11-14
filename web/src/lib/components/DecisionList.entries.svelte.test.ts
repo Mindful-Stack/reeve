@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The queue's entry adds the next step, when the decision is needed and the work it holds to a row; the title opens the drawer.
-import { flushSync, mount, unmount } from 'svelte';
+import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RequiredDecision } from '#lib/api/types.ts';
 import { blockedStory, decision as decisionDto, queueEntry } from '#lib/test/fixtures.ts';
@@ -121,6 +121,62 @@ describe('DecisionList entries', () => {
 		// The label stays beside the reason, so a row in the review lane still says which sprint it is for.
 		expect(row.querySelector('.needed')?.textContent).toBe('Needed next sprint \u00b7 for goal: Ship tiers');
 		expect(row.querySelector('[data-field="blocks"]')?.textContent).toContain('Holds 2 stories \u00b7 1 under way');
+		// On the queue page the label goes: a row's line is its reason alone, a Now line reads off the row, and a
+		// nested decision shows none (its row says why).
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const goal = mountWith(d, { inQueue: true, entries: entryFor(d, { needed_in: 'next_sprint', needed_in_reason: { kind: 'goal', goal_id: 3, outcome: 'Ship tiers' } }) });
+		expect(goal.row.querySelector('.needed')?.textContent).toBe('for goal: Ship tiers');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const due = { ...decision(PR), due: '2026-11-17' };
+		const now = mountWith(due, {
+			inQueue: true,
+			entries: entryFor(due, { lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'decision_due', id: 1 }, blocks: [blockedStory({ key: 'ABC-31' })] })
+		});
+		expect(now.row.querySelector('.needed')?.textContent).toBe('Now \u00b7 due 17 Nov');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const nested = mountWith(d, {
+			inQueue: true,
+			entries: entryFor(d, { next_step: { kind: 'review_record', pr_url: PR }, needed_in: 'next_sprint', needed_in_reason: { kind: 'goal', goal_id: 3, outcome: 'Ship tiers' }, under: 'RV-1' })
+		});
+		expect(nested.row.querySelector('.needed')).toBeNull();
+		// The step still shows when the needed line is dropped.
+		expect(nested.row.querySelector('.next-step')?.textContent?.trim()).toBe('Linked PR \u00b7 not accepted yet');
+	});
+
+	it('renders an always group with no rows, and is empty only when no group has rows and none is always', () => {
+		const heading = createRawSnippet((group: () => string, count: () => number) => ({
+			render: () => `<h3 data-heading="${group()}">${group()} ${count()}</h3>`
+		}));
+		const d = decision(PR);
+		const props = $state({
+			decisions: [d],
+			onchanged: async () => {},
+			groupOf: () => 'lane',
+			groups: [
+				{ id: 'row', folded: false, always: true },
+				{ id: 'lane', folded: false }
+			],
+			heading,
+			empty: 'Nothing here'
+		});
+		app = mount(DecisionList, { target: document.body, props: props as never });
+		flushSync();
+		const headings = () => [...document.body.querySelectorAll('[data-heading]')].map((h) => h.textContent);
+		expect(headings()).toEqual(['row 0', 'lane 1']);
+		props.decisions = [];
+		flushSync();
+		expect(headings()).toEqual(['row 0']);
+		expect(document.body.textContent).not.toContain('Nothing here');
+		props.groups = [{ id: 'lane', folded: false }];
+		flushSync();
+		expect(headings()).toEqual([]);
+		expect(document.body.textContent).toContain('Nothing here');
 	});
 
 	it('shows no such lines for a row without an entry, and keeps its plain-text step when the PR url is unsafe', () => {

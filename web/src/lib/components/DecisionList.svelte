@@ -25,7 +25,8 @@
 	// thread (where ratification is discussed) and an Actions menu (Edit, Close) that opens its form under the row, so
 	// every view that lists decisions also carries the thread. The UI only links records; it writes nothing into them
 	// (kb/ADR-0004).
-	type Group = { id: string; folded: boolean; listId?: string };
+	// `always` renders the group's heading even with no rows placed in it (a discovery row, a lane heading).
+	type Group = { id: string; folded: boolean; listId?: string; always?: boolean };
 
 	let {
 		decisions,
@@ -43,7 +44,8 @@
 		blocks,
 		groupOf,
 		groups = [],
-		heading
+		heading,
+		inQueue = false
 	}: {
 		decisions: RequiredDecision[];
 		/** The stories each decision keeps out of active work, by decision id (the queue's `blocks`). A decision missing
@@ -79,9 +81,11 @@
 		groupOf?: (d: RequiredDecision) => string;
 		/** The groups in render order. A folded group shows only its heading; `listId` is its list's id when unfolded. */
 		groups?: Group[];
-		/** Rendered before each group that has a decision in it, folded or not, with the group and how many rows are placed
-		 *  in it (a row pinned in its old group counts there). */
+		/** Rendered before each group that has a decision in it, folded or not, or that is `always`, with the group and how
+		 *  many rows are placed in it (a row pinned in its old group counts there). */
 		heading?: Snippet<[string, number]>;
+		/** The queue page: a row's line is its reason alone (the lane heading says when), and a nested decision (`under`) shows none. */
+		inQueue?: boolean;
 	} = $props();
 	/** `rest` as two groups: the first always shown, the rest folded unless `showRest`. */
 	const FIRST = 'first';
@@ -671,10 +675,11 @@
 		{#if entry && !d.closed}
 			{@const next = entry.next_step}
 			{@const reason = entry.needed_in_reason}
-			{#if next || entry.needed_in !== 'none'}
+			{@const showNeeded = inQueue ? !!reason && !entry.under : entry.needed_in !== 'none'}
+			{#if next || showNeeded}
 				<div class="lines">
-					{#if entry.needed_in !== 'none'}
-						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}<NeededInReason {reason} />{/if}</p>
+					{#if showNeeded}
+						<p class="needed" data-testid="needed">{#if !inQueue}{neededLabel(entry.needed_in)}{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} row={{ kind: 'decision', entry }} />{/if}</p>
 					{/if}
 					{#if next}
 						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
@@ -856,13 +861,13 @@
 
 <div class="decision-list" bind:this={root}>
 {#if groupOf}
-	{#if placed.every((g) => g.folded || g.rows.length === 0)}
+	{#if placed.every((g) => !g.always && (g.folded || g.rows.length === 0))}
 		<p class="empty">{empty}</p>
 	{/if}
 	{#each placed as g (g.id)}
-		{#if g.rows.length}
+		{#if g.rows.length || g.always}
 			{@render heading?.(g.id, g.rows.length)}
-			{#if !g.folded}
+			{#if !g.folded && g.rows.length}
 				<ul class="decisions" id={g.listId}>
 					{#each g.rows as d (d.id)}{@render row(d)}{/each}
 				</ul>
