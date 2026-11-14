@@ -273,11 +273,11 @@ async fn get_epic_answers_the_route_s_epic_with_a_long_brief_cut() {
     // An unknown key, and a key that is a story's, are told in a tool caller's words.
     assert_eq!(
         refusal(&h, &bob, "get_epic", json!({"key": "TST-999999"})).await,
-        "No epic with key TST-999999. Keys look like TST-123."
+        "No epic with key \"TST-999999\". Keys look like TST-123."
     );
     assert_eq!(
         refusal(&h, &bob, "get_epic", json!({"key": s.bobs})).await,
-        format!("No epic with key {}. Keys look like TST-123.", s.bobs)
+        format!("No epic with key {:?}. Keys look like TST-123.", s.bobs)
     );
 }
 
@@ -322,7 +322,7 @@ async fn get_initiative_answers_the_route_s_initiative_with_a_long_brief_cut() {
 
     assert_eq!(
         refusal(&h, &bob, "get_initiative", json!({"key": "TST-999999"})).await,
-        "No initiative with key TST-999999. Keys look like TST-123."
+        "No initiative with key \"TST-999999\". Keys look like TST-123."
     );
 }
 

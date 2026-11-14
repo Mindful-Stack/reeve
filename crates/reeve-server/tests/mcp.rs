@@ -831,7 +831,7 @@ async fn an_answer_too_large_to_send_is_a_tool_error_and_an_echoed_key_is_bounde
     assert_eq!(
         answer["result"]["content"][0]["text"],
         json!(format!(
-            "No story with key {}[cut: 100 more characters]. Keys look like TST-123.",
+            "No story with key \"{}[cut: 100 more characters]\". Keys look like TST-123.",
             "k".repeat(200)
         ))
     );
@@ -974,7 +974,7 @@ async fn a_tool_failure_is_a_result_the_model_can_read_and_a_malformed_call_is_a
     assert_eq!(answer["result"]["isError"], true);
     assert_eq!(
         answer["result"]["content"][0]["text"],
-        "No story with key TST-999999. Keys look like TST-123."
+        "No story with key \"TST-999999\". Keys look like TST-123."
     );
     assert!(answer["result"].get("structuredContent").is_none());
 

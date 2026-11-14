@@ -1,11 +1,10 @@
 //! `get_epic`: `reeve epic show <KEY>` as a tool. Read-only.
 use super::{
     Annotations, Tool, ToolError,
-    bound::{MAX_OWN_TEXT, cut, echo},
+    bound::{MAX_OWN_TEXT, cut},
 };
 use crate::{
     actions::{self, Acting},
-    error::AppError,
     state::AppState,
 };
 use futures_util::future::BoxFuture;
@@ -46,14 +45,7 @@ fn run<'a>(
         // The adapter: the tool's `key` is the route's path parameter.
         let mut epic = actions::get_epic(state, who, &input.key)
             .await
-            .map_err(|e| match e {
-                AppError::NotFound => ToolError::Told(format!(
-                    "No epic with key {}. Keys look like {}-123.",
-                    echo(&input.key),
-                    state.config.key_prefix
-                )),
-                other => super::told(other),
-            })?;
+            .map_err(|e| super::not_found(e, "epic", &input.key, &state.config.key_prefix))?;
         // The epic is the item asked for: its brief is its own text.
         cut(&mut epic.brief, MAX_OWN_TEXT);
         serde_json::to_value(epic).map_err(|e| ToolError::Internal(e.into()))

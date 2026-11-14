@@ -2,13 +2,11 @@
 use super::{
     Annotations, Tool, ToolError,
     bound::{
-        MAX_OTHER_TEXT, MAX_OWN_TEXT, MAX_RECENT, cut, cut_closing_reason, cut_goal, echo,
-        most_recent,
+        MAX_OTHER_TEXT, MAX_OWN_TEXT, MAX_RECENT, cut, cut_closing_reason, cut_goal, most_recent,
     },
 };
 use crate::{
     actions::{self, Acting},
-    error::AppError,
     state::AppState,
 };
 use futures_util::future::BoxFuture;
@@ -49,14 +47,7 @@ fn run<'a>(
         // The adapter: the tool's input becomes what the route's action takes, its path parameter.
         let context = actions::story_context(state, who, &input.key)
             .await
-            .map_err(|e| match e {
-                AppError::NotFound => ToolError::Told(format!(
-                    "No story with key {}. Keys look like {}-123.",
-                    echo(&input.key),
-                    state.config.key_prefix
-                )),
-                other => super::told(other),
-            })?;
+            .map_err(|e| super::not_found(e, "story", &input.key, &state.config.key_prefix))?;
         serde_json::to_value(bounded(context)).map_err(|e| ToolError::Internal(e.into()))
     })
 }

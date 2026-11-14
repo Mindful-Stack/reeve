@@ -169,9 +169,22 @@ fn key_ref(name: &str, raw: Option<String>, key_prefix: &str) -> Result<Option<K
     .transpose()
 }
 
+/// What reading one item by key failed with: a missing item is told with the key the caller sent (quoted, as
+/// `key_ref` quotes it) and what a key looks like; anything else is `told`. `what` is "story", "epic" or
+/// "initiative".
+fn not_found(e: AppError, what: &str, key: &str, key_prefix: &str) -> ToolError {
+    match e {
+        AppError::NotFound => ToolError::Told(format!(
+            "No {what} with key {:?}. Keys look like {key_prefix}-123.",
+            bound::echo(key)
+        )),
+        other => told(other),
+    }
+}
+
 /// What an action failed with, as the model reads it: everything the planner said (not found, a validation error, a
 /// refusal with its reasons, a version conflict, forbidden) is told, in a default wording. A tool with a better
-/// wording for one of them, as `get_story` has for not found, says it itself before calling this. Exhaustive on
+/// wording for one of them says it itself before calling this, as `not_found` does. Exhaustive on
 /// purpose: a new `AppError` variant does not compile until someone decides whether the model is told.
 fn told(e: AppError) -> ToolError {
     match e {
@@ -311,6 +324,19 @@ mod tests {
             ),
             _ => panic!("text that is not a key was not told to the model"),
         }
+    }
+
+    #[test]
+    fn a_missing_item_is_told_with_its_quoted_key_and_any_other_failure_in_the_default_words() {
+        let said = |e| match not_found(e, "epic", "TST-9", "TST") {
+            ToolError::Told(message) => message,
+            _ => panic!("not told"),
+        };
+        assert_eq!(
+            said(AppError::NotFound),
+            "No epic with key \"TST-9\". Keys look like TST-123."
+        );
+        assert_eq!(said(AppError::Validation("too long".into())), "too long");
     }
 
     #[test]
