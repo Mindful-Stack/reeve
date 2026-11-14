@@ -9,9 +9,11 @@ can carry required decisions, each with a responsible person and a link to a
 decision record in git that Reeve checks for acceptance. A story is ready when
 its ancestors are through discovery, nothing it requires is undecided, it has
 acceptance criteria and nothing blocks it. Moving a story that is not ready out
-of todo needs a written reason from a person. A CLI with JSON output lets agents
-create, place and read that same structure, and a web board plus a strategic
-planning view lets everyone else see it.
+of todo needs a written reason from a person. The `reeve` CLI is Reeve's primary interface, for people and agents alike (with
+JSON output for agents); the web client (a board, a strategic planning view and
+the readiness queue) is a view over the same API. A feature is not finished
+until the CLI can do it, and a view that ships web-first gets a story for its
+CLI form.
 
 Reeve is the successor to the original Reeve, now
 [reeve-runner](https://github.com/Mindful-Stack/reeve-runner), which orchestrated
@@ -25,7 +27,7 @@ then `mise tasks` lists everything.
 
 Start PostgreSQL and the server with `mise run run`, then open the bind address
 (`http://127.0.0.1:7474` by default) and sign in with Google: the server
-serves the web client itself (planning view, board, decisions, activity,
+serves the web client itself (planning view, board, readiness queue, activity,
 tokens), once `mise run web` has built it and an `[oidc]` section is configured.
 Signed-in users create their CLI token on the Tokens page (`reeve auth login`
 walks through it). [deploy/README.md](deploy/README.md)

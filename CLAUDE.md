@@ -9,6 +9,9 @@ and the `reeve` CLI. Read first: the records under `lore/knowledge/adrs/` and `l
 (the rules the crates follow). Each further milestone gets its own spec and plan; they are working documents and are
 not committed to this repository.
 
+**The `reeve` CLI is Reeve's primary interface**, for people and agents; the web client is a view over the same API. A
+feature is not finished until the CLI can do it, and a view that ships web-first gets a story for its CLI form.
+
 ## Build and verify
 
 Tasks are defined once in `mise.toml` and run the same way locally and in CI (`mise tasks` lists them all):
