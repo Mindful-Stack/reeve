@@ -292,3 +292,130 @@ pub(crate) async fn move_story(
         .await?;
     Ok(state.handlers.story_dto(story.key(), who.ctx.now).await?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{build_state, composed_migrator, pool_options, run_migrations};
+    use chrono::Utc;
+    use reeve_protocol::Via;
+
+    /// A state on a fresh database, with no sign-in provider (none is needed to call an action), and the access
+    /// policy its callers are built with.
+    async fn state() -> (reeve_testdb::TestDb, AppState, reeve_identity::AccessPolicy) {
+        let db = reeve_testdb::database(&composed_migrator()).await;
+        let pool = pool_options().connect(&db.url).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let config = crate::config::ServerConfig::parse(&format!(
+            r#"database_url = "{}"
+key_prefix = "TST"
+public_url = "http://127.0.0.1:7474"
+allowed_domains = ["example.com"]
+admins = ["dan@example.com"]"#,
+            db.url
+        ))
+        .unwrap();
+        let policy = reeve_identity::AccessPolicy::floor_only(&config.identity());
+        let state = build_state(config, pool).await.unwrap();
+        (db, state, policy)
+    }
+
+    async fn entries(state: &AppState) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM activity")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap()
+    }
+
+    /// kb/ADR-0029 R10 at the shared action, as a behaviour and not only as the helper's rule: an override reason
+    /// from a caller that came through an MCP client, interactive as an MCP token is, is refused by
+    /// `move_story` itself (whatever a tool's adapter passes), and the story that is not ready stays where it
+    /// was. Without the refusal, planning's own rule would let this interactive caller override the gate.
+    #[tokio::test]
+    async fn the_move_action_refuses_an_override_reason_from_a_caller_that_came_through_mcp() {
+        let (_db, state, policy) = state().await;
+        let api = Acting::new(
+            "dan@example.com",
+            Via::Interactive,
+            Utc::now(),
+            &policy,
+            None,
+        );
+        // No epic: untriaged, so not ready.
+        let (story, _) = create_story(
+            &state,
+            &api,
+            CreateStory {
+                idempotency_key: "ov-1".into(),
+                title: "Tidy the footer".into(),
+                kind: Kind::Chore,
+                epic: None,
+                description: None,
+                criteria: vec!["tidy".into()],
+                labels: vec![],
+                external_ref: None,
+                owner: None,
+                attachments: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let key = story.key.to_string();
+        let logged = entries(&state).await;
+        let mcp = Acting::new(
+            "dan@example.com",
+            Via::Interactive,
+            Utc::now(),
+            &policy,
+            Some("claude.ai".into()),
+        );
+        for reason in ["agreed in standup", ""] {
+            let moved = move_story(
+                &state,
+                &mcp,
+                &key,
+                MoveStory {
+                    version: story.version,
+                    to: DeliveryState::InProgress,
+                    resolution: None,
+                    override_reason: Some(reason.into()),
+                },
+            )
+            .await;
+            match moved {
+                Err(AppError::Validation(message)) => assert_eq!(
+                    message,
+                    "an MCP client cannot override the readiness gate: a person can, in the CLI or the web client",
+                    "{reason:?}"
+                ),
+                other => panic!("{reason:?} was not refused: {other:?}"),
+            }
+            let after = read_story(&state, &api, &key).await.unwrap();
+            assert_eq!(
+                (after.delivery, &after.owner, after.version),
+                (story.delivery, &story.owner, story.version),
+                "{reason:?}: the story did not move"
+            );
+            assert_eq!(
+                entries(&state).await,
+                logged,
+                "{reason:?}: nothing was logged"
+            );
+        }
+        // The control: the same move and reason from the API's caller overrides the gate.
+        let moved = move_story(
+            &state,
+            &api,
+            &key,
+            MoveStory {
+                version: story.version,
+                to: DeliveryState::InProgress,
+                resolution: None,
+                override_reason: Some("agreed in standup".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(moved.delivery, DeliveryState::InProgress);
+    }
+}
