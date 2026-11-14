@@ -43,7 +43,7 @@ impl Handlers {
 
     /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2), and whether
     /// this call inserted the story: false when its idempotency key already had one. The flag is the insert's own
-    /// answer, never a lookup before it, so of two calls racing on one key exactly one is told it created.
+    /// answer, true only from the insert itself, so of two calls racing on one key exactly one is told it created.
     pub async fn create_story_attaching(
         &self,
         c: &Ctx,

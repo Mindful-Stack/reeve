@@ -42,7 +42,7 @@ fn run<'a>(
     Box::pin(async move {
         let input: CreateStoryInput = super::arguments(args)?;
         let prefix = &state.config.key_prefix;
-        let named_epic = input.epic.clone().unwrap_or_default();
+        let named_epic = input.epic.clone();
         // Every field of the route's body is written out, with no `..`: a field added to `CreateStory` does not
         // compile here until someone decides whether a chat may send it (kb/ADR-0029 R12). The tool withholds the
         // external reference and attachments.
@@ -61,13 +61,13 @@ fn run<'a>(
         let (story, created) =
             actions::create_story(state, who, body)
                 .await
-                .map_err(|e| match e {
-                    // The epic is the only thing a create looks up.
-                    AppError::NotFound => ToolError::Told(format!(
+                .map_err(|e| match (e, &named_epic) {
+                    // The epic is the only thing a create looks up, when one is named.
+                    (AppError::NotFound, Some(epic)) => ToolError::Told(format!(
                         "No epic with key {:?}. Keys look like {prefix}-123.",
-                        bound::echo(&named_epic)
+                        bound::echo(epic)
                     )),
-                    other => super::told(other),
+                    (other, _) => super::told(other),
                 })?;
         // A receipt, never the story: nothing in it but the title is a person's text, and the planner limits a
         // title to 200 characters, so the last guard cannot refuse this answer after its write.

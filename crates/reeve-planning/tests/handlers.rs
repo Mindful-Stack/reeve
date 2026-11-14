@@ -9476,8 +9476,8 @@ async fn own_unmerged_work_blocks_others_but_not_its_owner() {
 }
 
 /// What `created` must mean: this call inserted the row. It is atomic by construction: the flag is the insert's own
-/// `ON CONFLICT DO NOTHING` answer inside the handler's transaction, never the lookup before it. This test does not
-/// force the race (nothing makes both lookups finish before either write); it checks that of two creates with one
+/// `ON CONFLICT DO NOTHING` answer inside the handler's transaction, true only from the insert itself. A smoke test:
+/// it does not force the race (nothing makes both lookups finish before either write); it checks that of two creates with one
 /// key, run concurrently on separate pool connections, exactly one reports that it created, whichever order the
 /// database serves them in.
 #[tokio::test]

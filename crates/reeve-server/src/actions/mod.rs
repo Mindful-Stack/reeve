@@ -73,6 +73,12 @@ impl<'a> Acting<'a> {
 const MCP_KEYS: &str = "mcp:";
 
 impl Acting<'_> {
+    /// Whether the call came through an MCP client: a caller with a client (`McpCaller::acting`). A caller with no
+    /// client is an API caller (the API, the CLI, the web client).
+    pub(crate) fn through_mcp(&self) -> bool {
+        self.ctx.client.is_some()
+    }
+
     /// The idempotency key a write is stored under. Keys are unique across the instance and blind to who sent
     /// them, and a chat model invents short ones (`create-story-1`), so an MCP caller's key is stored as
     /// `mcp:<the caller's email>:<key>`: one person's chats share a key space, and no other person's chat can get
@@ -84,7 +90,7 @@ impl Acting<'_> {
     /// otherwise equal `a@example.com:x` with key `k`). Identity does not forbid one in a domain, so no key is
     /// built for such an address; the sign-in providers cannot produce one.
     pub(crate) fn write_key(&self, raw: &str) -> Result<String, AppError> {
-        if self.ctx.client.is_none() {
+        if !self.through_mcp() {
             return if raw.starts_with(MCP_KEYS) {
                 Err(AppError::Validation(
                     "an idempotency key must not start with mcp: (reserved for MCP clients)".into(),
@@ -111,7 +117,7 @@ impl Acting<'_> {
     /// an MCP client never overrides the readiness gate, so it may send no override reason at all. (An MCP token
     /// is interactive, so planning's own rule, "only `Via::Interactive` may override", would let it.)
     pub(crate) fn no_override_over_mcp(&self, reason: Option<&str>) -> Result<(), AppError> {
-        if self.ctx.client.is_some() && reason.is_some() {
+        if self.through_mcp() && reason.is_some() {
             return Err(AppError::Validation(
                 "an MCP client cannot override the readiness gate: a person can, in the CLI or the web client".into(),
             ));
