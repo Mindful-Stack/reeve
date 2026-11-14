@@ -55,6 +55,71 @@ Playwright smoke against a real server and a fresh database; `mise run skill-smo
 runs the Lorekeeper planning skills' `reeve` commands against a real server (it
 needs a Lorekeeper checkout next to this repository, or `LOREKEEPER_DIR`).
 
+## Trying the MCP endpoint locally
+
+The MCP endpoint (`/mcp`) is off unless `[mcp] enabled = true`, and until sign-in for MCP clients exists the only
+tokens it accepts are ones a developer mints. Both need a binary built with the test sign-in feature:
+
+1. In `reeve.toml`, keep `bind` and `public_url` on loopback and add:
+
+   ```toml
+   [oidc]
+   provider = "static"
+   static_email = "dev@example.com"
+
+   [mcp]
+   enabled = true
+   ```
+
+   (`dev@example.com` must be allowed by `allowed_domains` or `allowed_emails`.)
+
+2. Start the server and mint a token. It is valid for one hour and is printed once:
+
+   ```bash
+   mise run db-up
+   cargo run -p reeve-server --features reeve-server/static-oidc -- serve
+   TOKEN=$(cargo run -p reeve-server --features reeve-server/static-oidc -- mcp-token-issue --email dev@example.com)
+   ```
+
+   The server logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)`.
+
+3. One call with `curl`, with every header revision 2026-07-28 requires:
+
+   ```bash
+   curl -sS http://127.0.0.1:7474/mcp \
+     -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -H 'MCP-Protocol-Version: 2026-07-28' \
+     -H 'Mcp-Method: tools/call' \
+     -H 'Mcp-Name: get_story' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_story","arguments":{"key":"ABC-1"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+   ```
+
+4. The MCP inspector, from the command line:
+
+   ```bash
+   npx @modelcontextprotocol/inspector --cli http://127.0.0.1:7474/mcp --transport http \
+     --method tools/list --header "Authorization: Bearer $TOKEN"
+   ```
+
+5. Claude Code:
+
+   ```bash
+   claude mcp add --transport http reeve-local http://127.0.0.1:7474/mcp --header "Authorization: Bearer $TOKEN"
+   ```
+
+What the refusals look like: `401` with `WWW-Authenticate: Bearer` for a missing, expired or non-MCP token (an API
+token from the Tokens page is refused here, and an MCP token is refused by the API); `403` when the request carries
+an `Origin` header that is not in `[mcp] allowed_origins` (by default only `public_url`'s own origin; add
+`http://localhost:6274` for the inspector's browser page); `404` with the text
+`MCP is not enabled on this instance ([mcp] enabled)` when the switch is off.
+
+**Warning.** claude.ai cannot connect yet: a custom connector signs in with OAuth, which this endpoint does not
+offer before the sign-in stories land. Do not put a local instance behind a tunnel to try it: the static sign-in
+provider signs in anyone who reaches `/auth/callback`. If a tunnel is needed (to see in the server's log which
+protocol revision a client sends), forward only the path `/mcp` through a local reverse proxy that answers 404 for
+everything else.
+
 ## Layout
 
 ```

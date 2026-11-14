@@ -48,5 +48,7 @@ no write to delivery, resolution or version; pull-request status is informationa
 an `override` activity entry (grandfathered stories are created in their state and logged `imported`). Only
 `Via::Interactive` may override the readiness gate. Moving a story never depends on goals (kb/ADR-0014 R4).
 
+An API route and its MCP tool share one action (`crates/reeve-server/src/actions/`): both call it and neither holds logic of its own (kb/ADR-0029 R1).
+
 Conventions carried over from reeve-runner: `lore/knowledge/general/commit-conventions.md`,
 `lore/knowledge/frameworks/rust/`, `lore/knowledge/languages/rust/`.
