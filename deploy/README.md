@@ -231,7 +231,7 @@ A person sees the apps they connected on the Tokens page, under "Connected apps"
 Once the endpoint is on, what people read in Reeve can leave the instance through an app they connect. Your privacy statement must say so:
 
 - What a person reads through a connected app is sent to that app's provider (for example Anthropic for Claude, OpenAI for ChatGPT), under the person's own account with that provider and that provider's terms.
-- Each approval and each ending of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id. Once a release has the tools that change things, the app's name is recorded with each change it makes.
+- Each approval and each revocation of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id. Once a release has the tools that change things, the app's name is recorded with each change it makes.
 - A connection (the person, the app, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
 
 Set `[mcp] privacy_url` to the statement's https address: the approval page links it beside the choice a person makes. Unset, the page shows no link.

@@ -43,7 +43,7 @@ The first lists your connections with their ids; the second ends one at once. An
 
 ## What Reeve records
 
-Reeve records in the activity log that you connected the app and when the connection ended. Once the app can change
+Reeve records in the activity log that you connected the app, and when a connection is revoked. Once the app can change
 things, each change is recorded with the app's name.
 
 ## ChatGPT
