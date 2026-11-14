@@ -89,9 +89,42 @@ pub(crate) fn list(tools: &[Tool]) -> Vec<Value> {
         .collect()
 }
 
-/// The JSON Schema utoipa generates for a tool's input type.
+/// The JSON Schema utoipa generates for a tool's input type, with optional properties flattened.
 fn input_schema<T: utoipa::PartialSchema>() -> Value {
-    serde_json::to_value(T::schema()).expect("a schema serialises")
+    let mut schema = serde_json::to_value(T::schema()).expect("a schema serialises");
+    flatten_optionals(&mut schema);
+    schema
+}
+
+/// utoipa writes an `Option` as nullable: `"type": ["t", "null"]`, or `oneOf: [null, X]` for an inline enum.
+/// In a tool's input, optional means absent from `required`; so the type becomes `"t"` and the `oneOf` becomes
+/// `X`, keeping the property's own description.
+fn flatten_optionals(schema: &mut Value) {
+    let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for property in properties.values_mut() {
+        let not_null = |v: &&Value| v["type"] != "null";
+        let one = property
+            .get("oneOf")
+            .and_then(Value::as_array)
+            .filter(|branches| branches.iter().filter(not_null).count() == 1)
+            .and_then(|branches| branches.iter().find(not_null).cloned());
+        if let Some(mut flat) = one {
+            if let Some(description) = property.get("description").cloned() {
+                flat["description"] = description;
+            }
+            *property = flat;
+        }
+        let plain = property
+            .get("type")
+            .and_then(Value::as_array)
+            .filter(|types| types.iter().filter(|t| **t != "null").count() == 1)
+            .and_then(|types| types.iter().find(|t| **t != "null").cloned());
+        if let Some(plain) = plain {
+            property["type"] = plain;
+        }
+    }
 }
 
 /// A call's arguments as the tool's input type, or the deserializer's message, cut like any text that comes along.
@@ -154,7 +187,19 @@ mod tests {
             let properties = tool.input_schema["properties"]
                 .as_object()
                 .unwrap_or_else(|| panic!("{} has no properties", tool.name));
+            // Refusing an unknown argument is the input type's `deny_unknown_fields`, which the schema shows.
+            assert_eq!(
+                tool.input_schema["additionalProperties"], false,
+                "{} accepts unknown arguments",
+                tool.name
+            );
             for (name, property) in properties {
+                // Optional means absent from `required`: no null branch, no `oneOf`.
+                assert!(
+                    property.get("oneOf").is_none() && !property["type"].is_array(),
+                    "{}.{name} is not flattened",
+                    tool.name
+                );
                 assert!(
                     property["description"]
                         .as_str()
@@ -174,6 +219,38 @@ mod tests {
             Some(
                 "The answer is too large to send (70001 bytes). For a list, ask for a narrower one. A single item this large cannot be read here."
             )
+        );
+    }
+
+    #[test]
+    fn an_optional_property_is_flattened_to_its_plain_type() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "label": {"type": ["string", "null"], "description": "A label."},
+                "limit": {"type": ["integer", "null"], "format": "int32", "minimum": 1},
+                "kind": {
+                    "description": "Only this kind.",
+                    "oneOf": [
+                        {"type": "null"},
+                        {"type": "string", "enum": ["story", "bug"], "description": "The enum's own."}
+                    ]
+                },
+                "key": {"type": "string", "description": "A key."}
+            }
+        });
+        flatten_optionals(&mut schema);
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "A label."},
+                    "limit": {"type": "integer", "format": "int32", "minimum": 1},
+                    "kind": {"type": "string", "enum": ["story", "bug"], "description": "Only this kind."},
+                    "key": {"type": "string", "description": "A key."}
+                }
+            })
         );
     }
 
