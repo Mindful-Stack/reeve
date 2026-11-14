@@ -231,8 +231,8 @@ A person sees the apps they connected on the Tokens page, under "Connected apps"
 Once the endpoint is on, what people read in Reeve can leave the instance through an app they connect. Your privacy statement must say so:
 
 - What a person reads through a connected app is sent to that app's provider (for example Anthropic for Claude, OpenAI for ChatGPT), under the person's own account with that provider and that provider's terms.
-- The app's name is recorded with each change it makes, in the activity log.
-- A connection, its tokens and its refresh tokens are stored until the connection ends, and for up to thirty days after.
+- Each approval and each ending of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id. Once a release has the tools that change things, the app's name is recorded with each change it makes.
+- A connection (the person, the app, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
 
 Set `[mcp] privacy_url` to the statement's https address: the approval page links it beside the choice a person makes. Unset, the page shows no link.
 
@@ -250,9 +250,9 @@ In this order:
         privacy_url = "https://example.com/privacy"
 
 3. The proxy rules of this section are in place: the limits on the two documents, `/oauth/authorize` and `/oauth/token`, the real client address when a CDN sits in front, and `/mcp` unbuffered.
-4. Restart the server. One person connects an app, reads a story through it and adds a comment (once the release has the tools that change things), and the activity log shows the change with the app's name.
+4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id, and the connection is listed under "Connected apps" on the Tokens page. (Once a release has the tools that change things: also add a comment and check that its entry names the app.)
 
-To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents and the sign-in routes answer 404. That ends no connection. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
+To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
 
 ## GitHub webhook
 
