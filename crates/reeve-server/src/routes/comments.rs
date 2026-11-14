@@ -25,16 +25,7 @@ async fn item_add(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<AddComment>,
 ) -> Result<Json<Response<Vec<CommentDto>>>, AppError> {
-    // The key's space is the caller's to decide, never the body's (`Acting::write_key`).
-    let idem = b
-        .idempotency_key
-        .as_deref()
-        .map(|key| c.acting().write_key(key))
-        .transpose()?;
-    let (t, key) = s.handlers.resolve_any(&key).await?;
-    s.handlers
-        .comment_item_attaching(&c.ctx(), t, &key, &b.body, idem.as_deref(), &b.attachments)
-        .await?;
+    let ((t, key), _) = crate::actions::add_item_comment(&s, &c.acting(), &key, b).await?;
     Ok(ok(s.handlers.comments_for_item(t, &key).await?))
 }
 #[utoipa::path(get, path = "/stories/{key}/comments", params(("key" = String, Path)), responses((status = 200, body = Response<Vec<CommentDto>>)))]
@@ -80,15 +71,7 @@ async fn decision_add(
     ApiPath(id): ApiPath<i64>,
     ApiJson(b): ApiJson<AddComment>,
 ) -> Result<Json<Response<Vec<CommentDto>>>, AppError> {
-    // The key's space is the caller's to decide, never the body's (`Acting::write_key`).
-    let idem = b
-        .idempotency_key
-        .as_deref()
-        .map(|key| c.acting().write_key(key))
-        .transpose()?;
-    s.handlers
-        .comment_decision_attaching(&c.ctx(), id, &b.body, idem.as_deref(), &b.attachments)
-        .await?;
+    crate::actions::add_decision_comment(&s, &c.acting(), id, b).await?;
     Ok(ok(s.handlers.comments_for_decision(id).await?))
 }
 

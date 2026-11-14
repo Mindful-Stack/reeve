@@ -758,3 +758,180 @@ async fn edit_story_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
         "the API's edit only"
     );
 }
+
+/// The comments of an item, as the API lists them.
+async fn thread(h: &Harness, path: &str) -> Vec<Value> {
+    api(h, &h.admin_token, path)
+        .await
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+#[tokio::test]
+async fn add_comment_comments_on_a_story_an_epic_and_a_decision_and_answers_a_receipt() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let story_key = editable(h, "ac-s1").await;
+    let epic = story(h, &story_key).await["epic"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let decision = post(
+        h,
+        "/api/v1/decisions",
+        json!({"idempotency_key": "ac-d1", "on": epic, "title": "Which queue", "decider": DAN}),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+
+    let targets = [
+        (
+            json!({"item": story_key}),
+            format!("/api/v1/items/{story_key}/comments"),
+            "story",
+            story_key.clone(),
+        ),
+        (
+            json!({"item": epic}),
+            format!("/api/v1/items/{epic}/comments"),
+            "epic",
+            epic.clone(),
+        ),
+        (
+            json!({"decision": decision}),
+            format!("/api/v1/decisions/{decision}/comments"),
+            "decision",
+            decision.to_string(),
+        ),
+    ];
+    for (n, (target, path, entity, entity_key)) in targets.into_iter().enumerate() {
+        assert_eq!(
+            thread(h, &path).await.len(),
+            0,
+            "the control: {path} starts empty"
+        );
+        let mut arguments = target.clone();
+        arguments["idempotency_key"] = json!(format!("c{n}"));
+        arguments["body"] = json!("  The queue is chosen. ");
+        let receipt = answer(h, &dan, "add_comment", arguments.clone()).await;
+        let comments = thread(h, &path).await;
+        assert_eq!(comments.len(), 1, "{path}");
+        // The comment is the caller's, trimmed as the route trims it, and the receipt names it.
+        assert_eq!(
+            json!([comments[0]["author"], comments[0]["body"]]),
+            json!([DAN, "The queue is chosen."])
+        );
+        let mut expected = target.clone();
+        expected["comment_id"] = comments[0]["id"].clone();
+        expected["created"] = json!(true);
+        assert_eq!(receipt, expected, "{path}");
+        // The entry is on the thing commented on and names the client.
+        let on_target = entries(h, &entity_key).await;
+        let entry = on_target
+            .iter()
+            .rfind(|e| e["action"] == "commented")
+            .unwrap_or_else(|| panic!("no entry on {entity_key}"));
+        assert_eq!(
+            json!([
+                entry["entity_type"],
+                entry["actor"],
+                entry["via"],
+                entry["payload"]["client"],
+                entry["payload"]["comment_id"]
+            ]),
+            json!([entity, DAN, "interactive", "127.0.0.1", comments[0]["id"]])
+        );
+        // A repeat adds nothing and says which comment the key made. It does not say what that comment is on:
+        // the key may have made it on another item.
+        arguments["body"] = json!("Said again.");
+        let repeat = answer(h, &dan, "add_comment", arguments).await;
+        assert_eq!(
+            repeat,
+            json!({"comment_id": comments[0]["id"], "created": false,
+                   "note": format!("Nothing was written: this idempotency key already made comment {}, which may be on another item. For another comment, use a new key.", comments[0]["id"])}),
+            "{path}"
+        );
+        assert_eq!(thread(h, &path).await.len(), 1, "{path}: still one");
+    }
+    // The case the note is worded for: the story's key reused on the epic answers the story's comment, adds
+    // nothing to the epic, and does not claim the comment is on the epic.
+    let on_story = thread(h, &format!("/api/v1/items/{story_key}/comments")).await;
+    let reused = answer(
+        h,
+        &dan,
+        "add_comment",
+        json!({"idempotency_key": "c0", "item": epic, "body": "For the epic."}),
+    )
+    .await;
+    assert_eq!(
+        json!([reused["comment_id"], reused["created"], reused.get("item")]),
+        json!([on_story[0]["id"], false, null])
+    );
+    assert_eq!(
+        thread(h, &format!("/api/v1/items/{epic}/comments"))
+            .await
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn add_comment_needs_exactly_one_target_and_a_body_and_a_long_comment_gets_a_small_receipt() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let story_key = editable(h, "an-s1").await;
+    let count = rows(h, "comments").await;
+    let said = |arguments: Value| refusal(h, &dan, "add_comment", arguments);
+    let one = "Send exactly one of item and decision.";
+    assert_eq!(
+        said(json!({"idempotency_key": "n1", "body": "x"})).await,
+        one
+    );
+    assert_eq!(
+        said(json!({"idempotency_key": "n2", "body": "x", "item": story_key, "decision": 1})).await,
+        one
+    );
+    assert_eq!(
+        said(json!({"idempotency_key": "n3", "body": "  ", "item": story_key})).await,
+        "empty comment"
+    );
+    assert_eq!(
+        said(json!({"idempotency_key": "n4", "body": "x", "item": "TST-9999"})).await,
+        "No item with key \"TST-9999\". Keys look like TST-123."
+    );
+    assert_eq!(
+        said(json!({"idempotency_key": "n5", "body": "x", "decision": 987654})).await,
+        "No required decision with id 987654."
+    );
+    assert_eq!(
+        said(json!({"idempotency_key": "", "body": "x", "item": story_key})).await,
+        "idempotency_key must be 1 to 100 characters, without control characters"
+    );
+    let withheld =
+        said(json!({"idempotency_key": "n6", "body": "x", "item": story_key, "attachments": []}))
+            .await;
+    assert!(
+        withheld.starts_with("Invalid arguments:") && withheld.contains("attachments"),
+        "{withheld}"
+    );
+    assert_eq!(rows(h, "comments").await, count, "nothing was written");
+
+    // 100 000 characters of two bytes: written whole, answered with a receipt.
+    let receipt = answer(
+        h,
+        &dan,
+        "add_comment",
+        json!({"idempotency_key": "n7", "item": story_key, "body": "å".repeat(100_000)}),
+    )
+    .await;
+    assert!(receipt.to_string().len() < 200, "{receipt}");
+    let stored = thread(h, &format!("/api/v1/items/{story_key}/comments")).await;
+    assert_eq!(
+        stored[0]["body"].as_str().map(|body| body.chars().count()),
+        Some(100_000)
+    );
+}

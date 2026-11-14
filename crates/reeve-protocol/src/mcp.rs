@@ -391,6 +391,40 @@ impl From<StoryDto> for StoryReceipt {
     }
 }
 
+// `add_comment` (`reeve comment add`). The doc comment is the schema's root description.
+/// A comment on one item or on one required decision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddCommentInput {
+    /// A key you make up for this one comment, 1 to 100 characters, for example `slot-comment-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Make a new key for every comment; send the same key again only to retry the same comment: a repeat writes nothing.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// The story, epic or initiative to comment on: its key. Send this or `decision`, not both.
+    pub item: Option<String>,
+    /// The required decision to comment on: its id, a number, as list_decisions shows it. Send this or `item`, not both.
+    pub decision: Option<i64>,
+    /// The comment's text.
+    pub body: String,
+}
+
+/// What `add_comment` answers: which comment, on what, and whether this call wrote it. Not the thread: read
+/// that with `get_story`. A repeat (`created: false`) names no target: its key may have made the comment on
+/// another item.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CommentReceipt {
+    pub comment_id: i64,
+    /// The item commented on, by its key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<Key>,
+    /// The required decision commented on, by its id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<i64>,
+    /// False: the idempotency key had already made a comment, and nothing was written.
+    pub created: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +610,42 @@ mod tests {
                 .to_string();
             assert!(e.contains(withheld), "{e}");
         }
+    }
+
+    #[test]
+    fn a_comment_receipt_names_one_target_or_none_on_a_repeat() {
+        let receipt = CommentReceipt {
+            comment_id: 41,
+            item: Some("TST-3".parse().unwrap()),
+            decision: None,
+            created: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 41, "item": "TST-3", "created": true})
+        );
+        let receipt = CommentReceipt {
+            comment_id: 42,
+            item: None,
+            decision: Some(17),
+            created: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 42, "decision": 17, "created": true})
+        );
+        let receipt = CommentReceipt {
+            comment_id: 42,
+            item: None,
+            decision: None,
+            created: false,
+            note: Some("n".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 42, "created": false, "note": "n"})
+        );
     }
 }

@@ -1,6 +1,7 @@
 //! The tool registry: the one list `tools/list` and `tools/call` both read. Each tool corresponds to a `reeve` CLI
 //! command and runs the action its API route runs (kb/ADR-0029 R1, kb/ADR-0005 R5); a tool outside the set of
 //! kb/ADR-0029 R10 needs an observation on that record first.
+mod add_comment;
 mod bound;
 mod create_story;
 mod edit_story;
@@ -113,6 +114,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         get_sprint::tool(),
         create_story::tool(key_prefix),
         edit_story::tool(key_prefix),
+        add_comment::tool(key_prefix),
     ]
 }
 
@@ -347,7 +349,7 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 2] = ["create_story", "edit_story"];
+        const WRITE: [&str; 3] = ["create_story", "edit_story", "add_comment"];
         let tools = registry("TST");
         let named = |read_only: bool| -> Vec<&str> {
             tools

@@ -5,12 +5,15 @@
 //! async fn <name>(state: &AppState, who: &Acting<'_>, <the input its route takes>) -> Result<<Dto>, AppError>
 //! ```
 //!
-//! It answers what its route sends. A create answers a pair, the DTO and whether this call created it
-//! (`create_story`: `(StoryDto, bool)`): the route sends the DTO, and the tool's receipt needs the flag.
+//! It answers what its route sends, and beside it what its tool's receipt needs when that is more. A create
+//! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
+//! the DTO, and the receipt needs the flag. A comment action answers the comment's id and whether this call wrote
+//! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that.
 //!
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
 //! passes what it parsed, and a tool is an adapter that turns its own narrower input into the route's and calls the
 //! same action. A check that sits in a route function moves into the action when that route gets a tool.
+mod comments;
 mod decisions;
 mod epics;
 mod initiatives;
@@ -20,6 +23,7 @@ mod stories;
 
 use crate::{error::AppError, state::AppState};
 use chrono::{DateTime, Utc};
+pub(crate) use comments::{add_decision_comment, add_item_comment};
 pub(crate) use decisions::{
     DecisionQuery, decision_dto, decision_scope, list_decisions, resolve_on,
 };
