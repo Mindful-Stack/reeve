@@ -106,6 +106,18 @@ impl Acting<'_> {
         }
         Ok(format!("{MCP_KEYS}{email}:{raw}"))
     }
+
+    /// kb/ADR-0029 R10, kept at the shared action and not only in the tool's adapter: a caller that came through
+    /// an MCP client never overrides the readiness gate, so it may send no override reason at all. (An MCP token
+    /// is interactive, so planning's own rule, "only `Via::Interactive` may override", would let it.)
+    pub(crate) fn no_override_over_mcp(&self, reason: Option<&str>) -> Result<(), AppError> {
+        if self.ctx.client.is_some() && reason.is_some() {
+            return Err(AppError::Validation(
+                "an MCP client cannot override the readiness gate: a person can, in the CLI or the web client".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Sets `browse_url` on an already-built decision DTO: `<repo url>/blob/HEAD/<path>`, nothing for a repository
@@ -255,6 +267,40 @@ mod tests {
             refused(
                 "an idempotency key cannot be kept for an email address that contains a colon: it would not be this person's alone"
             )
+        );
+    }
+
+    /// kb/ADR-0029 R10 at the shared action, whatever an adapter passes: a caller that came through an MCP client
+    /// may send no override reason, not even an empty one. An API caller may; whether its reason overrides
+    /// anything is planning's rule (only `Via::Interactive`).
+    #[test]
+    fn a_caller_that_came_through_mcp_may_send_no_override_reason() {
+        let policy = policy();
+        let through = |client: Option<&str>| {
+            Acting::new(
+                "dan@example.com",
+                Via::Interactive,
+                Utc::now(),
+                &policy,
+                client.map(str::to_string),
+            )
+        };
+        let mcp = through(Some("claude.ai"));
+        assert!(mcp.no_override_over_mcp(None).is_ok());
+        for reason in ["agreed in standup", ""] {
+            match mcp.no_override_over_mcp(Some(reason)) {
+                Err(AppError::Validation(message)) => assert_eq!(
+                    message,
+                    "an MCP client cannot override the readiness gate: a person can, in the CLI or the web client"
+                ),
+                other => panic!("not refused: {other:?}"),
+            }
+        }
+        // The control: the API's caller is not this rule's.
+        assert!(
+            through(None)
+                .no_override_over_mcp(Some("agreed in standup"))
+                .is_ok()
         );
     }
 }

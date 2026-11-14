@@ -13,6 +13,7 @@ mod list_decisions;
 mod list_epics;
 mod list_initiatives;
 mod list_stories;
+mod move_story;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
@@ -115,6 +116,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         create_story::tool(key_prefix),
         edit_story::tool(key_prefix),
         add_comment::tool(key_prefix),
+        move_story::tool(key_prefix),
     ]
 }
 
@@ -333,11 +335,10 @@ mod tests {
         assert_eq!(names(Write), vec![json!("reads"), json!("writes")]);
     }
 
-    /// kb/ADR-0029 R10: the tools are these and no others, and each is knowingly on one side of the scope rule.
-    /// A new tool does not pass until someone adds its name to one of the two lists, and a tool outside R10's set
-    /// needs an observation on the record first.
+    /// kb/ADR-0029 R10: the tools are these thirteen and no others, and each is knowingly on one side of the scope
+    /// rule. A tool outside R10's set needs an observation on the record first.
     #[test]
-    fn the_registry_is_the_read_tools_and_the_write_tools_so_far() {
+    fn the_registry_is_the_nine_read_tools_and_the_four_write_tools() {
         const READ: [&str; 9] = [
             "search_items",
             "list_stories",
@@ -349,7 +350,7 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 3] = ["create_story", "edit_story", "add_comment"];
+        const WRITE: [&str; 4] = ["create_story", "edit_story", "add_comment", "move_story"];
         let tools = registry("TST");
         let named = |read_only: bool| -> Vec<&str> {
             tools
@@ -360,6 +361,36 @@ mod tests {
         };
         assert_eq!(named(true), READ);
         assert_eq!(named(false), WRITE);
+    }
+
+    /// kb/ADR-0029 R10 and R12: no tool's input has a way to override the gate, to rank, to set an external
+    /// reference or to attach, and every tool's input refuses what it does not list.
+    #[test]
+    fn no_tool_takes_an_override_reason_or_another_withheld_field() {
+        for tool in registry("TST") {
+            let properties = tool
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object);
+            for withheld in [
+                "override_reason",
+                "override",
+                "rank",
+                "external_ref",
+                "attachments",
+            ] {
+                assert!(
+                    properties.is_none_or(|p| !p.contains_key(withheld)),
+                    "{} takes {withheld}",
+                    tool.name
+                );
+            }
+            assert_eq!(
+                tool.input_schema["additionalProperties"], false,
+                "{}",
+                tool.name
+            );
+        }
     }
 
     #[test]

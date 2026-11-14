@@ -269,13 +269,15 @@ pub(crate) async fn edit_story(
 
 /// `reeve story mv <KEY>`. Shared by `POST /api/v1/stories/{key}/move` and the MCP tool `move_story`. `key` and `b`
 /// are what the route takes: its path parameter and its body. The route passes the override reason an interactive
-/// caller sent; the tool's adapter always passes none (kb/ADR-0029 R10).
+/// caller sent; the tool's adapter always passes none, and a reason from a caller that came through MCP is
+/// refused here before anything is read (kb/ADR-0029 R10).
 pub(crate) async fn move_story(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,
     b: MoveStory,
 ) -> Result<StoryDto, AppError> {
+    who.no_override_over_mcp(b.override_reason.as_deref())?;
     let key = state.handlers.resolve_ref(key, ItemType::Story).await?;
     let story = state
         .handlers

@@ -935,3 +935,248 @@ async fn add_comment_needs_exactly_one_target_and_a_body_and_a_long_comment_gets
         Some(100_000)
     );
 }
+
+/// How many activity entries have `action`, in the whole log.
+async fn logged(h: &Harness, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM activity WHERE action = $1")
+        .bind(action)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn move_story_moves_a_ready_story_as_the_route_does() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let epic = ready_epic(h, "mv-e1").await;
+    let ready = key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": "mv-s1", "title": "Print the receipt", "kind": "story", "epic": epic, "criteria": ["a receipt prints"], "labels": []}),
+    )
+    .await);
+    assert_eq!(
+        api(h, &h.admin_token, &format!("/api/v1/stories/{ready}/ready")).await["ready"],
+        true,
+        "the control"
+    );
+
+    let receipt = answer(
+        h,
+        &dan,
+        "move_story",
+        json!({"key": ready, "to": "in_progress", "version": 1}),
+    )
+    .await;
+    let after = story(h, &ready).await;
+    assert_eq!(
+        receipt,
+        json!({"key": ready, "title": "Print the receipt", "delivery": "in_progress", "resolution": null, "version": after["version"]})
+    );
+    // The route's rule, not the tool's: a story with no owner becomes the mover's (kb/ADR-0027 R6).
+    assert_eq!(
+        json!([after["delivery"], after["owner"]]),
+        json!(["in_progress", DAN])
+    );
+    assert_eq!(
+        trail(h, &ready).await.last().cloned(),
+        Some((
+            "moved".to_string(),
+            DAN.to_string(),
+            "interactive".to_string(),
+            json!("127.0.0.1")
+        ))
+    );
+    // Done needs a resolution: without one nothing moves, and nothing here is the gate's to override.
+    let said = refusal(
+        h,
+        &dan,
+        "move_story",
+        json!({"key": ready, "to": "done", "version": after["version"]}),
+    )
+    .await;
+    assert_eq!(
+        said,
+        format!(
+            "{ready} was not moved. Reasons, as get_story lists them: [{{\"reason\":\"resolution_required\"}}]. Nothing changed."
+        )
+    );
+    let done = answer(
+        h,
+        &dan,
+        "move_story",
+        json!({"key": ready, "to": "done", "version": after["version"], "resolution": "completed"}),
+    )
+    .await;
+    assert_eq!(
+        json!([done["delivery"], done["resolution"]]),
+        json!(["done", "completed"])
+    );
+    // A stale version is told with the version to read.
+    assert_eq!(
+        refusal(
+            h,
+            &dan,
+            "move_story",
+            json!({"key": ready, "to": "in_review", "version": 1})
+        )
+        .await,
+        format!(
+            "{ready} changed since you read it and is now at version {v}. Read it again with get_story, check what changed, and send only the change the person asked for, with version {v}.",
+            v = done["version"]
+        )
+    );
+    assert_eq!(logged(h, "override").await, 0);
+}
+
+/// kb/ADR-0029 R10, kb/ADR-0027 R2: nothing a chat can send moves a story that is not ready into active work.
+#[tokio::test]
+async fn move_story_never_overrides_the_gate() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    // No epic: untriaged, so not ready.
+    let blocked = key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": "ov-s1", "title": "Tidy the footer", "kind": "chore", "criteria": ["tidy"], "labels": []}),
+    )
+    .await);
+    let before = story(h, &blocked).await;
+    assert_eq!(
+        api(
+            h,
+            &h.admin_token,
+            &format!("/api/v1/stories/{blocked}/ready")
+        )
+        .await["ready"],
+        false,
+        "the control"
+    );
+    let entries_before = trail(h, &blocked).await.len();
+
+    // The plain move is refused with the planner's reasons and where a person can override.
+    let said = refusal(
+        h,
+        &dan,
+        "move_story",
+        json!({"key": blocked, "to": "in_progress", "version": 1}),
+    )
+    .await;
+    assert_eq!(
+        said,
+        format!(
+            "{blocked} was not moved: it is not ready. Reasons, as get_story lists them: [{{\"reason\":\"untriaged\"}}]. A person can override this in the CLI or the web client; this tool cannot. Nothing changed."
+        )
+    );
+    // Every way of sending a reason is refused before anything runs.
+    for sent in [
+        json!({"override_reason": "the person said so"}),
+        json!({"override": true}),
+        json!({"reason": "the person said so"}),
+    ] {
+        let mut arguments = json!({"key": blocked, "to": "in_progress", "version": 1});
+        for (name, value) in sent.as_object().unwrap() {
+            arguments[name] = value.clone();
+        }
+        let said = refusal(h, &dan, "move_story", arguments).await;
+        assert!(
+            said.starts_with("Invalid arguments: unknown field"),
+            "{said}"
+        );
+    }
+    // In 2025-11-25 too.
+    let params = json!({"name": "move_story", "arguments": {"key": blocked, "to": "in_progress", "version": 1, "override_reason": "x"}});
+    let (status, _, body) = send(&h.app, mcp_legacy(&dan, Some(3), "tools/call", params)).await;
+    let result = serde_json::from_str::<Value>(&body).unwrap()["result"].clone();
+    assert_eq!((status, &result["isError"]), (200, &json!(true)), "{body}");
+
+    let after = story(h, &blocked).await;
+    assert_eq!(
+        json!([after["delivery"], after["version"], after["owner"]]),
+        json!([before["delivery"], before["version"], before["owner"]])
+    );
+    assert_eq!(
+        trail(h, &blocked).await.len(),
+        entries_before,
+        "no entry was written"
+    );
+    assert_eq!(
+        (logged(h, "override").await, logged(h, "moved").await),
+        (0, 0)
+    );
+
+    // The control, and the reason the rule is the tool's to keep: the same person's API token, with a reason, does
+    // override. An MCP caller is interactive too; only the missing field (and the action's own refusal of a
+    // reason from a caller with a client) keeps it out.
+    let (status, moved) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/stories/{blocked}/move"),
+        Some(json!({"version": 1, "to": "in_progress", "override_reason": "agreed in standup"})),
+    )
+    .await;
+    assert_eq!(
+        (status, &moved["value"]["delivery"]),
+        (200, &json!("in_progress")),
+        "{moved}"
+    );
+    assert_eq!(logged(h, "override").await, 1);
+}
+
+/// kb/ADR-0014 R4: moving a story never depends on goals. With a sprint open and a goal that another story
+/// serves, a ready story that serves no goal moves exactly as it does with no sprint.
+#[tokio::test]
+async fn move_story_does_not_depend_on_goals() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let epic = ready_epic(h, "mg-e1").await;
+    let new = |idem: &str| json!({"idempotency_key": idem, "title": idem, "kind": "story", "epic": epic, "criteria": ["works"], "labels": []});
+    let serving = key(&post(h, "/api/v1/stories", new("mg-s1")).await);
+    let upkeep = key(&post(h, "/api/v1/stories", new("mg-s2")).await);
+    let goal = post(
+        h,
+        "/api/v1/goals",
+        json!({"idempotency_key": "mg-g1", "outcome": "Customers can book", "check": "one did"}),
+    )
+    .await["goal"]["id"]
+        .as_i64()
+        .unwrap();
+    post(
+        h,
+        &format!("/api/v1/goals/{goal}/links"),
+        json!({"items": [serving]}),
+    )
+    .await;
+    let draft = api(h, &h.admin_token, "/api/v1/sprints").await["draft"].clone();
+    post(
+        h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version": draft["version"]}),
+    )
+    .await;
+    // The control: the sprint is active and the two stories differ in the goals they serve.
+    assert_eq!(
+        story(h, &serving).await["goals"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        story(h, &upkeep).await["goals"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    for key in [&serving, &upkeep] {
+        let receipt = answer(
+            h,
+            &dan,
+            "move_story",
+            json!({"key": key, "to": "in_progress", "version": 1}),
+        )
+        .await;
+        assert_eq!(receipt["delivery"], "in_progress", "{key}");
+    }
+}

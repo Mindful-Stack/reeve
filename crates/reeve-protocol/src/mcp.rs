@@ -425,6 +425,24 @@ pub struct CommentReceipt {
     pub note: Option<String>,
 }
 
+// `move_story` (`reeve story mv`). The doc comment is the schema's root description. There is no override reason,
+// and there must never be one: kb/ADR-0029 R10.
+/// A move of one story to another delivery state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveStoryInput {
+    /// The story's key.
+    pub key: String,
+    /// The state to move it to.
+    #[schema(inline)]
+    pub to: DeliveryState,
+    /// The story's `version` as you last read it (get_story or list_stories). If the story changed since, the move is refused.
+    pub version: i64,
+    /// Required when `to` is `done`, and only then: `completed` (only from in progress, in review or testing) or `dropped`.
+    #[schema(inline)]
+    pub resolution: Option<Resolution>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +664,34 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&receipt).unwrap(),
             json!({"comment_id": 42, "created": false, "note": "n"})
+        );
+    }
+
+    /// kb/ADR-0029 R10: "the move tool's input MUST NOT carry an override reason, and a call that sends one MUST
+    /// be refused." The API's `MoveStory` has the field; this type does not, and refuses it by name.
+    #[test]
+    fn move_story_input_has_no_override_reason_and_refuses_one() {
+        let ok: MoveStoryInput =
+            serde_json::from_value(json!({"key": "TST-1", "to": "in_progress", "version": 3}))
+                .unwrap();
+        assert_eq!(
+            (ok.to, ok.version, ok.resolution),
+            (DeliveryState::InProgress, 3, None)
+        );
+        for sent in [json!("the person said so"), json!(null), json!("")] {
+            let e = serde_json::from_value::<MoveStoryInput>(
+                json!({"key": "TST-1", "to": "in_progress", "version": 3, "override_reason": sent}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains("override_reason"), "{e}");
+        }
+        // The control: the API's own type accepts the same field.
+        assert!(
+            serde_json::from_value::<crate::requests::MoveStory>(
+                json!({"version": 3, "to": "in_progress", "resolution": null, "override_reason": "x"})
+            )
+            .is_ok()
         );
     }
 }
