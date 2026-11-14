@@ -35,4 +35,17 @@ describe('ActivityList', () => {
 			'promised by 20 Nov 2026 to Acme'
 		]);
 	});
+	it('says which client a write was made through', () => {
+		app = mount(ActivityList, {
+			target: document.body,
+			props: {
+				entries: [
+					activity({ id: 1, action: 'moved', payload: { from: 'todo', to: 'in_progress' } }),
+					activity({ id: 2, action: 'moved', payload: { from: 'in_progress', to: 'in_review', client: 'claude.ai' } })
+				]
+			}
+		});
+		flushSync();
+		expect([...document.body.querySelectorAll('.action')].map((e) => e.textContent)).toEqual(['moved via claude.ai', 'moved']);
+	});
 });

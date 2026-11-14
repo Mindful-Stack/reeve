@@ -94,6 +94,19 @@ export function plainAction(action: string): string {
 	return action.replaceAll('_', ' ');
 }
 
+/** " via claude.ai" for an entry of a write made through an MCP client (kb/ADR-0029 R9: the server records the client
+ *  in the payload), else "". The one place the client is worded; it is appended to an entry's words. */
+export function viaClient(payload: unknown): string {
+	const client = nonEmpty(payloadField(payload, 'client'));
+	return client == null ? '' : ` via ${client}`;
+}
+
+/** An activity entry's action as the activity views show it: `actionLabel`'s words, or the plain action, and, for a
+ *  write made through an MCP client, "via" and the client. */
+export function entryAction(action: string, payload: unknown): string {
+	return `${actionLabel(action, payload) ?? plainAction(action)}${viaClient(payload)}`;
+}
+
 /** `n` and the noun that agrees with it: `plural(1, 'day', 'days')` is "1 day". */
 export function plural(n: number, one: string, many: string): string {
 	return `${n} ${n === 1 ? one : many}`;

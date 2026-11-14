@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ActivityEntry } from '#lib/api/types.ts';
-	import { actionLabel, age, plainAction, short } from '#lib/format.ts';
+	import { age, entryAction, short } from '#lib/format.ts';
 
 	// An item's activity, newest first: who, what, how long ago. An override is highlighted with the reason given for it.
 	let { entries }: { entries: ActivityEntry[] } = $props();
@@ -23,7 +23,7 @@
 			{@const why = overrideReason(e)}
 			<li class:override={e.action === 'override'}>
 				<span class="actor" title={e.actor}>{short(e.actor)}</span>
-				<span class="action">{actionLabel(e.action, e.payload) ?? plainAction(e.action)}</span>
+				<span class="action">{entryAction(e.action, e.payload)}</span>
 				{#if e.via !== 'interactive'}<span class="via">{e.via}</span>{/if}
 				<span class="muted" title={new Date(e.at).toLocaleString()}>{age(e.at)}</span>
 				{#if why}<p class="why">“{why}”</p>{/if}

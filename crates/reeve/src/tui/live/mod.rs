@@ -139,7 +139,7 @@ impl State {
             format!("{} {k}", e.entity_type)
         };
         let k = &who_what;
-        let text = match e.action.as_str() {
+        let mut text = match e.action.as_str() {
             "override" => {
                 self.override_for = Some(k.clone());
                 format!("{k} override · {who}")
@@ -178,6 +178,13 @@ impl State {
                 format!("{k} {} · {who}", other.replace('_', " "))
             }
         };
+        // kb/ADR-0029 R9: a write made through an MCP client names it, as the web's activity views do.
+        if let Some(client) = e.payload["client"]
+            .as_str()
+            .filter(|client| !client.is_empty())
+        {
+            text.push_str(&format!(" via {client}"));
+        }
         self.ticker = Some(Ticker { text, at: now });
         // The mark is on the entry's story until the next entry, whatever that entry is about.
         self.last_changed = if e.entity_type == "story" {
@@ -311,6 +318,55 @@ mod tests {
         let _ = l.update(Msg::Stream { epoch, ev }, &cx());
         l.ticker.unwrap().text
     }
+    /// kb/ADR-0029 R9: a write made through a client says so in the ticker, whatever the action.
+    #[test]
+    fn the_ticker_names_the_client_a_write_was_made_through() {
+        let cases = [
+            (
+                "moved",
+                "story",
+                "ABC-1",
+                serde_json::json!({"from": "todo", "to": "in_progress"}),
+            ),
+            (
+                "commented",
+                "decision",
+                "17",
+                serde_json::json!({"comment_id": 4}),
+            ),
+            ("edited", "story", "ABC-1", serde_json::json!({})),
+            (
+                "promise_cleared",
+                "story",
+                "ABC-1",
+                serde_json::json!({"item_type": "story", "previous": {"on": "2026-11-20", "to": null}}),
+            ),
+            (
+                "override",
+                "story",
+                "ABC-1",
+                serde_json::json!({"reason": "agreed"}),
+            ),
+        ];
+        for (action, entity, key, payload) in cases {
+            let plain = ticker_after(action, entity, key, payload.clone());
+            assert!(!plain.contains(" via "), "{plain}");
+            let mut through = payload.clone();
+            through["client"] = serde_json::json!("claude.ai");
+            assert_eq!(
+                ticker_after(action, entity, key, through),
+                format!("{plain} via claude.ai"),
+                "{action}"
+            );
+            // A client that is not text, or is empty, is not shown.
+            for not_a_client in [serde_json::json!(""), serde_json::json!(7)] {
+                let mut odd = payload.clone();
+                odd["client"] = not_a_client;
+                assert_eq!(ticker_after(action, entity, key, odd), plain, "{action}");
+            }
+        }
+    }
+
     /// Closes the connection, retries, and returns the `after_id` of the new Connect and its epoch.
     fn reconnect(l: &mut State, epoch: u64) -> (Option<i64>, u64) {
         let o = l.update(
