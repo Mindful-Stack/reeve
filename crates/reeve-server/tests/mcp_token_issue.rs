@@ -18,7 +18,7 @@ async fn run(cfg: &std::path::Path, email: &str) -> std::process::Output {
 
 #[tokio::test]
 async fn mcp_token_issue_prints_a_one_hour_mcp_token_for_an_allowed_user() {
-    let h = harness().await;
+    let h = mcp_harness().await;
     let dir = tempfile::tempdir().unwrap();
     let cfg = dir.path().join("reeve.toml");
     std::fs::write(
@@ -68,6 +68,13 @@ async fn mcp_token_issue_prints_a_one_hour_mcp_token_for_an_allowed_user() {
             .await
             .unwrap();
     assert_eq!(who.email, "bob@example.com");
+    // And `/mcp` accepts it.
+    let (status, _, body) = send(
+        &h.app,
+        mcp_modern(&secret, 1, "server/discover", serde_json::json!({})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
 
     let refused = run(&cfg, "mallory@evil.example").await;
     assert_eq!(refused.status.code(), Some(1));

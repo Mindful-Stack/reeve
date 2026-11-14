@@ -4,6 +4,7 @@
 //! an extractor argument would run before the switch and the origin check. Its errors are `McpError`, never
 //! `AppError` (which renders the API's envelope).
 mod protocol;
+mod tools;
 
 use crate::{auth::McpCaller, state::AppState};
 use axum::{
@@ -13,12 +14,37 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use protocol::{Headers, Message, RpcError};
+use protocol::{Headers, Message, Revision, RpcError};
 use reeve_identity::AuthError;
 use serde_json::{Value, json};
 
 /// The largest request body read (step 5). A raw `Request` gets no default body limit, so this is the only one.
 const MAX_BODY: usize = 1024 * 1024;
+
+/// How long a client may keep `server/discover` and `tools/list` answers: neither changes while the process runs.
+const TTL_MS: u64 = 300_000;
+
+fn capabilities() -> Value {
+    // No `listChanged`: no list ever changes at run time, and `subscriptions/listen` is not implemented.
+    json!({"tools": {}})
+}
+
+fn server_info() -> Value {
+    json!({"name": "reeve", "version": env!("CARGO_PKG_VERSION")})
+}
+
+/// A 2026-07-28 result: `resultType`, the server's identity, and for the cacheable ones the caching hints.
+/// `cacheScope` is `public` while every caller sees the same list; it becomes `private` once scopes filter it
+/// (GRA-658).
+fn modern(mut result: Value, cacheable: bool) -> Value {
+    result["resultType"] = json!("complete");
+    result["_meta"] = json!({"io.modelcontextprotocol/serverInfo": server_info()});
+    if cacheable {
+        result["ttlMs"] = json!(TTL_MS);
+        result["cacheScope"] = json!("public");
+    }
+    result
+}
 
 pub(crate) enum McpError {
     /// Step 1.
@@ -191,7 +217,7 @@ async fn admit(
 /// Steps 7 to 11 for one parsed message: a request's result, or `Null` for an accepted notification.
 fn answer(headers: &HeaderMap, msg: &Message) -> Result<Value, McpError> {
     // 7 to 10, or the legacy classification in their place.
-    protocol::classify(
+    let revision = protocol::classify(
         msg,
         Headers {
             protocol_version: header_text(headers, "mcp-protocol-version"),
@@ -204,10 +230,30 @@ fn answer(headers: &HeaderMap, msg: &Message) -> Result<Value, McpError> {
     if msg.id.is_none() {
         return Ok(Value::Null);
     }
-    // 11. No method is implemented yet.
-    Err(McpError::Rpc(RpcError::new(
-        StatusCode::NOT_FOUND,
-        protocol::METHOD_NOT_FOUND,
-        format!("Method not found: {}", msg.method),
-    )))
+    // 11. The methods of each revision; anything else is not implemented.
+    match (revision, msg.method.as_str()) {
+        (Revision::Modern, "server/discover") => Ok(modern(
+            json!({"supportedVersions": protocol::SUPPORTED, "capabilities": capabilities()}),
+            true,
+        )),
+        // The answer is 2025-11-25 whatever the client asked for; the client decides whether to go on.
+        (Revision::Legacy, "initialize") => Ok(json!({
+            "protocolVersion": protocol::LEGACY,
+            "capabilities": capabilities(),
+            "serverInfo": server_info()
+        })),
+        (Revision::Legacy, "ping") => Ok(json!({})),
+        (_, "tools/list") => {
+            let result = json!({"tools": tools::list()});
+            Ok(match revision {
+                Revision::Modern => modern(result, true),
+                Revision::Legacy => result,
+            })
+        }
+        _ => Err(McpError::Rpc(RpcError::new(
+            StatusCode::NOT_FOUND,
+            protocol::METHOD_NOT_FOUND,
+            format!("Method not found: {}", msg.method),
+        ))),
+    }
 }

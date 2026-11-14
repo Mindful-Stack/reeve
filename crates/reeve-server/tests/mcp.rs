@@ -302,3 +302,229 @@ async fn a_notification_gets_no_body_once_it_has_been_parsed() {
     );
     assert_eq!(answer["id"], 3);
 }
+
+fn server_info() -> Value {
+    json!({"name": "reeve", "version": env!("CARGO_PKG_VERSION")})
+}
+
+#[tokio::test]
+async fn every_row_of_the_classification_table_through_the_router() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    // (version in _meta, MCP-Protocol-Version, method) -> (status, JSON-RPC error code; None for a result)
+    type Row = (
+        Option<&'static str>,
+        Option<&'static str>,
+        &'static str,
+        u16,
+        Option<i64>,
+    );
+    let rows: [Row; 13] = [
+        (
+            Some("2026-07-28"),
+            Some("2026-07-28"),
+            "tools/list",
+            200,
+            None,
+        ),
+        (
+            Some("2026-07-28"),
+            Some("2026-07-28"),
+            "initialize",
+            404,
+            Some(-32601),
+        ),
+        (Some("2026-07-28"), None, "tools/list", 400, Some(-32020)),
+        (
+            Some("2026-07-28"),
+            Some("2025-11-25"),
+            "tools/list",
+            400,
+            Some(-32020),
+        ),
+        (None, Some("2026-07-28"), "tools/list", 400, Some(-32020)),
+        (None, Some("2025-11-25"), "tools/list", 200, None),
+        (
+            None,
+            Some("2025-11-25"),
+            "server/discover",
+            404,
+            Some(-32601),
+        ),
+        (None, None, "initialize", 200, None),
+        (None, None, "tools/list", 400, Some(-32020)),
+        (None, Some("2025-06-18"), "tools/list", 400, Some(-32022)),
+        (
+            Some("1900-01-01"),
+            Some("1900-01-01"),
+            "tools/list",
+            400,
+            Some(-32022),
+        ),
+        // Step 7 before step 8: an unsupported body version without the header is a mismatch first.
+        (Some("1900-01-01"), None, "tools/list", 400, Some(-32020)),
+        (
+            Some("2025-11-25"),
+            Some("2025-11-25"),
+            "tools/list",
+            400,
+            Some(-32600),
+        ),
+    ];
+    for (meta, header, method, status, code) in rows {
+        let mut params = json!({});
+        if let Some(v) = meta {
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/protocolVersion": v,
+                "io.modelcontextprotocol/clientCapabilities": {}
+            });
+        }
+        let mut req = Request::post("/mcp")
+            .header("authorization", format!("Bearer {t}"))
+            .header("content-type", "application/json")
+            .header("mcp-method", method);
+        if let Some(v) = header {
+            req = req.header("mcp-protocol-version", v);
+        }
+        let body = json!({"jsonrpc": "2.0", "id": 7, "method": method, "params": params});
+        let (got, _, text) = send(&h.app, req.body(Body::from(body.to_string())).unwrap()).await;
+        let answer = rpc(&text);
+        let row = format!("_meta {meta:?}, header {header:?}, {method}: {text}");
+        assert_eq!(
+            (got, answer["error"]["code"].as_i64()),
+            (status, code),
+            "{row}"
+        );
+        assert_eq!(answer["id"], 7, "{row}");
+        assert_eq!(answer.get("result").is_some(), code.is_none(), "{row}");
+        if code == Some(-32022) {
+            assert_eq!(
+                answer["error"]["data"]["supported"],
+                json!(["2026-07-28", "2025-11-25"]),
+                "{row}"
+            );
+            assert_eq!(
+                answer["error"]["data"]["requested"],
+                json!(meta.or(header)),
+                "{row}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn discover_and_an_empty_tool_list_have_the_2026_shapes() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let (status, headers, body) =
+        send(&h.app, mcp_modern(&t, 1, "server/discover", json!({}))).await;
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "application/json");
+    assert_eq!(
+        rpc(&body),
+        json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "resultType": "complete",
+            "supportedVersions": ["2026-07-28", "2025-11-25"],
+            "capabilities": {"tools": {}},
+            "ttlMs": 300000,
+            "cacheScope": "public",
+            "_meta": {"io.modelcontextprotocol/serverInfo": server_info()}
+        }})
+    );
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 2, "tools/list", json!({}))).await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        rpc(&body),
+        json!({"jsonrpc": "2.0", "id": 2, "result": {
+            "resultType": "complete",
+            "tools": [],
+            "ttlMs": 300000,
+            "cacheScope": "public",
+            "_meta": {"io.modelcontextprotocol/serverInfo": server_info()}
+        }})
+    );
+    // Deliberately not implemented in 2026-07-28: no list changes at run time, and that revision has no ping.
+    for method in ["subscriptions/listen", "ping", "initialize"] {
+        let (status, _, body) = send(&h.app, mcp_modern(&t, 3, method, json!({}))).await;
+        assert_eq!(
+            (status, rpc(&body)["error"]["code"].as_i64()),
+            (404, Some(-32601)),
+            "{method}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_legacy_handshake_is_served_without_a_session() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    // Whatever version the client asks for, the answer is 2025-11-25 and the client decides.
+    for asked in ["2026-07-28", "2025-11-25", "2024-11-05"] {
+        let init = json!({"protocolVersion": asked, "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}});
+        let (status, headers, body) =
+            send(&h.app, mcp_legacy(&t, Some(1), "initialize", init)).await;
+        assert_eq!(status, 200, "{asked}");
+        assert!(!headers.contains_key("mcp-session-id"), "{asked}");
+        assert_eq!(
+            rpc(&body),
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": server_info()
+            }}),
+            "{asked}"
+        );
+    }
+    let (status, _, body) = send(
+        &h.app,
+        mcp_legacy(&t, None, "notifications/initialized", json!({})),
+    )
+    .await;
+    assert_eq!((status, body.as_str()), (202, ""));
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(2), "ping", json!({}))).await;
+    assert_eq!(
+        (status, rpc(&body)),
+        (200, json!({"jsonrpc": "2.0", "id": 2, "result": {}}))
+    );
+    // A session id a client sends is ignored, and none is issued.
+    let mut list = mcp_legacy(&t, Some(3), "tools/list", json!({}));
+    list.headers_mut()
+        .insert("mcp-session-id", "abc".parse().unwrap());
+    let (status, headers, body) = send(&h.app, list).await;
+    assert_eq!(
+        (status, rpc(&body)),
+        (
+            200,
+            json!({"jsonrpc": "2.0", "id": 3, "result": {"tools": []}})
+        )
+    );
+    assert!(!headers.contains_key("mcp-session-id"));
+}
+
+#[tokio::test]
+async fn the_legacy_path_needs_an_mcp_token_like_the_modern_one() {
+    let h = mcp_harness().await;
+    let init = json!({"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}});
+    let mut no_token = mcp_legacy("", Some(1), "initialize", init.clone());
+    no_token.headers_mut().remove("authorization");
+    assert_eq!(send(&h.app, no_token).await.0, 401);
+    assert_eq!(
+        send(
+            &h.app,
+            mcp_legacy(&h.admin_token, Some(1), "initialize", init)
+        )
+        .await
+        .0,
+        401
+    );
+    let call = json!({"name": "get_story", "arguments": {"key": "TST-1"}});
+    assert_eq!(
+        send(
+            &h.app,
+            mcp_legacy(&h.admin_token, Some(2), "tools/call", call)
+        )
+        .await
+        .0,
+        401
+    );
+}
