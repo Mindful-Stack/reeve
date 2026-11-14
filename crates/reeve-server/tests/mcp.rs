@@ -6,6 +6,17 @@ use serde_json::{Value, json};
 
 const DISABLED: &str = "MCP is not enabled on this instance ([mcp] enabled)";
 
+/// What every 401's `WWW-Authenticate` ends with (GRA-655); `tests/mcp_discovery.rs` pins the whole value and when
+/// `error="invalid_token"` comes before it.
+const POINTER: &str =
+    r#"resource_metadata="http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp""#;
+
+fn names_the_metadata(headers: &axum::http::HeaderMap) -> bool {
+    headers["www-authenticate"]
+        .to_str()
+        .is_ok_and(|v| v.starts_with("Bearer ") && v.ends_with(POINTER))
+}
+
 fn rpc(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text:?}"))
 }
@@ -121,7 +132,7 @@ async fn without_a_token_the_answer_is_401_whatever_the_body() {
     ] {
         let (status, headers, _) = send(&h.app, req).await;
         assert_eq!(status, 401);
-        assert_eq!(headers["www-authenticate"], "Bearer");
+        assert!(names_the_metadata(&headers));
     }
 }
 
@@ -144,7 +155,7 @@ async fn only_a_live_mcp_token_in_the_bearer_header_is_accepted() {
     ] {
         let (status, headers, _) = send(&h.app, knock(bearer, cookie)).await;
         assert_eq!(status, 401, "{what}");
-        assert_eq!(headers["www-authenticate"], "Bearer", "{what}");
+        assert!(names_the_metadata(&headers), "{what}");
     }
 
     let pool = &h.state.pool;
@@ -271,7 +282,7 @@ async fn a_notification_gets_no_body_once_it_has_been_parsed() {
     unauthenticated.headers_mut().remove("authorization");
     let (status, headers, body) = send(&h.app, unauthenticated).await;
     assert_eq!((status, body.as_str()), (401, "unauthenticated"));
-    assert_eq!(headers["www-authenticate"], "Bearer");
+    assert!(names_the_metadata(&headers));
     // Step 6: a body without an id that is not a JSON-RPC message; the ordinary JSON-RPC error, without an id.
     let mut malformed = notification();
     *malformed.body_mut() = Body::from(r#"{"jsonrpc":"1.0","method":"notifications/initialized"}"#);
@@ -611,7 +622,7 @@ async fn an_authorization_header_that_is_not_bearer_is_401() {
         .insert("authorization", format!("Basic {t}").parse().unwrap());
     let (status, headers, _) = send(&h.app, req).await;
     assert_eq!(status, 401);
-    assert_eq!(headers["www-authenticate"], "Bearer");
+    assert!(names_the_metadata(&headers));
 }
 
 #[tokio::test]

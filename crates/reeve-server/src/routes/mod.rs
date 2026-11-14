@@ -248,6 +248,9 @@ pub fn app(state: AppState) -> Router {
         // Always mounted; the handler's own switch answers 404 when `[mcp]` is off. Outside `api_router()`, so not
         // in the OpenAPI document, and `any` keeps GET from reaching the fallbacks below.
         .route("/mcp", axum::routing::any(crate::mcp::handle))
+        // The public OAuth routes (kb/ADR-0029 R11): always mounted, each with the `[mcp]` switch inside. Outside
+        // `api_router()`, so not in the OpenAPI document.
+        .merge(crate::auth::oauth::router())
         .fallback(crate::assets::serve)
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
         .with_state(state)

@@ -165,10 +165,7 @@ pub async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
 /// Builds the provider adapter from `[oidc]`. Google discovers its metadata here, so a server that cannot reach
 /// Google fails at startup rather than at the first sign-in.
 async fn build_oidc(config: &ServerConfig) -> anyhow::Result<Option<Arc<dyn OidcClient>>> {
-    let redirect = format!(
-        "{}/auth/callback",
-        config.public_url().as_str().trim_end_matches('/')
-    );
+    let redirect = format!("{}/auth/callback", config.public_origin());
     Ok(match &config.oidc {
         None => None,
         Some(OidcSection::Google {

@@ -1,5 +1,7 @@
 //! Who is calling: the bearer header (CLI, automation) or the browser's session cookie, resolved to the same
-//! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`.
+//! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`; the public OAuth
+//! surface of the MCP endpoint (kb/ADR-0029) lives in `oauth`.
+pub(crate) mod oauth;
 pub mod routes;
 
 use crate::{error::AppError, state::AppState};
@@ -49,7 +51,7 @@ pub fn has_client_header(headers: &axum::http::HeaderMap) -> bool {
 
 /// The secret of a request's bearer header: `Ok(None)` without an `Authorization` header, `Err` with the reason when
 /// the header is not a bearer token. The one reading of that header, for `Caller` and `McpCaller` alike.
-fn bearer_secret(headers: &axum::http::HeaderMap) -> Result<Option<&str>, &'static str> {
+pub(crate) fn bearer_secret(headers: &axum::http::HeaderMap) -> Result<Option<&str>, &'static str> {
     let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Ok(None);
     };
