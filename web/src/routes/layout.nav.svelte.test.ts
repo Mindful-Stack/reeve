@@ -231,6 +231,22 @@ describe('navigation', () => {
 		document.body.dispatchEvent(ev);
 		expect(ev.defaultPrevented).toBe(false);
 	});
+
+	// The approval page renders signed out: no top bar, no event stream, no requests of the layout's own (a 401 from
+	// them would send the browser to sign in before the page could show a problem that needs no sign-in). Catches
+	// `/connect` treated as an app page.
+	it('renders /connect without the top bar', async () => {
+		route.path = '/connect?problem=app_not_enabled';
+		// Signed in, so that an app page would show the bar and ask for the untriaged count: the test can fail.
+		session.me = me();
+		const children = createRawSnippet(() => ({ render: () => '<p>content</p>' }));
+		app = mount(Layout, { target: document.body, props: { children } as never });
+		await settle();
+		flushSync();
+		expect(document.body.textContent).toContain('content');
+		expect(document.body.querySelector('nav[aria-label="Main"]')).toBeNull();
+		expect(net.gets).toEqual([]);
+	});
 });
 
 describe('account menu', () => {
