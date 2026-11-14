@@ -9,7 +9,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_identity::{Connection, Role, normalise_email};
+use reeve_identity::Connection;
 use reeve_protocol::*;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -23,16 +23,11 @@ pub struct ConnectionsQuery {
 }
 
 fn dto(c: Connection) -> ConnectionDto {
-    // The app's identity as people are shown it; a client id that is not an address has none.
-    let client_host = url::Url::parse(&c.client_id)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_default();
     ConnectionDto {
+        client_host: c.client_host(),
         id: c.id,
         owner: c.owner,
         client_id: c.client_id,
-        client_host,
         client_name: c.client_name,
         scope: c.scope,
         approved_at: c.approved_at,
@@ -50,16 +45,7 @@ async fn list(
     c: Caller,
     ApiQuery(q): ApiQuery<ConnectionsQuery>,
 ) -> Result<Json<Response<Vec<ConnectionDto>>>, AppError> {
-    let owner = match q.owner.as_deref().map(normalise_email) {
-        Some(other) if other != c.0.email => {
-            if c.0.role != Role::Admin {
-                return Err(AppError::Forbidden);
-            }
-            other
-        }
-        _ => c.0.email.clone(),
-    };
-    let rows = reeve_identity::list_connections(&*s.tokens, &owner, c.1).await?;
+    let rows = reeve_identity::list_connections(&*s.tokens, &c.0, q.owner.as_deref(), c.1).await?;
     Ok(ok(rows.into_iter().map(dto).collect()))
 }
 

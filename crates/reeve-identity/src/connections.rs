@@ -11,6 +11,7 @@ use crate::{
     access::AccessPolicy,
     access_repo::AccessStore,
     authorization::{AuthorizationRequests, RedeemRefusal},
+    clients::host_of,
     domain::{
         IdentityConfig, Principal, Role, hash_secret, new_secret, normalise_email, random_secret,
         reason_text,
@@ -60,6 +61,12 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// The app's identity as people are shown it: the host of its client id, empty for a client id that is not
+    /// an address (the developer command's).
+    pub fn client_host(&self) -> String {
+        host_of(&self.client_id).unwrap_or_default()
+    }
+
     pub fn is_live(&self, now: DateTime<Utc>) -> bool {
         is_live(self.ends_at, self.revoked.map(|(at, _)| at), now)
     }
@@ -428,17 +435,21 @@ pub async fn revoke_all_connections(
 }
 
 /// The owner's connections: the live ones, and those that ended or were revoked within the last thirty days,
-/// newest first (kb/ADR-0029 R9). The listing filters by date itself; it does not rely on old rows being deleted.
+/// newest first (kb/ADR-0029 R9). The owner is the caller's own when `None`; another person's needs an admin
+/// (the later observation on kb/ADR-0029), whatever the kind of token. The listing filters by date itself; it
+/// does not rely on old rows being deleted.
 pub async fn list_connections(
     store: &dyn TokenStore,
-    owner: &str,
+    who: &Principal,
+    owner: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<Vec<Connection>, AuthError> {
+    let owner = owner.map_or_else(|| who.email.clone(), normalise_email);
+    if owner != who.email && who.role != Role::Admin {
+        return Err(AuthError::Forbidden);
+    }
     Ok(store
-        .list_connections(
-            &normalise_email(owner),
-            now - Duration::days(CONNECTION_DAYS),
-        )
+        .list_connections(&owner, now - Duration::days(CONNECTION_DAYS))
         .await?)
 }
 

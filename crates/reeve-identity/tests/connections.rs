@@ -7,9 +7,9 @@ mod common;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
-    AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken, Role,
-    Scope, TokenKind, Via, authenticate_api, authenticate_mcp, hash_secret, issue_mcp_token,
-    issue_token, make_token_store,
+    AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken,
+    Principal, Role, Scope, TokenKind, Via, authenticate_api, authenticate_mcp, hash_secret,
+    issue_mcp_token, issue_token, list_connections, make_token_store,
 };
 use sqlx::PgPool;
 
@@ -526,4 +526,53 @@ async fn a_token_stops_when_its_connection_is_revoked_or_has_ended() {
             .await
             .is_ok()
     );
+}
+
+fn caller(email: &str, role: Role) -> Principal {
+    Principal {
+        email: email.into(),
+        role,
+        token_kind: TokenKind::Automation,
+        token_id: 1,
+    }
+}
+
+/// The listing's permission is identity's (the later observation on kb/ADR-0029). Catches a listing of the
+/// caller's own that misses them when the owner is named in another letter case, an admin who cannot list
+/// another person's, and a member who can.
+#[tokio::test]
+async fn a_person_lists_their_own_connections_and_an_admin_anyones() {
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    developer_token(&pool, "dan@example.com").await;
+    developer_token(&pool, "bob@example.com").await;
+    let owners = |rows: Vec<reeve_identity::Connection>| {
+        rows.into_iter().map(|c| c.owner).collect::<Vec<_>>()
+    };
+    let bob = caller("bob@example.com", Role::Member);
+    let dan = caller("dan@example.com", Role::Admin);
+    assert_eq!(
+        owners(list_connections(&*store, &bob, None, now()).await.unwrap()),
+        ["bob@example.com"]
+    );
+    assert_eq!(
+        owners(
+            list_connections(&*store, &bob, Some("Bob@Example.COM"), now())
+                .await
+                .unwrap()
+        ),
+        ["bob@example.com"]
+    );
+    assert_eq!(
+        owners(
+            list_connections(&*store, &dan, Some("bob@example.com"), now())
+                .await
+                .unwrap()
+        ),
+        ["bob@example.com"]
+    );
+    assert!(matches!(
+        list_connections(&*store, &bob, Some("dan@example.com"), now()).await,
+        Err(AuthError::Forbidden)
+    ));
 }

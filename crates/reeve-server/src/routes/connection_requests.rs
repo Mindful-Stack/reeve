@@ -47,13 +47,6 @@ fn bound(s: &AppState, headers: &HeaderMap, id: &str) -> Result<(), AppError> {
     }
 }
 
-fn host_of(address: &str) -> String {
-    url::Url::parse(address)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_default()
-}
-
 /// The answer to an answered request: the connect cookie is cleared, and the page is told where to go.
 fn answered(s: &AppState, jar: CookieJar, redirect_to: String) -> impl IntoResponse + use<> {
     (
@@ -76,7 +69,7 @@ async fn read(
     Ok(ok(ConnectionRequestDto {
         client_host: view.client_host,
         client_name: view.client_name,
-        redirect_host: host_of(&view.redirect_uri),
+        redirect_host: reeve_identity::host_of(&view.redirect_uri).unwrap_or_default(),
         email: c.0.email.clone(),
         requested_at: view.requested_at,
         approval: view.approval,

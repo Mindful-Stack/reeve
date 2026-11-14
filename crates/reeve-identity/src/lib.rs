@@ -30,7 +30,7 @@ pub use client_fetch::make_client_fetcher;
 #[cfg(feature = "static-oidc")]
 pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
-    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
+    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, host_of, resolve_client,
 };
 pub use connections::{
     Connection, ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair, exchange_code,
