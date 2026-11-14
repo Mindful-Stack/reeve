@@ -141,12 +141,12 @@ proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy
 
 ## MCP sign-in at the reverse proxy
 
-With `[mcp] enabled = true` the server answers, without a caller, two documents which an MCP client reads to find where to sign in, and the authorize route they name (kb/ADR-0029 R2, R11). The documents:
+With `[mcp] enabled = true` the server answers, without a caller, two documents which an MCP client reads to find where to sign in, and the two sign-in routes they name (kb/ADR-0029 R2, R11). The documents:
 
 - `GET /.well-known/oauth-protected-resource/mcp`
 - `GET /.well-known/oauth-authorization-server`
 
-The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents and `/oauth/authorize` answer 404 as well.
+The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` and `/oauth/token` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents, `/oauth/authorize` and `/oauth/token` answer 404 as well.
 
 The addresses in the documents are built from `public_url` as the server parses it (lower-case host, no default port), without its trailing slash, followed by the path: `public_url = "https://reeve.example.com/"` gives the MCP endpoint `https://reeve.example.com/mcp`. A client compares them with the address the person typed, as text, so that is the address to give people.
 
@@ -182,7 +182,23 @@ Limit it per client address, as `/auth/login` is: here the caller is a person's 
         proxy_pass http://127.0.0.1:7474;
     }
 
-The approval page, `/connect`, is a page of the web client and needs no rule of its own. `/oauth/token` is not served yet; its limit is added here when it is. Until then an app can bring a person to the approval page and be sent back with a code, but nothing exchanges the code: keep `[mcp]` off in production.
+The approval page, `/connect`, is a page of the web client and needs no rule of its own.
+
+### The token route
+
+`POST /oauth/token` is called by the app's servers, not by a person's browser: every Claude user's requests arrive from the same few addresses (`160.79.104.0/21`), once to connect and about once an hour per connected person to refresh. Limit it per address at a rate sized for many people behind one, as the two documents are. For nginx, five requests a second per address:
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_oauth_token:10m rate=5r/s;
+
+    # in the server block, before the general proxy location
+    location = /oauth/token {
+        limit_req zone=reeve_oauth_token burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+The route reads at most 16 KiB, answers within one database transaction and makes no outbound request (Claude waits ten seconds for it). A refresh token works once: if an answer is lost on the way, or an app sends two refreshes at once, the next attempt with the old token revokes the connection and the person connects again. Each such case is a `connection_revoked` entry with reason `refresh_token_reused` in the activity log, and a `warn` line `token request refused`, which never holds a code, a token or anything else the caller sent.
 
 ### Which apps may connect
 
@@ -403,6 +419,8 @@ has a migration it does not know (sqlx's `VersionMissing`, kept strict on purpos
 it too, so the image from before this release cannot run against a database that 1011 has been applied to. A rollback
 past this release therefore restores the pre-release backup (see "Restore after an incident"), and every image
 uploaded since that backup is lost; the Markdown that showed them keeps links that answer 404 after the next upgrade.
+
+Migration 2005 adds MCP connections and refresh tokens and gives every MCP token a connection. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and every connection made since that backup is lost: people connect again.
 
 Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 
