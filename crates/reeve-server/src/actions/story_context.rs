@@ -5,7 +5,7 @@ use reeve_protocol::{ItemType, StoryContextDto};
 /// `reeve story context <KEY>`: everything an agent needs before starting a story. Shared by
 /// `GET /api/v1/stories/{key}/context` and the MCP tool `get_story`. `key` is what the route takes: its path
 /// parameter, a story's key or external reference.
-pub async fn story_context(
+pub(crate) async fn story_context(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,

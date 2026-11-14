@@ -14,20 +14,24 @@ use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
-pub use story_context::story_context;
+pub(crate) use story_context::story_context;
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
 /// timestamp), the caller's role, and the access policy the request was authenticated with. Role checks and owner
 /// validation against the policy need the last two; they cannot be recovered from an input.
-pub struct Acting<'a> {
-    pub ctx: reeve_planning::Ctx,
-    pub role: Role,
-    pub policy: &'a AccessPolicy,
+///
+/// `role` and `policy` are private to `actions`, so an `Acting` is built in one place, `Acting::new`.
+pub(crate) struct Acting<'a> {
+    pub(crate) ctx: reeve_planning::Ctx,
+    #[allow(dead_code)] // read by the first action that checks a role (GRA-661)
+    role: Role,
+    #[allow(dead_code)] // read by the first action that validates an owner (GRA-661)
+    policy: &'a AccessPolicy,
 }
 
 impl<'a> Acting<'a> {
     /// The one constructor: `Caller::acting` and `McpCaller::acting` both call it, so the two cannot differ.
-    pub fn new(
+    pub(crate) fn new(
         email: &str,
         via: Via,
         role: Role,

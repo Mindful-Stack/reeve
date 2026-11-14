@@ -991,14 +991,35 @@ async fn a_tool_failure_is_a_result_the_model_can_read_and_a_malformed_call_is_a
     );
 }
 
-/// The planner limits no text. The tool cuts the story's own description at 10 000 characters and every text that
-/// comes along with it (here a comment's body and a blocker's description) at 2 000, and says how many characters
-/// it removed. The API route still answers every text whole.
+/// The planner limits no text. The tool cuts the story's own description at 10 000 characters and every other text
+/// (each acceptance criterion, the epic's and the initiative's brief, a blocker's description, a comment's body) at
+/// 2 000, and says how many characters it removed. The API route still answers every text whole.
 #[tokio::test]
 async fn get_story_cuts_long_text_and_the_api_route_does_not() {
     let h = mcp_harness().await;
     let t = admin_mcp(&h).await;
-    let epic = ready_epic(&h, "mcp-e2").await;
+    let initiative_brief = "é".repeat(2_003);
+    let epic_brief = "ø".repeat(2_002);
+    let criterion = "ñ".repeat(2_004);
+    let (st, initiative) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key": "mcp-i2", "title": "Long", "horizon": "Now", "brief": initiative_brief})),
+    )
+    .await;
+    assert_eq!(st, 200, "{initiative}");
+    let (st, epic) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/epics",
+        Some(json!({"idempotency_key": "mcp-e2", "title": "Long", "initiative": initiative["value"]["key"], "brief": epic_brief})),
+    )
+    .await;
+    assert_eq!(st, 200, "{epic}");
+    let epic = epic["value"]["key"].as_str().unwrap().to_string();
     // Two-byte characters: a cut that counted bytes would stop at half of them.
     let description = "å".repeat(10_010);
     let blocker_description = "ü".repeat(2_005);
@@ -1009,7 +1030,7 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
             Some(&h.admin_token),
             "POST",
             "/api/v1/stories",
-            Some(json!({"idempotency_key": idem, "title": "Long", "kind": "story", "epic": epic, "description": text, "criteria": ["works"], "labels": []})),
+            Some(json!({"idempotency_key": idem, "title": "Long", "kind": "story", "epic": epic, "description": text, "criteria": ["works", criterion], "labels": []})),
         )
         .await;
         assert_eq!(st, 200, "{story}");
@@ -1038,7 +1059,7 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
         assert_eq!(st, 200, "{c}");
     }
 
-    // The control: the API route answers all three whole.
+    // The control: the API route answers every one of them whole.
     let api = api_context(&h, key).await;
     assert_eq!(api["story"]["description"], json!(description));
     assert_eq!(api["comments"][1]["body"], json!(body));
@@ -1046,6 +1067,9 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
         api["blockers"][0]["description"],
         json!(blocker_description)
     );
+    assert_eq!(api["epic"]["brief"], json!(epic_brief));
+    assert_eq!(api["initiative"]["brief"], json!(initiative_brief));
+    assert_eq!(api["story"]["criteria"][1]["text"], json!(criterion));
 
     let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
     assert_eq!(status, 200);
@@ -1062,6 +1086,19 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
     assert_eq!(
         sent["blockers"][0]["description"],
         json!(format!("{}[cut: 5 more characters]", "ü".repeat(2_000)))
+    );
+    assert_eq!(
+        sent["epic"]["brief"],
+        json!(format!("{}[cut: 2 more characters]", "ø".repeat(2_000)))
+    );
+    assert_eq!(
+        sent["initiative"]["brief"],
+        json!(format!("{}[cut: 3 more characters]", "é".repeat(2_000)))
+    );
+    assert_eq!(sent["story"]["criteria"][0]["text"], "works");
+    assert_eq!(
+        sent["story"]["criteria"][1]["text"],
+        json!(format!("{}[cut: 4 more characters]", "ñ".repeat(2_000)))
     );
     let text = answer["result"]["content"][0]["text"].as_str().unwrap();
     assert_eq!(&rpc(text), sent, "the text block carries the same cut text");

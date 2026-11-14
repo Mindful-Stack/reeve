@@ -133,7 +133,7 @@ impl Caller {
     }
 
     /// What an action needs to know about this caller.
-    pub fn acting(&self) -> crate::actions::Acting<'_> {
+    pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
         let via = match self.0.token_kind {
             reeve_protocol::TokenKind::Interactive => reeve_protocol::Via::Interactive,
             reeve_protocol::TokenKind::Automation => reeve_protocol::Via::Automation,
