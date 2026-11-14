@@ -41,6 +41,14 @@ pub struct SearchItemsResult {
     pub omitted: usize,
 }
 
+/// `get_epic`: read one epic by key (`reeve epic show <KEY>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetEpicInput {
+    /// The epic's key.
+    pub key: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -61,8 +61,7 @@ async fn get(
     c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
-    Ok(ok(s.handlers.epic_dto(&key, c.ctx().now).await?))
+    Ok(ok(crate::actions::get_epic(&s, &c.acting(), &key).await?))
 }
 #[utoipa::path(patch, path = "/epics/{key}", params(("key" = String, Path)), request_body = EditItem, responses((status = 200, body = Response<EpicDto>)))]
 async fn edit(

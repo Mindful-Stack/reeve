@@ -232,3 +232,51 @@ async fn search_items_answers_the_route_s_hits() {
     let unknown = refusal(&h, &bob, "search_items", json!({"q": "slot"})).await;
     assert!(unknown.contains("unknown field `q`"), "{unknown}");
 }
+
+#[tokio::test]
+async fn get_epic_answers_the_route_s_epic_with_a_long_brief_cut() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+
+    let want = api(&h, &h.victim_token, &format!("/api/v1/epics/{}", s.epic)).await;
+    // The control: the epic has what the answer is supposed to carry.
+    assert_eq!(want["brief"], "Pick, pay, confirm.");
+    assert_eq!(want["initiative"], json!(s.initiative));
+    assert!(want["discovery_complete"].is_object());
+    assert_eq!(
+        answer(&h, &bob, "get_epic", json!({"key": s.epic})).await,
+        want
+    );
+
+    // A brief over the limit: the API answers it whole, the tool cuts it and says by how much. Two-byte
+    // characters: a cut that counted bytes would stop at half of them.
+    let brief = "å".repeat(10_003);
+    let long = key(&post(
+        &h,
+        "/api/v1/epics",
+        json!({"idempotency_key": "rt-e3", "title": "Long", "brief": brief}),
+    )
+    .await);
+    let mut want = api(&h, &h.victim_token, &format!("/api/v1/epics/{long}")).await;
+    assert_eq!(
+        want["brief"],
+        json!(brief),
+        "the control: the API route answers it whole"
+    );
+    want["brief"] = json!(format!("{}[cut: 3 more characters]", "å".repeat(10_000)));
+    assert_eq!(
+        answer(&h, &bob, "get_epic", json!({"key": long})).await,
+        want
+    );
+
+    // An unknown key, and a key that is a story's, are told in a tool caller's words.
+    assert_eq!(
+        refusal(&h, &bob, "get_epic", json!({"key": "TST-999999"})).await,
+        "No epic with key TST-999999. Keys look like TST-123."
+    );
+    assert_eq!(
+        refusal(&h, &bob, "get_epic", json!({"key": s.bobs})).await,
+        format!("No epic with key {}. Keys look like TST-123.", s.bobs)
+    );
+}
