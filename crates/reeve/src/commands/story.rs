@@ -96,6 +96,13 @@ pub enum Story {
         /// then title matches).
         #[arg(long, value_enum)]
         sort: Option<SortArg>,
+        /// At most this many stories, 1 to 100: one page of the list, in its order. Without it, the whole list.
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Skip this many stories first (needs --limit). After a full page, the flags for the next page are
+        /// printed on standard error.
+        #[arg(long)]
+        offset: Option<u32>,
     },
     /// Stories with a similar title (fuzzy match on the title): open ones, and ones done recently with their resolution. Check before filing.
     Similar {
@@ -398,6 +405,8 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             open,
             promised,
             sort,
+            limit,
+            offset,
         } => {
             let owner = if mine {
                 match whoami(c).await? {
@@ -451,17 +460,39 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
             if let Some(s) = sort {
                 q.push(("sort", wire(StorySort::from(s))?));
             }
-            finish(
-                c.get_query::<Vec<StoryWithReadiness>>("/stories", &q)
-                    .await?,
-                json,
-                |rows| {
-                    rows.iter()
-                        .map(|r| crate::render::story_row(&r.story, &r.readiness))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                },
-            )
+            if let Some(l) = limit {
+                q.push(("limit", l.to_string()));
+            }
+            if let Some(o) = offset {
+                q.push(("offset", o.to_string()));
+            }
+            let out = c
+                .get_query::<Vec<StoryWithReadiness>>("/stories", &q)
+                .await?;
+            // A page of exactly `limit` rows may have a successor. Text mode says how to ask for it, on standard
+            // error, so nothing that reads rows from standard output takes the line for one; JSON mode prints the
+            // envelope and nothing else.
+            let more = match (&out, limit) {
+                (crate::client::Outcome::Ok(rows), Some(l))
+                    if !json && rows.len() == l as usize =>
+                {
+                    Some(format!(
+                        "more: --limit {l} --offset {}",
+                        u64::from(offset.unwrap_or(0)) + u64::from(l)
+                    ))
+                }
+                _ => None,
+            };
+            let code = finish(out, json, |rows| {
+                rows.iter()
+                    .map(|r| crate::render::story_row(&r.story, &r.readiness))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+            if let Some(line) = more {
+                eprintln!("{line}");
+            }
+            code
         }
         Story::Edit {
             key,

@@ -3884,3 +3884,135 @@ fn show_prints_the_promise_chip_and_line() {
         "{text}"
     );
 }
+
+/// `n` rows as `GET /stories` answers them, ABC-1 to ABC-n.
+fn story_rows(n: usize) -> serde_json::Value {
+    (1..=n)
+        .map(|i| {
+            let mut s = urgent_story(vec![]);
+            s.key = format!("ABC-{i}").parse().unwrap();
+            serde_json::json!({"story": s, "readiness": {"ready": true, "reasons": []}})
+        })
+        .collect()
+}
+
+fn stderr_text(out: &std::process::Output) -> String {
+    String::from_utf8(out.stderr.clone()).unwrap()
+}
+
+/// The lines of standard error that start with `more:`.
+fn more_lines(out: &std::process::Output) -> Vec<String> {
+    stderr_text(out)
+        .lines()
+        .filter(|l| l.starts_with("more:"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `--limit` and `--offset` reach the wire as `limit` and `offset`; after a page of exactly `--limit` rows the flags
+/// for the next page are on standard error, and standard output holds the rows only.
+#[test]
+fn story_ls_sends_limit_and_offset_and_says_more_on_stderr_after_a_full_page() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories?limit=2&offset=2",
+        200,
+        ok(story_rows(2)),
+    )]);
+    let out = reeve_at(&url, &["story", "ls", "--limit", "2", "--offset", "2"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_text(&out));
+    let text = out_text(&out);
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(!text.contains("more:"), "{text}");
+    assert_eq!(more_lines(&out), vec!["more: --limit 2 --offset 4"]);
+
+    // No --offset: none is sent, and the next page starts at the limit.
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories?limit=2",
+        200,
+        ok(story_rows(2)),
+    )]);
+    let out = reeve_at(&url, &["story", "ls", "--limit", "2"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_text(&out));
+    assert_eq!(more_lines(&out), vec!["more: --limit 2 --offset 2"]);
+
+    // --offset alone is sent as given: refusing it is the server's rule, not a second copy in the CLI.
+    let (line, _) = capture(&["story", "ls", "--offset", "5"]);
+    assert!(line.starts_with("GET /api/v1/stories?offset=5 "), "{line}");
+}
+
+/// A page shorter than the limit, an empty page, and a list read without a limit say nothing more.
+#[test]
+fn story_ls_says_nothing_more_after_a_short_page_or_without_a_limit() {
+    for (want, args, rows) in [
+        (
+            "GET /api/v1/stories?limit=3",
+            &["story", "ls", "--limit", "3"][..],
+            2,
+        ),
+        (
+            "GET /api/v1/stories?limit=3&offset=6",
+            &["story", "ls", "--limit", "3", "--offset", "6"][..],
+            0,
+        ),
+        ("GET /api/v1/stories", &["story", "ls"][..], 3),
+    ] {
+        let (url, server) = serve(vec![(want, 200, ok(story_rows(rows)))]);
+        let out = reeve_at(&url, args);
+        server.join().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            stderr_text(&out)
+        );
+        assert_eq!(more_lines(&out), Vec::<String>::new(), "{args:?}");
+        assert!(!out_text(&out).contains("more:"), "{args:?}");
+    }
+}
+
+/// With `--json` a full page prints the envelope, unchanged, on standard output and nothing about more pages on
+/// either stream.
+#[test]
+fn story_ls_json_prints_only_the_envelope_after_a_full_page() {
+    let rows = story_rows(2);
+    let (url, server) = serve(vec![("GET /api/v1/stories?limit=2", 200, ok(rows.clone()))]);
+    let out = reeve_at(&url, &["--json", "story", "ls", "--limit", "2"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_text(&out));
+    let text = out_text(&out);
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let printed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(printed, ok(rows), "the envelope the server sent");
+    assert_eq!(more_lines(&out), Vec::<String>::new());
+}
+
+/// `--limit` and `--offset` take whole numbers: anything else is refused by clap, exit 1, before any request.
+#[test]
+fn story_ls_refuses_a_limit_or_offset_that_is_not_a_whole_number() {
+    for (args, says) in [
+        (
+            &["story", "ls", "--limit", "x"][..],
+            "invalid value 'x' for '--limit <LIMIT>'",
+        ),
+        (
+            &["story", "ls", "--limit", "2", "--offset", "x"][..],
+            "invalid value 'x' for '--offset <OFFSET>'",
+        ),
+        (&["story", "ls", "--limit", "-1"][..], "unexpected argument"),
+    ] {
+        let out = Command::cargo_bin("reeve")
+            .unwrap()
+            .env("REEVE_URL", "http://127.0.0.1:9")
+            .env("REEVE_TOKEN", "reeve_test")
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let err = stderr_text(&out);
+        // A request to the closed port would also exit 1; only clap writes these texts. A value-validation error
+        // carries no usage line in clap 4.6 (`a_malformed_key_argument_is_a_usage_error` asserts the same way).
+        assert!(err.contains(says), "{args:?}: {err}");
+    }
+}
