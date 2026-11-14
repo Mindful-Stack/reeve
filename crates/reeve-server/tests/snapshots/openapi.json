@@ -636,6 +636,77 @@
         ],
         "type": "object"
       },
+      "ConnectionDto": {
+        "description": "An app a person connected (kb/ADR-0029 R9): listed once, whatever tokens it has had. Never a secret or a hash.",
+        "properties": {
+          "approved_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "client_host": {
+            "description": "The host of the client id: the app's identity as people are shown it. Empty when the client id is not an\naddress (the developer command's).",
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "client_name": {
+            "description": "The name the app gave itself when it was approved.",
+            "type": "string"
+          },
+          "ends_at": {
+            "description": "Thirty days after the approval. A connection at or past this has ended.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "refreshed_at": {
+            "description": "When the app last refreshed its token: the nearest thing to \"last used\" that is recorded.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revoked_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RevokedReason"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "client_id",
+          "client_host",
+          "client_name",
+          "scope",
+          "approved_at",
+          "ends_at"
+        ],
+        "type": "object"
+      },
       "ConnectionRequestDto": {
         "description": "A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4).",
         "properties": {
@@ -7419,6 +7490,156 @@
           }
         ]
       },
+      "Response_Vec_ConnectionDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "An app a person connected (kb/ADR-0029 R9): listed once, whatever tokens it has had. Never a secret or a hash.",
+                  "properties": {
+                    "approved_at": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "client_host": {
+                      "description": "The host of the client id: the app's identity as people are shown it. Empty when the client id is not an\naddress (the developer command's).",
+                      "type": "string"
+                    },
+                    "client_id": {
+                      "type": "string"
+                    },
+                    "client_name": {
+                      "description": "The name the app gave itself when it was approved.",
+                      "type": "string"
+                    },
+                    "ends_at": {
+                      "description": "Thirty days after the approval. A connection at or past this has ended.",
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "id": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "refreshed_at": {
+                      "description": "When the app last refreshed its token: the nearest thing to \"last used\" that is recorded.",
+                      "format": "date-time",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "revoked_at": {
+                      "format": "date-time",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "revoked_reason": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/RevokedReason"
+                        }
+                      ]
+                    },
+                    "scope": {
+                      "$ref": "#/components/schemas/Scope"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "owner",
+                    "client_id",
+                    "client_host",
+                    "client_name",
+                    "scope",
+                    "approved_at",
+                    "ends_at"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_Vec_EpicDto": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -8885,6 +9106,16 @@
         "enum": [
           "one_way",
           "two_way"
+        ],
+        "type": "string"
+      },
+      "RevokedReason": {
+        "description": "Why a connection was revoked.",
+        "enum": [
+          "revoked",
+          "refresh_token_reused",
+          "user_disabled",
+          "restored"
         ],
         "type": "string"
       },
@@ -11004,6 +11235,182 @@
               }
             },
             "description": "an interactive token only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connections": {
+      "get": {
+        "operationId": "connections_list",
+        "parameters": [
+          {
+            "description": "Whose connections; the caller's own when absent. Another person's needs an admin.",
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_ConnectionDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "another person's connections: admins only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connections/{id}": {
+      "delete": {
+        "operationId": "connections_id_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
           },
           "404": {
             "content": {
@@ -17404,7 +17811,7 @@
     },
     "/api/v1/tokens/{id}": {
       "delete": {
-        "operationId": "revoke",
+        "operationId": "tokens_id_revoke",
         "parameters": [
           {
             "in": "path",

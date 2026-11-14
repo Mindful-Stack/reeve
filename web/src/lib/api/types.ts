@@ -65,6 +65,7 @@ export type AccessEntry = S['AccessEntryDto'];
 export type AccessKind = S['AccessKind'];
 export type Scope = S['Scope'];
 export type ConnectionRequest = S['ConnectionRequestDto'];
+export type Connection = S['ConnectionDto'];
 /** The query `GET /api/v1/stories` takes. */
 export type StoryQuery = NonNullable<operations['stories_list']['parameters']['query']>;
 export type MoveStory = S['MoveStory'];

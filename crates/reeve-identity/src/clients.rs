@@ -199,8 +199,9 @@ pub async fn resolve_client(
     outcome
 }
 
-fn host_of(client_id: &str) -> Option<String> {
-    url::Url::parse(client_id)
+/// The host of an address, `None` for text that is not one.
+pub fn host_of(address: &str) -> Option<String> {
+    url::Url::parse(address)
         .ok()?
         .host_str()
         .map(str::to_string)

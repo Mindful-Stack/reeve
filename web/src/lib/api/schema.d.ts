@@ -203,6 +203,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["connections_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/connections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["connections_id_revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/decisions": {
         parameters: {
             query?: never;
@@ -1144,7 +1176,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete: operations["revoke"];
+        delete: operations["tokens_id_revoke"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1434,6 +1466,36 @@ export interface components {
         /** @description Where the page sends the browser once the request is answered: the app's redirect address with the answer. */
         ConnectionAnswerDto: {
             redirect_to: string;
+        };
+        /** @description An app a person connected (kb/ADR-0029 R9): listed once, whatever tokens it has had. Never a secret or a hash. */
+        ConnectionDto: {
+            /** Format: date-time */
+            approved_at: string;
+            /**
+             * @description The host of the client id: the app's identity as people are shown it. Empty when the client id is not an
+             *     address (the developer command's).
+             */
+            client_host: string;
+            client_id: string;
+            /** @description The name the app gave itself when it was approved. */
+            client_name: string;
+            /**
+             * Format: date-time
+             * @description Thirty days after the approval. A connection at or past this has ended.
+             */
+            ends_at: string;
+            /** Format: int64 */
+            id: number;
+            owner: string;
+            /**
+             * Format: date-time
+             * @description When the app last refreshed its token: the nearest thing to "last used" that is recorded.
+             */
+            refreshed_at?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            revoked_reason?: null | components["schemas"]["RevokedReason"];
+            scope: components["schemas"]["Scope"];
         };
         /** @description A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4). */
         ConnectionRequestDto: {
@@ -3484,6 +3546,60 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_Vec_ConnectionDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: date-time */
+                approved_at: string;
+                /**
+                 * @description The host of the client id: the app's identity as people are shown it. Empty when the client id is not an
+                 *     address (the developer command's).
+                 */
+                client_host: string;
+                client_id: string;
+                /** @description The name the app gave itself when it was approved. */
+                client_name: string;
+                /**
+                 * Format: date-time
+                 * @description Thirty days after the approval. A connection at or past this has ended.
+                 */
+                ends_at: string;
+                /** Format: int64 */
+                id: number;
+                owner: string;
+                /**
+                 * Format: date-time
+                 * @description When the app last refreshed its token: the nearest thing to "last used" that is recorded.
+                 */
+                refreshed_at?: string | null;
+                /** Format: date-time */
+                revoked_at?: string | null;
+                revoked_reason?: null | components["schemas"]["RevokedReason"];
+                scope: components["schemas"]["Scope"];
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_Vec_EpicDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -3909,6 +4025,11 @@ export interface components {
          * @enum {string}
          */
         Reversibility: "one_way" | "two_way";
+        /**
+         * @description Why a connection was revoked.
+         * @enum {string}
+         */
+        RevokedReason: "revoked" | "refresh_token_reused" | "user_disabled" | "restored";
         /** @enum {string} */
         Role: "admin" | "member";
         /**
@@ -5147,6 +5268,148 @@ export interface operations {
             };
             /** @description an interactive token only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    connections_list: {
+        parameters: {
+            query?: {
+                /** @description Whose connections; the caller's own when absent. Another person's needs an admin. */
+                owner?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ConnectionDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description another person's connections: admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    connections_id_revoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10182,7 +10445,7 @@ export interface operations {
             };
         };
     };
-    revoke: {
+    tokens_id_revoke: {
         parameters: {
             query?: never;
             header?: never;

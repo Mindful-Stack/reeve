@@ -33,7 +33,62 @@ pub enum Auth {
     },
     /// Show where the CLI connects and who the server says you are (never prints the secret).
     Status,
+    /// List the apps connected to your account through MCP sign-in, or revoke one.
+    #[command(args_conflicts_with_subcommands = true)]
+    Connections {
+        /// List this person's connections instead of your own (admins only).
+        #[arg(long)]
+        owner: Option<String>,
+        #[command(subcommand)]
+        action: Option<ConnectionsAction>,
+    },
 }
+
+#[derive(Subcommand)]
+pub enum ConnectionsAction {
+    /// Revoke one connection by the id `reeve auth connections` shows: it stops working at once.
+    Revoke {
+        /// The connection's id.
+        id: i64,
+    },
+}
+
+/// One line per connection: the id (what `revoke` takes), the app, what it may do, and when it ends, ended and
+/// why, or was revoked.
+fn connection_line(
+    c: &reeve_protocol::ConnectionDto,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    use reeve_protocol::{RevokedReason, Scope};
+    let app = if c.client_host.is_empty() {
+        c.client_name.clone()
+    } else {
+        format!("{} ({})", c.client_host, c.client_name)
+    };
+    let scope = match c.scope {
+        Scope::Read => "read",
+        Scope::Write => "read and change",
+    };
+    let day = |at: &chrono::DateTime<chrono::Utc>| at.format("%Y-%m-%d").to_string();
+    let state = match (&c.revoked_at, c.revoked_reason) {
+        // The words of the web page: a person revoked it, or it ended for a reason of the system's.
+        (Some(at), Some(reason)) => match reason {
+            RevokedReason::Revoked => format!("revoked {}", day(at)),
+            RevokedReason::RefreshTokenReused => format!(
+                "ended {}: the app's sign-in went out of step; connect it again",
+                day(at)
+            ),
+            RevokedReason::UserDisabled => format!("ended {}: the account was disabled", day(at)),
+            RevokedReason::Restored => {
+                format!("ended {}: the instance was restored from a backup", day(at))
+            }
+        },
+        _ if c.ends_at <= now => format!("ended {}", day(&c.ends_at)),
+        _ => format!("ends {}", day(&c.ends_at)),
+    };
+    format!("{}\t{app}\t{scope}\t{state}", c.id)
+}
+
 pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
     match a {
         Auth::Login { url, no_browser } => login(url, no_browser, json).await,
@@ -106,6 +161,39 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                     v["token_kind"].as_str().unwrap_or_default()
                 )
             }))
+        }
+        Auth::Connections {
+            owner,
+            action: None,
+        } => {
+            let r = crate::config::resolve()?;
+            let c = Client::new(r.url, r.token);
+            let query: Vec<(&str, String)> = owner.into_iter().map(|o| ("owner", o)).collect();
+            let out = c
+                .get_query::<Vec<reeve_protocol::ConnectionDto>>("/connections", &query)
+                .await?;
+            let now = chrono::Utc::now();
+            Ok(finish(out, json, |rows| {
+                if rows.is_empty() {
+                    "no connected apps".to_string()
+                } else {
+                    rows.iter()
+                        .map(|c| connection_line(c, now))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+            }))
+        }
+        Auth::Connections {
+            action: Some(ConnectionsAction::Revoke { id }),
+            ..
+        } => {
+            let r = crate::config::resolve()?;
+            let c = Client::new(r.url, r.token);
+            let out = c
+                .delete::<reeve_protocol::Empty>(&format!("/connections/{id}"))
+                .await?;
+            Ok(finish(out, json, |_| format!("revoked connection {id}")))
         }
     }
 }

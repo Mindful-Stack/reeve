@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const fail = vi.hoisted(() => ({ next: false }));
 const liveFns = vi.hoisted(() => [] as (() => unknown)[]);
-vi.mock('#lib/events.svelte.ts', () => ({ onLive: (fn: () => unknown) => void liveFns.push(fn) }));
+vi.mock('#lib/events.svelte.ts', async (orig) => ({
+	...(await orig<typeof import('#lib/events.svelte.ts')>()),
+	onLive: (fn: () => unknown) => void liveFns.push(fn),
+	everyVisible: () => {}
+}));
 const calls: { method: string; path: string; init: unknown }[] = [];
 const user = (email: string, role: string, disabled = false) => ({ email, display_name: '', role, disabled });
 const entry = (value: string, source: string) => ({
@@ -35,6 +39,7 @@ vi.mock('#lib/api/client.ts', () => {
 			fail.next = false;
 			throw new Error('boom');
 		}
+		if (path === '/api/v1/connections') return [];
 		return path === '/api/v1/users' ? data.users : data.access;
 	};
 	return {
@@ -211,5 +216,26 @@ describe('Users page', () => {
 		flushSync();
 		await vi.waitFor(() => expect(document.querySelector('ul.rows li')).not.toBeNull());
 		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
+	});
+
+	// Catches the component mounted without its owner (an admin would see their own apps under every person), a page
+	// that asks for everyone's connections on load, a disclosure on the viewer's own row, and a closed disclosure that
+	// keeps its list mounted (and refetching).
+	it('asks for a person’s connected apps only when their row is opened, and for that person', async () => {
+		await open();
+		const connections = () => calls.filter((c) => c.path === '/api/v1/connections');
+		expect(connections()).toHaveLength(0);
+		expect(rowOf('dan@example.com').querySelector('details')).toBeNull();
+		const details = rowOf('ada@example.com').querySelector('details') as HTMLDetailsElement;
+		details.open = true;
+		details.dispatchEvent(new Event('toggle'));
+		flushSync();
+		await vi.waitFor(() => expect(connections()).toHaveLength(1));
+		expect(connections()[0].init).toEqual({ params: { query: { owner: 'ada@example.com' } } });
+		await vi.waitFor(() => expect(details.textContent).toContain('No connected apps.'));
+		details.open = false;
+		details.dispatchEvent(new Event('toggle'));
+		flushSync();
+		expect(details.textContent).not.toContain('No connected apps.');
 	});
 });

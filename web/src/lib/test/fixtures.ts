@@ -7,6 +7,7 @@ import type {
 	DecisionQueue,
 	DecisionQueueEntry,
 	Comment,
+	Connection,
 	ConnectionRequest,
 	Epic,
 	Goal,
@@ -274,6 +275,24 @@ export function connectionRequest(over: Partial<ConnectionRequest> = {}): Connec
 		email: 'dan@example.com',
 		requested_at: '2026-11-14T09:00:00Z',
 		approval: 'value-1',
+		...over
+	};
+}
+
+/** A live read connection of bob@example.com to "Example App" on client.example, approved 2026-11-01. */
+export function connection(over: Partial<Connection> = {}): Connection {
+	return {
+		id: 7,
+		owner: 'bob@example.com',
+		client_id: 'https://client.example/app.json',
+		client_host: 'client.example',
+		client_name: 'Example App',
+		scope: 'read',
+		approved_at: '2026-11-01T09:00:00Z',
+		ends_at: '2026-12-01T09:00:00Z',
+		refreshed_at: null,
+		revoked_at: null,
+		revoked_reason: null,
 		...over
 	};
 }

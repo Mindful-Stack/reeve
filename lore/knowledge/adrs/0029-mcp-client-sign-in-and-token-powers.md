@@ -98,6 +98,14 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   have nothing to apply to yet. The registration trigger has not fired: how ChatGPT identifies itself is
   unverified until its trial, and the parked registration story is decided then. We fetch client documents only
   from hosts the instance lists, which narrows R3. The decision holds.
+- 2026-11-14 (GRA-669, connections): an admin may list and revoke any person's connections, beside the owner R9
+  names. An admin may do either with either kind of token. The two permissions differ. Revoking only reduces access,
+  as disabling a user does (kb/ADR-0015 R6). Listing gives an admin sight of other people's connection metadata:
+  which app each person connected, by the client's name and host, with what scope, when it was approved and last
+  refreshed, and, for an ended connection, when and why it ended. That is new
+  visibility, accepted because an admin who must cut a connection has to find it first, and because the
+  `connection_approved` and `connection_revoked` activity entries already show every signed-in person which app
+  someone connected. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)

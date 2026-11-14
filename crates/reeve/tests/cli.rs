@@ -4033,3 +4033,135 @@ fn story_ls_prints_a_validation_error_and_nothing_more() {
     assert_eq!(more_lines(&out), Vec::<String>::new());
     assert_eq!(out_text(&out), "");
 }
+
+/// A connection as the server lists it. `ends_at` is far in the future or the past, so what the text says about
+/// it does not depend on the day the test runs.
+fn connection_row(id: i64, ends_at: &str, revoked: Option<(&str, &str)>) -> serde_json::Value {
+    serde_json::json!({
+        "id": id, "owner": "dan@example.com", "client_id": "https://claude.ai/oauth/client.json",
+        "client_host": "claude.ai", "client_name": "Claude", "scope": if id == 7 { "write" } else { "read" },
+        "approved_at": "2020-01-01T09:00:00Z", "ends_at": ends_at, "refreshed_at": null,
+        "revoked_at": revoked.map(|(at, _)| at), "revoked_reason": revoked.map(|(_, reason)| reason)
+    })
+}
+
+/// Catches a listing sent anywhere but `GET /api/v1/connections`, `--owner` not sent as the query, `--json` that
+/// is not the server's envelope, and a text line that lacks the id a person needs for `revoke`, the app, or why a
+/// connection stopped.
+#[test]
+fn auth_connections_lists_connections() {
+    let rows = serde_json::json!([
+        connection_row(7, "2099-12-01T09:00:00Z", None),
+        connection_row(
+            8,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-10T09:00:00Z", "refresh_token_reused"))
+        ),
+        connection_row(9, "2020-01-31T09:00:00Z", None),
+        connection_row(
+            10,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-11T09:00:00Z", "revoked"))
+        ),
+        connection_row(
+            11,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-12T09:00:00Z", "user_disabled"))
+        ),
+        connection_row(
+            12,
+            "2099-12-01T09:00:00Z",
+            Some(("2020-01-13T09:00:00Z", "restored"))
+        ),
+    ]);
+    let (url, server) = serve(vec![("GET /api/v1/connections", 200, ok(rows.clone()))]);
+    let out = reeve_at(&url, &["--json", "auth", "connections"]);
+    server.join().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        ok(rows.clone())
+    );
+
+    let (url, server) = serve(vec![("GET /api/v1/connections", 200, ok(rows))]);
+    let out = reeve_at(&url, &["auth", "connections"]);
+    server.join().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "7\tclaude.ai (Claude)\tread and change\tends 2099-12-01",
+            "8\tclaude.ai (Claude)\tread\tended 2020-01-10: the app's sign-in went out of step; connect it again",
+            "9\tclaude.ai (Claude)\tread\tended 2020-01-31",
+            "10\tclaude.ai (Claude)\tread\trevoked 2020-01-11",
+            "11\tclaude.ai (Claude)\tread\tended 2020-01-12: the account was disabled",
+            "12\tclaude.ai (Claude)\tread\tended 2020-01-13: the instance was restored from a backup",
+        ]
+    );
+
+    // An admin names another person; the request line carries the query.
+    let (url, server) = serve(vec![(
+        "GET /api/v1/connections?owner=bob%40example.com",
+        200,
+        ok(serde_json::json!([])),
+    )]);
+    let out = reeve_at(&url, &["auth", "connections", "--owner", "bob@example.com"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "no connected apps"
+    );
+}
+
+/// Catches a revoke sent to the wrong address or with the wrong id, and a refusal that exits as a success.
+#[test]
+fn auth_connections_revoke_deletes_that_connection() {
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/connections/7",
+        200,
+        ok(serde_json::json!({})),
+    )]);
+    let out = reeve_at(&url, &["auth", "connections", "revoke", "7"]);
+    server.join().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap().trim(),
+        "revoked connection 7"
+    );
+
+    let not_found = serde_json::json!({"outcome":"error","code":"not_found","message":"not found"});
+    let (url, server) = serve(vec![("DELETE /api/v1/connections/9", 404, not_found)]);
+    let out = reeve_at(&url, &["--json", "auth", "connections", "revoke", "9"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["code"],
+        "not_found"
+    );
+
+    // A missing or non-numeric id is a usage error. The message is clap's, so the refusal is the argument's and
+    // not a failed connection (which exits 1 too).
+    for (args, message) in [
+        (vec!["auth", "connections", "revoke"], "required"),
+        (
+            vec!["auth", "connections", "revoke", "seven"],
+            "invalid value",
+        ),
+    ] {
+        let out = reeve_at("http://127.0.0.1:9", &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+    }
+}
