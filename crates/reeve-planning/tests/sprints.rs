@@ -194,6 +194,7 @@ mod started_at {
     }
     pub fn ctx(via: Via, day: u32) -> Ctx {
         Ctx {
+            client: None,
             actor: "dan@example.com".into(),
             via,
             now: at(day, 18),
@@ -2113,6 +2114,7 @@ mod views {
         let (_c, pool) = super::common::pg().await;
         let (h, sink) = mk(pool.clone());
         let me = |t| Ctx {
+            client: None,
             actor: "dan@example.com".into(),
             via: Via::Interactive,
             now: t,
@@ -2323,6 +2325,7 @@ mod views {
         let (_c, pool) = super::common::pg().await;
         let (h, _) = mk(pool.clone());
         let me = |day, hour| Ctx {
+            client: None,
             actor: "dan@example.com".into(),
             via: Via::Interactive,
             now: at(day, hour),

@@ -67,6 +67,8 @@ pub struct AppState {
     /// The MCP tools, built once here (`mcp::build_tools`); `tools/list`, `tools/call` and the startup line read
     /// this one list.
     pub(crate) mcp_tools: crate::mcp::Tools,
+    /// The count behind the limit on writes over MCP (`mcp::WriteLimit`): per person, in memory.
+    pub(crate) mcp_writes: Arc<crate::mcp::WriteLimit>,
     /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route resolves a client with
     /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
@@ -309,6 +311,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         assets,
         repo_urls,
         mcp_tools,
+        mcp_writes: Arc::default(),
         client_fetcher,
         clock: Clock::default(),
         authorization_requests: Arc::new(reeve_identity::AuthorizationRequests::default()),

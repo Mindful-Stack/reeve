@@ -51,6 +51,7 @@ fn mk(pool: sqlx::PgPool) -> (Handlers, Arc<MemSink>) {
 }
 fn ctx(actor: &str, via: Via) -> Ctx {
     Ctx {
+        client: None,
         actor: actor.into(),
         via,
         now: Utc.with_ymd_and_hms(2026, 11, 9, 9, 0, 0).unwrap(),

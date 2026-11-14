@@ -91,3 +91,18 @@ describe('actionLabel', () => {
 		expect(plainAction('goal_linked')).toBe('goal linked');
 	});
 });
+
+describe('entryAction', () => {
+	it('adds the client a write was made through, to worded and plain actions alike', async () => {
+		const { entryAction } = await import('./format.ts');
+		expect(entryAction('moved', { from: 'todo', to: 'in_progress', client: 'claude.ai' })).toBe('moved via claude.ai');
+		expect(entryAction('goal_linked', { client: 'chatgpt.com' })).toBe('goal linked via chatgpt.com');
+		expect(entryAction('attachment_added', { filename: 'shot.png', client: 'claude.ai' })).toBe('added attachment shot.png via claude.ai');
+	});
+	it('reads as before without a client', async () => {
+		const { entryAction } = await import('./format.ts');
+		expect(entryAction('moved', { from: 'todo', to: 'in_progress' })).toBe('moved');
+		expect(entryAction('attachment_added', { filename: 'shot.png' })).toBe('added attachment shot.png');
+		for (const payload of [null, undefined, 'text', {}, { client: '' }, { client: 7 }, { client: null }]) expect(entryAction('edited', payload)).toBe('edited');
+	});
+});

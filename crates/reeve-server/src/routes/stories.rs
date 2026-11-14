@@ -10,21 +10,6 @@ use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-/// A story's owner must be an allowed user (allowed by the floor or a database entry): an owner nobody can sign
-/// in as would hold work no one can pick up.
-fn allowed_owner(
-    policy: &reeve_identity::AccessPolicy,
-    owner: Option<String>,
-) -> Result<Option<String>, AppError> {
-    match owner {
-        Some(o) if !policy.is_allowed(&o) => Err(reeve_planning::HandlerError::Validation(
-            format!("{} is not an allowed user", normalise_email(&o)),
-        )
-        .into()),
-        other => Ok(other),
-    }
-}
-
 #[utoipa::path(get, path = "/stories", params(StoryQuery), responses((status = 200, body = Response<Vec<StoryWithReadiness>>)))]
 async fn list(
     State(s): State<AppState>,
@@ -39,23 +24,9 @@ async fn create(
     c: Caller,
     ApiJson(b): ApiJson<CreateStory>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    let st = s
-        .handlers
-        .create_story_attaching(
-            &c.ctx(),
-            &b.idempotency_key,
-            &b.title,
-            b.kind,
-            resolve_opt(&s.handlers, b.epic.as_ref(), ItemType::Epic).await?,
-            b.description.as_deref().unwrap_or(""),
-            b.criteria,
-            b.labels,
-            b.external_ref,
-            allowed_owner(c.policy(), b.owner)?,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
+    Ok(ok(crate::actions::create_story(&s, &c.acting(), b)
+        .await?
+        .0))
 }
 #[utoipa::path(get, path = "/stories/{key}", params(("key" = String, Path)), responses((status = 200, body = Response<StoryDto>)))]
 async fn get(
@@ -63,8 +34,7 @@ async fn get(
     c: Caller,
     ApiPath(key): ApiPath<String>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    Ok(ok(s.handlers.story_dto(&key, c.ctx().now).await?))
+    Ok(ok(crate::actions::read_story(&s, &c.acting(), &key).await?))
 }
 #[utoipa::path(patch, path = "/stories/{key}", params(("key" = String, Path)), request_body = EditItem, responses((status = 200, body = Response<StoryDto>)))]
 async fn edit(
@@ -73,37 +43,9 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    let criteria = b.criteria.map(|v| {
-        v.into_iter()
-            .map(|c| reeve_planning::Criterion {
-                text: c.text,
-                done: c.done,
-            })
-            .collect()
-    });
-    let st = s
-        .handlers
-        .edit_story_attaching(
-            &c.ctx(),
-            &key,
-            b.version,
-            b.title,
-            b.description,
-            b.kind,
-            super::resolve_edit(&s.handlers, b.epic, ItemType::Epic).await?,
-            criteria,
-            match b.owner {
-                Some(Some(o)) => Some(allowed_owner(c.policy(), Some(o))?),
-                other => other,
-            },
-            b.labels,
-            b.rank,
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
+    Ok(ok(
+        crate::actions::edit_story(&s, &c.acting(), &key, b).await?
+    ))
 }
 #[utoipa::path(post, path = "/stories/{key}/move", params(("key" = String, Path)), request_body = MoveStory, responses((status = 200, body = Response<StoryDto>), (status = 422, body = Response<StoryDto>)))]
 async fn mv(
@@ -112,19 +54,9 @@ async fn mv(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<MoveStory>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Story).await?;
-    let st = s
-        .handlers
-        .move_story(
-            &c.ctx(),
-            &key,
-            b.version,
-            b.to,
-            b.resolution,
-            b.override_reason,
-        )
-        .await?;
-    Ok(ok(s.handlers.story_dto(st.key(), c.ctx().now).await?))
+    Ok(ok(
+        crate::actions::move_story(&s, &c.acting(), &key, b).await?
+    ))
 }
 /// Places a todo story before another todo story, or at the end of todo when `before` is absent: one write, one
 /// `reranked` entry, and only this story's version changes.

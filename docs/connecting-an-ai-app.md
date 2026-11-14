@@ -20,10 +20,12 @@ has to turn this on for your instance first; if the steps below fail at the star
 With **Read** it can search Reeve, list and open stories, epics and initiatives, list the required decisions (the
 choices that must be made before work is ready), and show a sprint.
 
-**Read and change** will also let it create and edit stories, comment and move stories, as you. The tools that
-change things arrive in a later release; until then **Read and change** works as **Read**.
+With **Read and change** it can also, as you: create a story, edit a story, add a comment, and move a story. It
+can never override the readiness gate: a story that is not ready stays where it is, and the app tells you why. To
+keep a mistaken or planted instruction from doing much, one person's apps may try at most 30 changes in any ten
+minutes between them; after that the app tells you when it can go on.
 
-Whatever you choose, it can never override the readiness gate, issue tokens or change who has access.
+Whatever you choose, it can never issue tokens or change who has access.
 
 ## How long it lasts
 
@@ -43,8 +45,9 @@ The first lists your connections with their ids; the second ends one at once. An
 
 ## What Reeve records
 
-Reeve records in the activity log that you connected the app, and when a connection is revoked. Once the app can change
-things, each change is recorded with the app's name.
+Reeve records in the activity log that you connected the app, and when a connection is revoked. Each change the app
+makes is recorded as yours, together with the app it was made through: the activity feed shows it as, for example,
+"commented via claude.ai".
 
 ## ChatGPT
 

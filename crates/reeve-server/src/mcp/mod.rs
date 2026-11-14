@@ -3,8 +3,11 @@
 //! `Accept` is ignored. The handler takes the raw request and runs its checks itself, in the numbered order below:
 //! an extractor argument would run before the switch and the origin check. A failure before the message is parsed
 //! is an `McpError`, one after it an `RpcError`; neither is ever an `AppError` (which renders the API's envelope).
+mod limit;
 mod protocol;
 mod tools;
+
+pub(crate) use limit::WriteLimit;
 
 use crate::{auth::McpCaller, state::AppState};
 use axum::{
@@ -49,13 +52,13 @@ fn complete(mut result: Value) -> Value {
     result
 }
 
-/// A 2026-07-28 result that a client may cache: a complete one with the caching hints. `cacheScope` is `public`
-/// while every caller sees the same list; it becomes `private` once scopes filter it (GRA-661, with the
-/// first tool that needs `write`).
-fn modern(result: Value) -> Value {
+/// A 2026-07-28 result that a client may cache: a complete one with the caching hints. `server/discover` is
+/// `public`: every caller gets the same answer. `tools/list` is `private`: it lists what the token's scope
+/// allows, and a private answer is reused only "within the same authorization context".
+fn modern(result: Value, cache_scope: &'static str) -> Value {
     let mut result = complete(result);
     result["ttlMs"] = json!(TTL_MS);
-    result["cacheScope"] = json!("public");
+    result["cacheScope"] = json!(cache_scope);
     result
 }
 
@@ -135,9 +138,36 @@ fn internal(e: anyhow::Error) -> RpcError {
     )
 }
 
-/// A JSON-RPC error response, with the request's id when one was read.
+/// A JSON-RPC error response, with the request's id when one was read and the error's challenge as a header.
 fn rpc_error(e: &RpcError, id: Option<&Value>) -> Response {
-    (e.status, Json(e.body(id))).into_response()
+    let mut response = (e.status, Json(e.body(id))).into_response();
+    if let Some(challenge) = &e.challenge
+        && let Ok(value) = axum::http::HeaderValue::from_str(challenge)
+    {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
+}
+
+/// This server's own code for a scope refusal's body: JSON-RPC reserves -32000 to -32099 for
+/// implementation-defined server errors, and the specification names only the status and the header.
+const INSUFFICIENT_SCOPE: i64 = -32003;
+
+/// A tool called by a connection whose scope does not allow it (kb/ADR-0029 R7): 403 with the challenge of
+/// RFC 6750 section 3.1, in both revisions. `metadata` is `auth::oauth::resource_metadata_url`. `write` includes
+/// `read`, so it is the whole scope the call needs.
+fn insufficient_scope(metadata: &str) -> RpcError {
+    RpcError {
+        status: StatusCode::FORBIDDEN,
+        code: INSUFFICIENT_SCOPE,
+        message: "Insufficient scope: this tool needs the write scope".into(),
+        data: None,
+        challenge: Some(format!(
+            r#"Bearer error="insufficient_scope", scope="write", resource_metadata="{metadata}", error_description="This tool changes the planner and needs a connection that may read and change""#
+        )),
+    }
 }
 
 fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -175,7 +205,8 @@ fn protocol_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a 
     }
 }
 
-/// The one line `serve` logs at startup about this endpoint, from the state as built.
+/// The one line `serve` logs at startup about this endpoint, from the state as built. It counts every tool; a
+/// connection that may only read is listed fewer.
 pub fn mcp_startup_line(state: &AppState) -> String {
     if !state.config.mcp.enabled {
         return "mcp endpoint disabled".into();
@@ -309,6 +340,7 @@ async fn answer(
     match (revision, msg.method.as_str()) {
         (Revision::Modern, "server/discover") => Ok(modern(
             json!({"supportedVersions": protocol::SUPPORTED, "capabilities": capabilities()}),
+            "public",
         )),
         // The answer is 2025-11-25 whatever the client asked for; the client decides whether to go on.
         (Revision::Legacy, "initialize") => Ok(json!({
@@ -318,9 +350,9 @@ async fn answer(
         })),
         (Revision::Legacy, "ping") => Ok(json!({})),
         (_, "tools/list") => {
-            let result = json!({"tools": tools::list(&s.mcp_tools)});
+            let result = json!({"tools": tools::list(&s.mcp_tools, caller.principal.scope)});
             Ok(match revision {
-                Revision::Modern => modern(result),
+                Revision::Modern => modern(result, "private"),
                 Revision::Legacy => result,
             })
         }
@@ -365,6 +397,13 @@ async fn call_tool(
     let Some(tool) = s.mcp_tools.iter().find(|t| t.name == name) else {
         return Err(invalid(format!("Unknown tool: {name}")));
     };
+    // Before anything else about the call: a connection that may only read never reaches a tool that changes
+    // something, whatever its arguments are.
+    if !tool.allowed(caller.principal.scope) {
+        return Err(insufficient_scope(
+            &crate::auth::oauth::resource_metadata_url(&s.config),
+        ));
+    }
     // `arguments` may be left out (no arguments); when present it must be a JSON object.
     let args = msg
         .params
@@ -372,12 +411,20 @@ async fn call_tool(
         .cloned()
         .unwrap_or_else(|| json!({}));
     let who = caller.acting();
-    let outcome = if args.is_object() {
-        (tool.run)(s, &who, args).await
+    // The limit on writes, after the scope and before the arguments: a refused call and a repeat count too.
+    let over = if tool.annotations.read_only {
+        None
     } else {
-        Err(ToolError::Arguments(
+        s.mcp_writes
+            .reserve(&caller.principal.email, caller.now)
+            .err()
+    };
+    let outcome = match over {
+        Some(over) => Err(ToolError::Told(limit::told(over.again, over.now))),
+        None if args.is_object() => (tool.run)(s, &who, args).await,
+        None => Err(ToolError::Arguments(
             "the arguments must be a JSON object".into(),
-        ))
+        )),
     };
     let failure =
         |message: String| json!({"content": [{"type": "text", "text": message}], "isError": true});
@@ -399,7 +446,8 @@ async fn call_tool(
             "Invalid arguments: {message}. The arguments must match this schema: {}",
             tool.input_schema
         )),
-        Err(ToolError::Told(message)) => failure(message),
+        // Bounded here, once, whichever tool or action said it.
+        Err(ToolError::Told(message)) => failure(tools::bounded(message)),
         Err(ToolError::Internal(e)) => return Err(internal(e)),
     };
     // Not cacheable: no `ttlMs`, no `cacheScope`.
@@ -407,4 +455,27 @@ async fn call_tool(
         Revision::Modern => complete(result),
         Revision::Legacy => result,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The refusal's header, exactly: RFC 6750 section 3.1 and the MCP authorization specification.
+    #[test]
+    fn a_scope_refusal_is_403_with_the_bearer_challenge() {
+        let e = insufficient_scope(
+            "https://reeve.example.com/.well-known/oauth-protected-resource/mcp",
+        );
+        assert_eq!(e.status, StatusCode::FORBIDDEN);
+        assert_eq!(e.code, -32003);
+        assert_eq!(
+            e.challenge.as_deref(),
+            Some(
+                r#"Bearer error="insufficient_scope", scope="write", resource_metadata="https://reeve.example.com/.well-known/oauth-protected-resource/mcp", error_description="This tool changes the planner and needs a connection that may read and change""#
+            )
+        );
+        // The scope it names is one this server issues.
+        assert!(crate::auth::oauth::SCOPES.contains(&"write"));
+    }
 }

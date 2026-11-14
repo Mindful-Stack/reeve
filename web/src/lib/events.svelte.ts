@@ -1,6 +1,6 @@
 import type { ActivityEntry } from '#lib/api/types.ts';
 import { createSubscriber } from 'svelte/reactivity';
-import { actionLabel, plainAction, short } from '#lib/format.ts';
+import { actionLabel, plainAction, short, viaClient } from '#lib/format.ts';
 
 /** How long a change by someone else stays highlighted on its card or row. */
 export const RECENT_MS = 10_000;
@@ -60,14 +60,15 @@ function clearRecent() {
 	live.recent = [];
 }
 
-/** "erik moved this · just now" while someone other than `me` changed `key` within the window, else null. */
+/** "erik moved this · just now" while someone other than `me` changed `key` within the window, else null; "erik moved
+ *  this via claude.ai · just now" for a change made through an MCP client. */
 export function freshNote(recent: Arrival[], key: string, me: string | undefined, now: number = Date.now()): string | null {
 	for (let i = recent.length - 1; i >= 0; i--) {
 		const { entry, arrived } = recent[i];
 		if (now - arrived >= RECENT_MS) return null;
 		if (entry.entity_key !== key || entry.actor === me) continue;
 		const words = actionLabel(entry.action, entry.payload, entry.entity_key) ?? `${plainAction(entry.action)} this`;
-		return `${short(entry.actor)} ${words} · just now`;
+		return `${short(entry.actor)} ${words}${viaClient(entry.payload)} · just now`;
 	}
 	return null;
 }

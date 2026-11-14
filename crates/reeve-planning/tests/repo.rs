@@ -748,6 +748,7 @@ fn handlers(pool: &sqlx::PgPool) -> Handlers {
 
 fn dan() -> Ctx {
     Ctx {
+        client: None,
         actor: "dan@example.com".into(),
         via: Via::Interactive,
         now: Utc.with_ymd_and_hms(2026, 10, 26, 9, 0, 0).unwrap(),

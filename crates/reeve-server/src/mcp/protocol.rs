@@ -28,6 +28,8 @@ pub(crate) struct RpcError {
     pub code: i64,
     pub message: String,
     pub data: Option<Value>,
+    /// The `WWW-Authenticate` value answered with the error, when it is an authorization failure.
+    pub challenge: Option<String>,
 }
 
 impl RpcError {
@@ -37,6 +39,7 @@ impl RpcError {
             code,
             message: message.into(),
             data: None,
+            challenge: None,
         }
     }
 
@@ -135,6 +138,7 @@ fn unsupported(requested: &str) -> RpcError {
         code: UNSUPPORTED_PROTOCOL_VERSION,
         message: format!("Unsupported protocol version; supported: {MODERN}, {LEGACY}"),
         data: Some(json!({"supported": SUPPORTED, "requested": requested})),
+        challenge: None,
     }
 }
 

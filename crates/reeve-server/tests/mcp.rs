@@ -458,7 +458,7 @@ async fn discover_and_the_tool_list_have_the_2026_shapes() {
     );
     assert_eq!(result["resultType"], "complete");
     assert_eq!(result["ttlMs"], 300000);
-    assert_eq!(result["cacheScope"], "public");
+    assert_eq!(result["cacheScope"], "private");
     assert_eq!(
         result["_meta"],
         json!({"io.modelcontextprotocol/serverInfo": server_info()})
@@ -904,7 +904,7 @@ async fn the_tool_list_matches_its_snapshot_and_every_schema_is_a_self_contained
     }
     assert_eq!(
         (&result["resultType"], &result["cacheScope"]),
-        (&json!("complete"), &json!("public"))
+        (&json!("complete"), &json!("private"))
     );
     // 2025-11-25 lists the same tools, without the 2026 fields.
     let (_, _, body) = send(&h.app, mcp_legacy(&t, Some(2), "tools/list", json!({}))).await;

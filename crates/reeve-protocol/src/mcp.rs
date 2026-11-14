@@ -5,7 +5,7 @@ use crate::activity::StoryWithReadiness;
 use crate::context::StoryContextDto;
 use crate::enums::{DeliveryState, Kind, Resolution};
 use crate::ids::Key;
-use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit};
+use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit, StoryDto};
 use crate::promise::PromisedFilter;
 use crate::readiness::Reason;
 use chrono::NaiveDate;
@@ -294,6 +294,155 @@ pub struct GetSprintInput {
     pub id: Option<i64>,
 }
 
+// `create_story` (`reeve story create`). The doc comment is the schema's root description.
+/// A new story, bug or chore.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStoryInput {
+    /// A key you make up for this one create, 1 to 100 characters, for example `slot-story-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Send the same key again only to retry the same create: a repeat writes nothing and answers the story the key already made.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// A short title, at most 200 characters.
+    pub title: String,
+    /// The kind of work; a story when left out.
+    #[schema(inline)]
+    pub kind: Option<Kind>,
+    /// The epic to place it in: the epic's key. Left out, the item is untriaged until someone places it.
+    pub epic: Option<String>,
+    /// A longer description.
+    pub description: Option<String>,
+    /// The acceptance criteria, one text each.
+    #[serde(default)]
+    pub criteria: Vec<String>,
+    /// Labels.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// The owner's email address. Set it only when the person names an owner, and use the exact address.
+    pub owner: Option<String>,
+}
+
+// `edit_story` (`reeve story edit`). The doc comment is the schema's root description.
+/// A change to one story: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditStoryInput {
+    /// The story's key.
+    pub key: String,
+    /// The story's `version` as you last read it (get_story or list_stories). If the story changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new kind.
+    #[schema(inline)]
+    pub kind: Option<Kind>,
+    /// Move the story to this epic: the epic's key. Not together with `detach_epic`.
+    pub epic: Option<String>,
+    /// True takes the story out of its epic, which makes it untriaged. Not together with `epic`.
+    #[serde(default)]
+    pub detach_epic: bool,
+    /// A new description, replacing the whole text. Never send a text that ends with `[cut: N more characters]`.
+    pub description: Option<String>,
+    /// The story's acceptance criteria, replacing the list: send every criterion the story should have, not only a new one. A criterion keeps its done mark when its text and position are unchanged. Cannot be empty.
+    pub criteria: Option<Vec<String>>,
+    /// A new owner's email address. Set it only when the person names an owner. Not together with `clear_owner`.
+    pub owner: Option<String>,
+    /// True removes the owner. Not together with `owner`.
+    #[serde(default)]
+    pub clear_owner: bool,
+    /// Labels to add to the ones the story has.
+    #[serde(default)]
+    pub add_labels: Vec<String>,
+    /// Labels to remove from the ones the story has.
+    #[serde(default)]
+    pub remove_labels: Vec<String>,
+}
+
+/// What a tool that changes a story answers: enough to see that the change happened and to make the next one
+/// (the key and the new version), and nothing whose size a person controls except the title, which the planner
+/// limits to 200 characters. So an answer is small whatever was written, and reading the story whole is
+/// `get_story`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StoryReceipt {
+    pub key: Key,
+    pub title: String,
+    pub delivery: DeliveryState,
+    pub resolution: Option<Resolution>,
+    pub version: i64,
+    /// `create_story` only: whether this call created the story. False: its idempotency key had already made
+    /// this story, and nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<bool>,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl From<StoryDto> for StoryReceipt {
+    fn from(story: StoryDto) -> Self {
+        Self {
+            key: story.key,
+            title: story.title,
+            delivery: story.delivery,
+            resolution: story.resolution,
+            version: story.version,
+            created: None,
+            note: None,
+        }
+    }
+}
+
+// `add_comment` (`reeve comment add`). The doc comment is the schema's root description.
+/// A comment on one item or on one required decision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddCommentInput {
+    /// A key you make up for this one comment, 1 to 100 characters, for example `slot-comment-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Make a new key for every comment; send the same key again only to retry the same comment: a repeat writes nothing.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// The story, epic or initiative to comment on: its key. Send this or `decision`, not both.
+    pub item: Option<String>,
+    /// The required decision to comment on: its id, a number, as list_decisions shows it. Send this or `item`, not both.
+    pub decision: Option<i64>,
+    /// The comment's text.
+    pub body: String,
+}
+
+/// What `add_comment` answers: which comment, on what, and whether this call wrote it. Not the thread: read
+/// that with `get_story`. A repeat (`created: false`) names no target: its key may have made the comment on
+/// another item.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CommentReceipt {
+    pub comment_id: i64,
+    /// The item commented on, by its key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<Key>,
+    /// The required decision commented on, by its id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<i64>,
+    /// False: the idempotency key had already made a comment, and nothing was written.
+    pub created: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+// `move_story` (`reeve story mv`). The doc comment is the schema's root description. There is no override reason,
+// and there must never be one: kb/ADR-0029 R10.
+/// A move of one story to another delivery state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveStoryInput {
+    /// The story's key.
+    pub key: String,
+    /// The state to move it to.
+    #[schema(inline)]
+    pub to: DeliveryState,
+    /// The story's `version` as you last read it (get_story or list_stories). If the story changed since, the move is refused.
+    pub version: i64,
+    /// Required when `to` is `done`, and only then: `completed` (only from in progress, in review or testing) or `dropped`.
+    #[schema(inline)]
+    pub resolution: Option<Resolution>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,6 +586,112 @@ mod tests {
                 "ready": true, "reasons": [],
                 "urgent": false, "promised_on": null
             })
+        );
+    }
+
+    /// A receipt's field names, pinned as literal JSON: `created` and `note` are sent only when set.
+    #[test]
+    fn a_story_receipt_is_these_fields() {
+        let story: crate::items::StoryDto = serde_json::from_value(json!({
+            "key": "TST-7", "title": "Pick a slot", "kind": "story", "epic": "TST-2",
+            "description": "A long description.", "criteria": [{"text": "a slot can be picked", "done": false}],
+            "owner": "bob@example.com", "labels": ["web"], "rank": 3, "blocked_by": [], "delivery": "in_progress",
+            "resolution": null, "external_ref": null, "version": 4, "prs": [], "goals": [],
+            "urgent_mark": null, "urgent_sources": []
+        }))
+        .unwrap();
+        let mut receipt = StoryReceipt::from(story);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-7", "title": "Pick a slot", "delivery": "in_progress", "resolution": null, "version": 4})
+        );
+        receipt.created = Some(false);
+        receipt.note = Some("Nothing was written.".into());
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-7", "title": "Pick a slot", "delivery": "in_progress", "resolution": null,
+                   "version": 4, "created": false, "note": "Nothing was written."})
+        );
+    }
+
+    #[test]
+    fn create_story_input_refuses_what_the_tool_withholds() {
+        let ok: CreateStoryInput =
+            serde_json::from_value(json!({"idempotency_key": "k1", "title": "Pick a slot"}))
+                .unwrap();
+        assert_eq!((ok.kind, ok.criteria.len(), ok.labels.len()), (None, 0, 0));
+        for withheld in ["external_ref", "attachments", "rank", "delivery"] {
+            let mut call = json!({"idempotency_key": "k1", "title": "Pick a slot"});
+            call[withheld] = json!("x");
+            let e = serde_json::from_value::<CreateStoryInput>(call)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "{e}");
+        }
+    }
+
+    #[test]
+    fn a_comment_receipt_names_one_target_or_none_on_a_repeat() {
+        let receipt = CommentReceipt {
+            comment_id: 41,
+            item: Some("TST-3".parse().unwrap()),
+            decision: None,
+            created: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 41, "item": "TST-3", "created": true})
+        );
+        let receipt = CommentReceipt {
+            comment_id: 42,
+            item: None,
+            decision: Some(17),
+            created: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 42, "decision": 17, "created": true})
+        );
+        let receipt = CommentReceipt {
+            comment_id: 42,
+            item: None,
+            decision: None,
+            created: false,
+            note: Some("n".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"comment_id": 42, "created": false, "note": "n"})
+        );
+    }
+
+    /// kb/ADR-0029 R10: "the move tool's input MUST NOT carry an override reason, and a call that sends one MUST
+    /// be refused." The API's `MoveStory` has the field; this type does not, and refuses it by name.
+    #[test]
+    fn move_story_input_has_no_override_reason_and_refuses_one() {
+        let ok: MoveStoryInput =
+            serde_json::from_value(json!({"key": "TST-1", "to": "in_progress", "version": 3}))
+                .unwrap();
+        assert_eq!(
+            (ok.to, ok.version, ok.resolution),
+            (DeliveryState::InProgress, 3, None)
+        );
+        for sent in [json!("the person said so"), json!(null), json!("")] {
+            let e = serde_json::from_value::<MoveStoryInput>(
+                json!({"key": "TST-1", "to": "in_progress", "version": 3, "override_reason": sent}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains("override_reason"), "{e}");
+        }
+        // The control: the API's own type accepts the same field.
+        assert!(
+            serde_json::from_value::<crate::requests::MoveStory>(
+                json!({"version": 3, "to": "in_progress", "resolution": null, "override_reason": "x"})
+            )
+            .is_ok()
         );
     }
 }

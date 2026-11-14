@@ -32,4 +32,13 @@ describe('freshNote', () => {
 		expect(cleared).toBe('erik cleared the promise on ABC-12 · just now');
 		expect(cleared).not.toContain('promise cleared this');
 	});
+	it('says which client the change was made through, after the words and before the age', () => {
+		const through = (action: string, payload: unknown): Arrival[] => [{ entry: entry('ABC-12', 'erik@example.com', action, payload), arrived: now - 1_000 }];
+		const note = (action: string, payload: unknown) => freshNote(through(action, payload), 'ABC-12', 'anna@example.com', now);
+		expect(note('moved', { from: 'todo', to: 'in_progress', client: 'claude.ai' })).toBe('erik moved this via claude.ai · just now');
+		expect(note('promise_cleared', { item_type: 'story', previous: { on: '2026-11-20', to: null }, client: 'claude.ai' })).toBe(
+			'erik cleared the promise on ABC-12 via claude.ai · just now'
+		);
+		expect(note('moved', { from: 'todo', to: 'in_progress', client: '' })).toBe('erik moved this · just now');
+	});
 });

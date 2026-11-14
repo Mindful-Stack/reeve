@@ -38,9 +38,12 @@ impl Handlers {
             &[],
         )
         .await
+        .map(|(story, _)| story)
     }
 
-    /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2).
+    /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2), and whether
+    /// this call inserted the story: false when its idempotency key already had one. The flag is the insert's own
+    /// answer, true only from the insert itself, so of two calls racing on one key exactly one is told it created.
     pub async fn create_story_attaching(
         &self,
         c: &Ctx,
@@ -54,7 +57,7 @@ impl Handlers {
         external_ref: Option<String>,
         owner: Option<String>,
         attachments: &[Uuid],
-    ) -> Result<Story, HandlerError> {
+    ) -> Result<(Story, bool), HandlerError> {
         self.create_story_reporting(
             c,
             idem,
@@ -70,7 +73,6 @@ impl Handlers {
             attachments,
         )
         .await
-        .map(|(x, _)| x)
     }
 
     /// `create_story`, and whether this call inserted it (false when its idempotency key already had one). A `delivery`
