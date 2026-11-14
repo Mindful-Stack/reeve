@@ -597,6 +597,7 @@ async fn the_read_carries_the_privacy_statement_only_when_one_is_configured() {
         let s = authorize(&f).await;
         let (status, _, body) = read(&f, &dan, &s).await;
         assert_eq!(status, 200, "{body}");
-        assert_eq!(body["value"]["privacy_url"], expected, "{body}");
+        // `get`, not indexing: an absent field indexes as null too, and the page reads null as "no statement".
+        assert_eq!(body["value"].get("privacy_url"), Some(&expected), "{body}");
     }
 }
