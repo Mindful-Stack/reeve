@@ -6,6 +6,7 @@ pub mod config;
 pub mod error;
 pub mod export;
 pub mod extract;
+mod mcp;
 pub mod ops;
 pub mod routes;
 pub mod state;
