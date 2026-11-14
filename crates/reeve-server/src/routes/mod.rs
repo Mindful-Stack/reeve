@@ -8,6 +8,7 @@ pub mod attachments;
 pub mod comments;
 pub mod config;
 pub mod connection_requests;
+pub mod connections;
 pub mod decisions;
 pub mod epics;
 pub mod events;
@@ -140,6 +141,7 @@ fn api_router(mcp_enabled: bool) -> OpenApiRouter<AppState> {
         .merge(access::router())
         .merge(config::router())
         .merge(connection_requests::router(mcp_enabled))
+        .merge(connections::router())
         .merge(import::router())
         .merge(export::router())
         .merge(plans::router())

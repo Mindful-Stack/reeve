@@ -11,7 +11,11 @@ use crate::{
     access::AccessPolicy,
     access_repo::AccessStore,
     authorization::{AuthorizationRequests, RedeemRefusal},
-    domain::{IdentityConfig, hash_secret, new_secret, random_secret, reason_text},
+    domain::{
+        IdentityConfig, Principal, Role, hash_secret, new_secret, normalise_email, random_secret,
+        reason_text,
+    },
+    handler::AuthError,
     ports::{IdentityActivity, IdentityEvent},
     repo::TokenStore,
 };
@@ -38,8 +42,8 @@ pub(crate) fn is_live(
     revoked_at.is_none() && ends_at > now
 }
 
-/// A connection as the store hands it out. Today only the refresh grant reads it; the listing of a person's
-/// connections (kb/ADR-0029 R9) arrives in the next pull request.
+/// A connection as the store hands it out: to the refresh grant, and to the listing of a person's connections
+/// (kb/ADR-0029 R9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
     pub id: i64,
@@ -421,6 +425,65 @@ pub async fn revoke_all_connections(
             .map(|(_, connections)| connections.len())
             .sum::<usize>();
     }
+}
+
+/// The owner's connections: the live ones, and those that ended or were revoked within the last thirty days,
+/// newest first (kb/ADR-0029 R9). The listing filters by date itself; it does not rely on old rows being deleted.
+pub async fn list_connections(
+    store: &dyn TokenStore,
+    owner: &str,
+    now: DateTime<Utc>,
+) -> Result<Vec<Connection>, AuthError> {
+    Ok(store
+        .list_connections(
+            &normalise_email(owner),
+            now - Duration::days(CONNECTION_DAYS),
+        )
+        .await?)
+}
+
+/// Revokes one connection: its owner may, and an admin may revoke anyone's (the later observation on
+/// kb/ADR-0029; it only reduces access). `Ok(false)` covers no such connection, not the caller's to revoke,
+/// ended, and already revoked alike, so ids cannot be probed. The connection is read to learn its owner, then
+/// the owner's row is locked, then the connection is revoked if it is still live, the entry last. Its tokens
+/// stop at their next use through `authenticate_mcp`'s check.
+pub async fn revoke_connection(
+    pool: &PgPool,
+    store: &dyn TokenStore,
+    activity: &dyn IdentityActivity,
+    who: &Principal,
+    via: Via,
+    id: i64,
+    now: DateTime<Utc>,
+) -> Result<bool, AuthError> {
+    let mut tx = pool.begin().await?;
+    let Some(found) = store.connection(&mut tx, id).await? else {
+        return Ok(false);
+    };
+    if found.owner != who.email && who.role != Role::Admin {
+        return Ok(false);
+    }
+    store.lock_user(&mut tx, &found.owner).await?;
+    let reason = RevokedReason::Revoked;
+    let revoked = store
+        .revoke_connections(&mut tx, &found.owner, Some(id), reason, now)
+        .await?;
+    if revoked.is_empty() {
+        return Ok(false);
+    }
+    record_revocations(
+        activity,
+        &mut tx,
+        &who.email,
+        via,
+        &found.owner,
+        &revoked,
+        reason,
+        now,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 #[cfg(test)]

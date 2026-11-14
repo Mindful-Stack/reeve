@@ -133,6 +133,12 @@ pub trait TokenStore: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         id: i64,
     ) -> Result<Option<Connection>, sqlx::Error>;
+    /// The owner's connections that had not stopped (ended or been revoked) by `since`, newest first.
+    async fn list_connections(
+        &self,
+        owner: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<Connection>, sqlx::Error>;
     /// Revokes the owner's live connections, or only the one named, and returns each one's id and client id, by
     /// id. A connection that is revoked already or has ended is left as it is. The caller holds the owner's
     /// `users` row lock.
@@ -363,6 +369,22 @@ impl TokenStore for PgTokenStore {
         .fetch_optional(&mut **tx)
         .await?;
         row.as_ref().map(connection_from).transpose()
+    }
+    async fn list_connections(
+        &self,
+        owner: &str,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<Connection>, sqlx::Error> {
+        let rows = sqlx::query(&format!(
+            "SELECT {CONNECTION} FROM connections c \
+             WHERE c.owner = $1 AND LEAST(c.ends_at, COALESCE(c.revoked_at, c.ends_at)) > $2 \
+             ORDER BY c.approved_at DESC, c.id DESC"
+        ))
+        .bind(owner)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(connection_from).collect()
     }
     async fn revoke_connections(
         &self,

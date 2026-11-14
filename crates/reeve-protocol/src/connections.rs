@@ -56,3 +56,24 @@ pub enum RevokedReason {
     /// The instance was restored from a backup, which ends every connection.
     Restored,
 }
+
+/// An app a person connected (kb/ADR-0029 R9): listed once, whatever tokens it has had. Never a secret or a hash.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConnectionDto {
+    pub id: i64,
+    pub owner: String,
+    pub client_id: String,
+    /// The host of the client id: the app's identity as people are shown it. Empty when the client id is not an
+    /// address (the developer command's).
+    pub client_host: String,
+    /// The name the app gave itself when it was approved.
+    pub client_name: String,
+    pub scope: Scope,
+    pub approved_at: DateTime<Utc>,
+    /// Thirty days after the approval. A connection at or past this has ended.
+    pub ends_at: DateTime<Utc>,
+    /// When the app last refreshed its token: the nearest thing to "last used" that is recorded.
+    pub refreshed_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub revoked_reason: Option<RevokedReason>,
+}
