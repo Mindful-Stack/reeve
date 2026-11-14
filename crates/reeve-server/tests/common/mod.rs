@@ -276,3 +276,73 @@ pub async fn issue_mcp_token(h: &Harness, email: &str) -> reeve_identity::Issued
     .await
     .unwrap()
 }
+
+/// The standard harness with `[mcp] enabled = true`, added to the configuration text so that parsing and validation
+/// see it.
+pub async fn mcp_harness() -> Harness {
+    harness_with(|cfg| format!("{cfg}\n[mcp]\nenabled = true\n")).await
+}
+
+/// The `_meta` every 2026-07-28 request carries.
+pub fn mcp_meta() -> serde_json::Value {
+    serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "reeve-tests", "version": "0"},
+        "io.modelcontextprotocol/clientCapabilities": {}
+    })
+}
+
+/// A 2026-07-28 request to `/mcp` as the specification's examples show one: the per-request `_meta` and the mirrored
+/// headers. Written from the same reading of the specification as the server; `tests/mcp_conformance.rs` (the SDK's
+/// client over a real port) is the check that the reading is right.
+pub fn mcp_modern(
+    token: &str,
+    id: i64,
+    method: &str,
+    mut params: serde_json::Value,
+) -> axum::http::Request<axum::body::Body> {
+    params["_meta"] = mcp_meta();
+    let mut req = axum::http::Request::post("/mcp")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", method);
+    if let Some(name) = params.get("name").and_then(|n| n.as_str()) {
+        req = req.header("mcp-name", name);
+    }
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+    req.body(axum::body::Body::from(body.to_string())).unwrap()
+}
+
+/// A 2025-11-25 message: no `_meta` version; the version header on everything but `initialize`. `id` `None` makes it
+/// a notification.
+pub fn mcp_legacy(
+    token: &str,
+    id: Option<i64>,
+    method: &str,
+    params: serde_json::Value,
+) -> axum::http::Request<axum::body::Body> {
+    let mut req = axum::http::Request::post("/mcp")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json");
+    if method != "initialize" {
+        req = req.header("mcp-protocol-version", "2025-11-25");
+    }
+    let mut body = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
+    if let Some(id) = id {
+        body["id"] = serde_json::json!(id);
+    }
+    req.body(axum::body::Body::from(body.to_string())).unwrap()
+}
+
+/// Sends a request and returns the status, the headers and the body as text (empty for no body).
+pub async fn send(
+    app: &axum::Router,
+    req: axum::http::Request<axum::body::Body>,
+) -> (u16, axum::http::HeaderMap, String) {
+    use http_body_util::BodyExt;
+    let res = call_raw(app, req).await;
+    let (status, headers) = (res.status().as_u16(), res.headers().clone());
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, String::from_utf8(bytes.to_vec()).unwrap())
+}
