@@ -176,18 +176,15 @@ fn protocol_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a 
 
 /// The one line `serve` logs at startup about this endpoint, from the state as built.
 pub fn mcp_startup_line(state: &AppState) -> String {
-    startup_line(&state.config, state.mcp_tools.len())
-}
-
-fn startup_line(config: &crate::ServerConfig, tools: usize) -> String {
-    if !config.mcp.enabled {
+    if !state.config.mcp.enabled {
         return "mcp endpoint disabled".into();
     }
     format!(
-        "mcp endpoint enabled at {} (protocol {} and {}, {tools} tools)",
-        crate::auth::oauth::resource(config),
+        "mcp endpoint enabled at {} (protocol {} and {}, {} tools)",
+        crate::auth::oauth::resource(&state.config),
         protocol::MODERN,
-        protocol::LEGACY
+        protocol::LEGACY,
+        state.mcp_tools.len()
     )
 }
 
@@ -409,22 +406,4 @@ async fn call_tool(
         Revision::Modern => complete(result),
         Revision::Legacy => result,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const BASE: &str = "database_url = \"postgres://x\"\nkey_prefix = \"TST\"\nallowed_domains = [\"example.com\"]\nadmins = [\"admin@example.com\"]\npublic_url = \"https://reeve.example.com\"\n[oidc]\nprovider = \"google\"\nclient_id = \"i\"\nclient_secret = \"s\"\n";
-
-    #[test]
-    fn the_startup_line_says_whether_and_where_mcp_is_served() {
-        let off = crate::ServerConfig::parse(BASE).unwrap();
-        assert_eq!(startup_line(&off, 3), "mcp endpoint disabled");
-        let on = crate::ServerConfig::parse(&format!("{BASE}[mcp]\nenabled = true\n")).unwrap();
-        assert_eq!(
-            startup_line(&on, 3),
-            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 3 tools)"
-        );
-    }
 }

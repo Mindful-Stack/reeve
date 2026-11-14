@@ -794,6 +794,30 @@ async fn call_get_story(h: &Harness, token: &str, arguments: Value) -> (u16, Val
     (status, rpc(&body))
 }
 
+/// The startup line counts the tools `tools/list` answers, from the same built state; and says so only when the
+/// endpoint is on.
+#[tokio::test]
+async fn the_startup_line_says_whether_and_where_mcp_is_served_and_counts_the_listed_tools() {
+    let off = harness().await;
+    assert_eq!(
+        reeve_server::mcp_startup_line(&off.state),
+        "mcp endpoint disabled"
+    );
+
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    let (status, _, body) = send(&h.app, mcp_modern(&t, 1, "tools/list", json!({}))).await;
+    assert_eq!(status, 200, "{body}");
+    let listed = rpc(&body)["result"]["tools"].as_array().unwrap().len();
+    assert!(listed > 1, "the control: {listed} tools are listed");
+    assert_eq!(
+        reeve_server::mcp_startup_line(&h.state),
+        format!(
+            "mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, {listed} tools)"
+        )
+    );
+}
+
 /// The last guard and the bounded echo, through the dispatch: neither is a tool's own doing.
 #[tokio::test]
 async fn an_answer_too_large_to_send_is_a_tool_error_and_an_echoed_key_is_bounded() {
