@@ -11,7 +11,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
     AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken, Role,
     TokenKind, Via, authenticate_api, authenticate_mcp, disable_user, hash_secret, issue_mcp_token,
-    issue_token, list_tokens, make_token_store, revoke_all_for, revoke_token,
+    issue_token, list_tokens, make_token_store, revoke_token,
 };
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
@@ -429,8 +429,7 @@ async fn each_audience_authenticates_only_through_its_own_function() {
 }
 
 #[tokio::test]
-async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_bulk_revocation_sees_all()
-{
+async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_disabling_sees_all() {
     let (_db, pool) = common::pg().await;
     let store = make_token_store(pool.clone());
     let api = issue_api(&pool).await;
@@ -462,7 +461,8 @@ async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_bulk_r
             .await
             .is_ok()
     );
-    let n = revoke_all_for(
+    // Disabling covers every audience (kb/ADR-0015 R6).
+    disable_user(
         &pool,
         &*store,
         &NoLog,
@@ -473,10 +473,6 @@ async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_bulk_r
     )
     .await
     .unwrap();
-    assert_eq!(
-        n, 2,
-        "bulk revocation covers every audience (kb/ADR-0015 R6)"
-    );
     assert!(
         authenticate_mcp(&*store, &policy(), &mcp.secret, now())
             .await

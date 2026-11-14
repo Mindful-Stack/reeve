@@ -416,3 +416,84 @@ pub async fn set_guest_allowed(h: &Harness, allowed: bool) {
     };
     query.execute(&h.state.pool).await.unwrap();
 }
+
+pub type Answered = tokio::task::JoinHandle<(u16, axum::http::HeaderMap, Value)>;
+
+/// Starts a request against the router without waiting for its answer.
+pub fn start(f: &Flow, req: Request<Body>) -> Answered {
+    let app = f.h.app.clone();
+    tokio::spawn(async move { answer_of(&app, req).await })
+}
+
+/// Waits until `n` backends of this test's database wait for a lock. Bounded: when the request under test never
+/// waits for the lock the test holds, this panics instead of hanging.
+pub async fn until_waiting(h: &Harness, n: i64) {
+    let waiting = async {
+        loop {
+            let now: i64 = sqlx::query_scalar(
+                "SELECT count(DISTINCT l.pid) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.datname = current_database()",
+            )
+            .fetch_one(&h.state.pool)
+            .await
+            .unwrap();
+            if now >= n {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), waiting)
+        .await
+        .expect("no request waited for the lock this test holds: the flow does not take it, or takes it later than the test assumes");
+}
+
+/// Whether another transaction holds a lock on the row `id` of `table`, asked without waiting.
+pub async fn locked(h: &Harness, table: &str, id: i64) -> bool {
+    let mut probe = h.state.pool.begin().await.unwrap();
+    let got = sqlx::query(&format!(
+        "SELECT 1 FROM {table} WHERE id = $1 FOR UPDATE NOWAIT"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *probe)
+    .await;
+    // Rolled back before answering: a probe that found the row free must not keep it locked.
+    probe.rollback().await.unwrap();
+    match got {
+        Ok(Some(_)) => false,
+        Ok(None) => panic!("{table} has no row {id}"),
+        Err(e) => {
+            let code = e
+                .as_database_error()
+                .and_then(|d| d.code())
+                .map(|c| c.into_owned());
+            assert_eq!(
+                code.as_deref(),
+                Some("55P03"),
+                "lock_not_available expected: {e}"
+            );
+            true
+        }
+    }
+}
+
+/// The ids of the token row and the refresh token row a client holds.
+pub async fn rows_of(h: &Harness, c: &Connected) -> (i64, i64) {
+    let id = |sql: &'static str, secret: &str| {
+        let (pool, hash) = (h.state.pool.clone(), reeve_identity::hash_secret(secret));
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .bind(hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    (
+        id("SELECT id FROM tokens WHERE hash = $1", &c.access_token).await,
+        id(
+            "SELECT id FROM refresh_tokens WHERE hash = $1",
+            &c.refresh_token,
+        )
+        .await,
+    )
+}

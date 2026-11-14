@@ -1,12 +1,14 @@
 use crate::{
     access::AccessPolicy,
-    connections::{CONNECTION_DAYS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live},
+    connections::{
+        CONNECTION_DAYS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations,
+    },
     domain::*,
     ports::*,
     repo::{TokenRow, TokenStore, TokenSummary, UserRow},
 };
 use chrono::{DateTime, Utc};
-use reeve_protocol::{Scope, Via};
+use reeve_protocol::{RevokedReason, Scope, Via};
 use sqlx::PgPool;
 
 #[derive(Debug, thiserror::Error)]
@@ -292,36 +294,8 @@ pub async fn authenticate_mcp(
     })
 }
 
-pub async fn revoke_all_for(
-    pool: &PgPool,
-    store: &dyn TokenStore,
-    activity: &dyn IdentityActivity,
-    actor: &str,
-    via: Via,
-    email: &str,
-    now: DateTime<Utc>,
-) -> Result<u64, AuthError> {
-    let email = normalise_email(email);
-    let mut tx = pool.begin().await?;
-    let n = store.revoke_all_for(&mut tx, &email, now).await?;
-    activity
-        .record(
-            &mut tx,
-            IdentityEvent {
-                at: now,
-                actor: actor.into(),
-                via,
-                subject: email,
-                action: "tokens_revoked",
-                payload: serde_json::json!({"count": n}),
-            },
-        )
-        .await?;
-    tx.commit().await?;
-    Ok(n)
-}
-
-/// Disable and revoke commit together (kb/ADR-0015 R6, kb/ADR-0010 R5). Works for a user not yet seen.
+/// Disable and revoke commit together: the user's connections and tokens (kb/ADR-0015 R6, kb/ADR-0029 R9,
+/// kb/ADR-0010 R5). Works for a user not yet seen.
 pub async fn disable_user(
     pool: &PgPool,
     store: &dyn TokenStore,
@@ -333,8 +307,24 @@ pub async fn disable_user(
 ) -> Result<(), AuthError> {
     let email = normalise_email(email);
     let mut tx = pool.begin().await?;
+    // The user's row first (`set_disabled` locks it even when the flag does not change), the entries last.
+    // Disabling revokes every live connection (kb/ADR-0029 R9); enabling again revives none.
     store.set_disabled(&mut tx, &email, true, now).await?;
+    let connections = store
+        .revoke_connections(&mut tx, &email, None, RevokedReason::UserDisabled, now)
+        .await?;
     let n = store.revoke_all_for(&mut tx, &email, now).await?;
+    record_revocations(
+        activity,
+        &mut tx,
+        actor,
+        via,
+        &email,
+        &connections,
+        RevokedReason::UserDisabled,
+        now,
+    )
+    .await?;
     activity
         .record(
             &mut tx,

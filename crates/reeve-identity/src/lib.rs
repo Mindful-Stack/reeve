@@ -47,7 +47,7 @@ pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
 pub use handler::{
     AuthError, IssuedToken, SESSION_LABEL, VerifiedIdentity, authenticate_api, authenticate_mcp,
     disable_user, enable_user, issue_mcp_token, issue_token, list_tokens, list_users,
-    list_users_in, revoke_all_for, revoke_token, sign_in,
+    list_users_in, revoke_token, sign_in,
 };
 pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]
