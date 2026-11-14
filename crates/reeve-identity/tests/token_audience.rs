@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
     AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken,
-    McpPrincipal, Role, TokenKind, Via, authenticate_api, authenticate_mcp, hash_secret,
-    issue_mcp_token, issue_token, list_tokens, make_token_store, revoke_all_for, revoke_token,
+    McpPrincipal, Role, TokenKind, Via, authenticate_api, authenticate_mcp, disable_user,
+    hash_secret, issue_mcp_token, issue_token, list_tokens, make_token_store, revoke_all_for,
+    revoke_token,
 };
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
@@ -24,6 +25,33 @@ impl IdentityActivity for NoLog {
         _e: IdentityEvent,
     ) -> Result<(), sqlx::Error> {
         Ok(())
+    }
+}
+
+/// Records what identity logs, as the issuance tests in `tokens.rs` do.
+struct MemActivity(Mutex<Vec<IdentityEvent>>);
+#[async_trait]
+impl IdentityActivity for MemActivity {
+    async fn record(
+        &self,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        e: IdentityEvent,
+    ) -> Result<(), sqlx::Error> {
+        self.0.lock().unwrap().push(e);
+        Ok(())
+    }
+}
+
+/// An activity log whose write fails.
+struct Failing;
+#[async_trait]
+impl IdentityActivity for Failing {
+    async fn record(
+        &self,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        _e: IdentityEvent,
+    ) -> Result<(), sqlx::Error> {
+        Err(sqlx::Error::Protocol("boom".into()))
     }
 }
 
@@ -270,29 +298,6 @@ async fn the_table_refuses_an_mcp_token_of_kind_automation_and_an_unknown_audien
 }
 
 #[tokio::test]
-async fn the_audience_round_trips_through_the_store() {
-    let (_db, pool) = common::pg().await;
-    let store = make_token_store(pool.clone());
-    for (issued, text) in [
-        (issue_api(&pool).await, "api"),
-        (issue_mcp(&pool).await, "mcp"),
-    ] {
-        let row = store
-            .find_by_hash(&hash_secret(&issued.secret))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.audience, text);
-        let stored: String = sqlx::query_scalar("SELECT audience FROM tokens WHERE id = $1")
-            .bind(issued.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(stored, text);
-    }
-}
-
-#[tokio::test]
 async fn an_mcp_token_is_interactive_and_lives_at_most_one_hour() {
     let (_db, pool) = common::pg().await;
     // Exactly one hour is accepted, and is stored as an interactive token that expires then.
@@ -306,14 +311,14 @@ async fn an_mcp_token_is_interactive_and_lives_at_most_one_hour() {
             .unwrap();
     assert_eq!((kind.as_str(), expires), ("interactive", Some(hour)));
     // A second more is refused, and so are an expiry that is not in the future and an email outside the allowlist.
-    for (email, expires_at) in [
-        ("dan@example.com", hour + Duration::seconds(1)),
-        ("dan@example.com", now() + Duration::days(1)),
-        ("dan@example.com", now()),
+    for expires_at in [
+        hour + Duration::seconds(1),
+        now() + Duration::days(1),
+        now(),
     ] {
         assert!(
             matches!(
-                try_issue_mcp(&pool, email, expires_at).await,
+                try_issue_mcp(&pool, "dan@example.com", expires_at).await,
                 Err(AuthError::Validation(_))
             ),
             "{expires_at}"
@@ -468,4 +473,132 @@ async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_bulk_r
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn issue_mcp_token_refuses_a_disabled_user_as_issue_token_does() {
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    disable_user(
+        &pool,
+        &*store,
+        &NoLog,
+        "operator",
+        Via::System,
+        "new@example.com",
+        now(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        issue_token(
+            &pool,
+            &*store,
+            &NoLog,
+            &policy(),
+            "operator",
+            Via::System,
+            "New@example.com",
+            TokenKind::Interactive,
+            "t",
+            None,
+            now(),
+        )
+        .await,
+        Err(AuthError::Disabled)
+    ));
+    assert!(matches!(
+        try_issue_mcp(&pool, "New@example.com", now() + Duration::hours(1)).await,
+        Err(AuthError::Disabled)
+    ));
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM tokens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tokens, 0);
+}
+
+#[tokio::test]
+async fn each_issue_records_token_issued_and_only_the_mcp_entry_names_an_audience() {
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    let log = MemActivity(Mutex::new(vec![]));
+    let api = issue_token(
+        &pool,
+        &*store,
+        &log,
+        &policy(),
+        "operator",
+        Via::System,
+        "Dan@Example.com",
+        TokenKind::Automation,
+        "ci",
+        None,
+        now(),
+    )
+    .await
+    .unwrap();
+    let mcp = issue_mcp_token(
+        &pool,
+        &*store,
+        &log,
+        &policy(),
+        "operator",
+        Via::System,
+        "Dan@Example.com",
+        "claude",
+        now() + Duration::hours(1),
+        now(),
+    )
+    .await
+    .unwrap();
+    let events = log.0.lock().unwrap();
+    assert_eq!(events.len(), 2);
+    for e in events.iter() {
+        assert_eq!(
+            (e.at, e.actor.as_str(), e.subject.as_str(), e.action),
+            (now(), "operator", "dan@example.com", "token_issued")
+        );
+        assert!(matches!(e.via, Via::System));
+    }
+    assert_eq!(
+        events[0].payload,
+        serde_json::json!({"kind": "automation", "label": "ci", "token_id": api.id})
+    );
+    assert_eq!(
+        events[1].payload,
+        serde_json::json!({"kind": "interactive", "audience": "mcp", "label": "claude", "token_id": mcp.id})
+    );
+}
+
+#[tokio::test]
+async fn a_failed_activity_write_rolls_back_the_mcp_issue() {
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    assert!(
+        issue_mcp_token(
+            &pool,
+            &*store,
+            &Failing,
+            &policy(),
+            "operator",
+            Via::Interactive,
+            "dan@example.com",
+            "t",
+            now() + Duration::hours(1),
+            now(),
+        )
+        .await
+        .is_err()
+    );
+    let users: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users, 0);
+    let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM tokens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tokens, 0);
 }

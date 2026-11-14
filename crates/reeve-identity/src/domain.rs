@@ -61,10 +61,10 @@ pub(crate) fn kind_from(s: &str) -> Option<TokenKind> {
     }
 }
 
-/// Where a token works (kb/ADR-0029 R5, R6). Not a token kind (kb/ADR-0015 R7): an MCP token is an interactive
-/// token whose audience is the MCP endpoint. Private to this crate (not exported from `lib.rs`): a caller of this
-/// crate never names an audience, it calls `issue_token` or `issue_mcp_token`, `authenticate_api` or
-/// `authenticate_mcp`.
+/// Where a token works (kb/ADR-0029 R5, R6): the API or the MCP endpoint. Not a third token kind (kb/ADR-0015 R7):
+/// an MCP token is an interactive token whose audience is the MCP endpoint. Exported because the port `TokenStore`
+/// names it in `insert_token`; a caller outside this crate chooses an audience only by calling `issue_token` or
+/// `issue_mcp_token`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Audience {
     /// The API, the event stream, attachments and the session cookie.

@@ -16,7 +16,8 @@ pub use access::{
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
 pub use domain::{
-    IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret, normalise_email,
+    Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
+    normalise_email,
 };
 #[cfg(feature = "static-oidc")]
 pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
