@@ -42,6 +42,9 @@ commit the snapshot.
 **A wire change is one commit:** the type in `reeve-protocol`, the snapshot (`UPDATE_SNAPSHOTS=1 cargo test -p
 reeve-server --test openapi_snapshot`) and the client types (`cd web && npm run gen`, which rewrites
 `web/src/lib/api/schema.d.ts`), committed together. The client never defines a DTO by hand.
+An MCP tool is wire as well: its `…Input` type in `reeve-protocol`, its annotations and the tool-list snapshot
+(`UPDATE_SNAPSHOTS=1 scripts/test.sh -p reeve-server --features reeve-server/static-oidc --test mcp the_tool_list`,
+which rewrites `crates/reeve-server/tests/snapshots/mcp_tools.json`) change in one commit.
 
 Two rules the tests pin and no change may break: the GitHub webhook MUST NOT move a story (no path to `move_story`,
 no write to delivery, resolution or version; pull-request status is informational), and the importer MUST NOT write

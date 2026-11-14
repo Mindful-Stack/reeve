@@ -2,6 +2,7 @@
 //! type, and its `inputSchema` is generated from that type; so an input type is flat (or uses `#[schema(inline)]`,
 //! never a reference to another schema) and refuses unknown fields.
 use crate::context::StoryContextDto;
+use crate::items::SearchHit;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -21,6 +22,23 @@ pub struct StoryContextResult {
     pub context: StoryContextDto,
     /// How many older comments were left out; 0 when every comment is sent.
     pub comments_omitted: usize,
+}
+
+/// `search_items`: find items by text (`reeve search <text>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SearchItemsInput {
+    /// The text to find, 1 to 200 characters: a word or phrase from a title, brief or description, or a key.
+    pub text: String,
+}
+
+/// What `search_items` answers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SearchItemsResult {
+    /// At most 50 hits, best match first.
+    pub hits: Vec<SearchHit>,
+    /// How many more hits were found than `hits` lists, left out to keep the answer small; 0 when all are listed.
+    pub omitted: usize,
 }
 
 #[cfg(test)]

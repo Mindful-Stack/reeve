@@ -3,6 +3,7 @@
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod bound;
 mod get_story;
+mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
 use futures_util::future::BoxFuture;
@@ -65,7 +66,7 @@ pub(crate) struct Tool {
 
 /// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions.
 pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
-    vec![get_story::tool(key_prefix)]
+    vec![search_items::tool(key_prefix), get_story::tool(key_prefix)]
 }
 
 /// `tools/list`'s `tools` array. The field names are the same in the 2026-07-28 and the 2025-11-25 schema.

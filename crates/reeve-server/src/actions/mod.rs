@@ -8,12 +8,14 @@
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
 //! passes what it parsed, and a tool is an adapter that turns its own narrower input into the route's and calls the
 //! same action. A check that sits in a route function moves into the action when that route gets a tool.
+mod search;
 mod story_context;
 
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
+pub(crate) use search::{SearchQuery, search};
 pub(crate) use story_context::story_context;
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
