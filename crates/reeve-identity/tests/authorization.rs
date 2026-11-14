@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
     AuthError, AuthorizationRequests, ClientPolicy, CodeChallenge, FakeClientHost,
     IdentityActivity, IdentityEvent, Principal, Role, Scope, TokenKind, Via, approve_request,
-    make_loopback_client_fetcher, refuse_request, resolve_client,
+    make_loopback_client_fetcher, read_request, refuse_request, resolve_client,
 };
 use std::sync::Mutex;
 
@@ -188,10 +188,10 @@ async fn an_approval_whose_entry_cannot_be_written_returns_no_code() {
     );
 }
 
-/// Catches an automation token that can answer (kb/ADR-0015 R7), and a refusal by kind that consumed the
+/// Catches an automation token that can read or answer (kb/ADR-0015 R7), and a refusal by kind that consumed the
 /// request.
 #[tokio::test]
-async fn an_automation_token_can_neither_approve_nor_refuse() {
+async fn an_automation_token_can_neither_read_nor_approve_nor_refuse() {
     let (_db, pool) = common::pg().await;
     let requests = AuthorizationRequests::new();
     let (id, approval, _, _host) = pending(&requests).await;
@@ -214,6 +214,8 @@ async fn an_automation_token_can_neither_approve_nor_refuse() {
     );
     let refused = refuse_request(&requests, &bot, &id, &approval, now());
     assert!(matches!(refused, Err(AuthError::Forbidden)), "{refused:?}");
+    let read = read_request(&requests, &bot, &id, now());
+    assert!(matches!(read, Err(AuthError::Forbidden)), "{read:?}");
     assert!(log.0.lock().unwrap().is_empty());
     // The control: the same request, value and token id answer for an interactive token.
     let back = refuse_request(

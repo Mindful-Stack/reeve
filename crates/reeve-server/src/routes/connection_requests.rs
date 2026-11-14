@@ -1,6 +1,6 @@
 //! `/connection-requests`: what the approval page (`/connect` in the web client) reads and answers
 //! (kb/ADR-0029 R4, R11). The request itself is held by `reeve_identity::AuthorizationRequests`; these routes add
-//! the browser's proof, the connect cookie. Any interactive API token of the person may answer (as a session
+//! the browser's proof, the connect cookie. Any interactive API token of the person may read and answer (as a session
 //! cookie, with the client header, or as a bearer header): the proofs are the token's kind, the connect cookie,
 //! and the approval value bound to the token that read the request. A request that is unknown, expired, answered
 //! or another browser's is one and the same 404. The routes' own middleware, `guard`, runs before any extractor:
@@ -75,9 +75,7 @@ async fn read(
     ApiPath(id): ApiPath<String>,
 ) -> Result<Json<Response<ConnectionRequestDto>>, AppError> {
     bound(&s, &headers, &id)?;
-    let view = s
-        .authorization_requests
-        .read(&id, c.0.token_id, c.1)
+    let view = reeve_identity::read_request(&s.authorization_requests, &c.0, &id, c.1)?
         .ok_or(AppError::NotFound)?;
     Ok(ok(ConnectionRequestDto {
         client_host: view.client_host,

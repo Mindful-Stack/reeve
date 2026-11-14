@@ -135,6 +135,20 @@ async fn a_request_is_read_only_signed_in_and_in_the_browser_that_started_it() {
     );
 }
 
+/// Catches a read by an automation token (kb/ADR-0015 R7), which would hand it an approval value and mark the
+/// request read. The control: an interactive token still reads it afterwards, and approves with that value.
+#[tokio::test]
+async fn an_automation_token_cannot_read_a_request() {
+    let f = flow().await;
+    let s = authorize(&f).await;
+    let (status, headers, body) = read(&f, &f.h.bot_token, &s).await;
+    assert_eq!((status, is_no_store(&headers)), (403, true), "{body}");
+    assert_eq!(body["value"]["approval"], Value::Null, "{body}");
+    let dan = f.h.admin_token.clone();
+    let value = approval(&f, &dan, &s).await;
+    assert_eq!(approve(&f, &dan, &s, &value, "read").await.0, 200);
+}
+
 /// Catches an approval that sends the browser anywhere but the validated address, one without `state` or `iss`,
 /// one a cache may keep, one that leaves the connect cookie or the request alive, and a missing, wrong or
 /// uncommitted activity entry (it is read back through the API, on another connection).

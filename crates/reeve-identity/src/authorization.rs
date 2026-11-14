@@ -334,11 +334,33 @@ impl AuthorizationRequests {
     }
 }
 
+/// Only an interactive token may read or answer a request: an automation token must never become an interactive
+/// MCP token (kb/ADR-0015 R7), and a read hands out an approval value and marks the request read.
+fn interactive(who: &Principal) -> Result<(), AuthError> {
+    if who.token_kind == TokenKind::Interactive {
+        Ok(())
+    } else {
+        Err(AuthError::Forbidden)
+    }
+}
+
+/// Read, for the approval page: what it shows, with a fresh approval value bound to `who`'s token.
+/// `Ok(None)`: the request is unknown, expired or answered. `Forbidden`: an automation token.
+pub fn read_request(
+    requests: &AuthorizationRequests,
+    who: &Principal,
+    id: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<RequestView>, AuthError> {
+    interactive(who)?;
+    Ok(requests.read(id, who.token_id, now))
+}
+
 /// Approve (kb/ADR-0029 R4, R9): the request gets its code, the `connection_approved` entry is written and
 /// committed, and only then is the code returned. If the entry cannot be written the request is forgotten and
 /// the error returned: no code reaches anyone unless the entry committed, and the person connects again.
 /// `Ok(None)`: the request is unknown, expired, answered, or the value or token is not the current one.
-/// `Forbidden`: an automation token, which must never become an interactive MCP token (kb/ADR-0015 R7).
+/// `Forbidden`: an automation token.
 #[allow(clippy::too_many_arguments)]
 pub async fn approve_request(
     pool: &PgPool,
@@ -350,9 +372,7 @@ pub async fn approve_request(
     scope: Scope,
     now: DateTime<Utc>,
 ) -> Result<Option<(ReturnAddress, String)>, AuthError> {
-    if who.token_kind != TokenKind::Interactive {
-        return Err(AuthError::Forbidden);
-    }
+    interactive(who)?;
     let Some((back, code, client_id)) =
         requests.approve(id, approval, who.token_id, &who.email, scope, now)
     else {
@@ -391,9 +411,7 @@ pub fn refuse_request(
     approval: &str,
     now: DateTime<Utc>,
 ) -> Result<Option<ReturnAddress>, AuthError> {
-    if who.token_kind != TokenKind::Interactive {
-        return Err(AuthError::Forbidden);
-    }
+    interactive(who)?;
     Ok(requests.refuse(id, approval, who.token_id, now))
 }
 
