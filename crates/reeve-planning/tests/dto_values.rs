@@ -497,7 +497,8 @@ fn queue_summary_dto_carries_every_count() {
 }
 
 /// An old server's queue (no field added by the lanes change or the readiness queue) still reads: a new client against
-/// an older server, its `review` lane included (no longer sent, still read).
+/// an older server, its `review` lane included (no longer sent, still read). The `review` entry guards against removing
+/// `QueueLane::Review`: an older server still sends it.
 #[test]
 fn an_older_servers_queue_json_reads_with_defaults() {
     let old = json!({
@@ -895,6 +896,13 @@ fn needed_in_reason_promise_carries_every_field() {
 #[test]
 fn needed_in_reason_now_rules_carry_every_field() {
     for (r, want) in [
+        (
+            NeededInReason::Urgent {
+                key: k("ABC-5"),
+                level: ItemType::Epic,
+            },
+            json!({"kind": "urgent", "key": "ABC-5", "level": "epic"}),
+        ),
         (
             NeededInReason::TargetMonth {
                 month: "2026-11".into(),

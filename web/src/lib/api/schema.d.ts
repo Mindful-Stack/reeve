@@ -1269,9 +1269,8 @@ export interface components {
             owner: string | null;
             title: string;
             /**
-             * @description Urgent on the queue's snapshot (kb/ADR-0024 R5), shown only: the queue orders Now rows by their item, never by
-             *     this flag, and never places or counts by urgency (kb/ADR-0024 R7). Servers always send it; JSON without it
-             *     reads as false.
+             * @description Urgent on the queue's snapshot (kb/ADR-0024 R5). This story flag is shown only: the queue never places or
+             *     counts by it. Servers always send it; JSON without it reads as false.
              */
             urgent: boolean;
         };

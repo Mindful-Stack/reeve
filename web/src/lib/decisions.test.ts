@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RequiredDecision } from '#lib/api/types.ts';
+import type { NeededInReason, RequiredDecision } from '#lib/api/types.ts';
 import {
 	LANE_LABEL,
 	LANE_ORDER,
@@ -193,6 +193,26 @@ describe('next step and needed-in wording', () => {
 		expect(nextStepText({ kind: 'await_check' }, null)).toBe('Waiting for the check (never ran)');
 		const now = Date.parse('2026-11-10T12:00:00Z');
 		expect(nextStepText({ kind: 'await_check', checked_at: '2026-11-10T09:00:00Z' }, null, now)).toBe('Waiting for the check (last ran 3h ago)');
+	});
+
+	it('reads the Now rules: links for urgent and decision_due, nothing more without the row', () => {
+		const board = new URL('https://reeve.test/board');
+		const rules: NeededInReason[] = [
+			{ kind: 'urgent', key: 'ABC-5', level: 'epic' },
+			{ kind: 'urgent', key: 'ABC-6', level: 'story' },
+			{ kind: 'target_month', month: '2026-11' },
+			{ kind: 'decision_due', id: 20 },
+			{ kind: 'held' }
+		];
+		expect(reasonHref(rules[0], board)).toBe('/epics/ABC-5');
+		expect(reasonHref(rules[1], board)).toBe('/board?story=ABC-6');
+		expect(reasonHref(rules[3], board)).toBe('/board?decision=20');
+		expect(reasonHref(rules[2], board)).toBeNull();
+		expect(reasonHref(rules[4], board)).toBeNull();
+		for (const r of rules) {
+			expect(neededInText(r)).toBe('needed (reason not shown)');
+			expect(reasonParts(r)).toBeNull();
+		}
 	});
 
 	it('says why a decision is needed and in which sprint', () => {

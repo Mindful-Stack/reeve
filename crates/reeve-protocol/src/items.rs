@@ -172,9 +172,8 @@ pub struct AffectedStoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub owner: Option<String>,
-    /// Urgent on the queue's snapshot (kb/ADR-0024 R5), shown only: the queue orders Now rows by their item, never by
-    /// this flag, and never places or counts by urgency (kb/ADR-0024 R7). Servers always send it; JSON without it
-    /// reads as false.
+    /// Urgent on the queue's snapshot (kb/ADR-0024 R5). This story flag is shown only: the queue never places or
+    /// counts by it. Servers always send it; JSON without it reads as false.
     #[serde(default)]
     #[schema(required = true)]
     pub urgent: bool,
