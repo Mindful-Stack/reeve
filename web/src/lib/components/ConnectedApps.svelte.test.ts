@@ -1,21 +1,37 @@
 // @vitest-environment jsdom
-// "Connected apps": the list, what each row offers, what Revoke sends, and that it follows live updates.
+// "Connected apps": the list, what each row offers, what Revoke sends, and that it follows live updates and the clock.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Connection } from '#lib/api/types.ts';
 import { connection } from '#lib/test/fixtures.ts';
+import { settle } from '#lib/test/net.ts';
 
 const liveFns = vi.hoisted(() => [] as (() => unknown)[]);
-vi.mock('#lib/events.svelte.ts', () => ({ onLive: (fn: () => unknown) => void liveFns.push(fn) }));
+const polls = vi.hoisted(() => [] as { run: () => unknown; period: number }[]);
+// The real minute clock; the live stream and the visible-tab timer are captured and run by hand.
+vi.mock('#lib/events.svelte.ts', async (orig) => ({
+	...(await orig<typeof import('#lib/events.svelte.ts')>()),
+	onLive: (fn: () => unknown) => void liveFns.push(fn),
+	everyVisible: (run: () => unknown, period: number) => void polls.push({ run, period })
+}));
+type Deferred = { resolve: (rows: unknown[]) => void; reject: (e: Error) => void };
 const net = vi.hoisted(() => ({
 	calls: [] as { method: string; path: string; init: unknown }[],
 	rows: [] as unknown[],
-	fail: null as Error | null
+	fail: null as Error | null,
+	failDelete: null as Error | null,
+	/** When set, each GET waits here until the test settles it. */
+	pending: null as Deferred[] | null
 }));
 vi.mock('#lib/api/client.ts', () => {
 	const respond = (method: string) => async (path: string, init: unknown) => {
 		net.calls.push({ method, path, init });
 		if (net.fail) throw net.fail;
+		if (method === 'DELETE' && net.failDelete) throw net.failDelete;
+		if (method === 'GET' && net.pending) {
+			const pending = net.pending;
+			return new Promise((resolve, reject) => void pending.push({ resolve, reject }));
+		}
 		return method === 'GET' ? net.rows : {};
 	};
 	return {
@@ -46,7 +62,10 @@ afterEach(() => {
 	net.calls.length = 0;
 	net.rows = [];
 	net.fail = null;
+	net.failDelete = null;
+	net.pending = null;
 	liveFns.length = 0;
+	polls.length = 0;
 	asked = [];
 	confirmed = true;
 	vi.useRealTimers();
@@ -91,7 +110,7 @@ describe('ConnectedApps', () => {
 		confirmed = false;
 		revokeButton(7)!.click();
 		flushSync();
-		expect(asked).toEqual(['Revoke client.example for bob@example.com? It stops working at once and has to be connected again.']);
+		expect(asked).toEqual(['Revoke client.example for bob@example.com? A chat using it stops at its next step and has to be connected again.']);
 		expect(net.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
 		confirmed = true;
 		revokeButton(7)!.click();
@@ -103,7 +122,7 @@ describe('ConnectedApps', () => {
 		await open([connection()]);
 		confirmed = false;
 		revokeButton(7)!.click();
-		expect(asked).toEqual(['Revoke client.example? It stops working at once and has to be connected again.']);
+		expect(asked).toEqual(['Revoke client.example? A chat using it stops at its next step and has to be connected again.']);
 	});
 
 	// Every way a connection stops: its reason, no Revoke, and its dates still there.
@@ -134,6 +153,62 @@ describe('ConnectedApps', () => {
 		flushSync();
 		expect(rowOf(7).textContent).toContain('Ended 2026-11-14: the account was disabled');
 		expect(revokeButton(7)).toBeNull();
+	});
+
+	// Catches a failed revoke that leaves the list as it was: the connection may have been revoked elsewhere meanwhile.
+	it('a failed revoke says why and reloads the list', async () => {
+		await open([connection()]);
+		net.failDelete = new Error('gone');
+		revokeButton(7)!.click();
+		await vi.waitFor(() => expect(net.calls.filter((c) => c.method === 'GET')).toHaveLength(2));
+		await vi.waitFor(() => expect(document.body.textContent).toContain('gone'));
+		expect(net.calls.map((c) => c.method)).toEqual(['GET', 'DELETE', 'GET']);
+	});
+
+	// Two reloads overlap (a live update during a revoke's reload). Catches an older answer, success or failure, that
+	// lands after the newer one and overwrites it.
+	it('an older answer that arrives after a newer one is dropped', async () => {
+		await open([connection()]);
+		const pending: Deferred[] = [];
+		net.pending = pending;
+		void liveFns[0]();
+		void liveFns[0]();
+		expect(pending).toHaveLength(2);
+		pending[1].resolve([connection({ id: 8 })]);
+		await vi.waitFor(() => expect(rowOf(8)).not.toBeNull());
+		pending[0].reject(new Error('late failure'));
+		await settle();
+		flushSync();
+		expect(document.body.textContent).not.toContain('late failure');
+		expect(rowOf(8)).not.toBeNull();
+
+		void liveFns[0]();
+		void liveFns[0]();
+		pending[3].reject(new Error('newest failed'));
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Could not load connected apps: newest failed'));
+		pending[2].resolve([connection({ id: 9 })]);
+		await settle();
+		flushSync();
+		expect(document.body.textContent).toContain('Could not load connected apps: newest failed');
+	});
+
+	// An exchange writes no activity entry (the approval did, before the connection existed), and an end writes none.
+	// Catches a list that waits for one: the visible-tab timer reloads it, and the minute clock ends a connection on time.
+	it('reloads while the tab is visible and stops offering Revoke once a connection has ended', async () => {
+		vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+		await open([connection({ ends_at: '2026-11-14T09:00:30Z' })]);
+		expect(revokeButton(7)).not.toBeNull();
+		expect(polls).toHaveLength(1);
+		net.rows = [connection({ id: 8 }), connection({ ends_at: '2026-11-14T09:00:30Z' })];
+		await polls[0].run();
+		flushSync();
+		expect(rowOf(8)).not.toBeNull();
+		expect(revokeButton(7)).not.toBeNull();
+		vi.advanceTimersByTime(60_000);
+		flushSync();
+		expect(revokeButton(7)).toBeNull();
+		expect(rowOf(7).textContent).toContain('Ended 2026-11-14');
+		expect(revokeButton(8)).not.toBeNull();
 	});
 
 	it('names a connection without a host by its name alone', async () => {

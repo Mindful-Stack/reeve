@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { Connection } from '#lib/api/types.ts';
-	import { onLive } from '#lib/events.svelte.ts';
+	import { everyVisible, minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import Notice from '#lib/ui/Notice.svelte';
 
@@ -15,18 +15,27 @@
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
 
+	let latest = 0;
+
+	/** Every load goes through here; an older answer that arrives after a newer one is dropped. */
 	async function reload() {
+		const seq = ++latest;
 		try {
-			rows = await unwrap(api.GET('/api/v1/connections', { params: { query: owner ? { owner } : {} } }));
+			const loaded = await unwrap(api.GET('/api/v1/connections', { params: { query: owner ? { owner } : {} } }));
+			if (seq !== latest) return;
+			rows = loaded;
 			loadError = null;
 		} catch (e) {
+			if (seq !== latest) return;
 			loadError = errorMessage(e);
 		}
 	}
 	onMount(reload);
-	// A revoke elsewhere or a disable is an activity entry, so the list follows the live stream. A refresh writes
-	// none: "Last refreshed" is as fresh as the last load.
+	// A revoke elsewhere or a disable is an activity entry, so the list follows the live stream. An exchange writes none
+	// (the approval's entry comes before the connection exists), nor does a refresh or an end: while the tab is visible
+	// the list also reloads every minute, and the minute clock ends a connection on screen when its time comes.
 	onLive(reload);
+	everyVisible(reload, 60_000);
 
 	const day = (iso: string) => iso.slice(0, 10);
 	const app = (c: Connection) => c.client_host || c.client_name;
@@ -51,15 +60,16 @@
 
 	async function revoke(c: Connection) {
 		const whose = owner ? ` for ${owner}` : '';
-		if (!confirm(`Revoke ${app(c)}${whose}? It stops working at once and has to be connected again.`)) return;
+		if (!confirm(`Revoke ${app(c)}${whose}? A chat using it stops at its next step and has to be connected again.`)) return;
 		busy = true;
 		notice = null;
 		try {
 			await unwrap(api.DELETE('/api/v1/connections/{id}', { params: { path: { id: c.id } } }));
-			await reload();
 		} catch (e) {
 			notice = errorMessage(e);
 		} finally {
+			// Failed or not, the list is reloaded: the connection may have stopped meanwhile.
+			await reload();
 			busy = false;
 		}
 	}
@@ -77,7 +87,7 @@
 {:else}
 	<ul class="rows">
 		{#each rows as c (c.id)}
-			{@const why = stopped(c, Date.now())}
+			{@const why = stopped(c, minuteClock.now)}
 			<li data-connection={c.id} class:stopped={why !== null}>
 				<span class="app" id="con-{c.id}">{app(c)}</span>
 				{#if c.client_host}<span class="muted">{c.client_name}</span>{/if}
