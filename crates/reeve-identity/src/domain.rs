@@ -42,6 +42,14 @@ pub struct Principal {
     pub token_kind: TokenKind,
 }
 
+/// Who is calling the MCP endpoint (kb/ADR-0029 R6). A type of its own, without a token kind: code that takes a
+/// `Principal` cannot be handed an MCP caller, and the MCP endpoint cannot be handed an API one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpPrincipal {
+    pub email: String,
+    pub role: Role,
+}
+
 pub use reeve_protocol::normalise_email;
 
 /// The one parser for the stored token kind; `None` for text no `TokenKind` writes.
@@ -49,6 +57,37 @@ pub(crate) fn kind_from(s: &str) -> Option<TokenKind> {
     match s {
         "interactive" => Some(TokenKind::Interactive),
         "automation" => Some(TokenKind::Automation),
+        _ => None,
+    }
+}
+
+/// Where a token works (kb/ADR-0029 R5, R6): the API or the MCP endpoint. Not a third token kind (kb/ADR-0015 R7):
+/// an MCP token is an interactive token whose audience is the MCP endpoint. Exported because the port `TokenStore`
+/// names it in `insert_token`; a caller outside this crate chooses an audience only by calling `issue_token` or
+/// `issue_mcp_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    /// The API, the event stream, attachments and the session cookie.
+    Api,
+    /// The MCP endpoint only.
+    Mcp,
+}
+
+impl Audience {
+    /// The text stored in `tokens.audience`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Audience::Api => "api",
+            Audience::Mcp => "mcp",
+        }
+    }
+}
+
+/// The one parser for the stored audience; `None` for text no `Audience` writes.
+pub(crate) fn audience_from(s: &str) -> Option<Audience> {
+    match s {
+        "api" => Some(Audience::Api),
+        "mcp" => Some(Audience::Mcp),
         _ => None,
     }
 }
@@ -77,5 +116,15 @@ mod tests {
         assert!(c.is_allowed("guest@other.org"));
         assert!(!c.is_allowed("x@other.org"));
         assert!(!c.is_allowed("example.com"));
+    }
+
+    #[test]
+    fn audience_text_round_trips_and_unknown_text_is_refused() {
+        for a in [Audience::Api, Audience::Mcp] {
+            assert_eq!(audience_from(a.as_str()), Some(a));
+        }
+        for text in ["web", "", "API", " mcp"] {
+            assert_eq!(audience_from(text), None, "{text:?}");
+        }
     }
 }

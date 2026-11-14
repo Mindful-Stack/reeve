@@ -31,7 +31,7 @@ pub struct IssuedToken {
     pub secret: String,
 }
 
-/// Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
+/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
 #[allow(clippy::too_many_arguments)]
 pub async fn issue_token(
     pool: &PgPool,
@@ -42,6 +42,79 @@ pub async fn issue_token(
     via: Via,
     email: &str,
     kind: TokenKind,
+    label: &str,
+    expires_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Result<IssuedToken, AuthError> {
+    issue(
+        pool,
+        store,
+        activity,
+        policy,
+        actor,
+        via,
+        email,
+        kind,
+        Audience::Api,
+        label,
+        expires_at,
+        now,
+    )
+    .await
+}
+
+/// Issues a token for the MCP endpoint (kb/ADR-0029 R5, R6): always interactive, always with an expiry, and the
+/// expiry at most one hour after `now`. There is no kind and no optional expiry to pass, so an automation MCP token
+/// and one that never expires cannot be written down. GRA-658 extends this function with the connection.
+#[allow(clippy::too_many_arguments)]
+pub async fn issue_mcp_token(
+    pool: &PgPool,
+    store: &dyn TokenStore,
+    activity: &dyn IdentityActivity,
+    policy: &AccessPolicy,
+    actor: &str,
+    via: Via,
+    email: &str,
+    label: &str,
+    expires_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<IssuedToken, AuthError> {
+    if expires_at > now + chrono::Duration::hours(1) {
+        return Err(AuthError::Validation(
+            "an MCP token lives at most one hour".into(),
+        ));
+    }
+    issue(
+        pool,
+        store,
+        activity,
+        policy,
+        actor,
+        via,
+        email,
+        TokenKind::Interactive,
+        Audience::Mcp,
+        label,
+        Some(expires_at),
+        now,
+    )
+    .await
+}
+
+/// The one issuing path behind `issue_token` and `issue_mcp_token`: the allowlist, an expiry in the future, then in
+/// one transaction the user row (a disabled user is refused), the token, and the `token_issued` activity entry
+/// last. The entry names the audience only for an MCP token, so an API token's entry is what it always was.
+#[allow(clippy::too_many_arguments)]
+async fn issue(
+    pool: &PgPool,
+    store: &dyn TokenStore,
+    activity: &dyn IdentityActivity,
+    policy: &AccessPolicy,
+    actor: &str,
+    via: Via,
+    email: &str,
+    kind: TokenKind,
+    audience: Audience,
     label: &str,
     expires_at: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
@@ -65,12 +138,17 @@ pub async fn issue_token(
             &mut tx,
             &email,
             kind,
+            audience,
             &hash_secret(&secret),
             label,
             expires_at,
             now,
         )
         .await?;
+    let mut payload = serde_json::json!({"kind": kind, "label": label, "token_id": id});
+    if audience == Audience::Mcp {
+        payload["audience"] = audience.as_str().into();
+    }
     activity
         .record(
             &mut tx,
@@ -80,7 +158,7 @@ pub async fn issue_token(
                 via,
                 subject: email.clone(),
                 action: "token_issued",
-                payload: serde_json::json!({"kind": kind, "label": label, "token_id": id}),
+                payload,
             },
         )
         .await?;
@@ -88,15 +166,17 @@ pub async fn issue_token(
     Ok(IssuedToken { id, secret })
 }
 
-/// Resolves a bearer or session secret to its principal. Every refusal is logged at `warn` with its reason, the token
-/// id and owner when a row was found, and the first eight hex digits of the secret's hash (never the secret), so a 401
-/// can be told apart afterwards: not found, revoked, owner disabled, expired, owner not allowed, bad kind.
-pub async fn authenticate(
+/// Resolves a bearer or session secret to its owner and kind, for the audience `want`. Every refusal is logged at
+/// `warn` with its reason, the token id and owner when a row was found, and the first eight hex digits of the
+/// secret's hash (never the secret), so a 401 can be told apart afterwards: not found, revoked, owner disabled,
+/// expired, owner not allowed, bad kind, bad audience, wrong audience.
+async fn resolve(
     store: &dyn TokenStore,
     policy: &AccessPolicy,
     secret: &str,
     now: DateTime<Utc>,
-) -> Result<Principal, AuthError> {
+    want: Audience,
+) -> Result<(String, TokenKind), AuthError> {
     let hash = hash_secret(secret);
     let hash_prefix = &hash[..8];
     let Some(row) = store.find_by_hash(&hash).await? else {
@@ -123,14 +203,49 @@ pub async fn authenticate(
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, "authentication refused");
         return Err(AuthError::Unauthenticated);
     }
-    let Some(token_kind) = kind_from(&row.kind) else {
+    let Some(kind) = kind_from(&row.kind) else {
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason = "bad kind", kind = %row.kind, "authentication refused");
         return Err(AuthError::Unauthenticated);
     };
+    let reason = match audience_from(&row.audience) {
+        None => Some("bad audience"),
+        Some(audience) if audience != want => Some("wrong audience"),
+        Some(_) => None,
+    };
+    if let Some(reason) = reason {
+        tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, audience = %row.audience, "authentication refused");
+        return Err(AuthError::Unauthenticated);
+    }
+    Ok((owner, kind))
+}
+
+/// The caller of the API, the event stream, attachments and the session cookie: an API token only. An MCP token is
+/// `Unauthenticated` here (kb/ADR-0029 R6).
+pub async fn authenticate_api(
+    store: &dyn TokenStore,
+    policy: &AccessPolicy,
+    secret: &str,
+    now: DateTime<Utc>,
+) -> Result<Principal, AuthError> {
+    let (owner, token_kind) = resolve(store, policy, secret, now, Audience::Api).await?;
     Ok(Principal {
         role: policy.role_for(&owner),
         email: owner,
         token_kind,
+    })
+}
+
+/// The caller of the MCP endpoint: an MCP token only. An API token is `Unauthenticated` here (kb/ADR-0029 R6).
+pub async fn authenticate_mcp(
+    store: &dyn TokenStore,
+    policy: &AccessPolicy,
+    secret: &str,
+    now: DateTime<Utc>,
+) -> Result<McpPrincipal, AuthError> {
+    let (owner, _) = resolve(store, policy, secret, now, Audience::Mcp).await?;
+    Ok(McpPrincipal {
+        role: policy.role_for(&owner),
+        email: owner,
     })
 }
 
@@ -241,6 +356,7 @@ pub async fn sign_in(
             &mut tx,
             &email,
             TokenKind::Interactive,
+            Audience::Api,
             &hash_secret(&secret),
             SESSION_LABEL,
             Some(expires_at),

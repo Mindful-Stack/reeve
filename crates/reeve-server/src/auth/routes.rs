@@ -362,7 +362,7 @@ async fn callback(
     // Re-login: a live session this browser already holds for the same person is revoked before the new one is
     // issued, so one browser holds one live session and a re-login never orphans a 30-day token.
     if let Some(old) = session_secret(&headers, https)
-        && let Ok(p) = reeve_identity::authenticate(&*s.tokens, &policy, &old, now).await
+        && let Ok(p) = reeve_identity::authenticate_api(&*s.tokens, &policy, &old, now).await
         && p.email == reeve_identity::normalise_email(&who.email)
         && let Err(e) = revoke_session(&s, &old).await
     {

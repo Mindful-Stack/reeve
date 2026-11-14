@@ -15,13 +15,16 @@ pub use access::{
 };
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
-pub use domain::{IdentityConfig, Principal, Role, TokenKind, hash_secret, normalise_email};
+pub use domain::{
+    Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
+    normalise_email,
+};
 #[cfg(feature = "static-oidc")]
 pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
 pub use handler::{
-    AuthError, IssuedToken, SESSION_LABEL, VerifiedIdentity, authenticate, disable_user,
-    enable_user, issue_token, list_tokens, list_users, list_users_in, revoke_all_for, revoke_token,
-    sign_in,
+    AuthError, IssuedToken, SESSION_LABEL, VerifiedIdentity, authenticate_api, authenticate_mcp,
+    disable_user, enable_user, issue_mcp_token, issue_token, list_tokens, list_users,
+    list_users_in, revoke_all_for, revoke_token, sign_in,
 };
 pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]

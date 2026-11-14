@@ -28,6 +28,15 @@ enum Cmd {
         #[arg(long, default_value = "")]
         label: String,
     },
+    /// Developer command, only in builds with the `static-oidc` feature (the Dockerfile never enables it): issue an
+    /// interactive token whose audience is the MCP endpoint for an allowlisted email, valid for one hour
+    /// (kb/ADR-0029 R5), and print the secret once. Until connections exist (GRA-669) such a token appears in no
+    /// listing and is revoked only by disabling its owner; its short life is the cleanup.
+    #[cfg(feature = "static-oidc")]
+    McpTokenIssue {
+        #[arg(long)]
+        email: String,
+    },
     /// Operator command, run on the host with database access: write the whole instance as JSON (the document
     /// `GET /api/v1/export` returns) without a token. Read-only; never migrates; refuses a database whose migrations
     /// differ from this binary's.
@@ -223,6 +232,31 @@ async fn main() -> anyhow::Result<()> {
                 &label,
                 None,
                 chrono::Utc::now(),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+            println!("{}", t.secret);
+        }
+        #[cfg(feature = "static-oidc")]
+        Cmd::McpTokenIssue { email } => {
+            let store = reeve_identity::make_token_store(pool.clone());
+            let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> =
+                reeve_activity::make_activity_store(pool.clone());
+            let policy = reeve_identity::make_access_store(pool.clone())
+                .load(&config.identity())
+                .await?;
+            let now = chrono::Utc::now();
+            let t = reeve_identity::issue_mcp_token(
+                &pool,
+                &*store,
+                &*log,
+                &policy,
+                "operator",
+                reeve_protocol::Via::System,
+                &email,
+                "mcp developer token",
+                now + chrono::Duration::hours(1),
+                now,
             )
             .await
             .map_err(|e| anyhow::anyhow!(e))?;

@@ -9,7 +9,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
-use reeve_identity::{AuthError, Principal, authenticate};
+use reeve_identity::{AuthError, Principal, authenticate_api};
 
 /// The session cookie's name on an http instance (local development).
 pub const SESSION_COOKIE: &str = "reeve_session";
@@ -59,7 +59,7 @@ pub struct Caller(
 impl FromRequestParts<AppState> for Caller {
     type Rejection = AppError;
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, AppError> {
-        // Every refusal names its reason at `warn` (never the secret); `authenticate` logs why a secret was refused.
+        // Every refusal names its reason at `warn` (never the secret); `authenticate_api` logs why a secret was refused.
         let refuse = |reason: &'static str, err: AppError| {
             tracing::warn!(method = %parts.method, path = %request_path(parts), reason, "request refused");
             err
@@ -105,7 +105,7 @@ impl FromRequestParts<AppState> for Caller {
         let now = Utc::now();
         // Loaded on every request, never cached (kb/ADR-0015 R5); a load failure is internal, never a fallback to the floor.
         let policy = state.access.load(&state.identity).await?;
-        match authenticate(&*state.tokens, &policy, &secret, now).await {
+        match authenticate_api(&*state.tokens, &policy, &secret, now).await {
             Ok(p) => Ok(Caller(p, now, secret, policy)),
             Err(AuthError::Db(e)) => Err(AppError::from(e)),
             Err(e) => {

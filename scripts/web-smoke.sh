@@ -59,7 +59,7 @@ if (exec 3<>/dev/tcp/127.0.0.1/7475) 2>/dev/null; then
 fi
 
 log "starting reeve-server on $url"
-# Auth refusals name their reason at warn/debug (reeve_server's Caller, reeve_identity's authenticate); CI uploads this
+# Auth refusals name their reason at warn/debug (reeve_server's Caller, reeve_identity's authenticate_api); CI uploads this
 # log with the traces when the smoke fails.
 RUST_LOG="${RUST_LOG:-info,reeve_server=debug,reeve_identity=debug}" "$server" serve >"$work/server.log" 2>&1 &
 pid=$!
