@@ -446,7 +446,8 @@ async fn call_tool(
             "Invalid arguments: {message}. The arguments must match this schema: {}",
             tool.input_schema
         )),
-        Err(ToolError::Told(message)) => failure(message),
+        // Bounded here, once, whichever tool or action said it.
+        Err(ToolError::Told(message)) => failure(tools::bounded(message)),
         Err(ToolError::Internal(e)) => return Err(internal(e)),
     };
     // Not cacheable: no `ttlMs`, no `cacheScope`.

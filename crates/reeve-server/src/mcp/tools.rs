@@ -190,6 +190,31 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
     })
 }
 
+/// A refusal's text as the model is told it, whatever said it: the planner limits neither its messages nor what
+/// they repeat (an owner of 200 000 characters is named whole in "... is not an allowed user"). A refusal of up to
+/// `bound::MAX_OTHER_TEXT` characters is told as it is (a list of reasons is one long word and stays whole). In a
+/// longer one, a word longer than `bound::MAX_ECHO` is repeated as `bound::echo` repeats an argument, so the
+/// sentence around it keeps its meaning, and the whole is cut at `bound::MAX_OWN_TEXT`. Each cut carries its
+/// marker. `call_tool` calls this on every refusal before it is sent.
+pub(crate) fn bounded(message: String) -> String {
+    if message.chars().count() <= bound::MAX_OTHER_TEXT {
+        return message;
+    }
+    let mut text = message
+        .split(' ')
+        .map(|word| {
+            if word.chars().count() > bound::MAX_ECHO {
+                bound::echo(word)
+            } else {
+                word.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    bound::cut(&mut text, bound::MAX_OWN_TEXT);
+    text
+}
+
 /// A tool's answer as it is sent. `to_value` widens an `f32` to `f64`, so an initiative's `progress` of a third
 /// reads `0.3333333432674408` here and `0.33333334` from the API.
 fn sent<T: serde::Serialize>(answer: T) -> Result<Value, ToolError> {
@@ -587,6 +612,30 @@ mod tests {
             said(AppError::Forbidden).as_deref(),
             Some("Forbidden: you are not allowed to do this.")
         );
+    }
+
+    #[test]
+    fn a_refusal_is_bounded_and_keeps_its_meaning() {
+        let short = "title must not be empty".to_string();
+        assert_eq!(bounded(short.clone()), short);
+        // A long word in a refusal within the bound is not shortened: a list of reasons has no spaces.
+        let reasons = format!("Refused: [{}]", "{\"reason\":\"untriaged\"},".repeat(40));
+        assert_eq!(bounded(reasons.clone()), reasons);
+        let long_word = format!("{} is not an allowed user", "e".repeat(5_000));
+        assert_eq!(
+            bounded(long_word),
+            format!(
+                "{}[cut: 4800 more characters] is not an allowed user",
+                "e".repeat(bound::MAX_ECHO)
+            )
+        );
+        // Many short words: the whole is cut.
+        let said = bounded("no ".repeat(10_000));
+        assert_eq!(
+            said.chars().count(),
+            bound::MAX_OWN_TEXT + "[cut: 20000 more characters]".len()
+        );
+        assert!(said.ends_with("[cut: 20000 more characters]"));
     }
 
     #[test]

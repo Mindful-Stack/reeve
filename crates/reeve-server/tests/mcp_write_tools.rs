@@ -384,6 +384,27 @@ async fn a_write_with_a_very_long_description_succeeds_with_a_small_receipt() {
     );
 }
 
+/// An owner nobody is allowed as, of 200 000 characters: the planner's refusal repeats it.
+fn oversized_owner() -> String {
+    format!("{}@elsewhere.org", "e".repeat(200_000))
+}
+
+/// A refusal of `oversized_owner` as the model reads it: bounded, with the cut marker, still saying what was
+/// refused.
+fn assert_bounded(said: &str) {
+    assert!(
+        said.chars().count() < 10_000,
+        "{} characters",
+        said.chars().count()
+    );
+    assert!(said.contains("[cut: "), "{}", &said[..200]);
+    assert!(
+        said.ends_with("is not an allowed user"),
+        "{}",
+        &said[said.len() - 200..]
+    );
+}
+
 #[tokio::test]
 async fn create_story_tells_the_model_what_the_planner_refused() {
     let f = flow().await;
@@ -403,6 +424,10 @@ async fn create_story_tells_the_model_what_the_planner_refused() {
         said(json!({"idempotency_key": "r3", "title": "Refused", "owner": "eve@elsewhere.org"}))
             .await,
         "eve@elsewhere.org is not an allowed user"
+    );
+    assert_bounded(
+        &said(json!({"idempotency_key": "r6", "title": "Refused", "owner": oversized_owner()}))
+            .await,
     );
     assert!(
         said(json!({"idempotency_key": "r4", "title": "  "}))
@@ -702,6 +727,7 @@ async fn edit_story_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
     for (arguments, expected) in cases {
         assert_eq!(said(arguments.clone()).await, expected, "{arguments}");
     }
+    assert_bounded(&said(json!({"owner": oversized_owner()})).await);
     assert!(
         said(json!({"criteria": ["a slot can be picked", "  "]}))
             .await
