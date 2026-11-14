@@ -35,10 +35,9 @@
 	/** The lanes no goal or promise needs: the divider goes before the first of them that has a row. */
 	const OUTSIDE = new Set<PageLane>(['now', 'later', 'open', 'satisfied', 'closed']);
 
-	type Row = DiscoveryRow;
 	/** A DecisionList group: a lane's own group (its heading, and its decisions before any discovery row), a discovery
 	 *  row's group (its nested decisions), or a run of standalone decisions after a row. */
-	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; row?: Row };
+	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; row?: DiscoveryRow };
 
 	const me = $derived(mine ? session.me?.email : undefined);
 	/** In the server's order, never re-sorted. */
@@ -187,7 +186,7 @@
 <svelte:head><title>Readiness · Reeve</title></svelte:head>
 <svelte:document onvisibilitychange={() => onNewDay(Date.now())} />
 
-{#snippet discovery(r: Row)}
+{#snippet discovery(r: DiscoveryRow)}
 	{@const d = r.row}
 	{@const held = d.blocks.length}
 	{@const holds = held ? `Holds ${plural(held, 'story', 'stories')}${d.under_way.length ? ` · ${d.under_way.length} under way` : ''}` : `${d.under_way.length} under way`}

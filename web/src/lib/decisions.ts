@@ -187,7 +187,7 @@ export function queueRows(q: Pick<DecisionQueue, 'entries' | 'discoveries'>, f: 
 		if (!rows) out.set(l, (rows = []));
 		return rows;
 	};
-	const byKey = new Map<string, Extract<QueueRow, { kind: 'discovery' }>>();
+	const byKey = new Map<string, DiscoveryRow>();
 	const mine = (e: DecisionQueueEntry) => !f.me || sameEmail(e.decision.decider, f.me);
 	let next = 0;
 	const rowsBefore = (i: number) => {
