@@ -289,7 +289,12 @@ mod tests {
         for _ in 0..100 {
             assert!(reserve(&limit, DAN, at(5, 0)).is_err());
         }
-        assert_eq!(reserve(&limit, DAN, at(10, 0)), Ok(()));
+        // The clock is read under the limit's lock.
+        let read = limit.reserve(DAN, || {
+            assert!(limit.0.try_lock().is_err(), "the lock is not held");
+            at(10, 0)
+        });
+        assert_eq!(read, Ok(()));
     }
 
     /// The reservation is one step: eight threads asking ten times each at one instant get thirty between them.

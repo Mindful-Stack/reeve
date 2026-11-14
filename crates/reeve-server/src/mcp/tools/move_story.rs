@@ -144,17 +144,17 @@ mod tests {
         assert!(shown[0].ends_with(" more characters]"));
     }
 
-    /// A key of 203 characters, four titles of 1 942 characters and one of 3 000: each reason is cut on its own,
+    /// A key of 203 characters, one title of 3 000 characters and four of 1 942: each reason is cut on its own,
     /// the reasons that do not fit are counted, and the closing sentences survive. In ASCII and in multibyte text.
     #[test]
     fn a_long_key_and_long_titles_stay_within_the_bound_and_end_with_nothing_changed() {
         let key = format!("TST-{}", "1".repeat(199));
         for letter in ["t", "å", "世", "🙂"] {
-            let mut reasons: Vec<Reason> =
-                (0..4).map(|_| no_record(letter.repeat(1_942))).collect();
-            reasons.push(no_record(letter.repeat(3_000)));
+            let mut reasons = vec![no_record(letter.repeat(3_000))];
+            reasons.extend((0..4).map(|_| no_record(letter.repeat(1_942))));
             let shown = kept(&key, &reasons);
-            assert!(!shown.is_empty(), "{letter}");
+            assert!(shown[0].ends_with(" more characters]"), "{letter}");
+            assert!(shown.len() < reasons.len(), "{letter}");
         }
     }
 
