@@ -1,6 +1,7 @@
 use crate::domain::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use reeve_protocol::Scope;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 
@@ -14,6 +15,13 @@ pub struct TokenRow {
     pub expires_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub owner_disabled: bool,
+    /// The connection an MCP token belongs to, with what `authenticate_mcp` needs of it; all `None` for an API
+    /// token.
+    pub connection_id: Option<i64>,
+    pub connection_client_id: Option<String>,
+    pub connection_scope: Option<String>,
+    pub connection_ends_at: Option<DateTime<Utc>>,
+    pub connection_revoked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,15 +52,37 @@ pub trait TokenStore: Send + Sync {
         email: &str,
         now: DateTime<Utc>,
     ) -> Result<bool, sqlx::Error>;
+    /// An API token; an MCP token needs a connection and is written by `insert_mcp_token`.
     async fn insert_token(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         kind: TokenKind,
-        audience: Audience,
         hash: &str,
         label: &str,
         expires_at: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Result<i64, sqlx::Error>;
+    /// A new connection (kb/ADR-0029 R5); its id. The caller holds the owner's `users` row lock.
+    async fn insert_connection(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        client_id: &str,
+        client_name: &str,
+        scope: Scope,
+        approved_at: DateTime<Utc>,
+        ends_at: DateTime<Utc>,
+    ) -> Result<i64, sqlx::Error>;
+    /// An MCP token of `connection_id`: interactive, audience `mcp`, always with an expiry.
+    async fn insert_mcp_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        connection_id: i64,
+        hash: &str,
+        label: &str,
+        expires_at: DateTime<Utc>,
         now: DateTime<Utc>,
     ) -> Result<i64, sqlx::Error>;
     async fn find_by_hash(&self, hash: &str) -> Result<Option<TokenRow>, sqlx::Error>;
@@ -79,7 +109,7 @@ pub trait TokenStore: Send + Sync {
     /// (kb/ADR-0029 R9, GRA-669).
     async fn list_for(&self, owner: &str) -> Result<Vec<TokenSummary>, sqlx::Error>;
     /// Revokes one API token if it belongs to `owner` and is not yet revoked. Returns whether a row changed. An MCP
-    /// token is not found here (GRA-669 adds revoking a connection); `revoke_all_for` covers every audience.
+    /// token is not found here (a connection is revoked as a whole); `revoke_all_for` covers every audience.
     async fn revoke_one(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -122,7 +152,6 @@ impl TokenStore for PgTokenStore {
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         kind: TokenKind,
-        audience: Audience,
         hash: &str,
         label: &str,
         expires_at: Option<DateTime<Utc>>,
@@ -133,11 +162,56 @@ impl TokenStore for PgTokenStore {
             TokenKind::Automation => "automation",
         };
         sqlx::query_scalar("INSERT INTO tokens (owner, kind, audience, hash, label, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id")
-            .bind(owner).bind(kind).bind(audience.as_str()).bind(hash).bind(label).bind(now).bind(expires_at).fetch_one(&mut **tx).await
+            .bind(owner).bind(kind).bind(Audience::Api.as_str()).bind(hash).bind(label).bind(now).bind(expires_at).fetch_one(&mut **tx).await
     }
     async fn find_by_hash(&self, hash: &str) -> Result<Option<TokenRow>, sqlx::Error> {
-        sqlx::query_as("SELECT t.id, t.owner, t.kind, t.audience, t.expires_at, t.revoked_at, u.disabled AS owner_disabled FROM tokens t JOIN users u ON u.email = t.owner WHERE t.hash = $1")
-            .bind(hash).fetch_optional(&self.pool).await
+        // A plain read, no lock: every `/mcp` call runs it. The connection's columns are NULL for an API token.
+        sqlx::query_as(
+            "SELECT t.id, t.owner, t.kind, t.audience, t.expires_at, t.revoked_at, u.disabled AS owner_disabled, \
+             t.connection_id, c.client_id AS connection_client_id, c.scope AS connection_scope, \
+             c.ends_at AS connection_ends_at, c.revoked_at AS connection_revoked_at \
+             FROM tokens t JOIN users u ON u.email = t.owner LEFT JOIN connections c ON c.id = t.connection_id \
+             WHERE t.hash = $1",
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_connection(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        client_id: &str,
+        client_name: &str,
+        scope: Scope,
+        approved_at: DateTime<Utc>,
+        ends_at: DateTime<Utc>,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            "INSERT INTO connections (owner, client_id, client_name, scope, approved_at, ends_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+        )
+        .bind(owner).bind(client_id).bind(client_name).bind(scope_text(scope)).bind(approved_at).bind(ends_at)
+        .fetch_one(&mut **tx)
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_mcp_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        connection_id: i64,
+        hash: &str,
+        label: &str,
+        expires_at: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            "INSERT INTO tokens (owner, kind, audience, hash, label, created_at, expires_at, connection_id) VALUES ($1,'interactive','mcp',$2,$3,$4,$5,$6) RETURNING id",
+        )
+        .bind(owner).bind(hash).bind(label).bind(now).bind(expires_at).bind(connection_id)
+        .fetch_one(&mut **tx)
+        .await
     }
     async fn revoke_all_for(
         &self,

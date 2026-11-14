@@ -273,8 +273,8 @@ pub fn cookies_of(res: &axum::http::Response<axum::body::Body>) -> Vec<String> {
 
 /// An MCP token for `email`, issued on demand by the real `reeve_identity::issue_mcp_token` under the access policy
 /// as a request would load it, expiring in one hour. Not issued in `build_on`: the standard harness's token and
-/// activity counts stay as they were. This is a developer-minted token; a token issued through sign-in, with a
-/// client and scopes, does not exist before GRA-658.
+/// activity counts stay as they were. This is a developer-minted token, in a `write` connection of the developer client;
+/// a token issued through sign-in comes from `oauth::connect`.
 pub async fn issue_mcp_token(h: &Harness, email: &str) -> reeve_identity::IssuedToken {
     let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
     let policy = h.state.access.load(&h.state.identity).await.unwrap();

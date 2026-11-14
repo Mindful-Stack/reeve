@@ -5,6 +5,7 @@ mod access_repo;
 mod authorization;
 mod client_fetch;
 mod clients;
+mod connections;
 mod domain;
 #[cfg(feature = "static-oidc")]
 mod fake_client_host;

@@ -3,15 +3,15 @@
 //!
 //! The upgrade test seeds six representative rows through identity's own migrations below 2004 and upgrades to
 //! 2004, not further. It cannot reproduce production's rows or the server's composed migrator; 2004 touches only
-//! `tokens`, which identity owns. Its last assertion runs today's code against the 2004 schema.
+//! `tokens`, which identity owns. Its last assertion applies the rest of the migrations and runs today's code against
+//! today's schema.
 mod common;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
-    AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken,
-    McpPrincipal, Role, TokenKind, Via, authenticate_api, authenticate_mcp, disable_user,
-    hash_secret, issue_mcp_token, issue_token, list_tokens, make_token_store, revoke_all_for,
-    revoke_token,
+    AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken, Role,
+    TokenKind, Via, authenticate_api, authenticate_mcp, disable_user, hash_secret, issue_mcp_token,
+    issue_token, list_tokens, make_token_store, revoke_all_for, revoke_token,
 };
 use sqlx::PgPool;
 use std::sync::{Arc, Mutex};
@@ -231,11 +231,6 @@ async fn migration_2004_keeps_existing_tokens_and_makes_them_api_tokens() {
         .await
         .unwrap();
     assert_eq!(audiences, vec!["api"; 6]);
-    let store = make_token_store(pool.clone());
-    for (label, ..) in seeds {
-        let got = authenticate_api(&*store, &policy(), &format!("reeve_{label}"), t).await;
-        assert_eq!(got.is_ok(), label.starts_with("live"), "{label}: {got:?}");
-    }
     // A second run changes nothing.
     up_to_2004().run(&pool).await.unwrap();
     let again: Vec<Row> = sqlx::query_as(ROWS).fetch_all(&pool).await.unwrap();
@@ -245,6 +240,13 @@ async fn migration_2004_keeps_existing_tokens_and_makes_them_api_tokens() {
         .await
         .unwrap();
     assert_eq!(applied as usize, up_to_2004().migrations.len());
+    // Today's code reads today's schema: the rest of the migrations, then the rows 2004 kept still authenticate.
+    reeve_identity::migrator().run(&pool).await.unwrap();
+    let store = make_token_store(pool.clone());
+    for (label, ..) in seeds {
+        let got = authenticate_api(&*store, &policy(), &format!("reeve_{label}"), t).await;
+        assert_eq!(got.is_ok(), label.starts_with("live"), "{label}: {got:?}");
+    }
 }
 
 #[tokio::test]
@@ -270,7 +272,15 @@ async fn the_table_refuses_an_mcp_token_of_kind_automation_and_an_unknown_audien
         .execute(&pool)
         .await
         .unwrap();
-    let insert = "INSERT INTO tokens (owner, kind, audience, hash, created_at) VALUES ('dan@example.com', $1, $2, $3, now())";
+    // An MCP token needs a connection (migration 2005), so the MCP rows get one: the refusal of `automation`/`mcp`
+    // is then still the kind rule's.
+    let connection: i64 = sqlx::query_scalar(
+        "INSERT INTO connections (owner, client_id, client_name, scope, approved_at, ends_at) VALUES ('dan@example.com', 'urn:test', 'Test', 'read', now(), now() + interval '30 days') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let insert = "INSERT INTO tokens (owner, kind, audience, hash, created_at, connection_id) VALUES ('dan@example.com', $1, $2, $3, now(), $4)";
     // The controls: the three legal pairs are accepted.
     for (kind, audience) in [
         ("interactive", "api"),
@@ -281,6 +291,7 @@ async fn the_table_refuses_an_mcp_token_of_kind_automation_and_an_unknown_audien
             .bind(kind)
             .bind(audience)
             .bind(format!("ok-{kind}-{audience}"))
+            .bind((audience == "mcp").then_some(connection))
             .execute(&pool)
             .await
             .unwrap();
@@ -290,6 +301,7 @@ async fn the_table_refuses_an_mcp_token_of_kind_automation_and_an_unknown_audien
             .bind(kind)
             .bind(audience)
             .bind(format!("bad-{kind}-{audience}"))
+            .bind((audience == "mcp").then_some(connection))
             .execute(&pool)
             .await
             .unwrap_err();
@@ -386,11 +398,13 @@ async fn each_audience_authenticates_only_through_its_own_function() {
         .await
         .unwrap();
     assert_eq!(
-        m,
-        McpPrincipal {
-            email: "dan@example.com".into(),
-            role: Role::Admin
-        }
+        (m.email.as_str(), m.role, m.client_id.as_str(), m.scope),
+        (
+            "dan@example.com",
+            Role::Admin,
+            "urn:reeve:developer-command",
+            reeve_identity::Scope::Write
+        )
     );
     assert!(
         !logs.text().contains("authentication refused"),

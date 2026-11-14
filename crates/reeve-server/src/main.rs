@@ -30,8 +30,8 @@ enum Cmd {
     },
     /// Developer command, only in builds with the `static-oidc` feature (the Dockerfile never enables it): issue an
     /// interactive token whose audience is the MCP endpoint for an allowlisted email, valid for one hour
-    /// (kb/ADR-0029 R5), and print the secret once. Until connections exist (GRA-669) such a token appears in no
-    /// listing and is revoked only by disabling its owner; its short life is the cleanup.
+    /// (kb/ADR-0029 R5), and print the secret once. It makes a connection of its own (client
+    /// `urn:reeve:developer-command`, scope write), which disabling its owner revokes.
     #[cfg(feature = "static-oidc")]
     McpTokenIssue {
         #[arg(long)]
