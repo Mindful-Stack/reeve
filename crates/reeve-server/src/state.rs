@@ -14,6 +14,38 @@ pub struct PendingLogin {
     pub created_at: DateTime<Utc>,
 }
 
+/// The server's clock. A handler reads it once and passes that instant on (kb/ADR-0010 R4). `System` in
+/// production. `Fixed` is for tests: an instant that moves only by `advance`; clones share it.
+#[derive(Clone, Default)]
+pub enum Clock {
+    #[default]
+    System,
+    Fixed(Arc<std::sync::Mutex<DateTime<Utc>>>),
+}
+
+impl Clock {
+    pub fn fixed(at: DateTime<Utc>) -> Self {
+        Clock::Fixed(Arc::new(std::sync::Mutex::new(at)))
+    }
+
+    pub fn now(&self) -> DateTime<Utc> {
+        match self {
+            Clock::System => Utc::now(),
+            Clock::Fixed(at) => *at.lock().expect("the clock's lock"),
+        }
+    }
+
+    /// Moves a fixed clock forward. Panics for a negative duration and for the system clock: neither is a thing
+    /// a test may ask for.
+    pub fn advance(&self, by: chrono::Duration) {
+        assert!(by >= chrono::Duration::zero(), "a clock only moves forward");
+        match self {
+            Clock::System => panic!("only a fixed clock is advanced"),
+            Clock::Fixed(at) => *at.lock().expect("the clock's lock") += by,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub handlers: Handlers,
@@ -38,6 +70,8 @@ pub struct AppState {
     /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route will resolve a client with
     /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
+    /// The clock the callers and the OAuth routes read: the system time, except in a test harness that fixed it.
+    pub clock: Clock,
 }
 
 /// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, port, query or fragment and
@@ -273,12 +307,35 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         repo_urls,
         mcp_tools,
         client_fetcher,
+        clock: Clock::default(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Catches a clock that can run backwards, and a production clock a caller could move.
+    #[test]
+    fn a_fixed_clock_moves_only_forward_and_the_system_clock_not_at_all() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-11-14T09:00:00Z")
+            .unwrap()
+            .to_utc();
+        let clock = Clock::fixed(at);
+        assert_eq!(clock.now(), at);
+        clock.advance(chrono::Duration::minutes(10));
+        assert_eq!(
+            clock.clone().now(),
+            at + chrono::Duration::minutes(10),
+            "clones share the instant"
+        );
+        let back =
+            std::panic::catch_unwind(|| Clock::fixed(at).advance(chrono::Duration::seconds(-1)));
+        assert!(back.is_err(), "a negative duration is refused");
+        let system =
+            std::panic::catch_unwind(|| Clock::System.advance(chrono::Duration::seconds(1)));
+        assert!(system.is_err(), "the system clock is not advanced");
+    }
 
     #[tokio::test]
     async fn an_applied_version_missing_from_the_composed_list_fails() {

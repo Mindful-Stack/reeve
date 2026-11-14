@@ -102,7 +102,7 @@ impl FromRequestParts<AppState> for Caller {
             }
         };
         // Either way the token's kind, role, expiry and the owner's disabled flag are checked now, on this request.
-        let now = Utc::now();
+        let now = state.clock.now();
         // Loaded on every request, never cached (kb/ADR-0015 R5); a load failure is internal, never a fallback to the floor.
         let policy = state.access.load(&state.identity).await?;
         match authenticate_api(&*state.tokens, &policy, &secret, now).await {
@@ -181,7 +181,7 @@ impl McpCaller {
         let secret = bearer_secret(headers)
             .map_err(refuse)?
             .ok_or_else(|| refuse("no bearer header"))?;
-        let now = Utc::now();
+        let now = state.clock.now();
         // Loaded on every request, never cached (kb/ADR-0015 R5, kb/ADR-0029 R8).
         let policy = state.access.load(&state.identity).await?;
         let principal = authenticate_mcp(&*state.tokens, &policy, secret, now).await?;

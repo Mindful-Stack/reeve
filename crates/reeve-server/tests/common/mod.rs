@@ -17,6 +17,9 @@ pub struct Harness {
     pub victim_email: String,
     pub admin_token: String,
     pub bot_token: String,
+    /// The instant this harness issued its tokens at, in whole microseconds: PostgreSQL keeps microseconds, so a
+    /// time stored from this instant (or from a fixed clock started at it) reads back equal.
+    pub started: chrono::DateTime<chrono::Utc>,
 }
 
 /// The standard harness: loopback public URL and the static provider signing in as `dan@example.com`.
@@ -96,7 +99,8 @@ legacy_prefixes = ["SCRUM"]"#
     let identity = config.identity();
     let policy = reeve_identity::AccessPolicy::floor_only(&identity);
     let tokens = reeve_identity::make_token_store(pool.clone());
-    let now = chrono::Utc::now();
+    // Whole microseconds, as PostgreSQL stores them: `started` and a clock fixed at it have no finer part.
+    let now = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 6);
     let activity = reeve_activity::make_activity_store(pool.clone());
     let ident_log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = activity.clone();
     let admin_token = reeve_identity::issue_token(
@@ -161,10 +165,19 @@ legacy_prefixes = ["SCRUM"]"#
         victim_email: "bob@example.com".into(),
         admin_token,
         bot_token,
+        started: now,
     }
 }
 
 impl Harness {
+    /// This harness on a fixed clock that starts at `started` (whole microseconds) and moves only by
+    /// `state.clock.advance`. The router is rebuilt from the changed state, so both share the clock.
+    pub fn with_fixed_clock(mut self) -> Self {
+        self.state.clock = Clock::fixed(self.started);
+        self.app = app(self.state.clone());
+        self
+    }
+
     /// The router rebuilt from this harness's state with the client files read from `dir` (debug builds only).
     #[cfg(debug_assertions)]
     pub fn app_with_assets(&self, dir: &std::path::Path) -> axum::Router {
@@ -263,7 +276,7 @@ pub fn cookies_of(res: &axum::http::Response<axum::body::Body>) -> Vec<String> {
 pub async fn issue_mcp_token(h: &Harness, email: &str) -> reeve_identity::IssuedToken {
     let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = h.state.activity.clone();
     let policy = h.state.access.load(&h.state.identity).await.unwrap();
-    let now = chrono::Utc::now();
+    let now = h.state.clock.now();
     reeve_identity::issue_mcp_token(
         &h.state.pool,
         &*h.state.tokens,
