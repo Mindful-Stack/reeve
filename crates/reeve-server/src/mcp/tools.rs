@@ -8,6 +8,7 @@ mod get_story;
 mod list_decisions;
 mod list_epics;
 mod list_initiatives;
+mod list_stories;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
@@ -74,6 +75,7 @@ pub(crate) struct Tool {
 pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
     vec![
         search_items::tool(key_prefix),
+        list_stories::tool(),
         get_story::tool(key_prefix),
         list_epics::tool(),
         get_epic::tool(key_prefix),

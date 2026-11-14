@@ -1,9 +1,13 @@
 //! Tool inputs and results of the MCP endpoint (kb/ADR-0029 R12). A tool's arguments deserialize into its `…Input`
 //! type, and its `inputSchema` is generated from that type; so an input type is flat (or uses `#[schema(inline)]`,
 //! never a reference to another schema) and refuses unknown fields.
+use crate::activity::StoryWithReadiness;
 use crate::context::StoryContextDto;
+use crate::enums::{DeliveryState, Kind, Resolution};
 use crate::ids::Key;
 use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit};
+use crate::promise::PromisedFilter;
+use crate::readiness::Reason;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -49,6 +53,115 @@ pub struct SearchItemsResult {
 pub struct GetEpicInput {
     /// The epic's key.
     pub key: String,
+}
+
+/// One story in a list: what a person scans a backlog for, without the description, the criteria's text, the
+/// pull requests or the nested marks. It carries the key, to read the story whole with `get_story`, and the
+/// version, so a list is enough to prepare a move.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StorySummary {
+    pub key: Key,
+    pub title: String,
+    pub kind: Kind,
+    pub epic: Option<Key>,
+    pub owner: Option<String>,
+    pub delivery: DeliveryState,
+    pub resolution: Option<Resolution>,
+    pub labels: Vec<String>,
+    pub version: i64,
+    pub blocked_by: Vec<Key>,
+    /// How many acceptance criteria are checked.
+    pub criteria_done: usize,
+    /// How many acceptance criteria there are.
+    pub criteria_total: usize,
+    pub ready: bool,
+    /// Why the story is not ready; empty when it is.
+    pub reasons: Vec<Reason>,
+    /// Whether the story is shown as urgent, through its own mark or its epic's or initiative's.
+    pub urgent: bool,
+    /// The date the story is promised by (its own promise or the one it inherits from its epic), when it is.
+    pub promised_on: Option<NaiveDate>,
+}
+
+impl From<StoryWithReadiness> for StorySummary {
+    fn from(row: StoryWithReadiness) -> Self {
+        let StoryWithReadiness { story, readiness } = row;
+        Self {
+            criteria_done: story.criteria.iter().filter(|c| c.done).count(),
+            criteria_total: story.criteria.len(),
+            urgent: !story.urgent_sources.is_empty(),
+            promised_on: story.promise.as_ref().map(|promise| promise.on),
+            key: story.key,
+            title: story.title,
+            kind: story.kind,
+            epic: story.epic,
+            owner: story.owner,
+            delivery: story.delivery,
+            resolution: story.resolution,
+            labels: story.labels,
+            version: story.version,
+            blocked_by: story.blocked_by,
+            ready: readiness.ready,
+            reasons: readiness.reasons,
+        }
+    }
+}
+
+/// `list_stories`: one page of the story list, filtered (`reeve story ls`). There is no `sort`: the answer is in
+/// backlog order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListStoriesInput {
+    /// Only stories in this epic: the epic's key. A key that names nothing lists nothing.
+    pub epic: Option<String>,
+    /// Only stories in this initiative's epics: the initiative's key. A key that names nothing lists nothing.
+    pub initiative: Option<String>,
+    /// Only stories owned by this person: an email address. Not together with `mine`.
+    pub owner: Option<String>,
+    /// Only stories owned by the person asking. With `open`, this is their plate.
+    #[serde(default)]
+    pub mine: bool,
+    /// Only stories in this delivery state.
+    #[schema(inline)]
+    pub delivery: Option<DeliveryState>,
+    /// Only items of this kind.
+    #[schema(inline)]
+    pub kind: Option<Kind>,
+    /// Only stories with this label.
+    pub label: Option<String>,
+    /// Only stories whose title, description or external reference contains this text (any case, 1 to 200 characters); a key also finds that story.
+    pub text: Option<String>,
+    /// Only items with no epic that are not done: work nobody has placed yet.
+    #[serde(default)]
+    pub untriaged: bool,
+    /// Only work that can be picked up: ready stories still in todo.
+    #[serde(default)]
+    pub ready: bool,
+    /// Only stories that are not done.
+    #[serde(default)]
+    pub open: bool,
+    /// Only stories shown as urgent.
+    #[serde(default)]
+    pub urgent: bool,
+    /// Only stories serving the active sprint's goals: a goal id, `any` (some goal) or `none` (upkeep).
+    pub goal: Option<String>,
+    /// Only stories with a promise in this state: `this_sprint` (overdue, or due this sprint), `next_sprint`, `overdue`, or `any` (open or overdue). Kept, late and dropped promises never match.
+    #[schema(inline)]
+    pub promised: Option<PromisedFilter>,
+    /// At most this many stories, 1 to 50; 25 when left out.
+    #[schema(minimum = 1, maximum = 50)]
+    pub limit: Option<u32>,
+    /// Stories to skip first: the `next_offset` of the page before; 0 when left out.
+    pub offset: Option<u32>,
+}
+
+/// What `list_stories` answers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ListStoriesResult {
+    /// One page, in backlog order: by delivery state, then rank.
+    pub stories: Vec<StorySummary>,
+    /// Where the next page starts when there may be more (this page is full, or rows were left out to keep the answer small); null on the last page.
+    pub next_offset: Option<u32>,
 }
 
 /// One epic in a list: what tells epics apart, without the brief or the nested marks. It carries the key, to read
@@ -254,6 +367,64 @@ mod tests {
             json!({
                 "key": "TST-9", "title": "Later", "horizon": "Later", "target_month": null,
                 "owner": null, "version": 4, "discovery_complete": true, "progress": null
+            })
+        );
+    }
+
+    /// The one summary the design asks to be pinned as literal JSON: comparing a tool with its route through
+    /// `StorySummary::from` on both sides would prove nothing about the conversion.
+    #[test]
+    fn a_story_summary_is_these_sixteen_fields() {
+        let row: StoryWithReadiness = serde_json::from_value(json!({
+            "story": {
+                "key": "TST-7", "title": "Pick a slot", "kind": "bug", "epic": "TST-2",
+                "description": "A long description.",
+                "criteria": [
+                    {"text": "a", "done": true}, {"text": "b", "done": false}, {"text": "c", "done": true}
+                ],
+                "owner": "bob@example.com", "labels": ["web"], "rank": 4, "blocked_by": ["TST-5"],
+                "delivery": "in_review", "resolution": null, "external_ref": "SCRUM-9", "version": 6,
+                "prs": [], "goals": [], "urgent_mark": null,
+                "urgent_sources": [{"key": "TST-2", "item": "epic"}],
+                "promise": {
+                    "own": null, "epic": null, "on": "2026-12-01", "holder": "own", "state": "open",
+                    "due": "this_sprint", "days": null
+                }
+            },
+            "readiness": {"ready": false, "reasons": [{"reason": "no_criteria"}]}
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(StorySummary::from(row)).unwrap(),
+            json!({
+                "key": "TST-7", "title": "Pick a slot", "kind": "bug", "epic": "TST-2",
+                "owner": "bob@example.com", "delivery": "in_review", "resolution": null,
+                "labels": ["web"], "version": 6, "blocked_by": ["TST-5"],
+                "criteria_done": 2, "criteria_total": 3,
+                "ready": false, "reasons": [{"reason": "no_criteria"}],
+                "urgent": true, "promised_on": "2026-12-01"
+            })
+        );
+        // No derived field is a constant: a done, ready story with no criteria, no urgent source and no promise.
+        let plain: StoryWithReadiness = serde_json::from_value(json!({
+            "story": {
+                "key": "TST-8", "title": "Tidy the footer", "kind": "chore", "epic": null,
+                "description": "", "criteria": [], "owner": null, "labels": [], "rank": 0,
+                "blocked_by": [], "delivery": "done", "resolution": "dropped", "external_ref": null,
+                "version": 1, "prs": []
+            },
+            "readiness": {"ready": true, "reasons": []}
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(StorySummary::from(plain)).unwrap(),
+            json!({
+                "key": "TST-8", "title": "Tidy the footer", "kind": "chore", "epic": null,
+                "owner": null, "delivery": "done", "resolution": "dropped",
+                "labels": [], "version": 1, "blocked_by": [],
+                "criteria_done": 0, "criteria_total": 0,
+                "ready": true, "reasons": [],
+                "urgent": false, "promised_on": null
             })
         );
     }

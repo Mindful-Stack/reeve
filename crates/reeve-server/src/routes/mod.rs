@@ -22,8 +22,8 @@ pub mod users;
 pub mod war_room;
 pub mod webhooks;
 
-// The key filters live with the actions that use them; routes that still resolve a key themselves reach them here.
-pub(crate) use crate::actions::{FilterRef, resolve_filter, resolve_opt};
+// The key filters live with the actions that use them; routes that still resolve a key themselves reach this one.
+pub(crate) use crate::actions::resolve_opt;
 
 /// An edit's parent: `None` leaves it alone, `Some(None)` clears it, `Some(Some(r))` resolves `r`.
 pub(crate) async fn resolve_edit(

@@ -538,3 +538,368 @@ async fn list_decisions_answers_the_route_s_decisions_and_mine_keeps_the_caller_
     let queue = refusal(&h, &bob, "list_decisions", json!({"queue": true})).await;
     assert!(queue.contains("unknown field `queue`"), "{queue}");
 }
+
+/// One row of `GET /stories` as `list_stories` summarises it, written out by hand from the API's JSON, not
+/// through `StorySummary::from`.
+fn story_summary(row: &Value) -> Value {
+    let story = &row["story"];
+    let criteria = story["criteria"].as_array().unwrap();
+    json!({
+        "key": story["key"],
+        "title": story["title"],
+        "kind": story["kind"],
+        "epic": story["epic"],
+        "owner": story["owner"],
+        "delivery": story["delivery"],
+        "resolution": story["resolution"],
+        "labels": story["labels"],
+        "version": story["version"],
+        "blocked_by": story["blocked_by"],
+        "criteria_done": criteria.iter().filter(|c| c["done"] == true).count(),
+        "criteria_total": criteria.len(),
+        "ready": row["readiness"]["ready"],
+        "reasons": row["readiness"]["reasons"],
+        "urgent": !story["urgent_sources"].as_array().unwrap().is_empty(),
+        "promised_on": story["promise"]["on"],
+    })
+}
+
+fn story_keys(page: &Value) -> Vec<String> {
+    page["stories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(key)
+        .collect()
+}
+
+#[tokio::test]
+async fn list_stories_answers_the_route_s_page_as_summaries_for_every_filter() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    let all = [&s.bobs, &s.dans, &s.untriaged, &s.ready, &s.dropped];
+    // The tool's arguments, the route's query for them, and the control: the stories the route must list.
+    let cases: Vec<(Value, String, Vec<&String>)> = vec![
+        (json!({}), String::new(), all.to_vec()),
+        (
+            json!({"open": true}),
+            "&done=none".into(),
+            vec![&s.bobs, &s.dans, &s.untriaged, &s.ready],
+        ),
+        (
+            json!({"owner": DAN}),
+            format!("&owner={DAN}"),
+            vec![&s.dans],
+        ),
+        (
+            json!({"epic": s.epic}),
+            format!("&epic={}", s.epic),
+            vec![&s.bobs, &s.dans],
+        ),
+        (
+            json!({"initiative": s.initiative}),
+            format!("&initiative={}", s.initiative),
+            vec![&s.bobs, &s.dans],
+        ),
+        (
+            json!({"untriaged": true}),
+            "&untriaged=true".into(),
+            vec![&s.untriaged],
+        ),
+        (json!({"ready": true}), "&ready=true".into(), vec![&s.ready]),
+        (
+            json!({"urgent": true}),
+            "&urgent=true".into(),
+            vec![&s.dans],
+        ),
+        (json!({"kind": "bug"}), "&kind=bug".into(), vec![&s.dans]),
+        (json!({"label": "web"}), "&label=web".into(), vec![&s.bobs]),
+        (json!({"text": "slot"}), "&q=slot".into(), vec![&s.bobs]),
+        (
+            json!({"delivery": "done"}),
+            "&delivery=done".into(),
+            vec![&s.dropped],
+        ),
+        (
+            json!({"promised": "any"}),
+            "&promised=any".into(),
+            vec![&s.bobs],
+        ),
+        // Filters combine.
+        (
+            json!({"epic": s.epic, "kind": "bug", "open": true}),
+            format!("&epic={}&kind=bug&done=none", s.epic),
+            vec![&s.dans],
+        ),
+    ];
+    for (arguments, query, control) in cases {
+        let rows = api(
+            &h,
+            &h.victim_token,
+            &format!("/api/v1/stories?limit=25&offset=0{query}"),
+        )
+        .await;
+        let rows = rows.as_array().unwrap();
+        let mut listed: Vec<String> = rows.iter().map(|row| key(&row["story"])).collect();
+        listed.sort();
+        let mut control: Vec<String> = control.into_iter().cloned().collect();
+        control.sort();
+        assert_eq!(listed, control, "the control for {arguments}");
+        let summaries: Vec<Value> = rows.iter().map(story_summary).collect();
+        assert_eq!(
+            answer(&h, &bob, "list_stories", arguments.clone()).await,
+            json!({"stories": summaries, "next_offset": null}),
+            "{arguments}"
+        );
+    }
+
+    // The derived fields where they are not the default.
+    let ready = answer(&h, &bob, "list_stories", json!({"ready": true})).await;
+    assert_eq!(
+        (
+            &ready["stories"][0]["ready"],
+            &ready["stories"][0]["reasons"]
+        ),
+        (&json!(true), &json!([]))
+    );
+    let urgent = answer(&h, &bob, "list_stories", json!({"urgent": true})).await;
+    assert_eq!(urgent["stories"][0]["urgent"], true);
+    let done = answer(&h, &bob, "list_stories", json!({"delivery": "done"})).await;
+    assert_eq!(done["stories"][0]["resolution"], "dropped");
+}
+
+/// The `goal` filter needs an active sprint: a goal's id lists the stories linked to that goal, `any` the stories
+/// serving some goal, `none` the rest.
+#[tokio::test]
+async fn list_stories_goal_filters_by_the_active_sprint_s_goals() {
+    let h = mcp_harness().await;
+    let dan = mcp_token(&h, DAN).await;
+    let story = |idem: &str| json!({"idempotency_key": idem, "title": idem, "kind": "story", "criteria": [], "labels": []});
+    let first = new_story(&h, story("gl-s1")).await;
+    let second = new_story(&h, story("gl-s2")).await;
+    let upkeep = new_story(&h, story("gl-s3")).await;
+    let mut goals = Vec::new();
+    for (idem, linked) in [("gl-g1", &first), ("gl-g2", &second)] {
+        let goal = post(
+            &h,
+            "/api/v1/goals",
+            json!({"idempotency_key": idem, "outcome": idem, "check": "c"}),
+        )
+        .await["goal"]["id"]
+            .as_i64()
+            .unwrap();
+        post(
+            &h,
+            &format!("/api/v1/goals/{goal}/links"),
+            json!({"items": [linked]}),
+        )
+        .await;
+        goals.push(goal);
+    }
+    let draft = api(&h, &h.admin_token, "/api/v1/sprints").await["draft"].clone();
+    post(
+        &h,
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        json!({"version": draft["version"]}),
+    )
+    .await;
+
+    // The tool's `goal`, and the control: the stories the route lists for it. Four different lists.
+    let cases = [
+        (goals[0].to_string(), vec![&first]),
+        (goals[1].to_string(), vec![&second]),
+        ("any".to_string(), vec![&first, &second]),
+        ("none".to_string(), vec![&upkeep]),
+    ];
+    for (goal, control) in cases {
+        let rows = api(
+            &h,
+            &h.admin_token,
+            &format!("/api/v1/stories?limit=25&offset=0&goal={goal}"),
+        )
+        .await;
+        let mut listed: Vec<String> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| key(&row["story"]))
+            .collect();
+        listed.sort();
+        let mut control: Vec<String> = control.into_iter().cloned().collect();
+        control.sort();
+        assert_eq!(listed, control, "the control for goal={goal}");
+        let page = answer(&h, &dan, "list_stories", json!({"goal": goal})).await;
+        let mut got = story_keys(&page);
+        got.sort();
+        assert_eq!(got, control, "goal={goal}");
+    }
+}
+
+#[tokio::test]
+async fn list_stories_mine_is_the_caller_as_owner_as_the_cli_sends_it() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    let dan = mcp_token(&h, DAN).await;
+
+    // "Mine and open" is the caller's plate: what the CLI's `story ls --mine --open` asks the route for.
+    let plate = api(
+        &h,
+        &h.victim_token,
+        &format!("/api/v1/stories?owner={BOB}&done=none&limit=25&offset=0"),
+    )
+    .await;
+    let plate = plate.as_array().unwrap();
+    assert_eq!(plate.len(), 1, "the control: bob has one open story");
+    assert_eq!(plate[0]["story"]["key"], json!(s.bobs));
+    let summaries: Vec<Value> = plate.iter().map(story_summary).collect();
+    let mine_and_open = json!({"mine": true, "open": true});
+    assert_eq!(
+        answer(&h, &bob, "list_stories", mine_and_open.clone()).await,
+        json!({"stories": summaries, "next_offset": null})
+    );
+    // The same arguments from another person list that person's work.
+    let dans = answer(&h, &dan, "list_stories", mine_and_open).await;
+    assert_eq!(story_keys(&dans), vec![s.dans.clone()]);
+    // Without `open`, bob's done story is his too.
+    let mut all_of_bobs =
+        story_keys(&answer(&h, &bob, "list_stories", json!({"mine": true})).await);
+    all_of_bobs.sort();
+    let mut want = vec![s.bobs.clone(), s.dropped.clone()];
+    want.sort();
+    assert_eq!(all_of_bobs, want);
+    // `mine` and `owner` say two different things: refused, not guessed.
+    assert_eq!(
+        refusal(
+            &h,
+            &bob,
+            "list_stories",
+            json!({"mine": true, "owner": DAN})
+        )
+        .await,
+        "Give mine or owner, not both."
+    );
+}
+
+#[tokio::test]
+async fn list_stories_pages_with_next_offset_and_defaults_to_twenty_five() {
+    let h = mcp_harness().await;
+    let dan = mcp_token(&h, DAN).await;
+    for n in 1..=26 {
+        new_story(
+            &h,
+            json!({"idempotency_key": format!("pg-{n}"), "title": format!("Story {n}"), "kind": "story", "criteria": [], "labels": []}),
+        )
+        .await;
+    }
+    let all = api(&h, &h.admin_token, "/api/v1/stories").await;
+    let all: Vec<String> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| key(&row["story"]))
+        .collect();
+    assert_eq!(
+        all.len(),
+        26,
+        "the control: the whole list, in backlog order"
+    );
+
+    // No limit: 25 stories, and where the next page starts.
+    let first = answer(&h, &dan, "list_stories", json!({})).await;
+    assert_eq!(story_keys(&first), &all[..25]);
+    assert_eq!(first["next_offset"], 25);
+    let rest = answer(&h, &dan, "list_stories", json!({"offset": 25})).await;
+    assert_eq!(story_keys(&rest), &all[25..]);
+    assert!(rest["next_offset"].is_null(), "{rest}");
+
+    // Following `next_offset` covers the list exactly once, in order: 10, 10, 6.
+    let mut seen = Vec::new();
+    let mut offset = json!(0);
+    for _ in 0..4 {
+        let page = answer(
+            &h,
+            &dan,
+            "list_stories",
+            json!({"limit": 10, "offset": offset}),
+        )
+        .await;
+        seen.extend(story_keys(&page));
+        offset = page["next_offset"].clone();
+        if offset.is_null() {
+            break;
+        }
+    }
+    assert!(offset.is_null(), "three pages of ten end the list");
+    assert_eq!(seen, all);
+
+    // A full last page still names a next offset; the page after it is empty and ends the list.
+    let last_full = answer(&h, &dan, "list_stories", json!({"limit": 13, "offset": 13})).await;
+    assert_eq!(story_keys(&last_full), &all[13..]);
+    assert_eq!(last_full["next_offset"], 26);
+    assert_eq!(
+        answer(&h, &dan, "list_stories", json!({"limit": 13, "offset": 26})).await,
+        json!({"stories": [], "next_offset": null})
+    );
+
+    // A page is the route's page for the same limit and offset.
+    let route = api(&h, &h.admin_token, "/api/v1/stories?limit=10&offset=20").await;
+    let summaries: Vec<Value> = route
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(story_summary)
+        .collect();
+    assert_eq!(summaries.len(), 6, "the control");
+    assert_eq!(
+        answer(&h, &dan, "list_stories", json!({"limit": 10, "offset": 20})).await["stories"],
+        json!(summaries)
+    );
+
+    // The largest page a chat may ask for is accepted, and holds all 26.
+    let fifty = answer(&h, &dan, "list_stories", json!({"limit": 50})).await;
+    assert_eq!(story_keys(&fifty), all);
+    assert!(fifty["next_offset"].is_null(), "{fifty}");
+
+    // The tool's page is at most 50, whatever the route would allow.
+    for limit in [0, 51] {
+        assert_eq!(
+            refusal(&h, &dan, "list_stories", json!({"limit": limit})).await,
+            "limit must be 1 to 50."
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_stories_says_what_does_not_fit() {
+    let h = mcp_harness().await;
+    let bob = mcp_token(&h, BOB).await;
+    // The action's own validation, in its words.
+    assert_eq!(
+        refusal(&h, &bob, "list_stories", json!({"goal": "soon"})).await,
+        "goal must be any, none or a goal id"
+    );
+    assert_eq!(
+        refusal(&h, &bob, "list_stories", json!({"text": "x".repeat(201)})).await,
+        "story text must be 1..=200 characters"
+    );
+    // A key that names nothing lists nothing; text that is no key is said to be none.
+    assert_eq!(
+        answer(&h, &bob, "list_stories", json!({"epic": "TST-999999"})).await,
+        json!({"stories": [], "next_offset": null})
+    );
+    assert_eq!(
+        refusal(
+            &h,
+            &bob,
+            "list_stories",
+            json!({"epic": "the booking epic"})
+        )
+        .await,
+        "epic must be a key such as TST-12, not \"the booking epic\"."
+    );
+    // There is no `sort`.
+    let sort = refusal(&h, &bob, "list_stories", json!({"sort": "relevance"})).await;
+    assert!(sort.contains("unknown field `sort`"), "{sort}");
+}

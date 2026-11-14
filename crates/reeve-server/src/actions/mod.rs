@@ -12,6 +12,7 @@ mod decisions;
 mod epics;
 mod initiatives;
 mod search;
+mod stories;
 mod story_context;
 
 use crate::state::AppState;
@@ -24,6 +25,7 @@ pub(crate) use initiatives::{get_initiative, list_initiatives};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
 pub(crate) use search::{SearchQuery, search};
+pub(crate) use stories::{StoryQuery, list_stories};
 pub(crate) use story_context::story_context;
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
