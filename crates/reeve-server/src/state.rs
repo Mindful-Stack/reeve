@@ -32,6 +32,9 @@ pub struct AppState {
     /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
     /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
     pub repo_urls: Arc<HashMap<String, String>>,
+    /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route resolves a client with
+    /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
+    pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
 }
 
 /// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, port, query or fragment and
@@ -186,6 +189,20 @@ async fn build_oidc(config: &ServerConfig) -> anyhow::Result<Option<Arc<dyn Oidc
     })
 }
 
+/// The fetcher of client metadata documents, chosen as `build_oidc` chooses the provider: the loopback-only one
+/// for the static provider (which loads only on loopback, in builds with `static-oidc`), the production one in
+/// every other case. `ServerConfig::validate` admits a loopback client host under the same condition.
+#[cfg_attr(not(feature = "static-oidc"), allow(unused_variables))]
+fn build_client_fetcher(
+    config: &ServerConfig,
+) -> anyhow::Result<Arc<dyn reeve_identity::ClientDocumentFetcher>> {
+    #[cfg(feature = "static-oidc")]
+    if matches!(config.oidc, Some(OidcSection::Static { .. })) {
+        return reeve_identity::make_loopback_client_fetcher();
+    }
+    reeve_identity::make_client_fetcher()
+}
+
 /// The planning handlers over `pool`, with the instance settings from `config`. The one place they are built, for the
 /// server (`build_state`) and the offline export (`ExportSources::offline`), so the two cannot differ in settings.
 pub(crate) fn handlers_for(
@@ -226,6 +243,7 @@ impl AppState {
 pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<AppState> {
     config.validate()?;
     let oidc = build_oidc(&config).await?;
+    let client_fetcher = build_client_fetcher(&config)?;
     let activity = reeve_activity::make_activity_store(pool.clone());
     let handlers = handlers_for(&config, pool.clone(), activity.clone());
     // A directory override is a development convenience; release builds serve the embedded files only.
@@ -249,6 +267,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         logins: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assets,
         repo_urls,
+        client_fetcher,
     })
 }
 

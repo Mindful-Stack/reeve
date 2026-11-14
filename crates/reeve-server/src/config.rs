@@ -616,6 +616,14 @@ impl ServerConfig {
         }
         Ok(u)
     }
+    /// The instance's rules for MCP clients, as `reeve_identity::resolve_client` takes them: `[mcp] client_hosts`
+    /// and `[mcp] redirect_uris`.
+    pub fn client_policy(&self) -> reeve_identity::ClientPolicy {
+        reeve_identity::ClientPolicy {
+            client_hosts: self.mcp.client_hosts.clone(),
+            redirect_uris: self.mcp.redirect_uris.clone(),
+        }
+    }
     pub fn identity(&self) -> reeve_identity::IdentityConfig {
         reeve_identity::IdentityConfig {
             allowed_domains: self.allowed_domains.clone(),
