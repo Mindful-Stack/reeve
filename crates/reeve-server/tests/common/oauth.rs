@@ -5,7 +5,7 @@
 //! Not reproduced: a browser. The connect cookie is copied from the `Set-Cookie` the server sent and the session
 //! is an API token put in the cookie header by hand. Nothing here proves that a browser stores or sends either
 //! cookie; `web/tests/smoke.spec.ts` does, on http loopback.
-use super::{clients::client_harness, *};
+use super::{clients::client_harness_with, *};
 use axum::{body::Body, http::Request};
 use serde_json::Value;
 
@@ -32,7 +32,16 @@ pub async fn flow() -> Flow {
 
 /// The same with the instance's redirect list as given; the client's document lists `CALLBACK` only.
 pub async fn flow_with(redirect_uris: &[&str]) -> Flow {
-    let (h, host) = client_harness(redirect_uris).await;
+    flow_from(redirect_uris, "").await
+}
+
+/// The flow harness with `[mcp] privacy_url` set to `privacy_url`.
+pub async fn flow_with_privacy(privacy_url: &str) -> Flow {
+    flow_from(&[CALLBACK], &format!("privacy_url = \"{privacy_url}\"\n")).await
+}
+
+async fn flow_from(redirect_uris: &[&str], mcp_lines: &str) -> Flow {
+    let (h, host) = client_harness_with(redirect_uris, mcp_lines).await;
     let client_id = host.publish("/client.json", "Example App", &[CALLBACK]);
     Flow {
         h: h.with_fixed_clock(),

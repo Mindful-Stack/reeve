@@ -25,6 +25,8 @@ pub struct ConnectionRequestDto {
     pub requested_at: DateTime<Utc>,
     /// The one-time value an answer must carry. A later read of the same request replaces it.
     pub approval: String,
+    /// The instance's privacy statement (`[mcp] privacy_url`), null when none is configured.
+    pub privacy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

@@ -1507,6 +1507,8 @@ export interface components {
             client_name: string;
             /** @description The signed-in person who would approve. */
             email: string;
+            /** @description The instance's privacy statement (`[mcp] privacy_url`), null when none is configured. */
+            privacy_url?: string | null;
             /** @description The host the person is sent back to. */
             redirect_host: string;
             /** Format: date-time */
@@ -2534,6 +2536,8 @@ export interface components {
                 client_name: string;
                 /** @description The signed-in person who would approve. */
                 email: string;
+                /** @description The instance's privacy statement (`[mcp] privacy_url`), null when none is configured. */
+                privacy_url?: string | null;
                 /** @description The host the person is sent back to. */
                 redirect_host: string;
                 /** Format: date-time */
