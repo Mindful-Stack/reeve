@@ -26,3 +26,26 @@ fn no_configuration_names_another_issuer() {
     .unwrap_err();
     assert!(err.to_string().contains("issuer"), "{err}");
 }
+
+/// A production build has no way to mint an MCP token by hand (kb/ADR-0029 R5; GRA-658 adds the only real path). The
+/// configuration path does not exist: a build that had the subcommand would fail on that instead, with status 1,
+/// so a configuration error cannot pass for "no such subcommand".
+#[test]
+fn mcp_token_issue_does_not_exist_without_the_feature() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_reeve-server"))
+        .args([
+            "--config",
+            "/nonexistent/reeve.toml",
+            "mcp-token-issue",
+            "--email",
+            "dan@example.com",
+        ])
+        .env_remove("REEVE_CONFIG")
+        .env("RUST_LOG", "warn")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("unrecognized subcommand"), "{stderr}");
+    assert!(stderr.contains("mcp-token-issue"), "{stderr}");
+}
