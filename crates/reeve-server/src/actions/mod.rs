@@ -8,6 +8,7 @@
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
 //! passes what it parsed, and a tool is an adapter that turns its own narrower input into the route's and calls the
 //! same action. A check that sits in a route function moves into the action when that route gets a tool.
+mod decisions;
 mod epics;
 mod initiatives;
 mod search;
@@ -15,6 +16,9 @@ mod story_context;
 
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
+pub(crate) use decisions::{
+    DecisionQuery, decision_dto, decision_scope, list_decisions, resolve_on,
+};
 pub(crate) use epics::{EpicQuery, get_epic, list_epics};
 pub(crate) use initiatives::{get_initiative, list_initiatives};
 use reeve_identity::AccessPolicy;

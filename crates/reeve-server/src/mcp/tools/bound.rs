@@ -17,6 +17,8 @@ pub(super) const MAX_RECENT: usize = 20;
 /// How many rows of a list of summaries that is not paged (epics, initiatives) are sent: the first ones, in the
 /// list's own order.
 pub(super) const MAX_LIST: usize = 200;
+/// How many rows of a list of whole items (required decisions) are sent: fewer than summaries, since each is larger.
+pub(super) const MAX_WHOLE_LIST: usize = 50;
 /// The budget for a list's rows: their serialized size in bytes. Twice this, with the envelope, stays well under a
 /// client's limit.
 pub(super) const MAX_ANSWER: usize = 60_000;
@@ -77,6 +79,14 @@ pub(super) fn fit<T: serde::Serialize>(rows: &mut Vec<T>, omitted: usize) -> usi
     let dropped = rows.len() - keep;
     rows.truncate(keep);
     omitted + dropped
+}
+
+/// A closed decision's reason is people's text of any length that comes along with the decision: cut at
+/// `MAX_OTHER_TEXT`. Used wherever a tool answers a decision (`list_decisions`, `get_story`).
+pub(super) fn cut_closing_reason(decision: &mut reeve_protocol::RequiredDecisionDto) {
+    if let Some(closed) = &mut decision.closed {
+        cut(&mut closed.reason, MAX_OTHER_TEXT);
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +210,38 @@ mod tests {
         assert_eq!(one_over, (1..=MAX_LIST).collect::<Vec<_>>());
         let mut none: Vec<usize> = Vec::new();
         assert_eq!(capped(&mut none, MAX_LIST), 0);
+    }
+
+    fn decision(closed_because: Option<&str>) -> reeve_protocol::RequiredDecisionDto {
+        let closed = closed_because
+            .map(|reason| serde_json::json!({"at": "2026-11-01T10:00:00Z", "by": "dan@example.com", "reason": reason}));
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "on": "TST-1", "on_type": "epic", "title": "Which provider", "decider": "dan@example.com",
+            "due": null, "record": null, "pr_url": null, "check": {"kind": "unchecked"}, "checked_at": null,
+            "closed": closed, "created_at": "2026-11-01T09:00:00Z", "version": 1
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_long_closing_reason_is_cut_and_a_short_or_absent_one_is_not() {
+        let reason_after = |before: Option<&str>| {
+            let mut decision = decision(before);
+            cut_closing_reason(&mut decision);
+            decision.closed.map(|closed| closed.reason)
+        };
+        assert_eq!(
+            reason_after(Some(&"å".repeat(MAX_OTHER_TEXT + 1))),
+            Some(format!(
+                "{}[cut: 1 more characters]",
+                "å".repeat(MAX_OTHER_TEXT)
+            ))
+        );
+        assert_eq!(
+            reason_after(Some("Thirty minutes.")).as_deref(),
+            Some("Thirty minutes.")
+        );
+        assert_eq!(reason_after(None), None);
     }
 
     #[test]

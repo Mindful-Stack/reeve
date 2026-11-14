@@ -1,45 +1,17 @@
 use crate::{
+    actions::{DecisionQuery, decision_dto, decision_scope, resolve_on},
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{DecisionScope, HandlerError, Handlers, QueueEntry, RequiredDecision};
+use reeve_planning::QueueEntry;
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct DecisionQuery {
-    /// A story, epic or initiative key or external reference. A reference that matches nothing yields an empty list, not 404.
-    pub on: Option<KeyRef>,
-    #[serde(default)]
-    pub open_with_record: bool,
-    /// Without `on`, also list closed decisions (a list scoped by `on` always includes them).
-    #[serde(default)]
-    pub include_closed: bool,
-    /// Every decision under this initiative: on it, its epics and their stories, closed ones included. Not
-    /// with `on`.
-    pub initiative: Option<KeyRef>,
-}
-
-/// A decision target is untyped: `Handlers::resolve_any` checks native keys of every item type before any external
-/// reference.
-async fn resolve_on(h: &Handlers, raw: &KeyRef) -> Result<Key, HandlerError> {
-    h.resolve_any(raw.as_str()).await.map(|(_, k)| k)
-}
-
 type Dec = Json<Response<RequiredDecisionDto>>;
-
-/// The one place a decision becomes a response: its record link gains `browse_url` from the repository's `https://`
-/// URL in configuration (planning knows names only). Every route that returns a decision goes through it.
-pub(crate) fn decision_dto(s: &AppState, d: &RequiredDecision) -> RequiredDecisionDto {
-    let mut dto = RequiredDecisionDto::from(d);
-    crate::actions::browse(s, &mut dto);
-    dto
-}
 
 fn entry_dto(s: &AppState, e: &QueueEntry) -> DecisionQueueEntryDto {
     let mut dto = DecisionQueueEntryDto::from(e);
@@ -47,69 +19,15 @@ fn entry_dto(s: &AppState, e: &QueueEntry) -> DecisionQueueEntryDto {
     dto
 }
 
-/// The scope `on`/`initiative`/`include_closed` names. `None`: a reference that matches nothing, answered as an
-/// empty list, not 404. Both given is a validation error. The list and the queue resolve through this one function,
-/// so an unknown key behaves the same for both.
-async fn scope(
-    h: &Handlers,
-    on: Option<&KeyRef>,
-    initiative: Option<&KeyRef>,
-    include_closed: bool,
-) -> Result<Option<DecisionScope>, AppError> {
-    if let Some(r) = initiative {
-        if on.is_some() {
-            return Err(HandlerError::Validation("give on or initiative, not both".into()).into());
-        }
-        return match h.resolve_ref(r.as_str(), ItemType::Initiative).await {
-            Ok(k) => Ok(Some(DecisionScope::Initiative(k))),
-            Err(HandlerError::NotFound) => Ok(None),
-            Err(e) => Err(e.into()),
-        };
-    }
-    match on {
-        Some(r) => match resolve_on(h, r).await {
-            Ok(k) => Ok(Some(DecisionScope::On(k))),
-            Err(HandlerError::NotFound) => Ok(None),
-            Err(e) => Err(e.into()),
-        },
-        None => Ok(Some(DecisionScope::All { include_closed })),
-    }
-}
-
 #[utoipa::path(get, path = "/decisions", params(DecisionQuery), responses((status = 200, body = Response<Vec<RequiredDecisionDto>>)))]
 async fn list(
     State(s): State<AppState>,
-    _c: Caller,
+    c: Caller,
     ApiQuery(q): ApiQuery<DecisionQuery>,
 ) -> Result<Json<Response<Vec<RequiredDecisionDto>>>, AppError> {
-    let rows = match scope(
-        &s.handlers,
-        q.on.as_ref(),
-        q.initiative.as_ref(),
-        q.include_closed,
-    )
-    .await?
-    {
-        None => Vec::new(),
-        Some(DecisionScope::Initiative(k)) => {
-            match s.handlers.decisions_under_initiative(&k).await {
-                Ok(rows) => rows,
-                Err(HandlerError::NotFound) => Vec::new(),
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Some(DecisionScope::On(k)) => {
-            s.handlers
-                .list_decisions(Some(&k), q.open_with_record, q.include_closed)
-                .await?
-        }
-        Some(DecisionScope::All { include_closed }) => {
-            s.handlers
-                .list_decisions(None, q.open_with_record, include_closed)
-                .await?
-        }
-    };
-    Ok(ok(rows.iter().map(|d| decision_dto(&s, d)).collect()))
+    Ok(ok(
+        crate::actions::list_decisions(&s, &c.acting(), &q).await?
+    ))
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
@@ -130,7 +48,7 @@ async fn queue(
     c: Caller,
     ApiQuery(q): ApiQuery<DecisionQueueQuery>,
 ) -> Result<Json<Response<DecisionQueueDto>>, AppError> {
-    let Some(scope) = scope(
+    let Some(scope) = decision_scope(
         &s.handlers,
         q.on.as_ref(),
         q.initiative.as_ref(),

@@ -3,7 +3,7 @@
 //! never a reference to another schema) and refuses unknown fields.
 use crate::context::StoryContextDto;
 use crate::ids::Key;
-use crate::items::{EpicDto, InitiativeDto, SearchHit};
+use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -146,6 +146,28 @@ pub struct ListInitiativesResult {
 pub struct GetInitiativeInput {
     /// The initiative's key.
     pub key: String,
+}
+
+/// `list_decisions`: required decisions (`reeve decision ls`). Not the queue view.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListDecisionsInput {
+    /// Only the decisions on this item: the key of a story, an epic or an initiative. Closed ones are listed too. A key that names nothing lists nothing. Not together with `initiative`.
+    pub on: Option<String>,
+    /// Every decision under this initiative (on it, on its epics and on their stories): the initiative's key. Closed ones are listed too. A key that names nothing lists nothing. Not together with `on`.
+    pub initiative: Option<String>,
+    /// Only the decisions the person asking is the decider of.
+    #[serde(default)]
+    pub mine: bool,
+}
+
+/// What `list_decisions` answers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ListDecisionsResult {
+    /// At most 50 decisions, each whole except that a closed one's reason is cut when long.
+    pub decisions: Vec<RequiredDecisionDto>,
+    /// How many more decisions there are than `decisions` lists, left out to keep the answer small; 0 when all are listed.
+    pub omitted: usize,
 }
 
 #[cfg(test)]

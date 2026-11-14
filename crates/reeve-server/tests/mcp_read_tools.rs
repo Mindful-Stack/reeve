@@ -455,3 +455,86 @@ async fn list_initiatives_answers_the_route_s_initiatives_as_summaries() {
     let unknown = refusal(&h, &bob, "list_initiatives", json!({"horizon": "Now"})).await;
     assert!(unknown.contains("unknown field `horizon`"), "{unknown}");
 }
+
+fn ids(decisions: &Value) -> Vec<i64> {
+    decisions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["id"].as_i64().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn list_decisions_answers_the_route_s_decisions_and_mine_keeps_the_caller_s() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    let dan = mcp_token(&h, DAN).await;
+
+    // The tool's arguments, the route's query for them, and the control: the ids the route must list. Unscoped,
+    // the closed decision is left out; scoped, it is listed: as `reeve decision ls` lists them.
+    let cases = [
+        (json!({}), String::new(), vec![s.open_decision]),
+        (
+            json!({"on": s.bobs}),
+            format!("?on={}", s.bobs),
+            vec![s.closed_decision],
+        ),
+        (
+            json!({"initiative": s.initiative}),
+            format!("?initiative={}", s.initiative),
+            vec![s.open_decision, s.closed_decision],
+        ),
+    ];
+    for (arguments, query, control) in cases {
+        let rows = api(&h, &h.victim_token, &format!("/api/v1/decisions{query}")).await;
+        let mut listed = ids(&rows);
+        listed.sort();
+        assert_eq!(listed, control, "the control for {arguments}");
+        assert_eq!(
+            answer(&h, &bob, "list_decisions", arguments.clone()).await,
+            json!({"decisions": rows, "omitted": 0}),
+            "{arguments}"
+        );
+    }
+
+    // `mine` keeps the decisions the caller decides: bob the open one, dan none of the open ones, and dan's
+    // closed one once the list is scoped so that closed ones are in it.
+    let mine = json!({"mine": true});
+    let bobs = answer(&h, &bob, "list_decisions", mine.clone()).await;
+    assert_eq!(ids(&bobs["decisions"]), vec![s.open_decision]);
+    let dans = answer(&h, &dan, "list_decisions", mine).await;
+    assert_eq!(dans, json!({"decisions": [], "omitted": 0}));
+    let dans_under = answer(
+        &h,
+        &dan,
+        "list_decisions",
+        json!({"mine": true, "initiative": s.initiative}),
+    )
+    .await;
+    assert_eq!(ids(&dans_under["decisions"]), vec![s.closed_decision]);
+
+    // Both scopes at once are refused by the action, in the route's words.
+    assert_eq!(
+        refusal(
+            &h,
+            &bob,
+            "list_decisions",
+            json!({"on": s.bobs, "initiative": s.initiative})
+        )
+        .await,
+        "give on or initiative, not both"
+    );
+    // A key that names nothing lists nothing; text that is no key is said to be none; the queue is not offered.
+    assert_eq!(
+        answer(&h, &bob, "list_decisions", json!({"on": "TST-999999"})).await,
+        json!({"decisions": [], "omitted": 0})
+    );
+    assert_eq!(
+        refusal(&h, &bob, "list_decisions", json!({"on": "the epic"})).await,
+        "on must be a key such as TST-12, not \"the epic\"."
+    );
+    let queue = refusal(&h, &bob, "list_decisions", json!({"queue": true})).await;
+    assert!(queue.contains("unknown field `queue`"), "{queue}");
+}
