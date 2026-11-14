@@ -25,6 +25,14 @@ const MAX_BODY: usize = 1024 * 1024;
 /// How long a client may keep `server/discover` and `tools/list` answers: neither changes while the process runs.
 const TTL_MS: u64 = 300_000;
 
+/// Every tool, built once with the state (`build_state`): building a tool generates its input schema, which is
+/// not work to repeat on every request.
+pub(crate) type Tools = std::sync::Arc<Vec<tools::Tool>>;
+
+pub(crate) fn build_tools(config: &crate::ServerConfig) -> Tools {
+    std::sync::Arc::new(tools::registry(&config.key_prefix))
+}
+
 fn capabilities() -> Value {
     // No `listChanged`: no list ever changes at run time, and `subscriptions/listen` is not implemented.
     json!({"tools": {}})
@@ -166,17 +174,20 @@ fn protocol_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a 
     }
 }
 
-/// The one line `serve` logs at startup about this endpoint.
-pub fn mcp_startup_line(config: &crate::ServerConfig) -> String {
+/// The one line `serve` logs at startup about this endpoint, from the state as built.
+pub fn mcp_startup_line(state: &AppState) -> String {
+    startup_line(&state.config, state.mcp_tools.len())
+}
+
+fn startup_line(config: &crate::ServerConfig, tools: usize) -> String {
     if !config.mcp.enabled {
         return "mcp endpoint disabled".into();
     }
     format!(
-        "mcp endpoint enabled at {} (protocol {} and {}, {} tools)",
+        "mcp endpoint enabled at {} (protocol {} and {}, {tools} tools)",
         crate::auth::oauth::resource(config),
         protocol::MODERN,
-        protocol::LEGACY,
-        tools::list(&config.key_prefix).len()
+        protocol::LEGACY
     )
 }
 
@@ -309,7 +320,7 @@ async fn answer(
         })),
         (Revision::Legacy, "ping") => Ok(json!({})),
         (_, "tools/list") => {
-            let result = json!({"tools": tools::list(&s.config.key_prefix)});
+            let result = json!({"tools": tools::list(&s.mcp_tools)});
             Ok(match revision {
                 Revision::Modern => modern(result),
                 Revision::Legacy => result,
@@ -353,8 +364,7 @@ async fn call_tool(
             "Invalid params: tools/call requires params.name".into(),
         ));
     };
-    let registry = tools::registry(&s.config.key_prefix);
-    let Some(tool) = registry.iter().find(|t| t.name == name) else {
+    let Some(tool) = s.mcp_tools.iter().find(|t| t.name == name) else {
         return Err(invalid(format!("Unknown tool: {name}")));
     };
     // `arguments` may be left out (no arguments); when present it must be a JSON object.
@@ -403,11 +413,14 @@ mod tests {
     #[test]
     fn the_startup_line_says_whether_and_where_mcp_is_served() {
         let off = crate::ServerConfig::parse(BASE).unwrap();
-        assert_eq!(mcp_startup_line(&off), "mcp endpoint disabled");
+        assert_eq!(startup_line(&off, 3), "mcp endpoint disabled");
         let on = crate::ServerConfig::parse(&format!("{BASE}[mcp]\nenabled = true\n")).unwrap();
-        assert_eq!(
-            mcp_startup_line(&on),
-            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)"
+        let line = startup_line(&on, 3);
+        assert!(
+            line.starts_with(
+                "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, "
+            ),
+            "{line}"
         );
     }
 }

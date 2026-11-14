@@ -26,6 +26,21 @@ fn config(url: &str, token: &str) -> StreamableHttpClientTransportConfig {
     StreamableHttpClientTransportConfig::with_uri(url.to_string()).auth_header(token)
 }
 
+/// The tool names in the committed snapshot, in its order. `tests/mcp.rs` proves that `tools/list` equals that
+/// file; here the SDK's client must see the same names in the same order.
+fn snapshot_names() -> Vec<String> {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/mcp_tools.json");
+    let tools: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_sdk_client_discovers_and_lists_tools_over_2026_07_28() {
     let h = mcp_harness().await;
@@ -51,8 +66,11 @@ async fn the_sdk_client_discovers_and_lists_tools_over_2026_07_28() {
         .await
         .expect("tools/list is answered");
     assert_eq!(
-        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
-        vec!["get_story"]
+        tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<String>>(),
+        snapshot_names()
     );
     client.cancel().await.unwrap();
 }
@@ -75,8 +93,11 @@ async fn the_sdk_client_shakes_hands_and_lists_tools_over_2025_11_25() {
         .await
         .expect("tools/list is answered");
     assert_eq!(
-        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
-        vec!["get_story"]
+        tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<String>>(),
+        snapshot_names()
     );
     client.cancel().await.unwrap();
 }

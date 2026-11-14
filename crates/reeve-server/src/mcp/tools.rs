@@ -54,8 +54,8 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
 }
 
 /// `tools/list`'s `tools` array. The field names are the same in the 2026-07-28 and the 2025-11-25 schema.
-pub(crate) fn list(key_prefix: &str) -> Vec<Value> {
-    registry(key_prefix)
+pub(crate) fn list(tools: &[Tool]) -> Vec<Value> {
+    tools
         .iter()
         .map(|t| {
             json!({
