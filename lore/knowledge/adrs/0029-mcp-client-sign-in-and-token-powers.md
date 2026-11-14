@@ -101,7 +101,7 @@ We decided that the Reeve server is the OAuth authorization server for its own r
 - 2026-11-14 (GRA-669, connections): an admin may list and revoke any person's connections, beside the owner R9
   names. An admin may do either with either kind of token. The two permissions differ. Revoking only reduces access,
   as disabling a user does (kb/ADR-0015 R6). Listing gives an admin sight of other people's connection metadata:
-  which app each person connected, by the client's name and host, with what scope, when it was approved and last
+  which app each person connected, by the client's id, name and host, with what scope, when it was approved and last
   refreshed, and, for an ended connection, when and why it ended. That is new
   visibility, accepted because an admin who must cut a connection has to find it first, and because the
   `connection_approved` and `connection_revoked` activity entries already show every signed-in person which app

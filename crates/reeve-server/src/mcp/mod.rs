@@ -411,16 +411,19 @@ async fn call_tool(
         .cloned()
         .unwrap_or_else(|| json!({}));
     let who = caller.acting();
-    // The limit on writes, after the scope and before the arguments: a refused call and a repeat count too.
+    // The limit on writes, after the scope and before the arguments: a refused call and a repeat count too. Counted
+    // at the clock's instant when it is reserved, after the body was read, not at the caller's: a body can take
+    // minutes to arrive. The limit reads the clock under its own lock (the clock's lock inside it, never the other
+    // way round).
     let over = if tool.annotations.read_only {
         None
     } else {
         s.mcp_writes
-            .reserve(&caller.principal.email, caller.now)
+            .reserve(&caller.principal.email, || s.clock.now())
             .err()
     };
     let outcome = match over {
-        Some(over) => Err(ToolError::Told(limit::told(over.again, over.now))),
+        Some(over) => Err(ToolError::Told(limit::told(over.wait, over.now))),
         None if args.is_object() => (tool.run)(s, &who, args).await,
         None => Err(ToolError::Arguments(
             "the arguments must be a JSON object".into(),

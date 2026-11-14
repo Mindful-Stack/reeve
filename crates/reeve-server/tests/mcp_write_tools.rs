@@ -430,6 +430,12 @@ async fn create_story_tells_the_model_what_the_planner_refused() {
         &said(json!({"idempotency_key": "r6", "title": "Refused", "owner": oversized_owner()}))
             .await,
     );
+    // Many short words: no word to shorten, so the owner is bounded where the refusal repeats it, and the
+    // explanation after it survives the cut of the whole.
+    let spaced = format!("{}@elsewhere.org", "x ".repeat(6_000));
+    assert_bounded(
+        &said(json!({"idempotency_key": "r7", "title": "Refused", "owner": spaced})).await,
+    );
     assert!(
         said(json!({"idempotency_key": "r4", "title": "  "}))
             .await
@@ -541,7 +547,13 @@ async fn the_thirty_first_write_call_in_ten_minutes_is_refused_with_a_time() {
         refusal(h, &one, "create_story", good("l1")).await,
         format!(
             "Too many changes: one person may make at most 30 calls to tools that change the planner in 10 minutes. Nothing was written. Try again in 600 seconds (at {} UTC). Tell the person; do not call a tool that changes the planner again before then.",
-            (h.state.clock.now() + chrono::Duration::minutes(10)).format("%H:%M:%S")
+            // The time is rounded up to a whole second: a call at the second shown passes.
+            chrono::DurationRound::duration_round_up(
+                h.state.clock.now() + chrono::Duration::minutes(10),
+                chrono::Duration::seconds(1)
+            )
+            .unwrap()
+            .format("%H:%M:%S")
         )
     );
     assert_eq!(rows(h, "stories").await, count, "nothing was written");
@@ -562,6 +574,75 @@ async fn the_thirty_first_write_call_in_ten_minutes_is_refused_with_a_time() {
     assert_eq!(
         answer(h, &two, "create_story", good("l1")).await["created"],
         true
+    );
+}
+
+/// A call is counted at the moment it is reserved, after its body was read, not at the moment its caller was
+/// authenticated. Thirty calls are authenticated at 0:00 and their bodies arrive at 9:59; thirty more come at 10:00.
+/// Stamped at authentication, the first thirty would be ten minutes old at 10:00 and sixty calls would pass within
+/// a second; stamped at reservation, the second thirty are refused. No sleeps: each body tells the test when the
+/// server has started reading it (the caller is authenticated before the body is read), and waits to be released.
+#[tokio::test]
+async fn a_call_is_counted_when_it_is_reserved_not_when_its_caller_was_authenticated() {
+    use futures_util::{StreamExt, future::join_all, stream};
+    let f = flow().await;
+    let h = &f.h;
+    let writer = token(&f, &h.admin_token, "write").await;
+    let (release, released) = tokio::sync::watch::channel(false);
+    let (reading, mut read) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let delayed = (0..30).map(|n| {
+        let (parts, body) = mcp_modern(
+            &writer,
+            n,
+            "tools/call",
+            json!({"name": "create_story", "arguments": {}}),
+        )
+        .into_parts();
+        let (reading, mut released) = (reading.clone(), released.clone());
+        let slow = stream::once(async move {
+            let bytes = http_body_util::BodyExt::collect(body)
+                .await
+                .unwrap()
+                .to_bytes();
+            reading.send(()).unwrap();
+            released.wait_for(|go| *go).await.unwrap();
+            Ok::<_, std::io::Error>(bytes)
+        })
+        .boxed();
+        let request = axum::http::Request::from_parts(parts, axum::body::Body::from_stream(slow));
+        send(&h.app, request)
+    });
+    let driver = async {
+        for _ in 0..30 {
+            read.recv().await.unwrap();
+        }
+        // Every caller is authenticated at 0:00; the bodies arrive at 9:59.
+        h.state
+            .clock
+            .advance(chrono::Duration::minutes(10) - chrono::Duration::seconds(1));
+        release.send(true).unwrap();
+    };
+    let (answers, ()) = tokio::join!(join_all(delayed), driver);
+    for (n, (status, _, body)) in answers.iter().enumerate() {
+        assert_eq!(*status, 200, "delayed call {n}: {body}");
+        assert!(
+            body.contains("Invalid arguments:"),
+            "delayed call {n}: {body}"
+        );
+    }
+    h.state.clock.advance(chrono::Duration::seconds(1));
+    let mut passed = 0;
+    for _ in 0..30 {
+        if !refusal(h, &writer, "create_story", json!({}))
+            .await
+            .starts_with("Too many changes:")
+        {
+            passed += 1;
+        }
+    }
+    assert_eq!(
+        passed, 0,
+        "thirty calls stamped 9:59 are in the window at 10:00"
     );
 }
 

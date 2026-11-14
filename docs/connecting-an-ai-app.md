@@ -20,8 +20,9 @@ has to turn this on for your instance first; if the steps below fail at the star
 With **Read** it can search Reeve, list and open stories, epics and initiatives, list the required decisions (the
 choices that must be made before work is ready), and show a sprint.
 
-With **Read and change** it can also, as you: create a story, edit a story, add a comment, and move a story. It
-can never override the readiness gate: a story that is not ready stays where it is, and the app tells you why. To
+With **Read and change** it can also, as you: create a story, edit a story, add a comment, and move a story. Starting
+work on a story requires it to be ready; the app cannot override that check (a person can, in the CLI or the web
+client), and it tells you why a story is not ready. To
 keep a mistaken or planted instruction from doing much, one person's apps may try at most 30 changes in any ten
 minutes between them; after that the app tells you when it can go on.
 
