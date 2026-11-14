@@ -37,30 +37,13 @@ type Dec = Json<Response<RequiredDecisionDto>>;
 /// URL in configuration (planning knows names only). Every route that returns a decision goes through it.
 pub(crate) fn decision_dto(s: &AppState, d: &RequiredDecision) -> RequiredDecisionDto {
     let mut dto = RequiredDecisionDto::from(d);
-    browse(s, &mut dto);
+    crate::actions::browse(s, &mut dto);
     dto
-}
-
-/// Sets `browse_url` on an already-built DTO: `<repo url>/blob/HEAD/<path>`, nothing for a repository without an
-/// `https://` URL.
-pub(crate) fn browse(s: &AppState, dto: &mut RequiredDecisionDto) {
-    if let Some(r) = dto.record.as_mut() {
-        r.browse_url = s.repo_urls.get(&r.repo).map(|base| {
-            let path = r
-                .path
-                .trim_start_matches('/')
-                .split('/')
-                .map(|seg| urlencoding::encode(seg).into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            format!("{base}/blob/HEAD/{path}")
-        });
-    }
 }
 
 fn entry_dto(s: &AppState, e: &QueueEntry) -> DecisionQueueEntryDto {
     let mut dto = DecisionQueueEntryDto::from(e);
-    browse(s, &mut dto.decision);
+    crate::actions::browse(s, &mut dto.decision);
     dto
 }
 

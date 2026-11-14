@@ -132,15 +132,17 @@ impl Caller {
         &self.2
     }
 
+    /// What an action needs to know about this caller.
+    pub fn acting(&self) -> crate::actions::Acting<'_> {
+        let via = match self.0.token_kind {
+            reeve_protocol::TokenKind::Interactive => reeve_protocol::Via::Interactive,
+            reeve_protocol::TokenKind::Automation => reeve_protocol::Via::Automation,
+        };
+        crate::actions::Acting::new(&self.0.email, via, self.0.role, self.1, &self.3)
+    }
+
     pub fn ctx(&self) -> reeve_planning::Ctx {
-        reeve_planning::Ctx {
-            actor: self.0.email.clone(),
-            via: match self.0.token_kind {
-                reeve_protocol::TokenKind::Interactive => reeve_protocol::Via::Interactive,
-                reeve_protocol::TokenKind::Automation => reeve_protocol::Via::Automation,
-            },
-            now: self.1,
-        }
+        self.acting().ctx
     }
 }
 
@@ -151,6 +153,7 @@ pub(crate) struct McpCaller {
     pub(crate) principal: McpPrincipal,
     /// The instant the request was authenticated; the clock is read once per request, here.
     pub(crate) now: DateTime<Utc>,
+    policy: reeve_identity::AccessPolicy,
 }
 
 impl McpCaller {
@@ -181,6 +184,22 @@ impl McpCaller {
         // Loaded on every request, never cached (kb/ADR-0015 R5, kb/ADR-0029 R8).
         let policy = state.access.load(&state.identity).await?;
         let principal = authenticate_mcp(&*state.tokens, &policy, secret, now).await?;
-        Ok(Self { principal, now })
+        Ok(Self {
+            principal,
+            now,
+            policy,
+        })
+    }
+
+    /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5).
+    #[allow(dead_code)] // called once `tools/call` runs a tool (GRA-659)
+    pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
+        crate::actions::Acting::new(
+            &self.principal.email,
+            reeve_protocol::Via::Interactive,
+            self.principal.role,
+            self.now,
+            &self.policy,
+        )
     }
 }
