@@ -36,10 +36,17 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
 }
 
 /// What the model is told when the planner refused a move: its reasons as `get_story` lists them, whether a
-/// person could override (only when every reason is a readiness fact), and that nothing changed.
+/// person could override (only when every reason is a readiness fact), and that nothing changed. The reasons are
+/// one JSON list with a space after each comma between them, so `tools::bounded` sees each reason as a word of its
+/// own and never cuts the list in its middle; a long list is cut here, leaving room for the sentences after it, so
+/// the whole refusal is under `bound::MAX_OWN_TEXT` and always ends with them.
 fn refused(key: &str, reasons: &[Reason]) -> String {
-    let mut listed = serde_json::to_string(reasons).unwrap_or_default();
-    bound::cut(&mut listed, bound::MAX_OWN_TEXT);
+    let each: Vec<String> = reasons
+        .iter()
+        .map(|reason| serde_json::to_string(reason).unwrap_or_default())
+        .collect();
+    let mut listed = format!("[{}]", each.join(", "));
+    bound::cut(&mut listed, bound::MAX_OWN_TEXT - 500);
     let not_ready = !reasons.is_empty() && reasons.iter().all(Reason::overridable);
     let (why, who_can) = if not_ready {
         (
@@ -96,7 +103,7 @@ mod tests {
                     Reason::AncestorDiscoveryIncomplete { item: key }
                 ]
             ),
-            "TST-5 was not moved: it is not ready. Reasons, as get_story lists them: [{\"reason\":\"untriaged\"},{\"reason\":\"ancestor_discovery_incomplete\",\"item\":\"TST-5\"}]. A person can override this in the CLI or the web client; this tool cannot. Nothing changed."
+            "TST-5 was not moved: it is not ready. Reasons, as get_story lists them: [{\"reason\":\"untriaged\"}, {\"reason\":\"ancestor_discovery_incomplete\",\"item\":\"TST-5\"}]. A person can override this in the CLI or the web client; this tool cannot. Nothing changed."
         );
         for rule in [
             Reason::ResolutionRequired,
@@ -116,5 +123,39 @@ mod tests {
             })
             .collect();
         assert!(refused("TST-5", &many).chars().count() < bound::MAX_OWN_TEXT + 300);
+        // Bounded as `call_tool` sends it, the refusal still ends with what the model must tell the person.
+        let sent = super::super::bounded(refused("TST-5", &many));
+        assert!(
+            sent.ends_with("A person can override this in the CLI or the web client; this tool cannot. Nothing changed."),
+            "{}",
+            &sent[sent.len() - 300..]
+        );
+        assert!(
+            sent.chars().count() <= bound::MAX_OWN_TEXT,
+            "{}",
+            sent.chars().count()
+        );
+    }
+
+    /// Thirty blockers with an owner each make a list of reasons longer than the other-text bound, and no reason
+    /// has a title to put a space in. Bounded as `call_tool` sends it, every blocker's key is still there.
+    #[test]
+    fn a_refusal_keeps_every_reason_of_a_long_list_without_titles() {
+        let blockers: Vec<Reason> = (100..130)
+            .map(|n| Reason::BlockedBy {
+                story: format!("TST-{n}").parse().unwrap(),
+                delivery: reeve_protocol::DeliveryState::InProgress,
+                owner: Some("someone.with.a.long.name@example.com".into()),
+            })
+            .collect();
+        let sent = super::super::bounded(refused("TST-5", &blockers));
+        assert!(
+            sent.chars().count() > bound::MAX_OTHER_TEXT,
+            "the case is a long refusal"
+        );
+        for n in 100..130 {
+            assert!(sent.contains(&format!("\"TST-{n}\"")), "TST-{n}: {sent}");
+        }
+        assert!(sent.ends_with("Nothing changed."), "{sent}");
     }
 }

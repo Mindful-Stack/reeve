@@ -430,6 +430,12 @@ async fn create_story_tells_the_model_what_the_planner_refused() {
         &said(json!({"idempotency_key": "r6", "title": "Refused", "owner": oversized_owner()}))
             .await,
     );
+    // Many short words: no word to shorten, so the owner is bounded where the refusal repeats it, and the
+    // explanation after it survives the cut of the whole.
+    let spaced = format!("{}@elsewhere.org", "x ".repeat(6_000));
+    assert_bounded(
+        &said(json!({"idempotency_key": "r7", "title": "Refused", "owner": spaced})).await,
+    );
     assert!(
         said(json!({"idempotency_key": "r4", "title": "  "}))
             .await

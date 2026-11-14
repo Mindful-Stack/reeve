@@ -8,6 +8,7 @@ mod protocol;
 mod tools;
 
 pub(crate) use limit::WriteLimit;
+pub(crate) use tools::echo;
 
 use crate::{auth::McpCaller, state::AppState};
 use axum::{

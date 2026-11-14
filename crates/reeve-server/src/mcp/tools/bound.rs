@@ -37,7 +37,8 @@ pub(super) fn cut(text: &mut String, limit: usize) {
 }
 
 /// A caller's argument as an error message repeats it: its first `MAX_ECHO` characters, and how many were left out.
-pub(super) fn echo(text: &str) -> String {
+/// Also where an action's refusal repeats a caller's value (`actions::stories`), so the words after it survive.
+pub(crate) fn echo(text: &str) -> String {
     let mut text = text.to_string();
     cut(&mut text, MAX_ECHO);
     text

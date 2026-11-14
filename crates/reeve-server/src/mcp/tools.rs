@@ -17,6 +17,7 @@ mod move_story;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
+pub(crate) use bound::echo;
 use futures_util::future::BoxFuture;
 use reeve_protocol::{KeyRef, Scope};
 use serde_json::{Value, json};
@@ -190,12 +191,13 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
     })
 }
 
-/// A refusal's text as the model is told it, whatever said it: the planner limits neither its messages nor what
-/// they repeat (an owner of 200 000 characters is named whole in "... is not an allowed user"). A refusal of up to
-/// `bound::MAX_OTHER_TEXT` characters is told as it is (a list of reasons is one long word and stays whole). In a
-/// longer one, a word longer than `bound::MAX_ECHO` is repeated as `bound::echo` repeats an argument, so the
-/// sentence around it keeps its meaning, and the whole is cut at `bound::MAX_OWN_TEXT`. Each cut carries its
-/// marker. `call_tool` calls this on every refusal before it is sent.
+/// A refusal's text as the model is told it, whatever said it. A refusal of up to `bound::MAX_OTHER_TEXT`
+/// characters is told as it is. In a longer one, only a single word longer than `bound::MAX_OTHER_TEXT` is cut, at
+/// that bound, so a list of reasons (one word per reason) is never cut in its middle, and the whole is cut at
+/// `bound::MAX_OWN_TEXT`, a last guard. That guard would take a refusal's fixed explanation with it, so whatever
+/// says a refusal bounds what it repeats where it repeats it: a caller's value with `bound::echo`, the planner's
+/// reasons with room left for the sentences after them. Each cut carries its marker. `call_tool` calls this on
+/// every refusal before it is sent.
 pub(crate) fn bounded(message: String) -> String {
     if message.chars().count() <= bound::MAX_OTHER_TEXT {
         return message;
@@ -203,11 +205,9 @@ pub(crate) fn bounded(message: String) -> String {
     let mut text = message
         .split(' ')
         .map(|word| {
-            if word.chars().count() > bound::MAX_ECHO {
-                bound::echo(word)
-            } else {
-                word.to_string()
-            }
+            let mut word = word.to_string();
+            bound::cut(&mut word, bound::MAX_OTHER_TEXT);
+            word
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -621,12 +621,26 @@ mod tests {
         // A long word in a refusal within the bound is not shortened: a list of reasons has no spaces.
         let reasons = format!("Refused: [{}]", "{\"reason\":\"untriaged\"},".repeat(40));
         assert_eq!(bounded(reasons.clone()), reasons);
-        let long_word = format!("{} is not an allowed user", "e".repeat(5_000));
+        // In a long refusal, only a word longer than the other-text bound is shortened, to that bound: a list of
+        // reasons of 1 500 characters stays whole, and the sentences around it too.
+        let list = format!("[{}]", "{\"reason\":\"untriaged\"},".repeat(60));
+        let long = format!("{} Reasons: {list}. Nothing changed.", "no ".repeat(400));
+        assert!(
+            long.chars().count() > bound::MAX_OTHER_TEXT
+                && list.chars().count() < bound::MAX_OTHER_TEXT
+        );
+        assert_eq!(bounded(long.clone()), long);
+        let long_word = format!(
+            "{}{} is not an allowed user",
+            "no ".repeat(400),
+            "e".repeat(5_000)
+        );
         assert_eq!(
             bounded(long_word),
             format!(
-                "{}[cut: 4800 more characters] is not an allowed user",
-                "e".repeat(bound::MAX_ECHO)
+                "{}{}[cut: 3000 more characters] is not an allowed user",
+                "no ".repeat(400),
+                "e".repeat(bound::MAX_OTHER_TEXT)
             )
         );
         // Many short words: the whole is cut.
