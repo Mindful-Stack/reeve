@@ -139,12 +139,12 @@ impl Entry {
         }
     }
 
-    /// Whether an answer carrying `approval` from the token `session` may be given now.
-    fn answerable(&self, approval: &str, session: i64, now: DateTime<Utc>) -> bool {
+    /// Whether an answer carrying `approval` from the token whose id is `token_id` may be given now.
+    fn answerable(&self, approval: &str, token_id: i64, now: DateTime<Utc>) -> bool {
         !self.expired(now)
             && matches!(self.phase, Phase::Pending)
             && self.approval.as_ref().is_some_and(|(hash, given_to)| {
-                *given_to == session && *hash == hash_secret(approval)
+                *given_to == token_id && *hash == hash_secret(approval)
             })
     }
 }
@@ -210,15 +210,15 @@ impl AuthorizationRequests {
         Ok(id)
     }
 
-    /// What the page shows, with a fresh approval value bound to the token `session`. The value given before
+    /// What the page shows, with a fresh approval value bound to the token whose id is `token_id`. The value given before
     /// stops working. `None` when the request is unknown, expired or answered.
-    pub fn read(&self, id: &str, session: i64, now: DateTime<Utc>) -> Option<RequestView> {
+    pub fn read(&self, id: &str, token_id: i64, now: DateTime<Utc>) -> Option<RequestView> {
         let mut entries = self.entries();
         let e = entries
             .get_mut(id)
             .filter(|e| !e.expired(now) && matches!(e.phase, Phase::Pending))?;
         let approval = random_secret("");
-        e.approval = Some((hash_secret(&approval), session));
+        e.approval = Some((hash_secret(&approval), token_id));
         Some(RequestView {
             client_host: e.client_host.clone(),
             client_name: e.client_name.clone(),
@@ -234,7 +234,7 @@ impl AuthorizationRequests {
         &self,
         id: &str,
         approval: &str,
-        session: i64,
+        token_id: i64,
         owner: &str,
         scope: Scope,
         now: DateTime<Utc>,
@@ -242,7 +242,7 @@ impl AuthorizationRequests {
         let mut entries = self.entries();
         let e = entries
             .get_mut(id)
-            .filter(|e| e.answerable(approval, session, now))?;
+            .filter(|e| e.answerable(approval, token_id, now))?;
         let code = random_secret("reeve_code_");
         e.phase = Phase::Approved {
             code_hash: hash_secret(&code),
@@ -259,13 +259,13 @@ impl AuthorizationRequests {
         &self,
         id: &str,
         approval: &str,
-        session: i64,
+        token_id: i64,
         now: DateTime<Utc>,
     ) -> Option<ReturnAddress> {
         let mut entries = self.entries();
         if !entries
             .get(id)
-            .is_some_and(|e| e.answerable(approval, session, now))
+            .is_some_and(|e| e.answerable(approval, token_id, now))
         {
             return None;
         }
@@ -426,7 +426,7 @@ mod tests {
     /// RFC 7636, appendix B.
     const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-    const SESSION: i64 = 7;
+    const TOKEN_ID: i64 = 7;
     const DAN: &str = "dan@example.com";
 
     fn t0() -> DateTime<Utc> {
@@ -469,12 +469,12 @@ mod tests {
         )
     }
 
-    /// A request opened at `t0`, read by `SESSION` and approved one second later: its id and its code.
+    /// A request opened at `t0`, read by `TOKEN_ID` and approved one second later: its id and its code.
     fn approved(store: &AuthorizationRequests) -> (String, String) {
         let id = open_at(store, t0());
-        let view = store.read(&id, SESSION, t0()).unwrap();
+        let view = store.read(&id, TOKEN_ID, t0()).unwrap();
         let (_, code, _) = store
-            .approve(&id, &view.approval, SESSION, DAN, Scope::Read, after(1))
+            .approve(&id, &view.approval, TOKEN_ID, DAN, Scope::Read, after(1))
             .unwrap();
         (id, code)
     }
@@ -535,7 +535,7 @@ mod tests {
         let store = AuthorizationRequests::new();
         let id = open_at(&store, t0());
         assert_eq!(id.len(), 48, "24 random bytes in hex: {id}");
-        let view = store.read(&id, SESSION, after(599)).unwrap();
+        let view = store.read(&id, TOKEN_ID, after(599)).unwrap();
         assert_eq!(
             (
                 view.client_host.as_str(),
@@ -546,13 +546,13 @@ mod tests {
             ("client.example", "Example App", CALLBACK, t0())
         );
         assert!(
-            store.read(&id, SESSION, after(600)).is_none(),
+            store.read(&id, TOKEN_ID, after(600)).is_none(),
             "ten minutes"
         );
-        assert!(store.read("unknown", SESSION, t0()).is_none());
+        assert!(store.read("unknown", TOKEN_ID, t0()).is_none());
         let (answered, _) = approved(&store);
         assert!(
-            store.read(&answered, SESSION, after(2)).is_none(),
+            store.read(&answered, TOKEN_ID, after(2)).is_none(),
             "an approved request is not read again"
         );
     }
@@ -565,24 +565,24 @@ mod tests {
     fn an_answer_needs_the_current_value_from_the_token_that_read_it_and_is_given_once() {
         let store = AuthorizationRequests::new();
         let id = open_at(&store, t0());
-        let try_approve = |value: &str, session: i64, now| {
-            store.approve(&id, value, session, DAN, Scope::Write, now)
+        let try_approve = |value: &str, token_id: i64, now| {
+            store.approve(&id, value, token_id, DAN, Scope::Write, now)
         };
         assert!(
-            try_approve("", SESSION, t0()).is_none(),
+            try_approve("", TOKEN_ID, t0()).is_none(),
             "nobody has read it: there is no value"
         );
-        let stale = store.read(&id, SESSION, t0()).unwrap().approval;
-        let current = store.read(&id, SESSION, t0()).unwrap().approval;
+        let stale = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
+        let current = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
         assert_ne!(stale, current);
-        assert!(try_approve(&stale, SESSION, t0()).is_none());
-        assert!(store.refuse(&id, &stale, SESSION, t0()).is_none());
-        assert!(try_approve(&current, SESSION + 1, t0()).is_none());
-        assert!(store.refuse(&id, &current, SESSION + 1, t0()).is_none());
-        assert!(try_approve("not the value", SESSION, t0()).is_none());
-        assert!(try_approve(&current, SESSION, after(600)).is_none());
+        assert!(try_approve(&stale, TOKEN_ID, t0()).is_none());
+        assert!(store.refuse(&id, &stale, TOKEN_ID, t0()).is_none());
+        assert!(try_approve(&current, TOKEN_ID + 1, t0()).is_none());
+        assert!(store.refuse(&id, &current, TOKEN_ID + 1, t0()).is_none());
+        assert!(try_approve("not the value", TOKEN_ID, t0()).is_none());
+        assert!(try_approve(&current, TOKEN_ID, after(600)).is_none());
         // The right answer, once.
-        let (back, code, client_id) = try_approve(&current, SESSION, after(599)).unwrap();
+        let (back, code, client_id) = try_approve(&current, TOKEN_ID, after(599)).unwrap();
         assert_eq!(
             back,
             ReturnAddress {
@@ -592,18 +592,18 @@ mod tests {
         );
         assert!(code.starts_with("reeve_code_"), "{code}");
         assert_eq!(client_id, CLIENT);
-        assert!(try_approve(&current, SESSION, after(599)).is_none());
-        assert!(store.refuse(&id, &current, SESSION, after(599)).is_none());
+        assert!(try_approve(&current, TOKEN_ID, after(599)).is_none());
+        assert!(store.refuse(&id, &current, TOKEN_ID, after(599)).is_none());
         // Refuse wins the same way, and removes the request.
         let id = open_at(&store, t0());
-        let value = store.read(&id, SESSION, t0()).unwrap().approval;
-        assert!(store.refuse(&id, &value, SESSION, t0()).is_some());
+        let value = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
+        assert!(store.refuse(&id, &value, TOKEN_ID, t0()).is_some());
         assert!(
             store
-                .approve(&id, &value, SESSION, DAN, Scope::Read, t0())
+                .approve(&id, &value, TOKEN_ID, DAN, Scope::Read, t0())
                 .is_none()
         );
-        assert!(store.refuse(&id, &value, SESSION, t0()).is_none());
+        assert!(store.refuse(&id, &value, TOKEN_ID, t0()).is_none());
     }
 
     /// Catches a code spent by a request that was wrong (the right one must still work afterwards), a code that
@@ -700,9 +700,9 @@ mod tests {
         );
         // Approved 9 min 50 s after authorize: the request's ten minutes end before the code's minute.
         let id = open_at(&store, t0());
-        let value = store.read(&id, SESSION, t0()).unwrap().approval;
+        let value = store.read(&id, TOKEN_ID, t0()).unwrap().approval;
         let (_, code, _) = store
-            .approve(&id, &value, SESSION, DAN, Scope::Read, after(590))
+            .approve(&id, &value, TOKEN_ID, DAN, Scope::Read, after(590))
             .unwrap();
         assert_eq!(
             redeem_at(&store, &code, after(600)),
@@ -722,34 +722,34 @@ mod tests {
         }
         for (i, id) in ids.iter().enumerate() {
             if i != 1 && i != 2 {
-                store.read(id, SESSION, after(100)).unwrap();
+                store.read(id, TOKEN_ID, after(100)).unwrap();
             }
         }
         let newest = open_at(&store, after(101));
         assert!(
-            store.read(&ids[1], SESSION, after(101)).is_none(),
+            store.read(&ids[1], TOKEN_ID, after(101)).is_none(),
             "the oldest unread went"
         );
         assert!(
-            store.read(&ids[0], SESSION, after(101)).is_some(),
+            store.read(&ids[0], TOKEN_ID, after(101)).is_some(),
             "a read one stays"
         );
         assert!(
-            store.read(&ids[2], SESSION, after(101)).is_some(),
+            store.read(&ids[2], TOKEN_ID, after(101)).is_some(),
             "the younger unread stays"
         );
-        store.read(&newest, SESSION, after(101)).unwrap();
+        store.read(&newest, TOKEN_ID, after(101)).unwrap();
         let full = open_unread(&store, after(102));
         assert_eq!(full, Err(RequestsFull));
         // An approval whose code has lapsed stops counting: approved at 102 s, its code ends at 162 s. One second
         // earlier the store is still full.
-        let value = store.read(&newest, SESSION, after(102)).unwrap().approval;
+        let value = store.read(&newest, TOKEN_ID, after(102)).unwrap().approval;
         store
-            .approve(&newest, &value, SESSION, DAN, Scope::Read, after(102))
+            .approve(&newest, &value, TOKEN_ID, DAN, Scope::Read, after(102))
             .unwrap();
         assert_eq!(open_unread(&store, after(161)), Err(RequestsFull));
         let room = open_unread(&store, after(162)).expect("the lapsed approval made room");
-        store.read(&room, SESSION, after(162)).unwrap();
+        store.read(&room, TOKEN_ID, after(162)).unwrap();
         // Ten minutes after the first thousand were opened (all within one second) they are gone: there is room.
         assert_eq!(open_at(&store, after(601)).len(), 48);
     }
