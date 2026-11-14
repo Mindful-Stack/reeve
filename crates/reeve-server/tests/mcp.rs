@@ -1121,6 +1121,7 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
         api["blockers"][0]["description"],
         json!(blocker_description)
     );
+    assert_eq!(api["blockers"][0]["criteria"][1]["text"], json!(criterion));
     assert_eq!(api["epic"]["brief"], json!(epic_brief));
     assert_eq!(api["initiative"]["brief"], json!(initiative_brief));
     assert_eq!(api["story"]["criteria"][1]["text"], json!(criterion));
@@ -1140,6 +1141,11 @@ async fn get_story_cuts_long_text_and_the_api_route_does_not() {
     assert_eq!(
         sent["blockers"][0]["description"],
         json!(format!("{}[cut: 5 more characters]", "ü".repeat(2_000)))
+    );
+    assert_eq!(sent["blockers"][0]["criteria"][0]["text"], "works");
+    assert_eq!(
+        sent["blockers"][0]["criteria"][1]["text"],
+        json!(format!("{}[cut: 4 more characters]", "ñ".repeat(2_000)))
     );
     assert_eq!(
         sent["epic"]["brief"],
