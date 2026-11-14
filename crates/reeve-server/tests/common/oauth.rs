@@ -265,6 +265,24 @@ pub fn without_query(url: &url::Url) -> String {
     bare.to_string()
 }
 
+/// The flow harness with `[mcp] privacy_url` set to `privacy_url`.
+pub async fn flow_with_privacy(privacy_url: &str) -> Flow {
+    let host = reeve_identity::FakeClientHost::start().await;
+    let h = super::harness_with(|cfg| {
+        format!(
+            "{cfg}\n[mcp]\nenabled = true\nredirect_uris = [\"{CALLBACK}\"]\nclient_hosts = [\"{}\"]\nprivacy_url = \"{privacy_url}\"\n",
+            host.host()
+        )
+    })
+    .await;
+    let client_id = host.publish("/client.json", "Example App", &[CALLBACK]);
+    Flow {
+        h: h.with_fixed_clock(),
+        host,
+        client_id,
+    }
+}
+
 /// The flow harness served as `https://reeve.example.com`, so cookies are `Secure` and `__Host-` prefixed (built
 /// as `https_harness` is: from the loopback configuration, with `public_url` replaced afterwards).
 pub async fn https_flow() -> Flow {

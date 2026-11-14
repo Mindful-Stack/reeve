@@ -73,6 +73,7 @@ async fn read(
         email: c.0.email.clone(),
         requested_at: view.requested_at,
         approval: view.approval,
+        privacy_url: s.config.mcp.privacy_url.clone(),
     }))
 }
 

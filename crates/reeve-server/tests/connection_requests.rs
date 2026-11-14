@@ -581,3 +581,22 @@ async fn an_https_instance_sets_and_reads_only_the_host_prefixed_connect_cookie(
     );
     assert_eq!(get(s.cookie.clone()).await.0, 200);
 }
+
+/// Catches a read that does not hand the page the configured privacy statement, and one that invents a link when
+/// none is configured.
+#[tokio::test]
+async fn the_read_carries_the_privacy_statement_only_when_one_is_configured() {
+    for (f, expected) in [
+        (
+            flow_with_privacy("https://example.com/privacy").await,
+            json!("https://example.com/privacy"),
+        ),
+        (flow().await, Value::Null),
+    ] {
+        let dan = f.h.admin_token.clone();
+        let s = authorize(&f).await;
+        let (status, _, body) = read(&f, &dan, &s).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["value"]["privacy_url"], expected, "{body}");
+    }
+}
