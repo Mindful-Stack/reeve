@@ -51,7 +51,8 @@ no write to delivery, resolution or version; pull-request status is informationa
 an `override` activity entry (grandfathered stories are created in their state and logged `imported`). Only
 `Via::Interactive` may override the readiness gate. No MCP tool may override it: `MoveStoryInput` has no override
 reason, a call that sends one is refused, `move_story` always passes none and the shared action refuses one from a
-caller that came through MCP (kb/ADR-0029 R10; `tests/mcp_write_tools.rs` `move_story_never_overrides_the_gate`).
+caller that came through MCP (kb/ADR-0029 R10; `tests/mcp_write_tools.rs` `move_story_never_overrides_the_gate`, and
+the action's own `actions::stories` test `the_move_action_refuses_an_override_reason_from_a_caller_that_came_through_mcp`).
 Moving a story never depends on goals (kb/ADR-0014 R4).
 
 An API route and its MCP tool share one action (`crates/reeve-server/src/actions/`): validation and use-case logic live in the action; the route and the tool adapter only convert their input and present the answer (a tool adapter also bounds lists and cuts long text, `crates/reeve-server/src/mcp/tools/bound.rs`) (kb/ADR-0029 R1).
