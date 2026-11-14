@@ -3,6 +3,7 @@
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod bound;
 mod create_story;
+mod edit_story;
 mod get_epic;
 mod get_initiative;
 mod get_sprint;
@@ -111,6 +112,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         list_decisions::tool(),
         get_sprint::tool(),
         create_story::tool(key_prefix),
+        edit_story::tool(key_prefix),
     ]
 }
 
@@ -214,6 +216,25 @@ fn not_found(e: AppError, what: &str, key: &str, key_prefix: &str) -> ToolError 
             bound::echo(key)
         )),
         other => told(other),
+    }
+}
+
+/// What a write to a story by version failed with: a stale version is told with the version to read (when the
+/// planner could give one) and what to do about it; a missing story as `not_found` tells it; anything else in
+/// `told`'s words.
+fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
+    let advice = "Read it again with get_story, check what changed, and send only the change the person asked for";
+    match e {
+        AppError::Conflict { current } if current >= 0 => ToolError::Told(format!(
+            "{} changed since you read it and is now at version {current}. {advice}, with version {current}.",
+            bound::echo(key)
+        )),
+        // -1: a concurrent write, with no version to name.
+        AppError::Conflict { .. } => ToolError::Told(format!(
+            "{} changed while this ran. {advice}.",
+            bound::echo(key)
+        )),
+        other => not_found(other, "story", key, key_prefix),
     }
 }
 
@@ -326,7 +347,7 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 1] = ["create_story"];
+        const WRITE: [&str; 2] = ["create_story", "edit_story"];
         let tools = registry("TST");
         let named = |read_only: bool| -> Vec<&str> {
             tools
@@ -451,6 +472,30 @@ mod tests {
             "No epic with key \"TST-9\". Keys look like TST-123."
         );
         assert_eq!(said(AppError::Validation("too long".into())), "too long");
+    }
+
+    #[test]
+    fn a_stale_version_is_told_with_the_version_to_read_or_without_a_number() {
+        let said = |e| match write_failed(e, "TST-12", "TST") {
+            ToolError::Told(message) => message,
+            _ => panic!("not told"),
+        };
+        assert_eq!(
+            said(AppError::Conflict { current: 7 }),
+            "TST-12 changed since you read it and is now at version 7. Read it again with get_story, check what changed, and send only the change the person asked for, with version 7."
+        );
+        assert_eq!(
+            said(AppError::Conflict { current: -1 }),
+            "TST-12 changed while this ran. Read it again with get_story, check what changed, and send only the change the person asked for."
+        );
+        assert_eq!(
+            said(AppError::NotFound),
+            "No story with key \"TST-12\". Keys look like TST-123."
+        );
+        assert_eq!(
+            said(AppError::Validation("a criterion must not be blank".into())),
+            "a criterion must not be blank"
+        );
     }
 
     /// The number a chat reads for a fractional `f32`, as it is sent: widened, not rounded.

@@ -321,6 +321,42 @@ pub struct CreateStoryInput {
     pub owner: Option<String>,
 }
 
+// `edit_story` (`reeve story edit`). The doc comment is the schema's root description.
+/// A change to one story: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditStoryInput {
+    /// The story's key.
+    pub key: String,
+    /// The story's `version` as you last read it (get_story or list_stories). If the story changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new kind.
+    #[schema(inline)]
+    pub kind: Option<Kind>,
+    /// Move the story to this epic: the epic's key. Not together with `detach_epic`.
+    pub epic: Option<String>,
+    /// True takes the story out of its epic, which makes it untriaged. Not together with `epic`.
+    #[serde(default)]
+    pub detach_epic: bool,
+    /// A new description, replacing the whole text. Never send a text that ends with `[cut: N more characters]`.
+    pub description: Option<String>,
+    /// The story's acceptance criteria, replacing the list: send every criterion the story should have, not only a new one. A criterion keeps its done mark when its text and position are unchanged. Cannot be empty.
+    pub criteria: Option<Vec<String>>,
+    /// A new owner's email address. Set it only when the person names an owner. Not together with `clear_owner`.
+    pub owner: Option<String>,
+    /// True removes the owner. Not together with `owner`.
+    #[serde(default)]
+    pub clear_owner: bool,
+    /// Labels to add to the ones the story has.
+    #[serde(default)]
+    pub add_labels: Vec<String>,
+    /// Labels to remove from the ones the story has.
+    #[serde(default)]
+    pub remove_labels: Vec<String>,
+}
+
 /// What a tool that changes a story answers: enough to see that the change happened and to make the next one
 /// (the key and the new version), and nothing whose size a person controls except the title, which the planner
 /// limits to 200 characters. So an answer is small whatever was written, and reading the story whole is

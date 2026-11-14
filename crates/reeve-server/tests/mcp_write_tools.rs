@@ -538,3 +538,223 @@ async fn the_thirty_first_write_call_in_ten_minutes_is_refused_with_a_time() {
         true
     );
 }
+
+/// A story in a ready epic with two criteria, two labels and an owner, made through the API; its key.
+async fn editable(h: &Harness, idem: &str) -> String {
+    let epic = ready_epic(h, &format!("{idem}-e")).await;
+    key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": idem, "title": "Pick a slot", "kind": "story", "epic": epic, "description": "As a customer.", "criteria": ["a slot can be picked", "it is held"], "labels": ["web", "old"], "owner": BOB}),
+    )
+    .await)
+}
+
+/// `PATCH` on the API as the admin; the new story.
+async fn patch(h: &Harness, key: &str, body: Value) -> Value {
+    let (status, answer) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "PATCH",
+        &format!("/api/v1/stories/{key}"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, 200, "{answer}");
+    answer["value"].clone()
+}
+
+#[tokio::test]
+async fn edit_story_changes_only_what_it_names_and_merges_criteria_and_labels() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let key = editable(h, "es-s1").await;
+    // Both criteria are checked off, through the API.
+    let before = patch(
+        h,
+        &key,
+        json!({"version": 1, "criteria": [{"text": "a slot can be picked", "done": true}, {"text": "it is held", "done": true}]}),
+    )
+    .await;
+    assert_eq!(before["version"], 2, "the control");
+
+    let receipt = answer(
+        h,
+        &dan,
+        "edit_story",
+        json!({"key": key, "version": 2, "title": "Pick a time slot", "kind": "bug",
+               "criteria": ["a slot can be picked", "it is held for ten minutes", "it can be released"],
+               "add_labels": ["api", "web"], "remove_labels": ["old"]}),
+    )
+    .await;
+    let after = story(h, &key).await;
+    assert_eq!(
+        receipt,
+        json!({"key": key, "title": "Pick a time slot", "delivery": "todo", "resolution": null, "version": 3})
+    );
+    assert_eq!(after["version"], 3);
+    assert_eq!(
+        json!([
+            after["title"],
+            after["kind"],
+            after["criteria"],
+            after["labels"]
+        ]),
+        json!(["Pick a time slot", "bug",
+               [{"text": "a slot can be picked", "done": true}, {"text": "it is held for ten minutes", "done": false},
+                {"text": "it can be released", "done": false}],
+               ["web", "api"]])
+    );
+    // What the call did not name is as it was.
+    assert_eq!(
+        json!([
+            after["description"],
+            after["owner"],
+            after["epic"],
+            after["rank"]
+        ]),
+        json!([
+            before["description"],
+            before["owner"],
+            before["epic"],
+            before["rank"]
+        ])
+    );
+    assert_eq!(
+        trail(h, &key).await.last().cloned(),
+        Some((
+            "edited".to_string(),
+            DAN.to_string(),
+            "interactive".to_string(),
+            json!("127.0.0.1")
+        ))
+    );
+
+    // Clearing is by flag; setting is by value.
+    let cleared = answer(
+        h,
+        &dan,
+        "edit_story",
+        json!({"key": key, "version": 3, "detach_epic": true, "clear_owner": true}),
+    )
+    .await;
+    assert_eq!(cleared["version"], 4);
+    let after = story(h, &key).await;
+    assert_eq!(json!([after["epic"], after["owner"]]), json!([null, null]));
+    let set = answer(
+        h,
+        &dan,
+        "edit_story",
+        json!({"key": key, "version": 4, "epic": before["epic"], "owner": DAN, "description": "Rewritten."}),
+    )
+    .await;
+    assert_eq!(set["version"], 5);
+    let after = story(h, &key).await;
+    assert_eq!(
+        json!([after["epic"], after["owner"], after["description"]]),
+        json!([before["epic"], DAN, "Rewritten."])
+    );
+}
+
+#[tokio::test]
+async fn edit_story_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let key = editable(h, "er-s1").await;
+    let before = story(h, &key).await;
+    let said = |mut arguments: Value| {
+        arguments["key"] = json!(key);
+        arguments["version"] = json!(1);
+        refusal(h, &dan, "edit_story", arguments)
+    };
+    let cases = [
+        (
+            json!({"detach_epic": true, "epic": before["epic"]}),
+            "detach_epic and epic cannot be sent together.",
+        ),
+        (
+            json!({"clear_owner": true, "owner": DAN}),
+            "clear_owner and owner cannot be sent together.",
+        ),
+        (
+            json!({"criteria": []}),
+            "criteria cannot be emptied here: send every criterion the story should have.",
+        ),
+        (
+            json!({}),
+            "Nothing to change: send at least one field besides key and version.",
+        ),
+        (
+            json!({"owner": "eve@elsewhere.org"}),
+            "eve@elsewhere.org is not an allowed user",
+        ),
+        (
+            json!({"description": "As a cust[cut: 9990 more characters]"}),
+            "description ends with the marker of a text this server cut. Read the whole text first; a cut text cannot be written back.",
+        ),
+        (
+            json!({"criteria": ["a slot can be picked", "it is he[cut: 5 more characters]"]}),
+            "A criterion ends with the marker of a text this server cut. Read the whole text first; a cut text cannot be written back.",
+        ),
+    ];
+    for (arguments, expected) in cases {
+        assert_eq!(said(arguments.clone()).await, expected, "{arguments}");
+    }
+    assert!(
+        said(json!({"criteria": ["a slot can be picked", "  "]}))
+            .await
+            .contains("criterion")
+    );
+    for withheld in ["rank", "external_ref", "attachments", "brief", "labels"] {
+        let mut arguments = json!({"title": "Refused"});
+        arguments[withheld] = json!("x");
+        let said = said(arguments).await;
+        assert!(
+            said.starts_with("Invalid arguments:") && said.contains(withheld),
+            "{said}"
+        );
+    }
+    // A version that is no longer current, with and without a merge to read for: the same conflict, and what the
+    // model is told names the version to read.
+    patch(
+        h,
+        &key,
+        json!({"version": 1, "labels": ["web", "old", "new"]}),
+    )
+    .await;
+    let stale = "changed since you read it and is now at version 2. Read it again with get_story, check what changed, and send only the change the person asked for, with version 2.";
+    assert_eq!(
+        said(json!({"title": "Stale"})).await,
+        format!("{key} {stale}")
+    );
+    assert_eq!(
+        said(json!({"add_labels": ["x"]})).await,
+        format!("{key} {stale}")
+    );
+    assert_eq!(
+        refusal(
+            h,
+            &dan,
+            "edit_story",
+            json!({"key": "TST-9999", "version": 1, "title": "Nobody"})
+        )
+        .await,
+        "No story with key \"TST-9999\". Keys look like TST-123."
+    );
+    // Nothing above changed the story: it is as the API's own edit left it.
+    let after = story(h, &key).await;
+    assert_eq!(after["version"], 2);
+    assert_eq!(after["title"], before["title"]);
+    assert_eq!(after["labels"], json!(["web", "old", "new"]));
+    assert_eq!(
+        trail(h, &key)
+            .await
+            .iter()
+            .filter(|entry| entry.0 == "edited")
+            .count(),
+        1,
+        "the API's edit only"
+    );
+}
