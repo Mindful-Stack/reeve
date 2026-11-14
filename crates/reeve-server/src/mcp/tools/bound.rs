@@ -90,14 +90,6 @@ pub(super) fn fit<T: serde::Serialize>(rows: &mut Vec<T>, omitted: usize) -> usi
     omitted + dropped
 }
 
-/// A closed decision's reason is people's text of any length that comes along with the decision: cut at
-/// `MAX_OTHER_TEXT`. Used wherever a tool answers a decision (`list_decisions`, `get_story`).
-pub(super) fn cut_closing_reason(decision: &mut reeve_protocol::RequiredDecisionDto) {
-    if let Some(closed) = &mut decision.closed {
-        cut(&mut closed.reason, MAX_OTHER_TEXT);
-    }
-}
-
 /// A goal's six texts are people's text of any length that comes along with a sprint or a story: each is cut at
 /// `MAX_OTHER_TEXT`. Used wherever a tool answers a goal (`get_sprint`, `get_story`).
 pub(super) fn cut_goal(goal: &mut reeve_protocol::GoalDto) {

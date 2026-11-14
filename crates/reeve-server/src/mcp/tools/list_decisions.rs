@@ -1,7 +1,7 @@
 //! `list_decisions`: `reeve decision ls` as a tool. Read-only.
 use super::{
     Tool, ToolError,
-    bound::{MAX_WHOLE_LIST, capped, cut_closing_reason, fit},
+    bound::{MAX_OTHER_TEXT, MAX_WHOLE_LIST, capped, cut, fit},
 };
 use crate::{
     actions::{self, Acting, DecisionQuery},
@@ -60,7 +60,10 @@ fn run<'a>(
 /// how many were left out by the cap or the budget.
 fn bounded(mut decisions: Vec<RequiredDecisionDto>) -> ListDecisionsResult {
     let omitted = capped(&mut decisions, MAX_WHOLE_LIST);
-    decisions.iter_mut().for_each(cut_closing_reason);
+    // A closed decision's reason is people's text of any length.
+    for closed in decisions.iter_mut().filter_map(|d| d.closed.as_mut()) {
+        cut(&mut closed.reason, MAX_OTHER_TEXT);
+    }
     let omitted = fit(&mut decisions, omitted);
     ListDecisionsResult { decisions, omitted }
 }
