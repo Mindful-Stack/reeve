@@ -59,8 +59,10 @@ pub(crate) enum McpError {
     MethodNotAllowed,
     /// Step 3.
     OriginNotAllowed,
-    /// Step 4.
-    Unauthenticated,
+    /// Step 4. `challenge` is the whole `WWW-Authenticate` value, built by `challenge()`.
+    Unauthenticated {
+        challenge: String,
+    },
     /// Step 5.
     UnsupportedMediaType,
     TooLarge,
@@ -87,11 +89,10 @@ impl IntoResponse for McpError {
             McpError::OriginNotAllowed => {
                 (StatusCode::FORBIDDEN, "origin not allowed").into_response()
             }
-            // GRA-655 adds `resource_metadata="<public_url>/.well-known/oauth-protected-resource"` to this header
-            // (kb/ADR-0029 R2); Claude starts sign-in only on this 401.
-            McpError::Unauthenticated => (
+            // Claude starts sign-in only on this 401 and reads where to go from its header (kb/ADR-0029 R2).
+            McpError::Unauthenticated { challenge } => (
                 StatusCode::UNAUTHORIZED,
-                [(header::WWW_AUTHENTICATE, "Bearer")],
+                [(header::WWW_AUTHENTICATE, challenge)],
                 "unauthenticated",
             )
                 .into_response(),
@@ -132,6 +133,18 @@ fn rpc_error(e: &RpcError, id: Option<&Value>) -> Response {
 
 fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// The `WWW-Authenticate` value of a 401: where the protected resource's metadata is (RFC 9728 section 5.1), and
+/// `error="invalid_token"` when a bearer token was presented and refused. A request without one carries no error
+/// (RFC 6750 section 3.1). No `scope`: a client then asks for what the metadata lists.
+fn challenge(config: &crate::ServerConfig, token_refused: bool) -> String {
+    let metadata = crate::auth::oauth::resource_metadata_url(config);
+    if token_refused {
+        format!(r#"Bearer error="invalid_token", resource_metadata="{metadata}""#)
+    } else {
+        format!(r#"Bearer resource_metadata="{metadata}""#)
+    }
 }
 
 /// A protocol header's value: `None` only when the header is absent. One sent twice, or one that is not text, is
@@ -231,13 +244,17 @@ async fn admit(
         return Err(McpError::OriginNotAllowed);
     }
     // 4. The caller, before every protocol check: an unauthenticated call gets the 401 whatever else is wrong.
+    // Whether a bearer token was presented decides the 401's `error`; whether it is accepted is identity's.
+    let presented = matches!(crate::auth::bearer_secret(headers), Ok(Some(_)));
     let caller = McpCaller::from_headers(s, headers)
         .await
         .map_err(|e| match e {
             AuthError::Db(e) => McpError::Internal(e.into()),
             // Already logged, once: a missing or malformed bearer header by `McpCaller`, a refused token by
             // identity.
-            _ => McpError::Unauthenticated,
+            _ => McpError::Unauthenticated {
+                challenge: challenge(&s.config, presented),
+            },
         })?;
     // 5. A JSON body of at most 1 MiB.
     let is_json = header_text(headers, "content-type").is_some_and(|v| {

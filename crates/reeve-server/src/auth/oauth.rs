@@ -30,6 +30,11 @@ pub(crate) fn resource(config: &ServerConfig) -> String {
     format!("{}/mcp", config.issuer())
 }
 
+/// The address of the protected resource's document: what the 401 from `/mcp` names (RFC 9728 section 5.1).
+pub(crate) fn resource_metadata_url(config: &ServerConfig) -> String {
+    format!("{}{PROTECTED_RESOURCE_PATH}", config.issuer())
+}
+
 fn protected_resource(config: &ServerConfig) -> Value {
     json!({
         "resource": resource(config),

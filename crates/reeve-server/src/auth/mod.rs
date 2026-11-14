@@ -51,7 +51,7 @@ pub fn has_client_header(headers: &axum::http::HeaderMap) -> bool {
 
 /// The secret of a request's bearer header: `Ok(None)` without an `Authorization` header, `Err` with the reason when
 /// the header is not a bearer token. The one reading of that header, for `Caller` and `McpCaller` alike.
-fn bearer_secret(headers: &axum::http::HeaderMap) -> Result<Option<&str>, &'static str> {
+pub(crate) fn bearer_secret(headers: &axum::http::HeaderMap) -> Result<Option<&str>, &'static str> {
     let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Ok(None);
     };

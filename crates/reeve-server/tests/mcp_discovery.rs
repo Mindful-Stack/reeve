@@ -141,3 +141,82 @@ async fn on_only_the_two_documents_answer_under_the_prefixes() {
         assert_eq!(send(&h.app, request("GET", path)).await.0, 404, "{path}");
     }
 }
+
+const ISSUER: &str = "http://127.0.0.1:7474";
+const POINTER: &str =
+    r#"resource_metadata="http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp""#;
+
+fn post_mcp(authorization: Option<&str>) -> Request<Body> {
+    let mut req = Request::post("/mcp").header("content-type", "application/json");
+    if let Some(value) = authorization {
+        req = req.header("authorization", value);
+    }
+    req.body(Body::from("{}")).unwrap()
+}
+
+/// Every 401 carries the pointer; `error="invalid_token"` is there exactly when a bearer token was presented and
+/// refused.
+#[tokio::test]
+async fn the_401_points_at_the_metadata_and_says_invalid_token_only_for_a_refused_token() {
+    let h = mcp_harness().await;
+    let live = issue_mcp_token(&h, "dan@example.com").await.secret;
+    let expired = issue_mcp_token(&h, "e@example.com").await.secret;
+    sqlx::query("UPDATE tokens SET expires_at = now() - interval '1 minute' WHERE owner = $1")
+        .bind("e@example.com")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let plain = format!("Bearer {POINTER}");
+    let refused = format!(r#"Bearer error="invalid_token", {POINTER}"#);
+    for (what, authorization, expected) in [
+        ("no Authorization header", None, &plain),
+        ("another scheme", Some(format!("Basic {live}")), &plain),
+        (
+            "an unknown token",
+            Some("Bearer reeve_0000".to_string()),
+            &refused,
+        ),
+        (
+            "an API token",
+            Some(format!("Bearer {}", h.admin_token)),
+            &refused,
+        ),
+        (
+            "an expired MCP token",
+            Some(format!("Bearer {expired}")),
+            &refused,
+        ),
+    ] {
+        let (status, headers, _) = send(&h.app, post_mcp(authorization.as_deref())).await;
+        assert_eq!(status, 401, "{what}");
+        assert_eq!(
+            headers["www-authenticate"].to_str().unwrap(),
+            expected.as_str(),
+            "{what}"
+        );
+    }
+    // The control: a live MCP token gets past the caller check, so the 401s above are about the credential.
+    let (status, headers, _) = send(&h.app, post_mcp(Some(&format!("Bearer {live}")))).await;
+    assert_ne!(status, 401);
+    assert!(!headers.contains_key("www-authenticate"));
+}
+
+/// The address in the header is one this server answers, with the document for this endpoint: the pointer and the
+/// route cannot drift apart.
+#[tokio::test]
+async fn the_address_the_401_names_serves_the_document_for_this_endpoint() {
+    let h = mcp_harness().await;
+    let (_, headers, _) = send(&h.app, post_mcp(None)).await;
+    let challenge = headers["www-authenticate"].to_str().unwrap();
+    let url = challenge
+        .split('"')
+        .nth(1)
+        .expect("a quoted resource_metadata value");
+    let path = url
+        .strip_prefix(ISSUER)
+        .expect("the pointer is on the issuer's origin");
+    let (status, _, body) = send(&h.app, request("GET", path)).await;
+    assert_eq!(status, 200, "{path}: {body}");
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(document["resource"], "http://127.0.0.1:7474/mcp");
+}
