@@ -241,3 +241,77 @@ async fn the_sdk_client_sees_an_unknown_tool_as_a_json_rpc_error_in_both_revisio
         }
     }
 }
+
+fn create_story_call(idempotency_key: &str) -> CallToolRequestParams {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("idempotency_key".into(), json!(idempotency_key));
+    arguments.insert("title".into(), json!("Made by the SDK's client"));
+    CallToolRequestParams::new("create_story").with_arguments(arguments)
+}
+
+/// A successful call's `structuredContent`.
+fn receipt(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    result
+        .structured_content
+        .clone()
+        .expect("structuredContent")
+}
+
+/// A write through the SDK's client, in both revisions: the call is sent and its receipt is read by an
+/// implementation that is not this repository's, and the two revisions write to the same planner (a key used over
+/// one is a repeat over the other).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sdk_client_calls_a_write_tool_in_both_revisions() {
+    let h = mcp_harness().await;
+    let token = issue_mcp_token(&h, "dan@example.com").await.secret;
+    let url = serve(&h).await;
+
+    let modern = ()
+        .serve_with_lifecycle(
+            StreamableHttpClientTransport::from_config(config(&url, &token)),
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("server/discover is answered");
+    let over_modern = modern
+        .call_tool(create_story_call("conf-w1"))
+        .await
+        .expect("tools/call is answered");
+    modern.cancel().await.unwrap();
+
+    let legacy = ()
+        .serve(StreamableHttpClientTransport::from_config(config(
+            &url, &token,
+        )))
+        .await
+        .expect("initialize is answered");
+    let over_legacy = legacy
+        .call_tool(create_story_call("conf-w1"))
+        .await
+        .expect("tools/call is answered");
+    let another = legacy
+        .call_tool(create_story_call("conf-w2"))
+        .await
+        .expect("tools/call is answered");
+    legacy.cancel().await.unwrap();
+
+    let (first, repeat, second) = (
+        receipt(&over_modern),
+        receipt(&over_legacy),
+        receipt(&another),
+    );
+    assert_eq!(
+        (&first["created"], &repeat["created"], &second["created"]),
+        (&json!(true), &json!(false), &json!(true))
+    );
+    assert_eq!(first["key"], repeat["key"]);
+    assert_ne!(first["key"], second["key"]);
+    // One story per key, in the planner itself.
+    let (status, stories) =
+        call(&h.app, Some(&h.admin_token), "GET", "/api/v1/stories", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(stories["value"].as_array().map(Vec::len), Some(2));
+}

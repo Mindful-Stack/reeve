@@ -49,7 +49,10 @@ which rewrites `crates/reeve-server/tests/snapshots/mcp_tools.json`) change in o
 Two rules the tests pin and no change may break: the GitHub webhook MUST NOT move a story (no path to `move_story`,
 no write to delivery, resolution or version; pull-request status is informational), and the importer MUST NOT write
 an `override` activity entry (grandfathered stories are created in their state and logged `imported`). Only
-`Via::Interactive` may override the readiness gate. Moving a story never depends on goals (kb/ADR-0014 R4).
+`Via::Interactive` may override the readiness gate. No MCP tool may override it: `MoveStoryInput` has no override
+reason, a call that sends one is refused, `move_story` always passes none and the shared action refuses one from a
+caller that came through MCP (kb/ADR-0029 R10; `tests/mcp_write_tools.rs` `move_story_never_overrides_the_gate`).
+Moving a story never depends on goals (kb/ADR-0014 R4).
 
 An API route and its MCP tool share one action (`crates/reeve-server/src/actions/`): validation and use-case logic live in the action; the route and the tool adapter only convert their input and present the answer (a tool adapter also bounds lists and cuts long text, `crates/reeve-server/src/mcp/tools/bound.rs`) (kb/ADR-0029 R1).
 

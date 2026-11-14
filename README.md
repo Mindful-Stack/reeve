@@ -81,7 +81,7 @@ feature:
    cargo run -p reeve-server --features reeve-server/static-oidc -- serve
    ```
 
-   It logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 9 tools)`.
+   It logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 13 tools)`.
 
    In a second shell, mint a token. It is valid for one hour and is printed once:
 
@@ -113,7 +113,9 @@ feature:
      -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_stories","arguments":{"mine":true,"open":true},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
    ```
 
-   `tools/list` (the inspector line below) shows all nine tools with their arguments.
+   `tools/list` (the inspector line below) shows the tools with their arguments: nine that read and four that
+   change something (`create_story`, `edit_story`, `add_comment`, `move_story`). This token is a read-and-change
+   connection; a connection that may only read is listed the nine.
 
 4. The MCP inspector, from the command line (it speaks revision 2025-11-25):
 
