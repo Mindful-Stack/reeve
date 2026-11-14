@@ -207,6 +207,15 @@ async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing
             "invalid_target",
         ),
         (
+            "grant_type and the resource twice: the resource decides, as at authorize",
+            {
+                let mut t = also("grant_type", "authorization_code");
+                t.push(("resource", RESOURCE));
+                t
+            },
+            "invalid_target",
+        ),
+        (
             "no verifier",
             form_with(ok.clone(), "code_verifier", None),
             "invalid_request",

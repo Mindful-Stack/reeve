@@ -152,11 +152,13 @@ async fn grant(s: &AppState, headers: &HeaderMap, body: &[u8]) -> Result<TokenPa
         .filter(|_| is_form)
         .and_then(|text| Params::parse(text).ok())
         .ok_or_else(|| bad("invalid_request", "the body is not a well-formed form"))?;
-    // Every parameter this route knows, before any value is read.
-    match params.repeated(&RECOGNISED) {
-        Some("resource") => return Err(bad("invalid_target", "resource is sent more than once")),
-        Some(_) => return Err(bad("invalid_request", "a parameter is sent more than once")),
-        None => {}
+    // Every parameter this route knows, before any value is read. A repeated resource is asked on its own first,
+    // as at authorize, so the answer does not depend on which repeated parameter `repeated` names first.
+    if params.repeated(&["resource"]).is_some() {
+        return Err(bad("invalid_target", "resource is sent more than once"));
+    }
+    if params.repeated(&RECOGNISED).is_some() {
+        return Err(bad("invalid_request", "a parameter is sent more than once"));
     }
     if params.get("client_secret").is_some() {
         return Err(bad(
