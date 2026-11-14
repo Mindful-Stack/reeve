@@ -73,15 +73,20 @@ tokens it accepts are ones a developer mints. Both need a binary built with the 
 
    (`dev@example.com` must be allowed by `allowed_domains` or `allowed_emails`.)
 
-2. Start the server and mint a token. It is valid for one hour and is printed once:
+2. Start the server. `serve` runs until it is stopped, so leave it in a shell of its own:
 
    ```bash
    mise run db-up
    cargo run -p reeve-server --features reeve-server/static-oidc -- serve
-   TOKEN=$(cargo run -p reeve-server --features reeve-server/static-oidc -- mcp-token-issue --email dev@example.com)
    ```
 
-   The server logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)`.
+   It logs `mcp endpoint enabled at http://127.0.0.1:7474/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)`.
+
+   In a second shell, mint a token. It is valid for one hour and is printed once:
+
+   ```bash
+   TOKEN=$(cargo run -p reeve-server --features reeve-server/static-oidc -- mcp-token-issue --email dev@example.com)
+   ```
 
 3. One call with `curl`, with every header revision 2026-07-28 requires:
 
@@ -95,14 +100,16 @@ tokens it accepts are ones a developer mints. Both need a binary built with the 
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_story","arguments":{"key":"ABC-1"},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
    ```
 
-4. The MCP inspector, from the command line:
+4. The MCP inspector, from the command line (it speaks revision 2025-11-25):
 
    ```bash
-   npx @modelcontextprotocol/inspector --cli http://127.0.0.1:7474/mcp --transport http \
+   npx -y @modelcontextprotocol/inspector --cli http://127.0.0.1:7474/mcp --transport http \
      --method tools/list --header "Authorization: Bearer $TOKEN"
+   npx -y @modelcontextprotocol/inspector --cli http://127.0.0.1:7474/mcp --transport http \
+     --method tools/call --tool-name get_story --tool-arg key=ABC-1 --header "Authorization: Bearer $TOKEN"
    ```
 
-5. Claude Code:
+5. Claude Code (it speaks revision 2026-07-28):
 
    ```bash
    claude mcp add --transport http reeve-local http://127.0.0.1:7474/mcp --header "Authorization: Bearer $TOKEN"
