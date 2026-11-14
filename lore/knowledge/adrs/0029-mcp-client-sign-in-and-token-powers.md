@@ -3,7 +3,7 @@ id: kb/ADR-0029
 title: "ADR-0029: MCP clients sign in through Reeve's own authorization server and act with interactive tokens bound to the MCP endpoint"
 description: "We decided that the Reeve server is the OAuth authorization server for its own remote MCP endpoint, in front of the existing sign-in, and issues interactive tokens that work only at that endpoint, for a named set of tools that never includes tokens, access, import, export or overriding the gate, because a person is in the conversation and the chat clients reach only a remote server."
 tags: [adr, reeve, identity, tokens, auth, security, cli]
-status: proposed
+status: accepted
 date: 2026-11-14
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-14.
+Accepted 2026-11-14 by Daniel Thyselius.
 
 ## Context
 People reach Reeve through the `reeve` CLI, the TUI and the web client. Agents reach it by running the CLI (kb/ADR-0005), which chose the CLI over an MCP server and allowed one later if it wraps the same commands. Part of the team works only in claude.ai or ChatGPT. Those clients cannot run a local program: they call a remote server over HTTPS from their provider's cloud, and sign each person in with OAuth as the MCP authorization specification describes.
