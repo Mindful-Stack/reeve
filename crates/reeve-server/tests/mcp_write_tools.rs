@@ -317,7 +317,8 @@ async fn a_repeated_create_writes_nothing_and_says_so_and_keys_are_each_persons_
 
 /// One key sent at once over two connections of one person: one story, and exactly one of the two calls is told
 /// it created it. `created` is the insert's own answer inside the handler's transaction, so this holds in every
-/// interleaving; nothing here forces a particular one.
+/// interleaving. A smoke test: it does not force the race, and a run may well take the two calls one after the
+/// other.
 #[tokio::test]
 async fn one_key_sent_at_once_over_two_connections_of_one_person_makes_one_story() {
     let f = flow().await;
@@ -562,6 +563,64 @@ async fn the_thirty_first_write_call_in_ten_minutes_is_refused_with_a_time() {
         answer(h, &two, "create_story", good("l1")).await["created"],
         true
     );
+}
+
+/// One quota for all four write tools, checked after the scope: 31 write calls over a read connection are each
+/// 403 and count for nothing, a mix of the four tools then fills the person's thirty, at which each of the four is
+/// refused while the read tools still answer. A limit checked ahead of the scope, or for some tools only, goes red.
+#[tokio::test]
+async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_check() {
+    let f = flow().await;
+    let h = &f.h;
+    let reader = token(&f, &h.admin_token, "read").await;
+    let writer = token(&f, &h.admin_token, "write").await;
+    let made = key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": "q-s1", "title": "Pick a slot", "kind": "story", "criteria": [], "labels": []}),
+    )
+    .await);
+    // Arguments each tool would accept and act on, for call `n`.
+    let valid = |name: &str, n: usize| match name {
+        "create_story" => {
+            json!({"idempotency_key": format!("q-{n}"), "title": format!("Story {n}")})
+        }
+        "edit_story" => json!({"key": made, "version": 1, "title": format!("Edit {n}")}),
+        "add_comment" => {
+            json!({"idempotency_key": format!("q-{n}"), "item": made, "body": format!("Comment {n}")})
+        }
+        "move_story" => json!({"key": made, "to": "todo", "version": 1}),
+        other => panic!("{other}"),
+    };
+    const WRITE: [&str; 4] = ["create_story", "edit_story", "add_comment", "move_story"];
+    let over = "Too many changes:";
+
+    for n in 0..31 {
+        let name = WRITE[n % 4];
+        let params = json!({"name": name, "arguments": valid(name, n)});
+        let (status, _, body) = send(&h.app, mcp_modern(&reader, 1, "tools/call", params)).await;
+        assert_eq!(status, 403, "read call {n} ({name}): {body}");
+    }
+    // The person's whole thirty, a mix of the four tools; whatever each answers, none is the limit's refusal.
+    for n in 0..30 {
+        let name = WRITE[n % 4];
+        let result = tool(h, &writer, name, valid(name, n)).await;
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(!text.starts_with(over), "write call {n} ({name}): {text}");
+    }
+    let count = (rows(h, "stories").await, rows(h, "comments").await);
+    for name in WRITE {
+        let said = refusal(h, &writer, name, valid(name, 99)).await;
+        assert!(said.starts_with(over), "{name}: {said}");
+    }
+    assert_eq!(
+        (rows(h, "stories").await, rows(h, "comments").await),
+        count,
+        "nothing was written at exhaustion"
+    );
+    // Reading is not limited.
+    answer(h, &writer, "list_stories", json!({})).await;
+    answer(h, &reader, "get_story", json!({"key": made})).await;
 }
 
 /// A story in a ready epic with two criteria, two labels and an owner, made through the API; its key.
