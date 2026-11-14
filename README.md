@@ -9,11 +9,11 @@ can carry required decisions, each with a responsible person and a link to a
 decision record in git that Reeve checks for acceptance. A story is ready when
 its ancestors are through discovery, nothing it requires is undecided, it has
 acceptance criteria and nothing blocks it. Moving a story that is not ready out
-of todo needs a written reason from a person. The `reeve` CLI is Reeve's primary interface, for people and agents alike (with
-JSON output for agents); the web client (a board, a strategic planning view and
-the readiness queue) is a view over the same API. A feature is not finished
-until the CLI can do it, and a view that ships web-first gets a story for its
-CLI form.
+of todo needs a written reason from a person. The `reeve` CLI is Reeve's primary
+interface, for people and agents alike (with JSON output for agents); the web
+client (a board, a strategic planning view and the readiness queue) is a view
+over the same API. A feature is not finished until the CLI can do it, and a view
+that ships web-first gets a story for its CLI form.
 
 Reeve is the successor to the original Reeve, now
 [reeve-runner](https://github.com/Mindful-Stack/reeve-runner), which orchestrated
