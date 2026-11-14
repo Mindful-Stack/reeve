@@ -65,16 +65,30 @@ Wire DTOs are built only in `handler/dto.rs`; `domain/` returns domain values (`
 
 ### The readiness queue
 
-The queue lists what a PM must act on before work can start: discoveries that are not done and decisions that are not made. Everything in it is derived on read from the readiness reasons and the decisions; nothing is stored and the queue never decides whether a story is ready (kb/ADR-0018 R1).
+The Readiness page is one list of what holds work back: decisions, and initiatives and epics whose discovery is not done. Nothing in it is stored; it is worked out each time from the stories' readiness, goals and promises (kb/ADR-0014 R6, kb/ADR-0018 R1; `queue::order`).
 
-- **A discovery row.** Every unfinished story (a dropped story counts as finished) has readiness reasons that list its unmarked ancestors, nearest first. The nearest one is the story's discovery item, and the row is that item. A row counts its stories as *held* (not started) or *under way* (started); it exists as long as it has at least one of either. An epic row also names its initiative when that is unmarked too (`also`). An initiative gets a row only for stories whose epic is already marked, and no story is held by two rows.
-- **Nesting.** An open decision that is not yet satisfied sits under a discovery row when it is required on exactly that row's item, and takes the row's lane (`under`). Every other decision stands alone: one on a marked item, on a story, or on an unmarked initiative that has no row of its own. A decision appears once.
-- **When a row or decision is needed.** A row is needed this sprint or next sprint when a story it holds or has under way serves an active or draft goal, or carries a promise due in that window (kb/ADR-0025 R5, R7); a row takes the earlier of that and the window of any decision under it. Only goals and promises put anything in a sprint window. An unmarked item no longer puts a decision in next sprint by itself.
-- **Lanes.** Needed this sprint, Needed next sprint, then a divider "No goal or promise needs these yet": *Now, no goal yet* (no window, work waiting, and the item sits under an initiative in the first configured horizon bucket, kb/ADR-0016 R2), *Later* (decisions with waiting work that are not under that bucket), then *Open*, *Accepted* and *Closed* as before. A discovery row with no window that is not in Now is left out, so unmarked epics of far horizons do not flood Later. A decision with no waiting work stays in Open. With no horizon bucket configured there is no Now. A decision whose record awaits review stays in its window's lane; Review is no longer a lane (`QueueLane::Review` stays in the enum, never sent).
-- **Order in a lane.** In the sprint lanes and Later, discovery rows come first (more held stories first, then key number), each followed by its decisions, then the standalone decisions (those that block work before those that do not, then by urgency). The discovery is what a decision waits on, so it comes first. Open, Accepted and Closed keep their order.
-- **The Now ranking.** Rows and standalone decisions in Now are ordered by the first rule that differs: (1) urgent first, as computed for urgent marks (kb/ADR-0024 R5), the queue adding no urgency rule of its own; (2) the earlier target month of the initiative, items without one last; (3) a decision due within one sprint length from today, overdue included, earliest due first (for a row, any decision under it); (4) more held stories first. The last rule always applies, so every Now row says why it is there (`needed_in_reason`: urgent, target month, decision due, or held). On a full tie rows come before decisions, then by key.
-- **Urgency only orders.** Urgency never moves a row to another lane and never counts in the summary; it matters only inside Now. kb/ADR-0024 R7's "readiness" is the gate that lets a story start, which the queue's view order does not touch.
-- **Counts.** The summary counts decisions (nested ones too) per lane, every open decision whose next step is to review its record (`review`), and decisions that block work (`blocking`, `blocked_stories`; stories held only by a row do not count). Discoveries are counted by the client from the rows, once each, and a nested decision counts once as a decision. The board banner shows the sprint windows only ("2 in discovery and 1 decision needed this sprint · 2 in discovery needed next sprint"); a zero part is left out.
+- **Rows.** An unfinished story whose epic or initiative has no discovery mark is held by the nearest such item: that item is a discovery row. A story is held by one row only. An initiative is a row only for stories whose epic is marked; an epic row whose initiative is unmarked too says so ("with GRA-572"). Stories not started are *held*; started ones are *under way*, and a row holding only those is still a row. The queue reads discovery off readiness, never decides it.
+- **Nesting.** A decision on a row's own item sits under that row, in the row's lane; every other decision stands alone, and a decision never appears twice.
+- **Lanes.**
+
+  | Page lane | Holds | Example line |
+  |---|---|---|
+  | Needed this sprint | work an active-sprint goal or a promise due this sprint needs | "for goal: Ship tiers" |
+  | Needed next sprint | work a draft-sprint goal or a promise due next sprint needs | "promised by 20 Nov: GRA-12" |
+  | *No goal or promise needs these yet* | | |
+  | Now, no goal yet | rows and decisions with held or under-way work under an initiative in the first horizon bucket | "Now · holds 3" |
+  | Later | decisions with affected work anywhere else | |
+  | Open | decisions nothing waits on yet | |
+  | Accepted, Closed | as before | |
+
+  Only goals and promises put work in a sprint lane (promises by kb/ADR-0025 R5/R7). A row takes the earliest window of its stories and of the decisions under it. A row that no goal or promise needs and that is not under the first bucket is left out (it would flood Later), and so is one on an epic without an initiative. With no first bucket configured there is no Now. A record waiting for review stays in its lane; review is a next step, not a lane.
+- **Order.** In the sprint lanes and Later, rows come first (more held stories, then key), each followed by its decisions; then the other decisions by how much they hold and how urgent their date is. Rows come first because the discovery is what the decisions wait on.
+- **The Now ranking.** In Now, by the first rule that differs: (1) urgent (a mark on the item, an ancestor or a descendant); (2) the initiative's target month, earlier first, then none (a malformed month counts as none); (3) a decision due within a sprint length of today, overdue included (for a row, any decision under it), earliest first; (4) more held stories. On a full tie rows come before decisions.
+- **What a row says.** The lane heading says when; the row's line says why: the goal's outcome, the promise date, or the Now rule that placed it: "Now · urgent via GRA-590", "Now · target Nov 2026", "Now · due 17 Nov", "Now · decision #20 due 17 Nov", "Now · holds 3", "Now · holds none, 2 under way". A decision under a row shows no line: its row says why.
+- **Urgency only orders Now.** Urgency never moves work into a lane or into a count; it orders Now only. The readiness gate (kb/ADR-0024 R7's "readiness") and moving a story never read the queue, goals or urgency (kb/ADR-0014 R4).
+- **Counts.** The summary and the board banner count decisions in each sprint lane, those under a row included; records to review in any lane; and blocking decisions and the stories they hold, each once. The banner adds the discovery rows per sprint lane: "2 in discovery and 1 decision needed this sprint".
+
+- [ ] **Step 4: Commit**
 
 ## What the context never does
 
