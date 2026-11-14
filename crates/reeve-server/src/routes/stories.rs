@@ -76,6 +76,7 @@ pub struct StoryQuery {
     pub limit: Option<u32>,
     /// Stories to skip before the page, 0 or more; refused without `limit`. An offset at or past the end answers an
     /// empty list.
+    #[param(format = Int64, minimum = 0, maximum = 4294967295u32)]
     pub offset: Option<u32>,
 }
 
@@ -158,8 +159,6 @@ async fn list(
             c.ctx().now,
         )
         .await?;
-    // The page is a slice of the filtered, ordered list (delivery state, rank, key length, key): the envelope is the
-    // same, and a page of exactly `limit` stories means there may be more.
     Ok(ok(match page {
         Some((skip, take)) => stories.into_iter().skip(skip).take(take).collect(),
         None => stories,

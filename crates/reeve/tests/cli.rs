@@ -4016,3 +4016,20 @@ fn story_ls_refuses_a_limit_or_offset_that_is_not_a_whole_number() {
         assert!(err.contains(says), "{args:?}: {err}");
     }
 }
+
+/// The server's `validation` answer to `--limit 0` is printed as any error is, exit 1, with no `more:` line. It would
+/// catch a `more:` line printed for an error (a CLI that decides from its flags, not from a page it was answered).
+#[test]
+fn story_ls_prints_a_validation_error_and_nothing_more() {
+    let invalid = serde_json::json!({"outcome":"error","code":"validation","message":"limit must be 1..=100"});
+    let (url, server) = serve(vec![("GET /api/v1/stories?limit=0", 400, invalid)]);
+    let out = reeve_at(&url, &["story", "ls", "--limit", "0"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr_text(&out));
+    assert_eq!(
+        stderr_text(&out).trim_end(),
+        "error (Validation): limit must be 1..=100"
+    );
+    assert_eq!(more_lines(&out), Vec::<String>::new());
+    assert_eq!(out_text(&out), "");
+}
