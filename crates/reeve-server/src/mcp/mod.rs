@@ -422,12 +422,9 @@ mod tests {
         let off = crate::ServerConfig::parse(BASE).unwrap();
         assert_eq!(startup_line(&off, 3), "mcp endpoint disabled");
         let on = crate::ServerConfig::parse(&format!("{BASE}[mcp]\nenabled = true\n")).unwrap();
-        let line = startup_line(&on, 3);
-        assert!(
-            line.starts_with(
-                "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, "
-            ),
-            "{line}"
+        assert_eq!(
+            startup_line(&on, 3),
+            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 3 tools)"
         );
     }
 }
