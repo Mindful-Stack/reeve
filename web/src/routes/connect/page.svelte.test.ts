@@ -122,6 +122,31 @@ describe('the approval page', () => {
 		expect(assign).not.toHaveBeenCalled();
 	});
 
+	// Catches a link to anything but the configured statement, one that opens in this tab or hands the statement's
+	// site this page as its opener or referrer, and a provider sentence that depends on the link.
+	it('links the privacy statement in a new tab when the instance has one', async () => {
+		net.read = () => connectionRequest({ privacy_url: 'https://example.com/privacy' });
+		await shown();
+		const link = [...document.querySelectorAll('a')].find((a) => a.textContent?.trim() === 'Privacy statement');
+		expect(link?.getAttribute('href')).toBe('https://example.com/privacy');
+		expect(link?.getAttribute('target')).toBe('_blank');
+		expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+		expect(text()).toContain("What you read through this app is sent to the app's provider.");
+	});
+
+	it('shows no privacy link when the instance has none, and still says where what you read goes', async () => {
+		for (const privacy_url of [undefined, null]) {
+			net.read = () => connectionRequest({ privacy_url });
+			await shown();
+			expect(text()).not.toContain('Privacy statement');
+			expect(document.querySelector('a')).toBeNull();
+			expect(text()).toContain("What you read through this app is sent to the app's provider.");
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+		}
+	});
+
 	it('says the request expired when the read answers 404, and offers no buttons', async () => {
 		net.read = () => failure('not found', 404, 'not_found');
 		await open();

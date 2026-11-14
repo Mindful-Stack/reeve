@@ -152,6 +152,8 @@ The addresses in the documents are built from `public_url` as the server parses 
 
 The two documents send no CORS headers, so a cross-origin client running in a browser page cannot read them; the supported clients fetch them from their servers.
 
+A provider's servers, not the person's browser, fetch the two documents and call `/oauth/token` (and `/mcp`). A CDN, bot filter or firewall in front of the proxy must not block the provider's published egress addresses on those routes: a challenge page or a refusal there fails the connect with no message the person can act on. For Claude, Anthropic publishes the range its servers call from; allow it.
+
 Limit both documents at the proxy. A chat provider's users all arrive from a few shared addresses (Claude's from `160.79.104.0/21`), so the limit is per address but sized for many people behind one; the documents are small and the same for everyone. For nginx, five requests a second per address:
 
     # in the http block
@@ -164,7 +166,7 @@ Limit both documents at the proxy. A chat provider's users all arrive from a few
         proxy_pass http://127.0.0.1:7474;
     }
 
-When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is that proxy's address and every caller shares one limit. Make nginx use the real client address first (`set_real_ip_from <the CDN's ranges>;` and `real_ip_header X-Forwarded-For;`, module `ngx_http_realip_module`), or key the zone on the header your CDN sets.
+When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is that proxy's address and every caller shares one limit. Make nginx use the real client address first (`set_real_ip_from <the CDN's ranges>;` and `real_ip_header X-Forwarded-For;`, module `ngx_http_realip_module`), or key the zone on the header your CDN sets. The same holds for every limit in this section.
 
 ### The authorize route
 
@@ -200,7 +202,16 @@ The approval page, `/connect`, is a page of the web client and needs no rule of 
 
 The route reads at most 16 KiB, answers within one database transaction and makes no outbound request (Claude waits ten seconds for it). A refresh token works once: if an answer is lost on the way, or an app sends two refreshes at once, the next attempt with the old token revokes the connection and the person connects again. Each such case is a `connection_revoked` entry with reason `refresh_token_reused` in the activity log, and a `warn` line `token request refused`, which never holds a code, a token or anything else the caller sent.
 
-A person who connected an app can list and revoke their connections (kb/ADR-0029 R9; "Seeing and cutting connections" below). Turning `[mcp]` on in production still waits for the go-live checklist: the privacy statement, the proxy limits of this section, and the trial with each client. Keep it off until then.
+A person who connected an app can list and revoke their connections (kb/ADR-0029 R9; "Seeing and cutting connections" below). Before turning `[mcp]` on in production, work through "Turning it on" at the end of this section.
+
+### The MCP route
+
+`/mcp` is where a connected app calls the tools. `location /` forwards it; give it a location of its own that does not buffer, so that a tool which later streams its answer is not held back by the proxy (today every answer is one JSON object, and buffering costs nothing). For nginx:
+
+    location = /mcp {
+        proxy_pass http://127.0.0.1:7474;
+        proxy_buffering off;
+    }
 
 ### Which apps may connect
 
@@ -214,6 +225,34 @@ An app whose host or redirect address is not listed is refused without any reque
 ### Seeing and cutting connections
 
 A person sees the apps they connected on the Tokens page, under "Connected apps", and with `reeve auth connections`; either revokes one (`reeve auth connections revoke <id>`). An admin sees and revokes anyone's on the Users page, or with `reeve auth connections --owner <email>`. Disabling a user revokes all of theirs, and `reeve-server connections-revoke-all` (the restore procedure's step) everyone's. A revoked connection stops at its next call. Each approval and each revocation is an entry in the activity log (`connection_approved`; `connection_revoked` with its reason: `revoked`, `refresh_token_reused`, `user_disabled`, `restored`), which every signed-in person can read.
+
+### What your privacy statement must say
+
+Once the endpoint is on, what people read in Reeve can leave the instance through an app they connect. Your privacy statement must say so:
+
+- What a person reads through a connected app is sent to that app's provider (for example Anthropic for Claude, OpenAI for ChatGPT), under the person's own account with that provider and that provider's terms.
+- Each approval and each revocation of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id. Once a release has the tools that change things, the app's name is recorded with each change it makes.
+- A connection (the person, the app, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
+
+Set `[mcp] privacy_url` to the statement's https address: the approval page links it beside the choice a person makes. Unset, the page shows no link.
+
+### Turning it on
+
+In this order:
+
+1. The privacy statement says what the section above lists, and `[mcp] privacy_url` points at it.
+2. `[mcp] enabled = true`, with `redirect_uris` and `client_hosts` set. For claude.ai:
+
+        [mcp]
+        enabled = true
+        redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        client_hosts = ["claude.ai"]
+        privacy_url = "https://example.com/privacy"
+
+3. The proxy rules of this section are in place: the limits on the two documents, `/oauth/authorize` and `/oauth/token`, the real client address when a CDN sits in front, and `/mcp` unbuffered.
+4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id, and the connection is listed under "Connected apps" on the Tokens page. (Once a release has the tools that change things: also add a comment and check that its entry names the app.)
+
+To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
 
 ## GitHub webhook
 

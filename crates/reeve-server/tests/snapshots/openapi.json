@@ -726,6 +726,13 @@
             "description": "The signed-in person who would approve.",
             "type": "string"
           },
+          "privacy_url": {
+            "description": "The instance's privacy statement (`[mcp] privacy_url`), null when none is configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "redirect_host": {
             "description": "The host the person is sent back to.",
             "type": "string"
@@ -4219,6 +4226,13 @@
                   "email": {
                     "description": "The signed-in person who would approve.",
                     "type": "string"
+                  },
+                  "privacy_url": {
+                    "description": "The instance's privacy statement (`[mcp] privacy_url`), null when none is configured.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "redirect_host": {
                     "description": "The host the person is sent back to.",

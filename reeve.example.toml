@@ -54,8 +54,7 @@ admins = ["admin@example.com"]
 # exchanges the code at /oauth/token for a one-hour token it can refresh for thirty days. Rate-limit the two
 # routes and the two documents at the proxy first (deploy/README.md, "MCP sign-in at the reverse proxy").
 # A person lists and revokes their connections on the Tokens page and with `reeve auth connections` (kb/ADR-0029
-# R9). Turning [mcp] on in production still waits for the go-live checklist (the privacy statement, the proxy
-# limits, the trial with each client): keep it off until then.
+# R9). Before turning [mcp] on in production, work through deploy/README.md, "Turning it on".
 # allowed_origins lists the Origin header values accepted (a request without an Origin header always passes);
 # unset, only public_url's own origin.
 # Which apps may connect is two more lists, both empty by default, and empty means none. In redirect_uris, the
@@ -68,6 +67,8 @@ admins = ["admin@example.com"]
 # allowed_origins = ["https://claude.ai"]
 # redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
 # client_hosts = ["claude.ai"]
+# The privacy statement the approval page links (an https address); unset, the page shows no link.
+# privacy_url = "https://example.com/privacy"
 
 # The board's done column shows only stories done within this many days (1 to 3650); older ones stay one `?done=all` away.
 # [board]
