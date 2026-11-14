@@ -7,6 +7,7 @@ pub mod activity;
 pub mod attachments;
 pub mod comments;
 pub mod config;
+pub mod connection_requests;
 pub mod decisions;
 pub mod epics;
 pub mod events;
@@ -136,6 +137,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(users::router())
         .merge(access::router())
         .merge(config::router())
+        .merge(connection_requests::router())
         .merge(import::router())
         .merge(export::router())
         .merge(plans::router())

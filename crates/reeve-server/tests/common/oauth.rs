@@ -264,3 +264,25 @@ pub fn without_query(url: &url::Url) -> String {
     bare.set_query(None);
     bare.to_string()
 }
+
+/// The flow harness served as `https://reeve.example.com`, so cookies are `Secure` and `__Host-` prefixed (built
+/// as `https_harness` is: from the loopback configuration, with `public_url` replaced afterwards).
+pub async fn https_flow() -> Flow {
+    let host = reeve_identity::FakeClientHost::start().await;
+    let h = super::build(
+        |cfg| {
+            format!(
+                "{cfg}\n[mcp]\nenabled = true\nredirect_uris = [\"{CALLBACK}\"]\nclient_hosts = [\"{}\"]\n",
+                host.host()
+            )
+        },
+        |c| c.public_url = Some("https://reeve.example.com".into()),
+    )
+    .await;
+    let client_id = host.publish("/client.json", "Example App", &[CALLBACK]);
+    Flow {
+        h: h.with_fixed_clock(),
+        host,
+        client_id,
+    }
+}

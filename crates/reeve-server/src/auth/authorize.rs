@@ -61,7 +61,6 @@ pub(crate) fn connect_cookie(value: String, https: bool) -> Cookie<'static> {
 }
 
 /// Whether the request's cookies, under the name this instance issues, bind the authorization request `id`.
-#[cfg_attr(not(test), allow(dead_code))] // its callers are the API routes of the next commit, which removes this line
 pub(crate) fn connect_bound(headers: &HeaderMap, id: &str, https: bool) -> bool {
     CookieJar::from_headers(headers)
         .get(connect_cookie_name(https))
