@@ -508,7 +508,6 @@ impl ServerConfig {
                 u.fragment().is_none()
                     && u.username().is_empty()
                     && u.password().is_none()
-                    && u.host_str().is_some_and(|h| !h.is_empty())
                     && (u.scheme() == "https"
                         || (on_loopback
                             && u.scheme() == "http"
@@ -516,7 +515,8 @@ impl ServerConfig {
             });
             if !ok {
                 anyhow::bail!(
-                    "[mcp] privacy_url {p:?} must be an https address without credentials or a fragment, such as https://example.com/privacy"
+                    // Not the value itself: credentials in it would be copied into the log.
+                    "[mcp] privacy_url must be an https address without credentials or a fragment, such as https://example.com/privacy"
                 );
             }
         }
@@ -1260,7 +1260,8 @@ mod tests {
     }
 
     /// Catches a privacy address the approval page would link without it being an https page of its own: a
-    /// relative path, plain http, a fragment, credentials.
+    /// relative path, plain http (on loopback too, under a real provider), a fragment, credentials. The error
+    /// names the setting, never the value: a password in it would be copied into the log.
     #[test]
     fn mcp_privacy_url_is_absent_by_default_and_must_be_an_https_address() {
         assert_eq!(
@@ -1282,11 +1283,18 @@ mod tests {
             "https://example.com/privacy#mcp",
             "https://user:secret@example.com/privacy",
             "https://user@example.com/privacy",
+            "https://:secret@example.com/privacy",
+            "http://127.0.0.1:7474/privacy",
             "mailto:privacy@example.com",
         ] {
             let e = cfg(&format!("{GOOGLE}[mcp]\nprivacy_url = \"{bad}\"")).unwrap_err();
             assert!(e.to_string().contains("[mcp] privacy_url"), "{bad}: {e}");
         }
+        let e = cfg(&format!(
+            "{GOOGLE}[mcp]\nprivacy_url = \"https://user:SENTINEL@example.com/privacy\""
+        ))
+        .unwrap_err();
+        assert!(!format!("{e:#}").contains("SENTINEL"), "{e:#}");
     }
 
     /// As with a redirect address, only the static provider admits http, and only on loopback.
