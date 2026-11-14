@@ -321,7 +321,7 @@ async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing
     );
     let (status, _, body) = token(&f, &bare).await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["scope"], "write");
+    assert_eq!(body["scope"], "read write", "a write connection may also read");
 }
 
 /// kb/ADR-0029 R4: a code lives at most one minute. The clock is fixed, so the boundary is exact: 59 seconds
@@ -532,7 +532,7 @@ async fn a_refresh_issues_a_new_pair_and_retires_the_refresh_token() {
     assert_ne!(refresh, first.refresh_token);
     assert_eq!(
         (&body["token_type"], &body["scope"], &body["expires_in"]),
-        (&json!("Bearer"), &json!("write"), &json!(3600))
+        (&json!("Bearer"), &json!("read write"), &json!(3600))
     );
     assert_eq!(mcp_status(&f, access).await, 200);
     assert_eq!(

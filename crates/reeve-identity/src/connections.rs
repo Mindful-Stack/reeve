@@ -63,8 +63,8 @@ pub struct TokenPair {
     pub refresh_token: String,
     /// Seconds until the access token expires: one hour, or less when the connection ends sooner.
     pub expires_in: i64,
-    /// The scope granted: the connection's.
-    pub scope: Scope,
+    /// The scope granted, as the answer names it (`granted_scope`).
+    pub scope: &'static str,
 }
 
 /// Why a grant was refused, as RFC 6749 section 5.2 and RFC 8707 name it. `InvalidGrant` carries a fixed reason
@@ -139,7 +139,7 @@ async fn issue_pair(
         access_token,
         refresh_token,
         expires_in: (expires_at - now).num_seconds(),
-        scope,
+        scope: granted_scope(scope),
     })
 }
 
@@ -259,6 +259,15 @@ fn within(requested: Option<&str>, granted: Scope) -> bool {
             _ => false,
         })
     })
+}
+
+/// The `scope` a token answer names for a connection's scope: a write connection may also read, so it names both,
+/// as the metadata lists them.
+fn granted_scope(scope: Scope) -> &'static str {
+    match scope {
+        Scope::Read => "read",
+        Scope::Write => "read write",
+    }
 }
 
 /// The refresh grant (kb/ADR-0029 R5): rotation, with reuse revoking the connection. One transaction: the
