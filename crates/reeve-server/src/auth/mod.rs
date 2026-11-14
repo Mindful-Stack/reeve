@@ -142,7 +142,7 @@ impl Caller {
             reeve_protocol::TokenKind::Interactive => reeve_protocol::Via::Interactive,
             reeve_protocol::TokenKind::Automation => reeve_protocol::Via::Automation,
         };
-        crate::actions::Acting::new(&self.0.email, via, self.1, &self.3)
+        crate::actions::Acting::new(&self.0.email, via, self.1, &self.3, None)
     }
 
     pub fn ctx(&self) -> reeve_planning::Ctx {
@@ -157,6 +157,16 @@ pub(crate) struct McpCaller {
     /// The instant the request was authenticated; the clock is read once per request, here.
     pub(crate) now: DateTime<Utc>,
     policy: reeve_identity::AccessPolicy,
+}
+
+/// A client as an activity entry names it (kb/ADR-0029 R9): the host of the connection's client id, which is the
+/// address of the client's metadata document. A client id without a host (the developer command's
+/// `urn:reeve:developer-command`) is recorded as it is, so an entry always names something.
+fn client_label(client_id: &str) -> String {
+    url::Url::parse(client_id)
+        .ok()
+        .and_then(|address| address.host_str().map(str::to_string))
+        .unwrap_or_else(|| client_id.to_string())
 }
 
 impl McpCaller {
@@ -194,13 +204,37 @@ impl McpCaller {
         })
     }
 
-    /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5).
+    /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5), and
+    /// its writes name the connection's client (R9).
     pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
         crate::actions::Acting::new(
             &self.principal.email,
             reeve_protocol::Via::Interactive,
             self.now,
             &self.policy,
+            Some(client_label(&self.principal.client_id)),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_label;
+
+    #[test]
+    fn a_client_is_named_by_the_host_of_its_id_or_by_the_id_when_it_has_no_host() {
+        assert_eq!(
+            client_label("https://claude.ai/oauth/client-metadata.json"),
+            "claude.ai"
+        );
+        assert_eq!(
+            client_label("http://127.0.0.1:4455/client.json"),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            client_label("urn:reeve:developer-command"),
+            "urn:reeve:developer-command"
+        );
+        assert_eq!(client_label("not a url"), "not a url");
     }
 }

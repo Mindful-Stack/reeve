@@ -89,6 +89,7 @@ mod attachment_handlers {
 
     fn ctx(actor: &str) -> Ctx {
         Ctx {
+            client: None,
             actor: actor.into(),
             via: Via::Interactive,
             now: Utc.with_ymd_and_hms(2026, 11, 10, 9, 0, 0).unwrap(),

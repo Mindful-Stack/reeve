@@ -34,7 +34,7 @@ pub(crate) use stories::{
 };
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
-/// timestamp) and the access policy the request was authenticated with, which owner validation needs and which
+/// timestamp, and the client when the call came through MCP) and the access policy the request was authenticated with, which owner validation needs and which
 /// cannot be recovered from an input.
 ///
 /// `policy` is private to `actions`, so an `Acting` is built in one place, `Acting::new`.
@@ -45,12 +45,19 @@ pub(crate) struct Acting<'a> {
 
 impl<'a> Acting<'a> {
     /// The one constructor: `Caller::acting` and `McpCaller::acting` both call it, so the two cannot differ.
-    pub(crate) fn new(email: &str, via: Via, now: DateTime<Utc>, policy: &'a AccessPolicy) -> Self {
+    pub(crate) fn new(
+        email: &str,
+        via: Via,
+        now: DateTime<Utc>,
+        policy: &'a AccessPolicy,
+        client: Option<String>,
+    ) -> Self {
         Self {
             ctx: reeve_planning::Ctx {
                 actor: email.to_string(),
                 via,
                 now,
+                client,
             },
             policy,
         }

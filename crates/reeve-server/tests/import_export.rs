@@ -789,6 +789,7 @@ async fn export_is_one_snapshot_across_readers() {
         .handlers
         .create_story(
             &Ctx {
+                client: None,
                 actor: "dan@example.com".into(),
                 via: Via::Interactive,
                 now: chrono::Utc::now(),

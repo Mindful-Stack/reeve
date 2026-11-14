@@ -38,6 +38,10 @@ pub struct Ctx {
     pub actor: String,
     pub via: Via,
     pub now: DateTime<Utc>,
+    /// The client a write was made through, when it was not one of Reeve's own (kb/ADR-0029 R9): a provenance
+    /// string beside `via`, written into the activity entry's payload as `client`. Planning knows nothing else
+    /// about where a call came from.
+    pub client: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +122,15 @@ impl Handlers {
         action: &'static str,
         payload: serde_json::Value,
     ) -> ActivityRecord {
+        // Every payload planning writes is a JSON object, and none has a field of this name.
+        let mut payload = payload;
+        debug_assert!(
+            payload.is_object(),
+            "an activity payload is an object: {payload}"
+        );
+        if let (Some(client), Some(fields)) = (&c.client, payload.as_object_mut()) {
+            fields.insert("client".into(), serde_json::Value::String(client.clone()));
+        }
         ActivityRecord {
             at: c.now,
             actor: c.actor.clone(),

@@ -227,6 +227,7 @@ async fn github(State(s): State<AppState>, headers: HeaderMap, body: Bytes) -> R
         PrStatus::Open
     };
     let ctx = Ctx {
+        client: None,
         actor: "github".into(),
         via: Via::System,
         now: Utc::now(),

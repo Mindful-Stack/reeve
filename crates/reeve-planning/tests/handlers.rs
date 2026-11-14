@@ -88,6 +88,7 @@ fn ctx(actor: &str, automation: bool) -> Ctx {
 }
 fn ctx_via(actor: &str, via: Via) -> Ctx {
     Ctx {
+        client: None,
         actor: actor.into(),
         via,
         now: Utc.with_ymd_and_hms(2026, 10, 26, 9, 0, 0).unwrap(),
@@ -1670,6 +1671,7 @@ async fn recording_a_pull_request_links_updates_and_never_moves_the_story() {
     let pr = |status, updated, title: &str| pull_request(42, status, updated, title);
     let t0 = c.now;
     let gh = Ctx {
+        client: None,
         actor: "github".into(),
         via: Via::System,
         now: t0,
@@ -1890,6 +1892,7 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
         .await
         .unwrap();
     let gh = Ctx {
+        client: None,
         actor: "github".into(),
         via: Via::System,
         now: c.now,
@@ -3146,6 +3149,7 @@ async fn seed_board(h: &Handlers, tag: &str, n: usize, first_pr: i64) -> Vec<ree
     .await
     .unwrap();
     let gh = Ctx {
+        client: None,
         actor: "github".into(),
         via: Via::System,
         now: c.now,
@@ -9564,4 +9568,103 @@ async fn a_comment_reports_whether_it_inserted() {
     };
     let (first, repeat) = (on_epic("one").await.unwrap(), on_epic("two").await.unwrap());
     assert_eq!((first.1, repeat), (true, (first.0, false)));
+}
+
+/// kb/ADR-0029 R9: a write made through a client names it in every entry it logs, and a write made any other
+/// way has no such field. Create, comment, edit and move are the four writes a client can make.
+#[tokio::test]
+async fn every_entry_of_a_write_made_through_a_client_names_the_client() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let plain = ctx("dan@example.com", false);
+    let through = Ctx {
+        client: Some("claude.ai".into()),
+        ..ctx("dan@example.com", false)
+    };
+    let control = h
+        .create_story(
+            &plain,
+            "cl-s0",
+            "Booking flow",
+            Kind::Story,
+            None,
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let story = h
+        .create_story(
+            &through,
+            "cl-s1",
+            "Booking flow",
+            Kind::Story,
+            None,
+            "",
+            vec!["works".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.comment_story(&through, story.key(), "hello", None)
+        .await
+        .unwrap();
+    let edited = h
+        .edit_story(
+            &through,
+            story.key(),
+            story.version(),
+            Some("Booking".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.move_story(
+        &through,
+        story.key(),
+        edited.version(),
+        DeliveryState::Done,
+        Some(Resolution::Dropped),
+        None,
+    )
+    .await
+    .unwrap();
+    let records = sink.0.lock().unwrap();
+    let of = |key: &Key| -> Vec<(&'static str, serde_json::Value)> {
+        records
+            .iter()
+            .filter(|r| r.entity_key == key.to_string())
+            .map(|r| (r.action, r.payload["client"].clone()))
+            .collect()
+    };
+    let named = serde_json::json!("claude.ai");
+    assert_eq!(
+        of(story.key()),
+        vec![
+            ("created", named.clone()),
+            ("commented", named.clone()),
+            ("edited", named.clone()),
+            ("moved", named)
+        ]
+    );
+    assert_eq!(
+        of(control.key()),
+        vec![("created", serde_json::Value::Null)]
+    );
+    assert!(
+        records.iter().all(|r| r.payload.is_object()),
+        "a payload that is not an object could not carry the client"
+    );
 }
