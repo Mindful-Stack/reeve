@@ -120,7 +120,7 @@ fn state_hash(state: &str) -> String {
 }
 
 /// Compares two strings without an early exit on the first differing byte.
-fn same(a: &str, b: &str) -> bool {
+pub(crate) fn same(a: &str, b: &str) -> bool {
     a.len() == b.len()
         && a.bytes()
             .zip(b.bytes())
@@ -194,7 +194,7 @@ fn login_cookie(value: String, https: bool) -> Cookie<'static> {
 
 /// A removal cookie (empty, `Max-Age=0`, expired) with the attributes of the one it clears. Added rather than passed
 /// to `CookieJar::remove`, which emits nothing when the request did not carry the cookie.
-fn removal(mut c: Cookie<'static>) -> Cookie<'static> {
+pub(crate) fn removal(mut c: Cookie<'static>) -> Cookie<'static> {
     c.make_removal();
     c
 }

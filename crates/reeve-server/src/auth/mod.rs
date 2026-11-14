@@ -1,6 +1,7 @@
 //! Who is calling: the bearer header (CLI, automation) or the browser's session cookie, resolved to the same
 //! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`; the public OAuth
-//! surface of the MCP endpoint (kb/ADR-0029) lives in `oauth`.
+//! surface of the MCP endpoint (kb/ADR-0029) lives in `oauth` and `authorize`.
+pub(crate) mod authorize;
 pub(crate) mod oauth;
 pub mod routes;
 

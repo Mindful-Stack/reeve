@@ -134,11 +134,11 @@ async fn the_documents_answer_reads_only_and_never_in_the_api_envelope() {
     }
 }
 
-/// On, an unknown path under either prefix is still a 404: only the two documents answer. The off test cannot
-/// show this: with the switch off a route that matched too much (the root form, a longer path) would answer 404
+/// On, a path under either prefix that no route answers is still a 404: only the documents and the sign-in
+/// routes answer. The off test cannot show this: with the switch off a route that matched too much (the root form, a longer path) would answer 404
 /// from its handler all the same.
 #[tokio::test]
-async fn on_only_the_two_documents_answer_under_the_prefixes() {
+async fn on_an_unknown_path_under_the_prefixes_is_still_a_404() {
     let h = mcp_harness().await;
     for path in [
         "/oauth/nope",

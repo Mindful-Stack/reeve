@@ -67,11 +67,14 @@ pub struct AppState {
     /// The MCP tools, built once here (`mcp::build_tools`); `tools/list`, `tools/call` and the startup line read
     /// this one list.
     pub(crate) mcp_tools: crate::mcp::Tools,
-    /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route will resolve a client with
+    /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route resolves a client with
     /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
     /// The clock the callers and the OAuth routes read: the system time, except in a test harness that fixed it.
     pub clock: Clock,
+    /// The authorization requests of MCP sign-in, from authorize to the exchange of their code: in memory, in
+    /// this one process (kb/ADR-0016; kb/ADR-0029 R4, R11).
+    pub authorization_requests: Arc<reeve_identity::AuthorizationRequests>,
 }
 
 /// The `https://` base URL of each `[[repos]]` entry that has one, without credentials, port, query or fragment and
@@ -308,6 +311,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         mcp_tools,
         client_fetcher,
         clock: Clock::default(),
+        authorization_requests: Arc::new(reeve_identity::AuthorizationRequests::new()),
     })
 }
 
