@@ -1,5 +1,5 @@
 use crate::{
-    actions::EpicQuery,
+    actions::{EpicQuery, resolve_opt},
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
@@ -29,7 +29,7 @@ async fn create(
             &c.ctx(),
             &b.idempotency_key,
             &b.title,
-            super::resolve_opt(&s.handlers, b.initiative.as_ref(), ItemType::Initiative).await?,
+            resolve_opt(&s.handlers, b.initiative.as_ref(), ItemType::Initiative).await?,
             b.brief.as_deref().unwrap_or(""),
             b.external_ref,
             &b.attachments,

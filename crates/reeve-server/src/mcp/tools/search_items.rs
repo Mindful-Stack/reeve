@@ -1,5 +1,5 @@
 //! `search_items`: `reeve search <text>` as a tool. Read-only.
-use super::{Annotations, Tool, ToolError, bound::fit};
+use super::{Tool, ToolError, bound::fit};
 use crate::{
     actions::{self, Acting, SearchQuery},
     state::AppState,
@@ -17,13 +17,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema: super::input_schema::<SearchItemsInput>(),
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -35,13 +29,11 @@ fn run<'a>(
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
         let input: SearchItemsInput = super::arguments(args)?;
-        // The adapter: the tool's `text` is the route's `q`.
         let mut hits = actions::search(state, who, &SearchQuery { q: input.text })
             .await
             .map_err(super::told)?;
         // The handler stops at 50 hits; the budget is the only bound left to apply.
         let omitted = fit(&mut hits, 0);
-        serde_json::to_value(SearchItemsResult { hits, omitted })
-            .map_err(|e| ToolError::Internal(e.into()))
+        super::sent(SearchItemsResult { hits, omitted })
     })
 }

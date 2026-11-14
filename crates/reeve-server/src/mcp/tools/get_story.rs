@@ -1,6 +1,6 @@
 //! `get_story`: `reeve story context <KEY>` as a tool. Read-only.
 use super::{
-    Annotations, Tool, ToolError,
+    Tool, ToolError,
     bound::{
         MAX_OTHER_TEXT, MAX_OWN_TEXT, MAX_RECENT, cut, cut_closing_reason, cut_goal, most_recent,
     },
@@ -26,13 +26,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema,
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -44,11 +38,10 @@ fn run<'a>(
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
         let input: StoryContextInput = super::arguments(args)?;
-        // The adapter: the tool's input becomes what the route's action takes, its path parameter.
         let context = actions::story_context(state, who, &input.key)
             .await
             .map_err(|e| super::not_found(e, "story", &input.key, &state.config.key_prefix))?;
-        serde_json::to_value(bounded(context)).map_err(|e| ToolError::Internal(e.into()))
+        super::sent(bounded(context))
     })
 }
 

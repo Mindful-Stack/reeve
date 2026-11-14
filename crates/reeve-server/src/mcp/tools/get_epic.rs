@@ -1,6 +1,6 @@
 //! `get_epic`: `reeve epic show <KEY>` as a tool. Read-only.
 use super::{
-    Annotations, Tool, ToolError,
+    Tool, ToolError,
     bound::{MAX_OWN_TEXT, cut},
 };
 use crate::{
@@ -24,13 +24,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema,
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -42,12 +36,11 @@ fn run<'a>(
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
         let input: GetEpicInput = super::arguments(args)?;
-        // The adapter: the tool's `key` is the route's path parameter.
         let mut epic = actions::get_epic(state, who, &input.key)
             .await
             .map_err(|e| super::not_found(e, "epic", &input.key, &state.config.key_prefix))?;
         // The epic is the item asked for: its brief is its own text.
         cut(&mut epic.brief, MAX_OWN_TEXT);
-        serde_json::to_value(epic).map_err(|e| ToolError::Internal(e.into()))
+        super::sent(epic)
     })
 }

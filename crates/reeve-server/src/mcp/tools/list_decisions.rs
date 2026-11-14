@@ -1,6 +1,6 @@
 //! `list_decisions`: `reeve decision ls` as a tool. Read-only.
 use super::{
-    Annotations, Tool, ToolError,
+    Tool, ToolError,
     bound::{MAX_WHOLE_LIST, capped, cut_closing_reason, fit},
 };
 use crate::{
@@ -22,13 +22,7 @@ pub(super) fn tool() -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema: super::input_schema::<ListDecisionsInput>(),
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -57,7 +51,7 @@ fn run<'a>(
             let me = normalise_email(&who.ctx.actor);
             decisions.retain(|d| normalise_email(&d.decider) == me);
         }
-        serde_json::to_value(bounded(decisions)).map_err(|e| ToolError::Internal(e.into()))
+        super::sent(bounded(decisions))
     })
 }
 

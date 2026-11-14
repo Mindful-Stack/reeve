@@ -1,5 +1,5 @@
 use crate::{
-    actions::StoryQuery,
+    actions::{StoryQuery, resolve_opt},
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
@@ -31,7 +31,7 @@ async fn list(
     c: Caller,
     ApiQuery(q): ApiQuery<StoryQuery>,
 ) -> Result<Json<Response<Vec<StoryWithReadiness>>>, AppError> {
-    Ok(ok(crate::actions::list_stories(&s, &c.acting(), q).await?))
+    Ok(ok(crate::actions::list_stories(&s, &c.acting(), &q).await?))
 }
 #[utoipa::path(post, path = "/stories", request_body = CreateStory, responses((status = 200, body = Response<StoryDto>)))]
 async fn create(
@@ -46,7 +46,7 @@ async fn create(
             &b.idempotency_key,
             &b.title,
             b.kind,
-            super::resolve_opt(&s.handlers, b.epic.as_ref(), ItemType::Epic).await?,
+            resolve_opt(&s.handlers, b.epic.as_ref(), ItemType::Epic).await?,
             b.description.as_deref().unwrap_or(""),
             b.criteria,
             b.labels,
@@ -142,7 +142,7 @@ async fn rank(
             &c.ctx(),
             &key,
             b.version,
-            super::resolve_opt(&s.handlers, b.before.as_ref(), ItemType::Story)
+            resolve_opt(&s.handlers, b.before.as_ref(), ItemType::Story)
                 .await?
                 .as_ref(),
         )

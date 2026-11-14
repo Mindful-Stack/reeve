@@ -93,7 +93,7 @@ fn page(limit: Option<u32>, offset: Option<u32>) -> Result<Option<(usize, usize)
 pub(crate) async fn list_stories(
     state: &AppState,
     who: &Acting<'_>,
-    q: StoryQuery,
+    q: &StoryQuery,
 ) -> Result<Vec<StoryWithReadiness>, AppError> {
     let page = page(q.limit, q.offset)?;
     let goal = goal_filter(q.goal.as_deref())?;
@@ -118,10 +118,10 @@ pub(crate) async fn list_stories(
         };
     let f = StoryFilter {
         epic,
-        owner: q.owner,
+        owner: q.owner.clone(),
         delivery: q.delivery,
         untriaged: q.untriaged,
-        label: q.label,
+        label: q.label.clone(),
         goal,
         text: None,
         kind: q.kind,

@@ -22,9 +22,6 @@ pub mod users;
 pub mod war_room;
 pub mod webhooks;
 
-// The key filters live with the actions that use them; routes that still resolve a key themselves reach this one.
-pub(crate) use crate::actions::resolve_opt;
-
 /// An edit's parent: `None` leaves it alone, `Some(None)` clears it, `Some(Some(r))` resolves `r`.
 pub(crate) async fn resolve_edit(
     h: &reeve_planning::Handlers,
@@ -32,7 +29,9 @@ pub(crate) async fn resolve_edit(
     item: reeve_protocol::ItemType,
 ) -> Result<Option<Option<reeve_protocol::Key>>, reeve_planning::HandlerError> {
     match r {
-        Some(r) => Ok(Some(resolve_opt(h, r.as_ref(), item).await?)),
+        Some(r) => Ok(Some(
+            crate::actions::resolve_opt(h, r.as_ref(), item).await?,
+        )),
         None => Ok(None),
     }
 }

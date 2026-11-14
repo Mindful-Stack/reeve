@@ -1,5 +1,5 @@
 //! `get_sprint`: `reeve sprint show [id]` as a tool. Read-only.
-use super::{Annotations, Tool, ToolError, bound::cut_goal};
+use super::{Tool, ToolError, bound::cut_goal};
 use crate::{
     actions::{self, Acting},
     error::AppError,
@@ -18,13 +18,7 @@ pub(super) fn tool() -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema: super::input_schema::<GetSprintInput>(),
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -59,7 +53,7 @@ fn run<'a>(
                 AppError::NotFound => ToolError::Told(format!("No sprint with id {id}.")),
                 other => super::told(other),
             })?;
-        serde_json::to_value(bounded(view)).map_err(|e| ToolError::Internal(e.into()))
+        super::sent(bounded(view))
     })
 }
 

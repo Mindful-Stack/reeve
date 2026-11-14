@@ -1,5 +1,5 @@
 //! `list_stories`: `reeve story ls` as a tool. Read-only.
-use super::{Annotations, Tool, ToolError, bound::fit};
+use super::{Tool, ToolError, bound::fit};
 use crate::{
     actions::{self, Acting, StoryQuery},
     state::AppState,
@@ -24,13 +24,7 @@ pub(super) fn tool() -> Tool {
             super::PEOPLES_TEXT
         ),
         input_schema: super::input_schema::<ListStoriesInput>(),
-        // Reads only; nothing to destroy; the same call twice changes nothing; reaches nothing outside this planner.
-        annotations: Annotations {
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            open_world: false,
-        },
+        annotations: super::READ_ONLY,
         run,
     }
 }
@@ -82,11 +76,10 @@ fn run<'a>(
             limit: Some(limit),
             offset: Some(offset),
         };
-        let stories = actions::list_stories(state, who, query)
+        let stories = actions::list_stories(state, who, &query)
             .await
             .map_err(super::told)?;
-        serde_json::to_value(paged(stories, offset, limit))
-            .map_err(|e| ToolError::Internal(e.into()))
+        super::sent(paged(stories, offset, limit))
     })
 }
 

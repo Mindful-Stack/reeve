@@ -61,6 +61,15 @@ pub(crate) struct Annotations {
     pub open_world: bool,
 }
 
+/// Every read tool's hints: it reads only, has nothing to destroy, changes nothing when called twice, and reaches
+/// nothing outside this planner.
+pub(super) const READ_ONLY: Annotations = Annotations {
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    open_world: false,
+};
+
 pub(crate) struct Tool {
     pub name: &'static str,
     /// The name a person sees.
@@ -153,6 +162,12 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
         bound::cut(&mut message, bound::MAX_OTHER_TEXT);
         ToolError::Arguments(message)
     })
+}
+
+/// A tool's answer as it is sent. `to_value` widens an `f32` to `f64`, so an initiative's `progress` of a third
+/// reads `0.3333333432674408` here and `0.33333334` from the API.
+fn sent<T: serde::Serialize>(answer: T) -> Result<Value, ToolError> {
+    serde_json::to_value(answer).map_err(|e| ToolError::Internal(e.into()))
 }
 
 /// A key argument as the route takes it: a key of this instance or an external reference. `name` is the property,
@@ -337,6 +352,33 @@ mod tests {
             "No epic with key \"TST-9\". Keys look like TST-123."
         );
         assert_eq!(said(AppError::Validation("too long".into())), "too long");
+    }
+
+    /// The number a chat reads for a fractional `f32`, as it is sent: widened, not rounded.
+    #[test]
+    fn a_fractional_progress_is_sent_widened_to_f64() {
+        let initiative: reeve_protocol::InitiativeDto = serde_json::from_value(json!({
+            "key": "TST-1", "title": "Bookings", "brief": "", "horizon": "Now", "target_month": null,
+            "owner": null, "discovery_complete": null, "progress": 0.33333334, "external_ref": null,
+            "version": 1
+        }))
+        .unwrap();
+        assert_eq!(initiative.progress, Some(1.0 / 3.0));
+        // The API's serialization of the same value, for contrast.
+        assert!(
+            serde_json::to_string(&initiative)
+                .unwrap()
+                .contains("\"progress\":0.33333334")
+        );
+        let Ok(answer) = sent(reeve_protocol::InitiativeSummary::from(initiative)) else {
+            panic!("a summary serialises")
+        };
+        assert_eq!(answer["progress"], json!(0.3333333432674408));
+        assert!(
+            answer
+                .to_string()
+                .contains("\"progress\":0.3333333432674408")
+        );
     }
 
     #[test]

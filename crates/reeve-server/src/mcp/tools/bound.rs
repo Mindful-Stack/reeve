@@ -58,6 +58,15 @@ pub(super) fn capped<T>(items: &mut Vec<T>, keep: usize) -> usize {
     omitted
 }
 
+/// A list of summaries that is not paged: the first `MAX_LIST` rows, each as its summary, fitted to the answer
+/// budget; and how many rows the cap or the budget left out.
+pub(super) fn summaries<D, S: From<D> + serde::Serialize>(mut rows: Vec<D>) -> (Vec<S>, usize) {
+    let omitted = capped(&mut rows, MAX_LIST);
+    let mut rows: Vec<S> = rows.into_iter().map(S::from).collect();
+    let omitted = fit(&mut rows, omitted);
+    (rows, omitted)
+}
+
 /// Drops rows from the end while the rows, serialized as one JSON list, are over `MAX_ANSWER` bytes. Returns
 /// `omitted` (the rows a cap already left out) plus the rows dropped here. A list tool calls it after its row cap.
 /// It measures each row's own serialization; the form that is sent goes through `serde_json::to_value` and may
@@ -230,36 +239,42 @@ mod tests {
         assert_eq!(capped(&mut none, MAX_LIST), 0);
     }
 
-    fn decision(closed_because: Option<&str>) -> reeve_protocol::RequiredDecisionDto {
-        let closed = closed_because
-            .map(|reason| serde_json::json!({"at": "2026-11-01T10:00:00Z", "by": "dan@example.com", "reason": reason}));
-        serde_json::from_value(serde_json::json!({
-            "id": 1, "on": "TST-1", "on_type": "epic", "title": "Which provider", "decider": "dan@example.com",
-            "due": null, "record": null, "pr_url": null, "check": {"kind": "unchecked"}, "checked_at": null,
-            "closed": closed, "created_at": "2026-11-01T09:00:00Z", "version": 1
-        }))
-        .unwrap()
-    }
-
+    /// The cap of 200 and the budget for a list of summaries, tested where it is cheap: rows in memory, not 201
+    /// creates through HTTP.
     #[test]
-    fn a_long_closing_reason_is_cut_and_a_short_or_absent_one_is_not() {
-        let reason_after = |before: Option<&str>| {
-            let mut decision = decision(before);
-            cut_closing_reason(&mut decision);
-            decision.closed.map(|closed| closed.reason)
-        };
-        assert_eq!(
-            reason_after(Some(&"å".repeat(MAX_OTHER_TEXT + 1))),
-            Some(format!(
-                "{}[cut: 1 more characters]",
-                "å".repeat(MAX_OTHER_TEXT)
-            ))
+    fn summaries_keep_the_first_rows_under_the_cap_and_the_budget_and_count_the_rest() {
+        use reeve_protocol::{EpicDto, EpicSummary};
+        fn epic(n: u64) -> EpicDto {
+            serde_json::from_value(serde_json::json!({
+                "key": format!("TST-{n}"), "title": format!("Epic {n}"), "initiative": null, "brief": "",
+                "discovery_complete": null, "external_ref": null, "version": 1
+            }))
+            .unwrap()
+        }
+        let (at_the_cap, omitted): (Vec<EpicSummary>, _) =
+            summaries((1..=MAX_LIST as u64).map(epic).collect());
+        assert_eq!((at_the_cap.len(), omitted), (MAX_LIST, 0));
+        let (one_over, omitted): (Vec<EpicSummary>, _) =
+            summaries((1..=MAX_LIST as u64 + 1).map(epic).collect());
+        assert_eq!((one_over.len(), omitted), (200, 1));
+        assert_eq!(one_over[0].key.to_string(), "TST-1");
+        assert_eq!(one_over[199].key.to_string(), "TST-200");
+
+        // Rows too large for the budget (titles no planner would accept) are left out after the cap, and counted
+        // with the capped one.
+        let (wide, omitted): (Vec<EpicSummary>, _) = summaries(
+            (1..=MAX_LIST as u64 + 1)
+                .map(|n| {
+                    let mut epic = epic(n);
+                    epic.title = "t".repeat(400);
+                    epic
+                })
+                .collect(),
         );
-        assert_eq!(
-            reason_after(Some("Thirty minutes.")).as_deref(),
-            Some("Thirty minutes.")
-        );
-        assert_eq!(reason_after(None), None);
+        assert!(omitted > 1, "{omitted}");
+        assert_eq!(wide.len() + omitted, MAX_LIST + 1);
+        assert_eq!(wide[0].key.to_string(), "TST-1");
+        assert!(serde_json::to_string(&wide).unwrap().len() <= MAX_ANSWER);
     }
 
     /// All six of a goal's texts, in memory: each long one is cut, and a short or absent one is left as it is.
