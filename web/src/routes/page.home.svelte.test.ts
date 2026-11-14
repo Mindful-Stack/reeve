@@ -115,6 +115,7 @@ describe('home', () => {
 		expect(heading('Decisions you decide')).toBeDefined();
 		const review = [...document.body.querySelectorAll('a')].find((a) => a.textContent === '1 record to review →')!;
 		expect(review.getAttribute('href')).toBe('/decisions?mine=1');
+		expect(text()).toContain('1 more not needed in a sprint yet.');
 	});
 
 	it('lists urgent work first in Pick next and Start makes an unowned story mine', async () => {

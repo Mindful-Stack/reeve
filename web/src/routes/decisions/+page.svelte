@@ -9,7 +9,7 @@
 	import DecisionList from '#lib/components/DecisionList.svelte';
 	import Glyph from '#lib/components/Glyph.svelte';
 	import NeededInReason from '#lib/components/NeededInReason.svelte';
-	import { filterDecisions, itemHref, LANE_ANCHOR, LANE_LABEL, LANE_ORDER, queueRows, type PageLane, type QueueRow } from '#lib/decisions.ts';
+	import { filterDecisions, itemHref, LANE_ANCHOR, LANE_LABEL, LANE_ORDER, queueRows, type DiscoveryRow, type PageLane, type QueueRow } from '#lib/decisions.ts';
 	import { decisionHref } from '#lib/drawer.ts';
 	import { minuteClock, onLive } from '#lib/events.svelte.ts';
 	import { age, errorMessage, plural } from '#lib/format.ts';
@@ -35,7 +35,7 @@
 	/** The lanes no goal or promise needs: the divider goes before the first of them that has a row. */
 	const OUTSIDE = new Set<PageLane>(['now', 'later', 'open', 'satisfied', 'closed']);
 
-	type Row = Extract<QueueRow, { kind: 'discovery' }>;
+	type Row = DiscoveryRow;
 	/** A DecisionList group: a lane's own group (its heading, and its decisions before any discovery row), a discovery
 	 *  row's group (its nested decisions), or a run of standalone decisions after a row. */
 	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; row?: Row };
@@ -56,22 +56,22 @@
 		for (const lane of LANE_ORDER) {
 			const rows = lanes.get(lane) ?? [];
 			const folded = lane === 'closed' && !showClosed;
+			// Not `always` when folded: a folded Closed-only queue then shows the empty text instead of a bare heading.
 			let run: Group = { id: lane, lane, folded, listId: `decisions-${lane}`, always: rows.length > 0 && !folded };
 			groups.push(run);
-			let n = 0;
-			let afterRow = false;
+			let after: string | null = null;
 			for (const r of rows) {
 				if (r.kind === 'discovery') {
 					const id = `row:${r.row.key}`;
 					groups.push({ id, lane, folded: false, listId: `decisions-row-${r.row.key}`, always: true, row: r });
 					for (const e of r.nested) of.set(e.decision.id, id);
-					afterRow = true;
+					after = r.row.key;
 				} else {
-					if (afterRow) {
-						n += 1;
-						run = { id: `${lane}-${n}`, lane, folded, listId: `decisions-${lane}-${n}` };
+					if (after) {
+						// Keyed by the row it follows, so a pinned decision keeps its group when an earlier row leaves.
+						run = { id: `${lane}-after-${after}`, lane, folded, listId: `decisions-${lane}-after-${after}` };
 						groups.push(run);
-						afterRow = false;
+						after = null;
 					}
 					of.set(r.entry.decision.id, run.id);
 				}
@@ -269,6 +269,7 @@
 			{#if g.row}
 				{@render discovery(g.row)}
 			{:else if id === g.lane}
+				<!-- `count` covers a decision pinned here while it is edited or closed, after its lane emptied. -->
 				{@const n = lanes.get(g.lane)?.length || count}
 				{#if g.lane === firstOutside}
 					<p class="divider muted">No goal or promise needs these yet</p>

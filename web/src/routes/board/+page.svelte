@@ -397,10 +397,10 @@
 {#if readiness}
 	<DecisionBanner queue={readiness} />
 	{#if queueStale}
-		<p class="queue-note muted">Decision counts may be out of date · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
+		<p class="queue-note muted">Readiness counts may be out of date · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
 	{/if}
 {:else if queueFailed}
-	<p class="queue-note muted">Could not load decisions · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
+	<p class="queue-note muted">Could not load readiness · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
 {/if}
 
 {#if loadError}

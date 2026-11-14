@@ -211,6 +211,9 @@ describe('decisions queue page', () => {
 		};
 		await open();
 		expect(headings()).toEqual(['Needed this sprint', 'Now, no goal yet']);
+		// The row's nested decision counts once under its lane; Now counts the row and the standalone decision.
+		expect(text(document.getElementById('this-sprint'))).toBe('Needed this sprint 1');
+		expect(text([...document.body.querySelectorAll('h2')][1])).toBe('Now, no goal yet 2');
 		const row = document.body.querySelector('[data-discovery="RV-2"]')!;
 		expect(row.querySelector('a.item')?.getAttribute('href')).toBe('/epics/RV-2');
 		expect(row.querySelector('a.item .key')?.textContent).toBe('RV-2');
@@ -232,7 +235,7 @@ describe('decisions queue page', () => {
 		expect(now.querySelector('a.item')?.getAttribute('href')).toBe('/initiatives/RV-5');
 		expect(text(now.querySelector('.holds button'))).toBe('1 under way ▸');
 		expect(text(now.querySelector('[data-testid="reason"]'))).toBe('Now · holds none, 1 under way');
-		expect(text(document.getElementById('decisions-now-1')?.querySelector('.needed'))).toBe('Now · holds 1');
+		expect(text(document.getElementById('decisions-now-after-RV-5')?.querySelector('.needed'))).toBe('Now · holds 1');
 	});
 
 	it("under Mine keeps a row that nests one of mine, lists only mine, and still dates its reason from another decider's decision", async () => {
@@ -251,6 +254,24 @@ describe('decisions queue page', () => {
 		expect(row.querySelector('[data-testid="reason"] a')?.getAttribute('href')).toBe('/decisions?mine=1&decision=4');
 		expect(titles('#decisions-row-RV-2')).toEqual(['Mine one']);
 		expect(document.body.textContent).not.toContain('Theirs');
+		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing of yours needed this sprint or next.');
+		expect(text(document.body.querySelector('.divider')?.nextElementSibling)).toContain('Now, no goal yet');
+	});
+
+	it('under Mine does not say nothing is needed when a row in this sprint nests one of mine, and keeps the unfiltered summary', async () => {
+		await route.fake!.goto('/decisions?mine=1');
+		net.queue = {
+			entries: [
+				entry('this_sprint', dec(4, 'Theirs', { decider: 'bob@example.com' }), [], { needed_in: 'this_sprint' }),
+				entry('this_sprint', dec(8, 'Mine one'), [], { under: 'RV-2', needed_in: 'this_sprint' })
+			],
+			discoveries: [discoveryEntry({ key: 'RV-2', lane: 'this_sprint', at: 1 })],
+			summary: queueSummary({ this_sprint: 2 })
+		};
+		await open();
+		expect(document.body.querySelector('.quiet')).toBeNull();
+		expect(text(document.body.querySelector('.summary'))).toBe('2 this sprint');
+		expect(document.body.querySelector('.divider')).toBeNull();
 	});
 
 	it('says nothing is needed this sprint or next when those lanes are empty', async () => {

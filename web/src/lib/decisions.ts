@@ -171,7 +171,9 @@ export function pageLane(lane: QueueLane, reason: NeededInReason | null | undefi
 }
 
 /** One top-level row of the queue page: a standalone decision, or a discovery row with the decisions nested under it. */
-export type QueueRow = { kind: 'decision'; entry: DecisionQueueEntry } | { kind: 'discovery'; row: DiscoveryEntry; nested: DecisionQueueEntry[] };
+export type QueueRow = { kind: 'decision'; entry: DecisionQueueEntry } | DiscoveryRow;
+/** A discovery row with the decisions nested under it. */
+export type DiscoveryRow = { kind: 'discovery'; row: DiscoveryEntry; nested: DecisionQueueEntry[] };
 
 /** The page's top-level rows per lane, in server order (nothing is re-sorted): each discovery row goes before
  *  `entries[at]` (`discoveries` arrive in ascending `at`, as the server emits them), a decision with `under` goes inside the row it names (one the response lacks leaves it standing
