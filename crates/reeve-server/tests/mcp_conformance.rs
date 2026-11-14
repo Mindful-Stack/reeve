@@ -4,7 +4,7 @@
 mod common;
 use common::*;
 use rmcp::{
-    ClientLifecycleMode, ClientServiceExt, ServiceExt,
+    ClientLifecycleMode, ClientServiceExt, ServiceError, ServiceExt,
     model::{CallToolRequestParams, ProtocolVersion},
     transport::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
@@ -149,4 +149,44 @@ async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answ
         over_modern.structured_content,
         over_legacy.structured_content
     );
+}
+
+/// An unknown tool is a protocol error (-32602), and the client must be able to read it as one: not a transport
+/// failure it cannot tell from a broken connection, and not a tool result.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sdk_client_sees_an_unknown_tool_as_a_json_rpc_error_in_both_revisions() {
+    let h = mcp_harness().await;
+    let token = issue_mcp_token(&h, "dan@example.com").await.secret;
+    let url = serve(&h).await;
+
+    let modern = ()
+        .serve_with_lifecycle(
+            StreamableHttpClientTransport::from_config(config(&url, &token)),
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("server/discover is answered");
+    let over_modern = modern.call_tool(CallToolRequestParams::new("nope")).await;
+    modern.cancel().await.unwrap();
+
+    let legacy = ()
+        .serve(StreamableHttpClientTransport::from_config(config(
+            &url, &token,
+        )))
+        .await
+        .expect("initialize is answered");
+    let over_legacy = legacy.call_tool(CallToolRequestParams::new("nope")).await;
+    legacy.cancel().await.unwrap();
+
+    for (revision, outcome) in [("2026-07-28", over_modern), ("2025-11-25", over_legacy)] {
+        match outcome {
+            Err(ServiceError::McpError(e)) => {
+                assert_eq!(e.code.0, -32602, "{revision}: {e:?}");
+                assert_eq!(e.message, "Unknown tool: nope", "{revision}");
+            }
+            other => panic!("{revision}: not a JSON-RPC error: {other:?}"),
+        }
+    }
 }
