@@ -146,6 +146,15 @@ pub async fn serve(State(s): State<AppState>, method: Method, uri: Uri) -> Respo
     {
         return AppError::NotFound.into_response();
     }
+    // The OAuth addresses (kb/ADR-0029 R11) are never pages either. The routes under them answer for themselves;
+    // any other path there is a 404 in plain text, whatever the method, so a client that probes for metadata is
+    // never handed index.html, and never the API's envelope.
+    if matches!(trimmed, "oauth" | ".well-known")
+        || path.starts_with("oauth/")
+        || path.starts_with(".well-known/")
+    {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
     if method != Method::GET && method != Method::HEAD {
         return AppError::MethodNotAllowed.into_response();
     }
