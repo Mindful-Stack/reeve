@@ -4,6 +4,7 @@
 mod bound;
 mod get_epic;
 mod get_initiative;
+mod get_sprint;
 mod get_story;
 mod list_decisions;
 mod list_epics;
@@ -82,6 +83,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         list_initiatives::tool(),
         get_initiative::tool(key_prefix),
         list_decisions::tool(),
+        get_sprint::tool(),
     ]
 }
 

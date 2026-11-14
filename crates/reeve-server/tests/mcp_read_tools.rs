@@ -903,3 +903,92 @@ async fn list_stories_says_what_does_not_fit() {
     let sort = refusal(&h, &bob, "list_stories", json!({"sort": "relevance"})).await;
     assert!(sort.contains("unknown field `sort`"), "{sort}");
 }
+
+/// The three states `reeve sprint show` without an id meets, in the order a planner goes through them: no sprint,
+/// only a draft, an active sprint beside the next draft.
+#[tokio::test]
+async fn get_sprint_reads_the_current_sprint_as_the_cli_picks_it() {
+    let h = mcp_harness().await;
+    let dan = mcp_token(&h, DAN).await;
+
+    // None.
+    assert_eq!(
+        refusal(&h, &dan, "get_sprint", json!({})).await,
+        "There is no sprint yet."
+    );
+
+    // Only a draft: the first goal creates it. The goal's notes are over the limit.
+    let notes = "ö".repeat(2_001);
+    let cut_notes = json!(format!("{}[cut: 1 more characters]", "ö".repeat(2_000)));
+    post(
+        &h,
+        "/api/v1/goals",
+        json!({"idempotency_key": "sp-g1", "outcome": "Customers can book", "check": "a customer booked one", "notes": notes}),
+    )
+    .await;
+    let draft = api(&h, &h.admin_token, "/api/v1/sprints").await["draft"].clone();
+    let draft_id = draft["id"].as_i64().unwrap();
+    let mut want = api(&h, &h.admin_token, &format!("/api/v1/sprints/{draft_id}")).await;
+    assert_eq!(want["sprint"]["state"], "draft", "the control");
+    assert_eq!(
+        want["sprint"]["goals"][0]["notes"],
+        json!(notes),
+        "the control: the API route answers the notes whole"
+    );
+    want["sprint"]["goals"][0]["notes"] = cut_notes.clone();
+    assert_eq!(answer(&h, &dan, "get_sprint", json!({})).await, want);
+
+    // An active sprint beside the next draft: the active one is read, and read by id, so its promises are there.
+    let promised = new_story(
+        &h,
+        json!({"idempotency_key": "sp-s1", "title": "Promised this sprint", "kind": "story", "criteria": [], "labels": []}),
+    )
+    .await;
+    let in_three_days = chrono::Utc::now().date_naive() + chrono::Days::new(3);
+    post(
+        &h,
+        &format!("/api/v1/stories/{promised}/promise"),
+        json!({"on": in_three_days}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/sprints/{draft_id}/open"),
+        json!({"version": draft["version"]}),
+    )
+    .await;
+    let listed = api(&h, &h.admin_token, "/api/v1/sprints").await;
+    assert_eq!(
+        listed["active"]["sprint"]["id"], draft_id,
+        "the control: it is active"
+    );
+    assert!(
+        listed["draft"].is_object(),
+        "the control: opening made the next draft"
+    );
+    assert_eq!(
+        listed["active"]["promises"],
+        json!([]),
+        "the control: the list carries no promises"
+    );
+    let mut want = api(&h, &h.admin_token, &format!("/api/v1/sprints/{draft_id}")).await;
+    assert_eq!(
+        want["promises"][0]["key"],
+        json!(promised),
+        "the control: the sprint read by id does"
+    );
+    want["sprint"]["goals"][0]["notes"] = cut_notes;
+    assert_eq!(answer(&h, &dan, "get_sprint", json!({})).await, want);
+
+    // With an id: that sprint, here the next draft; and an id that names none.
+    let next = listed["draft"]["id"].as_i64().unwrap();
+    assert_ne!(next, draft_id);
+    assert_eq!(
+        answer(&h, &dan, "get_sprint", json!({"id": next})).await,
+        api(&h, &h.admin_token, &format!("/api/v1/sprints/{next}")).await
+    );
+    assert_eq!(
+        refusal(&h, &dan, "get_sprint", json!({"id": 999_999})).await,
+        "No sprint with id 999999."
+    );
+}

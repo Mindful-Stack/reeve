@@ -7,7 +7,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{Handlers, goal_dto, sprint_dto, sprint_view_dto};
+use reeve_planning::{Handlers, goal_dto, sprint_dto};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -35,31 +35,7 @@ async fn list(
     State(s): State<AppState>,
     c: Caller,
 ) -> Result<Json<Response<SprintsDto>>, AppError> {
-    let now = c.ctx().now;
-    let x = s.handlers.sprints(now).await?;
-    let line = s.handlers.settings.upkeep_line;
-    Ok(ok(SprintsDto {
-        today: Some(x.today),
-        active: x.active.as_ref().map(|a| {
-            sprint_view_dto(
-                a,
-                &x.goals,
-                &x.links,
-                x.active_summary.as_ref(),
-                // The active sprint's promises are read only by `GET /sprints/{id}` until a follow-up of GRA-608
-                // renders them here.
-                &[],
-                None,
-                line,
-            )
-        }),
-        draft: x.draft.as_ref().map(|d| sprint_dto(d, &x.goals, &x.links)),
-        closed: x
-            .closed
-            .iter()
-            .map(|c| sprint_dto(c, &x.goals, &x.links))
-            .collect(),
-    }))
+    Ok(ok(crate::actions::list_sprints(&s, &c.acting()).await?))
 }
 
 /// One sprint with its numbers, derived on read over its window (a draft has none: zero counts). A closed sprint's
@@ -70,16 +46,7 @@ async fn get(
     c: Caller,
     ApiPath(id): ApiPath<i64>,
 ) -> Result<Json<Response<SprintViewDto>>, AppError> {
-    let v = s.handlers.sprint_view(id, c.ctx().now).await?;
-    Ok(ok(sprint_view_dto(
-        &v.sprint,
-        &v.goals,
-        &v.links,
-        v.summary.as_ref(),
-        &v.promises,
-        v.promises_after,
-        s.handlers.settings.upkeep_line,
-    )))
+    Ok(ok(crate::actions::get_sprint(&s, &c.acting(), id).await?))
 }
 
 /// Opens the draft (interactive only) and creates the next draft; the answer carries the goal-count warnings.

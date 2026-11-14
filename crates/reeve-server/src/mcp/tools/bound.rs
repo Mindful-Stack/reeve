@@ -89,6 +89,24 @@ pub(super) fn cut_closing_reason(decision: &mut reeve_protocol::RequiredDecision
     }
 }
 
+/// A goal's six texts are people's text of any length that comes along with a sprint or a story: each is cut at
+/// `MAX_OTHER_TEXT`. Used wherever a tool answers a goal (`get_sprint`, `get_story`).
+pub(super) fn cut_goal(goal: &mut reeve_protocol::GoalDto) {
+    cut(&mut goal.outcome, MAX_OTHER_TEXT);
+    cut(&mut goal.check, MAX_OTHER_TEXT);
+    cut(&mut goal.notes, MAX_OTHER_TEXT);
+    for note in [
+        &mut goal.confidence_note,
+        &mut goal.suggested_note,
+        &mut goal.verdict_note,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        cut(note, MAX_OTHER_TEXT);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +260,69 @@ mod tests {
             Some("Thirty minutes.")
         );
         assert_eq!(reason_after(None), None);
+    }
+
+    /// All six of a goal's texts, in memory: each long one is cut, and a short or absent one is left as it is.
+    #[test]
+    fn each_of_a_goal_s_six_texts_is_cut_and_short_or_absent_ones_are_not() {
+        let long = "å".repeat(MAX_OTHER_TEXT + 3);
+        let cut_long = format!("{}[cut: 3 more characters]", "å".repeat(MAX_OTHER_TEXT));
+        let goal = |outcome: &str,
+                    check: &str,
+                    notes: &str,
+                    confidence: Option<&str>,
+                    suggested: Option<&str>,
+                    verdict: Option<&str>| {
+            let mut goal: reeve_protocol::GoalDto = serde_json::from_value(serde_json::json!({
+                "id": 1, "sprint_id": 1, "outcome": outcome, "check": check, "owner": "dan@example.com",
+                "notes": notes, "confidence": null, "confidence_note": confidence, "confidence_at": null,
+                "suggested_confidence": null, "suggested_note": suggested, "suggested_at": null,
+                "suggested_by": null, "verdict": null, "verdict_note": verdict, "version": 1,
+                "created_at": "2026-11-01T09:00:00Z", "links": []
+            }))
+            .unwrap();
+            cut_goal(&mut goal);
+            (
+                goal.outcome,
+                goal.check,
+                goal.notes,
+                goal.confidence_note,
+                goal.suggested_note,
+                goal.verdict_note,
+            )
+        };
+        let l = Some(long.as_str());
+        let c = Some(cut_long.clone());
+        assert_eq!(
+            goal(&long, &long, &long, l, l, l),
+            (
+                cut_long.clone(),
+                cut_long.clone(),
+                cut_long.clone(),
+                c.clone(),
+                c.clone(),
+                c
+            )
+        );
+        let none: Option<&str> = None;
+        assert_eq!(
+            goal(
+                "Customers can book",
+                "one did",
+                "",
+                Some("on track"),
+                none,
+                none
+            ),
+            (
+                "Customers can book".to_string(),
+                "one did".to_string(),
+                String::new(),
+                Some("on track".to_string()),
+                None,
+                None
+            )
+        );
     }
 
     #[test]

@@ -283,6 +283,14 @@ pub struct ListDecisionsResult {
     pub omitted: usize,
 }
 
+/// `get_sprint`: read one sprint, the current one when no id is given (`reeve sprint show [id]`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetSprintInput {
+    /// The sprint's id. Left out: the current sprint, which is the active one, or the draft being planned when none is active.
+    pub id: Option<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

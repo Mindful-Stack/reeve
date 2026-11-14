@@ -12,6 +12,7 @@ mod decisions;
 mod epics;
 mod initiatives;
 mod search;
+mod sprints;
 mod stories;
 mod story_context;
 
@@ -25,6 +26,7 @@ pub(crate) use initiatives::{get_initiative, list_initiatives};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
 pub(crate) use search::{SearchQuery, search};
+pub(crate) use sprints::{get_sprint, list_sprints};
 pub(crate) use stories::{StoryQuery, list_stories};
 pub(crate) use story_context::story_context;
 
