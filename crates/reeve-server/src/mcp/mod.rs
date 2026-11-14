@@ -172,8 +172,8 @@ pub fn mcp_startup_line(config: &crate::ServerConfig) -> String {
         return "mcp endpoint disabled".into();
     }
     format!(
-        "mcp endpoint enabled at {}mcp (protocol {} and {}, {} tools)",
-        config.public_url(),
+        "mcp endpoint enabled at {} (protocol {} and {}, {} tools)",
+        crate::auth::oauth::resource(config),
         protocol::MODERN,
         protocol::LEGACY,
         tools::list(&config.key_prefix).len()
