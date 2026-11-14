@@ -35,6 +35,7 @@ vi.mock('#lib/api/client.ts', () => {
 			fail.next = false;
 			throw new Error('boom');
 		}
+		if (path === '/api/v1/connections') return [];
 		return path === '/api/v1/users' ? data.users : data.access;
 	};
 	return {
@@ -211,5 +212,20 @@ describe('Users page', () => {
 		flushSync();
 		await vi.waitFor(() => expect(document.querySelector('ul.rows li')).not.toBeNull());
 		expect(calls.map((c) => `${c.method} ${c.path}`).sort()).toEqual(['GET /api/v1/access', 'GET /api/v1/users']);
+	});
+
+	// Catches the component mounted without its owner (an admin would see their own apps under every person), a page
+	// that asks for everyone's connections on load, and a disclosure on the viewer's own row.
+	it('asks for a person’s connected apps only when their row is opened, and for that person', async () => {
+		await open();
+		const connections = () => calls.filter((c) => c.path === '/api/v1/connections');
+		expect(connections()).toHaveLength(0);
+		expect(rowOf('dan@example.com').querySelector('details')).toBeNull();
+		const details = rowOf('ada@example.com').querySelector('details') as HTMLDetailsElement;
+		details.open = true;
+		details.dispatchEvent(new Event('toggle'));
+		flushSync();
+		await vi.waitFor(() => expect(connections()).toHaveLength(1));
+		expect(connections()[0].init).toEqual({ params: { query: { owner: 'ada@example.com' } } });
 	});
 });

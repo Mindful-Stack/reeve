@@ -3,6 +3,7 @@
 	import { errorMessage } from '#lib/format.ts';
 	import type { Access, User } from '#lib/api/types.ts';
 	import { allowedBy } from '#lib/access.ts';
+	import ConnectedApps from '#lib/components/ConnectedApps.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import { isAdmin, session } from '#lib/me.svelte.ts';
@@ -13,6 +14,8 @@
 	let loadError = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
+	// Whose "Connected apps" an admin has opened: a person's connections are asked for only then.
+	let opened = $state<Record<string, boolean>>({});
 
 	async function reload() {
 		try {
@@ -142,6 +145,17 @@
 							{/if}
 						{/if}
 					</span>
+					{#if u.email !== session.me?.email}
+						<details
+							class="apps"
+							ontoggle={(e) => {
+								if (e.currentTarget.open) opened[u.email] = true;
+							}}
+						>
+							<summary>Connected apps</summary>
+							{#if opened[u.email]}<ConnectedApps owner={u.email} />{/if}
+						</details>
+					{/if}
 				</li>
 			{/each}
 		</ul>
@@ -161,5 +175,8 @@
 	}
 	.disabled {
 		color: var(--muted);
+	}
+	.apps {
+		flex-basis: 100%;
 	}
 </style>

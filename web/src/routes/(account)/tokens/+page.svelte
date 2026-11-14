@@ -4,6 +4,7 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import type { Token } from '#lib/api/types.ts';
+	import ConnectedApps from '#lib/components/ConnectedApps.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 	import { isInteractive } from '#lib/me.svelte.ts';
@@ -187,6 +188,10 @@
 		{/each}
 	</ul>
 {/if}
+
+<h2>Connected apps</h2>
+<p class="muted">Apps you connected to Reeve from a chat client. Each ends after 30 days; revoke one to cut it now.</p>
+<ConnectedApps />
 
 <style>
 	h2 {
