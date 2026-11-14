@@ -384,11 +384,18 @@ async fn call_tool(
     let failure =
         |message: String| json!({"content": [{"type": "text", "text": message}], "isError": true});
     let result = match outcome {
-        Ok(value) => json!({
-            "content": [{"type": "text", "text": value.to_string()}],
-            "structuredContent": value,
-            "isError": false
-        }),
+        Ok(value) => {
+            let text = value.to_string();
+            match tools::too_large(text.len()) {
+                // The last guard, for every tool: an answer no cut or cap kept small enough is not sent.
+                Some(message) => failure(message),
+                None => json!({
+                    "content": [{"type": "text", "text": text}],
+                    "structuredContent": value,
+                    "isError": false
+                }),
+            }
+        }
         // The schema is the one `tools/list` shows, with this instance's example, so the model can correct itself.
         Err(ToolError::Arguments(message)) => failure(format!(
             "Invalid arguments: {message}. The arguments must match this schema: {}",

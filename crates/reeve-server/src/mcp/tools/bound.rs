@@ -11,6 +11,8 @@ pub(super) const MAX_OWN_TEXT: usize = 10_000;
 pub(super) const MAX_OTHER_TEXT: usize = 2_000;
 /// How many of a list that grows without limit (a story's comments) are sent: the most recent ones.
 pub(super) const MAX_RECENT: usize = 20;
+/// How much of a caller's own argument an error message repeats.
+pub(super) const MAX_ECHO: usize = 200;
 
 /// Cuts `text` to its first `limit` characters when it has more, and appends `[cut: <n> more characters]`, n being
 /// the number of characters removed. Characters, not bytes: the cut is always on a character boundary.
@@ -21,6 +23,13 @@ pub(super) fn cut(text: &mut String, limit: usize) {
         text.truncate(at);
         text.push_str(&format!("[cut: {removed} more characters]"));
     }
+}
+
+/// A caller's argument as an error message repeats it: its first `MAX_ECHO` characters, and how many were left out.
+pub(super) fn echo(text: &str) -> String {
+    let mut text = text.to_string();
+    cut(&mut text, MAX_ECHO);
+    text
 }
 
 /// Keeps the last `keep` of `items`, which are oldest first, and returns how many were left out (0 when all fit).
@@ -94,6 +103,16 @@ mod tests {
                 format!("{kept}[cut: {over} more characters]")
             );
         }
+    }
+
+    #[test]
+    fn an_echoed_argument_is_at_most_two_hundred_characters() {
+        assert_eq!(echo("TST-12"), "TST-12");
+        assert_eq!(echo(&"å".repeat(MAX_ECHO)), "å".repeat(MAX_ECHO));
+        assert_eq!(
+            echo(&"å".repeat(MAX_ECHO + 5)),
+            format!("{}[cut: 5 more characters]", "å".repeat(MAX_ECHO))
+        );
     }
 
     #[test]

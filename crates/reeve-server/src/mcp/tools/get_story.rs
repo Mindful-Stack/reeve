@@ -1,7 +1,7 @@
 //! `get_story`: `reeve story context <KEY>` as a tool. Read-only.
 use super::{
     Annotations, Tool, ToolError,
-    bound::{MAX_OTHER_TEXT, MAX_OWN_TEXT, MAX_RECENT, cut, most_recent},
+    bound::{MAX_OTHER_TEXT, MAX_OWN_TEXT, MAX_RECENT, cut, echo, most_recent},
 };
 use crate::{
     actions::{self, Acting},
@@ -49,7 +49,8 @@ fn run<'a>(
             .map_err(|e| match e {
                 AppError::NotFound => ToolError::Told(format!(
                     "No story with key {}. Keys look like {}-123.",
-                    input.key, state.config.key_prefix
+                    echo(&input.key),
+                    state.config.key_prefix
                 )),
                 other => super::told(other),
             })?;

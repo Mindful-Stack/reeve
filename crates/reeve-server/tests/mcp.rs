@@ -794,6 +794,49 @@ async fn call_get_story(h: &Harness, token: &str, arguments: Value) -> (u16, Val
     (status, rpc(&body))
 }
 
+/// The last guard and the bounded echo, through the dispatch: neither is a tool's own doing.
+#[tokio::test]
+async fn an_answer_too_large_to_send_is_a_tool_error_and_an_echoed_key_is_bounded() {
+    let h = mcp_harness().await;
+    let t = admin_mcp(&h).await;
+    // Forty-five criteria of exactly 2 000 characters: none is cut, and together they are 90 000.
+    let criterion = "a".repeat(2_000);
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "mcp-big", "title": "Big", "kind": "story", "criteria": vec![criterion; 45], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    let key = story["value"]["key"].as_str().unwrap();
+    // The control: the API route answers it, whole.
+    let api = api_context(&h, key).await;
+    assert_eq!(api["story"]["criteria"].as_array().unwrap().len(), 45);
+
+    let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["result"]["isError"], true);
+    assert!(answer["result"].get("structuredContent").is_none());
+    let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with("The answer is too large to send (9")
+            && text.ends_with(" bytes). For a list, ask for a narrower one. A single item this large cannot be read here."),
+        "{text}"
+    );
+
+    // A key of 300 characters comes back as its first 200.
+    let (_, answer) = call_get_story(&h, &t, json!({"key": "k".repeat(300)})).await;
+    assert_eq!(
+        answer["result"]["content"][0]["text"],
+        json!(format!(
+            "No story with key {}[cut: 100 more characters]. Keys look like TST-123.",
+            "k".repeat(200)
+        ))
+    );
+}
+
 fn has_ref(v: &Value) -> bool {
     match v {
         Value::Object(m) => m.contains_key("$ref") || m.values().any(has_ref),
