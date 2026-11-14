@@ -1,5 +1,6 @@
 //! Connections (kb/ADR-0029 R5, R9): an approved, exchanged request to connect an MCP client: a person, a client,
-//! a scope, and an end thirty days after the approval. Every MCP token belongs to one.
+//! a scope, and an end thirty days after the approval (the developer command's connection ends with its one-hour token). Every MCP
+//! token belongs to one.
 //!
 //! The lock rule of every transaction, here and in `handler.rs`, that touches a person's connections, MCP tokens
 //! or refresh tokens: the person's `users` row first (`TokenStore::lock_user`, or the `ON CONFLICT DO UPDATE` of
