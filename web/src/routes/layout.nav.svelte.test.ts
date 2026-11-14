@@ -128,10 +128,10 @@ async function open(path: string) {
 const link = (name: string) => [...document.body.querySelectorAll('nav[aria-label="Main"] a')].find((a) => a.textContent === name) as HTMLAnchorElement | undefined;
 
 describe('navigation', () => {
-	it('lists the six destinations, Home first, Sprint between Board and Decisions, and no Epics link', async () => {
+	it('lists the six destinations, Home first, Sprint between Board and Readiness, and no Epics link', async () => {
 		await open('/backlog');
 		expect([...document.body.querySelectorAll('nav[aria-label="Main"] a')].map((a) => a.textContent)).toEqual([
-			'Home', 'Planning', 'Backlog', 'Board', 'Sprint', 'Decisions'
+			'Home', 'Planning', 'Backlog', 'Board', 'Sprint', 'Readiness'
 		]);
 		expect(link('Backlog')!.getAttribute('aria-current')).toBe('page');
 		expect(link('Epics')).toBeUndefined();

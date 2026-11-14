@@ -263,7 +263,7 @@ describe('next step and needed-in wording', () => {
 	});
 
 	it('orders and labels every lane', () => {
-		expect(LANE_ORDER).toEqual(['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed']);
+		expect(LANE_ORDER).toEqual(['this_sprint', 'next_sprint', 'now', 'later', 'open', 'satisfied', 'closed']);
 		for (const l of LANE_ORDER) expect(LANE_LABEL[l]).toBeTruthy();
 	});
 });

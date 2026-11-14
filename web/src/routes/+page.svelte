@@ -156,10 +156,10 @@
 					</DecisionList>
 				{/if}
 				{#if decided.review > 0}
-					<p class="line"><a href="/decisions?mine=1#review">{plural(decided.review, 'record', 'records')} to review →</a></p>
+					<p class="line"><a href="/decisions?mine=1">{plural(decided.review, 'record', 'records')} to review →</a></p>
 				{/if}
 				{#if decided.later > 0}
-					<p class="line muted">{decided.later} more beyond the next sprint or not blocking yet.</p>
+					<p class="line muted">{decided.later} more not needed in a sprint yet.</p>
 				{/if}
 			</section>
 		{/if}

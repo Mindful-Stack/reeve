@@ -6,13 +6,14 @@ import { daysBetween, localDate, sameEmail } from '#lib/decisions.ts';
 import { plural } from '#lib/format.ts';
 import { ACTIVE } from '#lib/sprint.ts';
 
-/** My decisions in the queue's order: listed when needed this or next sprint; those with a record to review, and those
- *  beyond the next sprint or not blocking yet, are only counted. */
+/** My decisions in the queue's order: listed when in the this- or next-sprint lane (a nested decision by its row's
+ *  lane, as the banner counts it); my records to review counted in any lane (one may also be listed); the rest that
+ *  are open counted as not needed in a sprint yet. */
 export function myDecisions(entries: DecisionQueueEntry[], me: string) {
 	const mine = entries.filter((e) => sameEmail(e.decision.decider, me));
 	return {
 		listed: mine.filter((e) => e.lane === 'this_sprint' || e.lane === 'next_sprint'),
-		review: mine.filter((e) => e.lane === 'review').length,
+		review: mine.filter((e) => e.next_step?.kind === 'review_record').length,
 		later: mine.filter((e) => e.lane === 'beyond' || e.lane === 'open').length
 	};
 }

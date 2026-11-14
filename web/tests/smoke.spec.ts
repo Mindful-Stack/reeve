@@ -483,7 +483,7 @@ test('the client loads nothing from outside the server', async ({ page }) => {
 	const decisions = page.getByRole('region', { name: 'Decisions you decide' });
 	await expect(decisions).toBeVisible();
 	// The seeded decision is not needed this sprint or next (no goal links it), so Home counts it rather than listing it.
-	await expect(decisions.getByText(/more beyond the next sprint or not blocking yet/)).toBeVisible();
+	await expect(decisions.getByText(/more not needed in a sprint yet/)).toBeVisible();
 	await expect(page.getByText(/stor(y|ies) held by a decision/)).toBeVisible();
 	await page.goto('/planning');
 	await expect(page.getByRole('heading', { level: 1, name: 'Planning' })).toBeVisible();
@@ -1152,9 +1152,10 @@ test('the board banner counts a decision needed this sprint, links to its lane, 
 
 	try {
 		await page.goto('/board');
-		const banner = page.getByRole('navigation', { name: 'Decisions needing attention' });
-		// Earlier tests link the draft goal to the initiative, so other decisions are needed this sprint too: the count is at least ours.
-		const link = banner.getByRole('link', { name: /^\d+ decisions? needed this sprint$/ });
+		const banner = page.getByRole('navigation', { name: 'Readiness needing attention' });
+		// Earlier tests link the draft goal to the initiative, so other work is needed this sprint too, and this test's epic
+		// (no initiative, no mark) is a discovery row: the count is at least ours.
+		const link = banner.getByRole('link', { name: /^(\d+ in discovery and )?\d+ decisions? needed this sprint$/ });
 		await expect(link).toBeVisible();
 		await link.click();
 		await expect(page).toHaveURL(/\/decisions#this-sprint$/);

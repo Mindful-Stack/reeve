@@ -109,12 +109,12 @@ describe('home', () => {
 		expect(text()).toContain('Nothing under way.');
 	});
 
-	it('shows the section for a record to review alone, linking to the review lane', async () => {
-		net.state.entries = [queueEntry({ lane: 'review', decision: decision({ id: 5, decider: 'me@example.com' }) })];
+	it('shows the section for a record to review alone, linking to my queue', async () => {
+		net.state.entries = [queueEntry({ lane: 'beyond', next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/1' }, decision: decision({ id: 5, decider: 'me@example.com' }) })];
 		await open();
 		expect(heading('Decisions you decide')).toBeDefined();
 		const review = [...document.body.querySelectorAll('a')].find((a) => a.textContent === '1 record to review →')!;
-		expect(review.getAttribute('href')).toBe('/decisions?mine=1#review');
+		expect(review.getAttribute('href')).toBe('/decisions?mine=1');
 	});
 
 	it('lists urgent work first in Pick next and Start makes an unowned story mine', async () => {

@@ -138,24 +138,24 @@ export function recordMismatch(d: Pick<RequiredDecision, 'reversibility' | 'chec
 /** A decision's reversibility as the lists and the drawer say it. */
 export const REVERSIBILITY_TEXT: Record<Reversibility, string> = { one_way: 'One-way', two_way: 'Two-way' };
 
-/** The queue's lanes, top to bottom. */
-export const LANE_ORDER: QueueLane[] = ['review', 'this_sprint', 'next_sprint', 'beyond', 'open', 'satisfied', 'closed'];
+/** The queue page's lanes: the wire's `beyond` splits into Now (a Now reason) and Later. */
+export type PageLane = 'this_sprint' | 'next_sprint' | 'now' | 'later' | 'open' | 'satisfied' | 'closed';
 
-export const LANE_LABEL: Record<QueueLane, string> = {
-	review: 'Record to review',
+/** The queue page's lanes, top to bottom (spec §2). */
+export const LANE_ORDER: PageLane[] = ['this_sprint', 'next_sprint', 'now', 'later', 'open', 'satisfied', 'closed'];
+
+export const LANE_LABEL: Record<PageLane, string> = {
 	this_sprint: 'Needed this sprint',
 	next_sprint: 'Needed next sprint',
-	beyond: 'Needed after next sprint',
+	now: 'Now, no goal yet',
+	later: 'Later',
 	open: 'Open, not blocking yet',
 	satisfied: 'Accepted',
 	closed: 'Closed'
 };
 
-/** The anchors of the lanes that have one on the decisions page. */
-export const LANE_ANCHOR: Partial<Record<QueueLane, string>> = { review: 'review', this_sprint: 'this-sprint', next_sprint: 'next-sprint' };
-
-/** The queue page's lanes: the wire's `beyond` splits into Now (a Now reason) and Later. */
-export type PageLane = 'this_sprint' | 'next_sprint' | 'now' | 'later' | 'open' | 'satisfied' | 'closed';
+/** The anchors of the lanes that have one on the queue page. */
+export const LANE_ANCHOR: Partial<Record<PageLane, string>> = { this_sprint: 'this-sprint', next_sprint: 'next-sprint' };
 
 const NOW_KINDS: ReadonlySet<NeededInReason['kind']> = new Set<NeededInReason['kind']>(['urgent', 'target_month', 'decision_due', 'held']);
 

@@ -51,9 +51,9 @@
 	/** The sprints as the server last reported them; only the active one shows here (the strip, the nudge). */
 	let sprints = $state<Sprints | null>(null);
 	const active = $derived(sprints?.active ?? null);
-	/** The decision queue's counts as last loaded. A failed refetch keeps the last good ones (`queueStale`); a failed first
+	/** The readiness queue's counts and discovery rows as last loaded. A failed refetch keeps the last good ones (`queueStale`); a failed first
 	 *  load has none (`queueFailed`). The decisions are an extra: the cards never wait for them or depend on them. */
-	let queueSummary = $state<DecisionQueue['summary'] | null>(null);
+	let readiness = $state<Pick<DecisionQueue, 'summary' | 'discoveries'> | null>(null);
 	let queueStale = $state(false);
 	let queueFailed = $state(false);
 	/** The card that just started serving no goal (the move's reply said so), asking which goal it serves. */
@@ -121,12 +121,12 @@
 		try {
 			const q = await unwrap(api.GET('/api/v1/decisions/queue'));
 			if (seq !== latestQueue) return;
-			queueSummary = q.summary;
+			readiness = { summary: q.summary, discoveries: q.discoveries };
 			queueStale = false;
 			queueFailed = false;
 		} catch {
 			if (seq !== latestQueue) return;
-			if (queueSummary) queueStale = true;
+			if (readiness) queueStale = true;
 			else queueFailed = true;
 		}
 	}
@@ -394,8 +394,8 @@
 
 <GoalsStrip view={active} selected={filters.goal} onselect={(g) => setFilter('goal', g === null ? null : String(g))} />
 
-{#if queueSummary}
-	<DecisionBanner summary={queueSummary} />
+{#if readiness}
+	<DecisionBanner queue={readiness} />
 	{#if queueStale}
 		<p class="queue-note muted">Decision counts may be out of date · <button type="button" class="link" onclick={() => void loadQueue()}>Retry</button></p>
 	{/if}

@@ -5,7 +5,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AffectedStory, DecisionQueue, Epic, QueueGroup, QueueLane, RequiredDecision } from '#lib/api/types.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
-import { blockedStory, decision, queueEntry, queueSummary } from '#lib/test/fixtures.ts';
+import { blockedStory, decision, discoveryEntry, queueEntry, queueSummary } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Page from './+page.svelte';
 
@@ -127,46 +127,47 @@ const pressed = () => document.body.querySelector('[role="group"][aria-label="De
 
 describe('decisions queue page', () => {
 	const NEXT = { kind: 'write_record' } as const;
-	it('groups by lane under the lane headings, with anchors on the first three', async () => {
+	it('groups by page lane under the lane headings, with anchors on the two sprint lanes', async () => {
 		net.queue = queue([
-			entry('review', dec(1, 'Reviewing'), [], { next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/3' } }),
-			entry('this_sprint', dec(2, 'Now'), [], { next_step: NEXT, needed_in: 'this_sprint' }),
+			entry('this_sprint', dec(1, 'Reviewing'), [], { next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/3' }, needed_in: 'this_sprint' }),
+			entry('this_sprint', dec(2, 'Needed'), [], { next_step: NEXT, needed_in: 'this_sprint' }),
 			entry('next_sprint', dec(3, 'Soon')),
-			entry('beyond', dec(4, 'Later')),
+			entry('beyond', dec(4, 'Ranked'), [], { needed_in: 'beyond', needed_in_reason: { kind: 'held' } }),
+			entry('beyond', dec(6, 'Later one'), [], { needed_in: 'beyond' }),
 			entry('open', dec(5, 'Idle'))
 		]);
 		await open();
-		expect(headings()).toEqual(['Record to review', 'Needed this sprint', 'Needed next sprint', 'Needed after next sprint', 'Open, not blocking yet']);
-		const ids = [...document.body.querySelectorAll('h2')].map((h) => h.id);
-		expect(ids).toEqual(['review', 'this-sprint', 'next-sprint', '', '']);
-		expect(titles('#decisions-review')).toEqual(['Reviewing']);
-		expect(titles('#decisions-beyond')).toEqual(['Later']);
-		// The next step renders per row, and the title opens the drawer.
+		expect(headings()).toEqual(['Needed this sprint', 'Needed next sprint', 'Now, no goal yet', 'Later', 'Open, not blocking yet']);
+		expect([...document.body.querySelectorAll('h2')].map((h) => h.id)).toEqual(['this-sprint', 'next-sprint', '', '', '']);
+		// A record awaiting review stays in its window's lane: there is no Review lane.
+		expect(titles('#decisions-this_sprint')).toEqual(['Reviewing', 'Needed']);
+		expect(titles('#decisions-now')).toEqual(['Ranked']);
+		expect(titles('#decisions-later')).toEqual(['Later one']);
 		expect(text(document.getElementById('decisions-this_sprint'))).toContain('Write a record');
-		expect(text(document.getElementById('decisions-review'))).toContain('Linked PR');
-		expect(document.body.querySelector<HTMLAnchorElement>('#decisions-review a.title, #decisions-review .title a')?.getAttribute('href')).toBe('/decisions?decision=1');
+		expect(text(document.getElementById('decisions-this_sprint'))).toContain('Linked PR');
+		expect(document.body.querySelector('#decisions-this_sprint a.title')?.getAttribute('href')).toBe('/decisions?decision=1');
 	});
 
-	it('puts the Tuesday-queue divider before the first lane outside the window, once', async () => {
+	it('puts the divider before the first lane no goal or promise needs, once', async () => {
 		net.queue = queue([entry('this_sprint', dec(1, 'Now')), entry('open', dec(2, 'Idle')), entry('satisfied', dec(3, 'Settled'))]);
 		await open();
 		const dividers = [...document.body.querySelectorAll('.divider')];
-		expect(dividers.map((d) => text(d))).toEqual(['Outside the two-sprint window · for the Tuesday queue']);
+		expect(dividers.map((d) => text(d))).toEqual(['No goal or promise needs these yet']);
 		expect(dividers[0].nextElementSibling?.tagName).toBe('H2');
 		expect(text(dividers[0].nextElementSibling)).toContain('Open, not blocking yet');
 		expect(document.body.textContent).not.toContain('Nothing needed this sprint or next.');
 	});
 
-	it('skips an empty lane for the divider (Beyond has rows: it leads)', async () => {
-		net.queue = queue([entry('beyond', dec(1, 'Later')), entry('open', dec(2, 'Idle'))]);
+	it('skips an empty lane for the divider (Now has rows: it leads)', async () => {
+		net.queue = queue([entry('beyond', dec(1, 'Ranked'), [], { needed_in_reason: { kind: 'held' } }), entry('open', dec(2, 'Idle'))]);
 		await open();
 		const divider = document.body.querySelector('.divider')!;
-		expect(text(divider.nextElementSibling)).toContain('Needed after next sprint');
+		expect(text(divider.nextElementSibling)).toContain('Now, no goal yet');
 	});
 
 	it('does not say nothing is needed on a completely empty queue', async () => {
 		await open();
-		expect(document.body.textContent).toContain('No open decisions');
+		expect(document.body.textContent).toContain('Nothing holds work back');
 		expect(document.body.querySelector('.quiet')).toBeNull();
 	});
 
@@ -177,10 +178,79 @@ describe('decisions queue page', () => {
 		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing of yours needed this sprint or next.');
 	});
 
-	it('names only the window in the divider when just Accepted or Closed lie below it', async () => {
-		net.queue = queue([entry('this_sprint', dec(1, 'Now')), entry('satisfied', dec(2, 'Settled'))]);
+	it('shows a discovery row: its item link, status, holds, reason and its nested decisions in a list of their own', async () => {
+		const goal = { kind: 'goal' as const, goal_id: 3, outcome: 'Ship tiers' };
+		net.queue = {
+			entries: [
+				entry('this_sprint', dec(1, 'Pick tiers'), [], { under: 'RV-2', needed_in: 'this_sprint', needed_in_reason: goal }),
+				entry('beyond', dec(2, 'Standalone'), [blockedStory({ key: 'RV-9' })], { needed_in: 'beyond', needed_in_reason: { kind: 'held' } })
+			],
+			discoveries: [
+				discoveryEntry({
+					key: 'RV-2',
+					level: 'epic',
+					title: 'Tiers',
+					also: 'RV-1',
+					lane: 'this_sprint',
+					needed_in_reason: goal,
+					blocks: [blockedStory({ key: 'RV-7', title: 'Seven' })],
+					under_way: [blockedStory({ key: 'RV-8', title: 'Eight', delivery: 'in_progress' })],
+					at: 0
+				}),
+				discoveryEntry({
+					key: 'RV-5',
+					level: 'initiative',
+					title: 'Billing',
+					lane: 'beyond',
+					needed_in_reason: { kind: 'held' },
+					under_way: [blockedStory({ key: 'RV-6', delivery: 'in_progress' })],
+					at: 1
+				})
+			],
+			summary: queueSummary({ this_sprint: 1 })
+		};
 		await open();
-		expect(text(document.body.querySelector('.divider'))).toBe('Outside the two-sprint window');
+		expect(headings()).toEqual(['Needed this sprint', 'Now, no goal yet']);
+		const row = document.body.querySelector('[data-discovery="RV-2"]')!;
+		expect(row.querySelector('a.item')?.getAttribute('href')).toBe('/epics/RV-2');
+		expect(row.querySelector('a.item .key')?.textContent).toBe('RV-2');
+		expect(text(row.querySelector('a.item'))).toContain('Tiers');
+		expect(text(row.querySelector('.status'))).toBe('in discovery · with RV-1');
+		expect(text(row.querySelector('[data-testid="reason"]'))).toBe('for goal: Ship tiers');
+		const holds = row.querySelector<HTMLButtonElement>('.holds button')!;
+		expect(text(holds)).toBe('Holds 1 story · 1 under way ▸');
+		holds.click();
+		flushSync();
+		expect([...row.querySelectorAll('.stories a')].map((a) => a.getAttribute('href'))).toEqual(['/board?story=RV-7', '/board?story=RV-8']);
+		// The nested decision is listed in the row's own list, right after it, with no line of its own.
+		const nested = document.getElementById('decisions-row-RV-2')!;
+		expect(row.nextElementSibling).toBe(nested);
+		expect(titles('#decisions-row-RV-2')).toEqual(['Pick tiers']);
+		expect(nested.querySelector('.needed')).toBeNull();
+		// A Now row holding none reads off its own lists; the standalone decision after it says its own Now line.
+		const now = document.body.querySelector('[data-discovery="RV-5"]')!;
+		expect(now.querySelector('a.item')?.getAttribute('href')).toBe('/initiatives/RV-5');
+		expect(text(now.querySelector('.holds button'))).toBe('1 under way ▸');
+		expect(text(now.querySelector('[data-testid="reason"]'))).toBe('Now · holds none, 1 under way');
+		expect(text(document.getElementById('decisions-now-1')?.querySelector('.needed'))).toBe('Now · holds 1');
+	});
+
+	it("under Mine keeps a row that nests one of mine, lists only mine, and still dates its reason from another decider's decision", async () => {
+		await route.fake!.goto('/decisions?mine=1');
+		net.queue = {
+			entries: [
+				entry('beyond', dec(4, 'Theirs', { decider: 'bob@example.com', due: '2026-10-30' }), [], { under: 'RV-2', needed_in: 'beyond' }),
+				entry('beyond', dec(8, 'Mine one'), [], { under: 'RV-2', needed_in: 'beyond' })
+			],
+			discoveries: [discoveryEntry({ key: 'RV-2', lane: 'beyond', needed_in_reason: { kind: 'decision_due', id: 4 }, at: 0 })],
+			summary: queueSummary()
+		};
+		await open();
+		const row = document.body.querySelector('[data-discovery="RV-2"]')!;
+		expect(text(row.querySelector('[data-testid="reason"]'))).toBe('Now · decision #4 due 30 Oct');
+		expect(row.querySelector('[data-testid="reason"] a')?.getAttribute('href')).toBe('/decisions?mine=1&decision=4');
+		expect(titles('#decisions-row-RV-2')).toEqual(['Mine one']);
+		expect(document.body.textContent).not.toContain('Theirs');
 	});
 
 	it('says nothing is needed this sprint or next when those lanes are empty', async () => {
@@ -191,12 +261,12 @@ describe('decisions queue page', () => {
 
 	it('counts the summary by lane and leaves out a zero part', async () => {
 		net.queue = queue(
-			[entry('review', dec(1, 'R')), entry('beyond', dec(2, 'B1')), entry('beyond', dec(3, 'B2')), entry('open', dec(4, 'O'))],
+			[entry('this_sprint', dec(1, 'R'), [], { next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/1' } }), entry('beyond', dec(2, 'B1')), entry('beyond', dec(3, 'B2')), entry('open', dec(4, 'O'))],
 			queueSummary({ open: 4, review: 1, this_sprint: 0, next_sprint: 3, overdue: 2 })
 		);
 		await open();
-		// Beyond is counted from the entries; this sprint (zero) is left out; Open is not a part.
-		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 3 next sprint · 2 after next sprint · 2 overdue');
+		// this sprint (zero) is left out; Now and Later carry their own counts.
+		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 3 next sprint · 2 overdue');
 	});
 
 	it('words every part of the summary', async () => {
@@ -205,7 +275,7 @@ describe('decisions queue page', () => {
 			queueSummary({ review: 1, this_sprint: 2, next_sprint: 3, overdue: 5 })
 		);
 		await open();
-		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 2 this sprint · 3 next sprint · 1 after next sprint · 5 overdue');
+		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 2 this sprint · 3 next sprint · 5 overdue');
 	});
 
 	it('has no summary line when every part is zero', async () => {
@@ -245,7 +315,7 @@ describe('decisions queue page', () => {
 	it('requests the queue unscoped and shows every decider by default', async () => {
 		net.queue = queue([entry('this_sprint', dec(1, 'Mine')), entry('open', dec(3, 'Theirs', { decider: 'bob@example.com' }))]);
 		await open();
-		expect(document.body.querySelector('h1')?.textContent).toBe('Decisions');
+		expect(document.body.querySelector('h1')?.textContent).toBe('Readiness');
 		expect(pressed()).toBe('All');
 		expect(net.paths).not.toContain('/api/v1/decisions');
 		expect(net.queries).toEqual(['?include_closed=true']);
@@ -354,7 +424,7 @@ describe('decisions queue page', () => {
 	it('says the queue is empty when only folded closed decisions are listed', async () => {
 		net.queue = queue([entry('closed', dec(6, 'Old one', { closed: closedBy }))]);
 		await open();
-		expect(document.body.textContent).toContain('No open decisions');
+		expect(document.body.textContent).toContain('Nothing holds work back');
 		expect(headings()).toEqual(['Closed']);
 	});
 
@@ -399,7 +469,7 @@ describe('decisions queue page', () => {
 
 	it('says so when the queue is empty', async () => {
 		await open();
-		expect(document.body.textContent).toContain('No open decisions');
+		expect(document.body.textContent).toContain('Nothing holds work back');
 		expect(document.body.querySelector('.checked-all')).toBeNull();
 	});
 
@@ -465,7 +535,7 @@ describe('decisions queue page', () => {
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
 			flushSync();
-			expect(document.body.querySelector('.notice.error')?.textContent).toContain('Could not load the decisions: boom');
+			expect(document.body.querySelector('.notice.error')?.textContent).toContain('Could not load the readiness queue: boom');
 		});
 		expect([...document.body.querySelectorAll('.notice button')].map((b) => b.textContent)).toContain('Retry');
 	});

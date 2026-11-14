@@ -93,7 +93,7 @@ describe('board decisions', () => {
 		await mounted();
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav[aria-label="Decisions needing attention"]'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
+			expect(text(q('nav[aria-label="Readiness needing attention"]'))).toBe('⚑ 2 decisions needed this sprint');
 		});
 		expect(net.paths).toContain('/api/v1/decisions/queue');
 		const banner = q('nav.decision-banner')!;
@@ -215,13 +215,13 @@ describe('board decisions', () => {
 			flushSync();
 			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date · Retry');
 		});
-		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
+		expect(text(q('nav.decision-banner'))).toBe('⚑ 2 decisions needed this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
-		queue = { entries: [], discoveries: [], summary: queueSummary({ review: 3 }) };
+		queue = { entries: [], discoveries: [], summary: queueSummary({ next_sprint: 3 }) };
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();
-			expect(text(q('nav.decision-banner'))).toBe('⚑ 3 records to review');
+			expect(text(q('nav.decision-banner'))).toBe('⚑ 3 decisions needed next sprint');
 		});
 		expect(q('.queue-note')).toBeNull();
 	});
