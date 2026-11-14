@@ -75,8 +75,11 @@ pub trait TokenStore: Send + Sync {
         email: &str,
         name: &str,
     ) -> Result<(), sqlx::Error>;
+    /// The owner's API tokens, newest first. MCP tokens are not listed here; connections get their own listing
+    /// (kb/ADR-0029 R9, GRA-669).
     async fn list_for(&self, owner: &str) -> Result<Vec<TokenSummary>, sqlx::Error>;
-    /// Revokes one token if it belongs to `owner` and is not yet revoked. Returns whether a row changed.
+    /// Revokes one API token if it belongs to `owner` and is not yet revoked. Returns whether a row changed. An MCP
+    /// token is not found here (GRA-669 adds revoking a connection); `revoke_all_for` covers every audience.
     async fn revoke_one(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -185,8 +188,9 @@ impl TokenStore for PgTokenStore {
     }
     async fn list_for(&self, owner: &str) -> Result<Vec<TokenSummary>, sqlx::Error> {
         use sqlx::Row;
-        let rows = sqlx::query("SELECT id, kind, label, created_at, expires_at, revoked_at FROM tokens WHERE owner = $1 ORDER BY created_at DESC, id DESC")
+        let rows = sqlx::query("SELECT id, kind, label, created_at, expires_at, revoked_at FROM tokens WHERE owner = $1 AND audience = $2 ORDER BY created_at DESC, id DESC")
             .bind(owner)
+            .bind(Audience::Api.as_str())
             .fetch_all(&self.pool)
             .await?;
         rows.iter()
@@ -214,11 +218,12 @@ impl TokenStore for PgTokenStore {
         now: DateTime<Utc>,
     ) -> Result<bool, sqlx::Error> {
         Ok(sqlx::query(
-            "UPDATE tokens SET revoked_at = $3 WHERE id = $2 AND owner = $1 AND revoked_at IS NULL",
+            "UPDATE tokens SET revoked_at = $3 WHERE id = $2 AND owner = $1 AND audience = $4 AND revoked_at IS NULL",
         )
         .bind(owner)
         .bind(id)
         .bind(now)
+        .bind(Audience::Api.as_str())
         .execute(&mut **tx)
         .await?
         .rows_affected()

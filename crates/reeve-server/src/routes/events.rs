@@ -69,7 +69,7 @@ async fn events(
                     return None;
                 }
             };
-            if reeve_identity::authenticate(&*s.tokens, &policy, &secret, Utc::now())
+            if reeve_identity::authenticate_api(&*s.tokens, &policy, &secret, Utc::now())
                 .await
                 .is_err()
             {

@@ -688,6 +688,30 @@ async fn signing_in_again_revokes_the_session_the_browser_already_holds_for_the_
     assert_eq!(call_raw(&h.app, me(&bob)).await.status(), 200);
 }
 
+/// Re-login checks the old session cookie with `authenticate_api`: an MCP token found there is no previous session
+/// and is left alone (kb/ADR-0029 R6). The static provider signs in dan@example.com, the token's owner.
+#[tokio::test]
+async fn signing_in_with_an_mcp_token_in_the_session_cookie_leaves_it_alone() {
+    let h = harness().await;
+    let mcp = issue_mcp_token(&h, "dan@example.com").await;
+    let (state, login_cookie) = begin_login(&h.app, "/").await;
+    let res = call_raw(
+        &h.app,
+        callback(
+            &state,
+            &format!("{login_cookie}; reeve_session={}", mcp.secret),
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), 303);
+    let live: bool = sqlx::query_scalar("SELECT revoked_at IS NULL FROM tokens WHERE id = $1")
+        .bind(mcp.id)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap();
+    assert!(live);
+}
+
 /// The real Google adapter behind `/auth/login` and `/auth/callback`, pointed at a fake issuer. Every other test in
 /// this file signs in through the static provider.
 #[cfg(feature = "static-oidc")]

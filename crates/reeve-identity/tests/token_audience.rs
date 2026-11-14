@@ -9,9 +9,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
     AccessPolicy, AuthError, IdentityActivity, IdentityConfig, IdentityEvent, IssuedToken,
-    TokenKind, Via, authenticate, hash_secret, issue_mcp_token, issue_token, make_token_store,
+    McpPrincipal, Role, TokenKind, Via, authenticate_api, authenticate_mcp, hash_secret,
+    issue_mcp_token, issue_token, list_tokens, make_token_store, revoke_all_for, revoke_token,
 };
 use sqlx::PgPool;
+use std::sync::{Arc, Mutex};
 
 struct NoLog;
 #[async_trait]
@@ -203,7 +205,7 @@ async fn migration_2004_keeps_existing_tokens_and_makes_them_api_tokens() {
     assert_eq!(audiences, vec!["api"; 6]);
     let store = make_token_store(pool.clone());
     for (label, ..) in seeds {
-        let got = authenticate(&*store, &policy(), &format!("reeve_{label}"), t).await;
+        let got = authenticate_api(&*store, &policy(), &format!("reeve_{label}"), t).await;
         assert_eq!(got.is_ok(), label.starts_with("live"), "{label}: {got:?}");
     }
     // A second run changes nothing.
@@ -326,4 +328,144 @@ async fn an_mcp_token_is_interactive_and_lives_at_most_one_hour() {
         .await
         .unwrap();
     assert_eq!(tokens, 1, "a refused issue writes nothing");
+}
+
+/// What the code logged while the guard is alive, as text.
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+    fn make_writer(&'a self) -> Logs {
+        self.clone()
+    }
+}
+impl Logs {
+    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .finish();
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+#[tokio::test]
+async fn each_audience_authenticates_only_through_its_own_function() {
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    let api = issue_api(&pool).await;
+    let mcp = issue_mcp(&pool).await;
+    let (logs, _guard) = Logs::capture();
+
+    let p = authenticate_api(&*store, &policy(), &api.secret, now())
+        .await
+        .unwrap();
+    assert_eq!(
+        (p.email.as_str(), p.role, p.token_kind),
+        ("dan@example.com", Role::Admin, TokenKind::Interactive)
+    );
+    let m = authenticate_mcp(&*store, &policy(), &mcp.secret, now())
+        .await
+        .unwrap();
+    assert_eq!(
+        m,
+        McpPrincipal {
+            email: "dan@example.com".into(),
+            role: Role::Admin
+        }
+    );
+    assert!(
+        !logs.text().contains("authentication refused"),
+        "an accepted token logs no refusal: {}",
+        logs.text()
+    );
+
+    assert!(matches!(
+        authenticate_api(&*store, &policy(), &mcp.secret, now()).await,
+        Err(AuthError::Unauthenticated)
+    ));
+    assert!(matches!(
+        authenticate_mcp(&*store, &policy(), &api.secret, now()).await,
+        Err(AuthError::Unauthenticated)
+    ));
+    let text = logs.text();
+    assert_eq!(text.matches("wrong audience").count(), 2, "{text}");
+    assert!(
+        !text.contains(&api.secret) && !text.contains(&mcp.secret),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn the_owners_listing_and_single_revocation_see_api_tokens_only_and_bulk_revocation_sees_all()
+{
+    let (_db, pool) = common::pg().await;
+    let store = make_token_store(pool.clone());
+    let api = issue_api(&pool).await;
+    let mcp = issue_mcp(&pool).await;
+    let listed: Vec<i64> = list_tokens(&*store, "dan@example.com")
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(listed, vec![api.id]);
+    let changed = revoke_token(
+        &pool,
+        &*store,
+        &NoLog,
+        "dan@example.com",
+        Via::Interactive,
+        mcp.id,
+        now(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !changed,
+        "an MCP token is not found by the token page's revocation"
+    );
+    assert!(
+        authenticate_mcp(&*store, &policy(), &mcp.secret, now())
+            .await
+            .is_ok()
+    );
+    let n = revoke_all_for(
+        &pool,
+        &*store,
+        &NoLog,
+        "operator",
+        Via::System,
+        "dan@example.com",
+        now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        n, 2,
+        "bulk revocation covers every audience (kb/ADR-0015 R6)"
+    );
+    assert!(
+        authenticate_mcp(&*store, &policy(), &mcp.secret, now())
+            .await
+            .is_err()
+    );
+    assert!(
+        authenticate_api(&*store, &policy(), &api.secret, now())
+            .await
+            .is_err()
+    );
 }

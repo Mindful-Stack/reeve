@@ -42,6 +42,14 @@ pub struct Principal {
     pub token_kind: TokenKind,
 }
 
+/// Who is calling the MCP endpoint (kb/ADR-0029 R6). A type of its own, without a token kind: code that takes a
+/// `Principal` cannot be handed an MCP caller, and the MCP endpoint cannot be handed an API one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpPrincipal {
+    pub email: String,
+    pub role: Role,
+}
+
 pub use reeve_protocol::normalise_email;
 
 /// The one parser for the stored token kind; `None` for text no `TokenKind` writes.
@@ -75,6 +83,15 @@ impl Audience {
     }
 }
 
+/// The one parser for the stored audience; `None` for text no `Audience` writes.
+pub(crate) fn audience_from(s: &str) -> Option<Audience> {
+    match s {
+        "api" => Some(Audience::Api),
+        "mcp" => Some(Audience::Mcp),
+        _ => None,
+    }
+}
+
 pub fn hash_secret(secret: &str) -> String {
     hex::encode(Sha256::digest(secret.as_bytes()))
 }
@@ -99,5 +116,15 @@ mod tests {
         assert!(c.is_allowed("guest@other.org"));
         assert!(!c.is_allowed("x@other.org"));
         assert!(!c.is_allowed("example.com"));
+    }
+
+    #[test]
+    fn audience_text_round_trips_and_unknown_text_is_refused() {
+        for a in [Audience::Api, Audience::Mcp] {
+            assert_eq!(audience_from(a.as_str()), Some(a));
+        }
+        for text in ["web", "", "API", " mcp"] {
+            assert_eq!(audience_from(text), None, "{text:?}");
+        }
     }
 }

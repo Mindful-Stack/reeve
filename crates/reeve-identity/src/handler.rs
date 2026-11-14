@@ -153,15 +153,17 @@ pub async fn issue_mcp_token(
     Ok(IssuedToken { id, secret })
 }
 
-/// Resolves a bearer or session secret to its principal. Every refusal is logged at `warn` with its reason, the token
-/// id and owner when a row was found, and the first eight hex digits of the secret's hash (never the secret), so a 401
-/// can be told apart afterwards: not found, revoked, owner disabled, expired, owner not allowed, bad kind.
-pub async fn authenticate(
+/// Resolves a bearer or session secret to its owner and kind, for the audience `want`. Every refusal is logged at
+/// `warn` with its reason, the token id and owner when a row was found, and the first eight hex digits of the
+/// secret's hash (never the secret), so a 401 can be told apart afterwards: not found, revoked, owner disabled,
+/// expired, owner not allowed, bad kind, bad audience, wrong audience.
+async fn resolve(
     store: &dyn TokenStore,
     policy: &AccessPolicy,
     secret: &str,
     now: DateTime<Utc>,
-) -> Result<Principal, AuthError> {
+    want: Audience,
+) -> Result<(String, TokenKind), AuthError> {
     let hash = hash_secret(secret);
     let hash_prefix = &hash[..8];
     let Some(row) = store.find_by_hash(&hash).await? else {
@@ -188,14 +190,49 @@ pub async fn authenticate(
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, "authentication refused");
         return Err(AuthError::Unauthenticated);
     }
-    let Some(token_kind) = kind_from(&row.kind) else {
+    let Some(kind) = kind_from(&row.kind) else {
         tracing::warn!(hash_prefix, token_id = row.id, %owner, reason = "bad kind", kind = %row.kind, "authentication refused");
         return Err(AuthError::Unauthenticated);
     };
+    let reason = match audience_from(&row.audience) {
+        None => Some("bad audience"),
+        Some(audience) if audience != want => Some("wrong audience"),
+        Some(_) => None,
+    };
+    if let Some(reason) = reason {
+        tracing::warn!(hash_prefix, token_id = row.id, %owner, reason, audience = %row.audience, "authentication refused");
+        return Err(AuthError::Unauthenticated);
+    }
+    Ok((owner, kind))
+}
+
+/// The caller of the API, the event stream, attachments and the session cookie: an API token only. An MCP token is
+/// `Unauthenticated` here (kb/ADR-0029 R6).
+pub async fn authenticate_api(
+    store: &dyn TokenStore,
+    policy: &AccessPolicy,
+    secret: &str,
+    now: DateTime<Utc>,
+) -> Result<Principal, AuthError> {
+    let (owner, token_kind) = resolve(store, policy, secret, now, Audience::Api).await?;
     Ok(Principal {
         role: policy.role_for(&owner),
         email: owner,
         token_kind,
+    })
+}
+
+/// The caller of the MCP endpoint: an MCP token only. An API token is `Unauthenticated` here (kb/ADR-0029 R6).
+pub async fn authenticate_mcp(
+    store: &dyn TokenStore,
+    policy: &AccessPolicy,
+    secret: &str,
+    now: DateTime<Utc>,
+) -> Result<McpPrincipal, AuthError> {
+    let (owner, _) = resolve(store, policy, secret, now, Audience::Mcp).await?;
+    Ok(McpPrincipal {
+        role: policy.role_for(&owner),
+        email: owner,
     })
 }
 

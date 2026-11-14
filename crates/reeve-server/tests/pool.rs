@@ -7,7 +7,7 @@
 //! `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` (story readiness), the next statement on that connection fixes a
 //! snapshot (PostgreSQL 16 docs, 13.2.2: "a snapshot as of the start of the first non-transaction-control statement in
 //! the transaction") and every later read on it keeps that snapshot: a session token issued afterwards does not exist
-//! there, so `authenticate` answers 401 for one request in N while its siblings on other connections succeed. This
+//! there, so `authenticate_api` answers 401 for one request in N while its siblings on other connections succeed. This
 //! is the sporadic smoke 401 of CI run 40285287399.
 use reeve_server::pool_options;
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -68,7 +68,7 @@ async fn cancel_begin_after_it_ran(app: &PgPool, admin: &PgPool) {
 
 /// Poisons `app`'s only connection with a cancelled readiness BEGIN, lets one ordinary read fix the snapshot (a
 /// request authenticating with an older session), signs in a new session through another connection, and returns
-/// what `authenticate` answers for that new session on `app`.
+/// what `authenticate_api` answers for that new session on `app`.
 async fn new_session_after_a_cancelled_begin(
     app: PgPool,
     admin: PgPool,
@@ -102,7 +102,7 @@ async fn new_session_after_a_cancelled_begin(
     cancel_begin_after_it_ran(&app, &admin).await;
 
     // An earlier request on the same connection: it succeeds, and (on a poisoned connection) fixes the snapshot.
-    reeve_identity::authenticate(
+    reeve_identity::authenticate_api(
         &*app_store,
         &reeve_identity::AccessPolicy::floor_only(&cfg),
         &old.secret,
@@ -121,7 +121,7 @@ async fn new_session_after_a_cancelled_begin(
     )
     .await
     .unwrap();
-    reeve_identity::authenticate(
+    reeve_identity::authenticate_api(
         &*app_store,
         &reeve_identity::AccessPolicy::floor_only(&cfg),
         &new.secret,
