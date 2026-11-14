@@ -150,54 +150,80 @@ async fn an_automation_token_cannot_read_a_request() {
 }
 
 /// Catches an approval that sends the browser anywhere but the validated address, one without `state` or `iss`,
-/// one a cache may keep, one that leaves the connect cookie or the request alive, and a missing, wrong or
-/// uncommitted activity entry (it is read back through the API, on another connection).
+/// one a cache may keep, one that leaves the connect cookie or the request alive, a missing, wrong or uncommitted
+/// activity entry (it is read back through the API, on another connection), and a scope other than the one chosen
+/// reaching the grant or the entry: each scope is approved, and the code redeemed through the store with the
+/// flow's verifier.
 #[tokio::test]
 async fn approving_answers_the_clients_address_with_a_code_state_and_iss_and_writes_the_entry() {
-    let f = flow().await;
-    let dan = f.h.admin_token.clone();
-    let s = authorize(&f).await;
-    let value = approval(&f, &dan, &s).await;
-    let (status, headers, body) = approve(&f, &dan, &s, &value, "read").await;
-    assert_eq!(status, 200, "{body}");
-    assert!(is_no_store(&headers), "the answer holds a code");
-    let to = url::Url::parse(body["value"]["redirect_to"].as_str().unwrap()).unwrap();
-    assert_eq!(without_query(&to), CALLBACK);
-    let code = param(&to, "code").expect("a code");
-    assert!(code.starts_with("reeve_code_"), "{code}");
-    assert_eq!(param(&to, "state").as_deref(), Some("s-1"));
-    assert_eq!(param(&to, "iss").as_deref(), Some(ISSUER));
-    assert_eq!(param(&to, "error"), None);
-    let cleared = headers["set-cookie"].to_str().unwrap();
-    assert!(
-        cleared.starts_with("reeve_connect=;") && cleared.contains("Max-Age=0"),
-        "{cleared}"
-    );
-    let log = entries(&f.h, "connection_approved").await;
-    assert_eq!(log.len(), 1, "{log:?}");
-    assert_eq!(
-        (
-            &log[0]["actor"],
-            &log[0]["via"],
-            &log[0]["entity_key"],
-            &log[0]["payload"]
-        ),
-        (
-            &json!("dan@example.com"),
-            &json!("interactive"),
-            &json!("dan@example.com"),
-            &json!({"client_id": f.client_id, "scope": "read"})
-        )
-    );
-    assert!(
-        !log[0].to_string().contains(&code),
-        "an entry never holds a code"
-    );
-    // Answered: a second answer and a read find nothing, and nothing more is written.
-    assert_eq!(approve(&f, &dan, &s, &value, "read").await.0, 404);
-    assert_eq!(refuse(&f, &dan, &s, &value).await.0, 404);
-    assert_eq!(read(&f, &dan, &s).await.0, 404);
-    assert_eq!(entries(&f.h, "connection_approved").await.len(), 1);
+    for (scope, granted) in [
+        ("read", reeve_protocol::Scope::Read),
+        ("write", reeve_protocol::Scope::Write),
+    ] {
+        let f = flow().await;
+        let dan = f.h.admin_token.clone();
+        let s = authorize(&f).await;
+        let value = approval(&f, &dan, &s).await;
+        let (status, headers, body) = approve(&f, &dan, &s, &value, scope).await;
+        assert_eq!(status, 200, "{scope}: {body}");
+        assert!(is_no_store(&headers), "the answer holds a code");
+        let to = url::Url::parse(body["value"]["redirect_to"].as_str().unwrap()).unwrap();
+        assert_eq!(without_query(&to), CALLBACK);
+        let code = param(&to, "code").expect("a code");
+        assert!(code.starts_with("reeve_code_"), "{code}");
+        assert_eq!(param(&to, "state").as_deref(), Some("s-1"));
+        assert_eq!(param(&to, "iss").as_deref(), Some(ISSUER));
+        assert_eq!(param(&to, "error"), None);
+        let cleared = headers["set-cookie"].to_str().unwrap();
+        assert!(
+            cleared.starts_with("reeve_connect=;") && cleared.contains("Max-Age=0"),
+            "{cleared}"
+        );
+        let log = entries(&f.h, "connection_approved").await;
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert_eq!(
+            (
+                &log[0]["actor"],
+                &log[0]["via"],
+                &log[0]["entity_key"],
+                &log[0]["payload"]
+            ),
+            (
+                &json!("dan@example.com"),
+                &json!("interactive"),
+                &json!("dan@example.com"),
+                &json!({"client_id": f.client_id, "scope": scope})
+            ),
+            "{scope}"
+        );
+        assert!(
+            !log[0].to_string().contains(&code),
+            "an entry never holds a code"
+        );
+        // Answered: a second answer and a read find nothing, and nothing more is written.
+        assert_eq!(approve(&f, &dan, &s, &value, scope).await.0, 404);
+        assert_eq!(refuse(&f, &dan, &s, &value).await.0, 404);
+        assert_eq!(read(&f, &dan, &s).await.0, 404);
+        assert_eq!(entries(&f.h, "connection_approved").await.len(), 1);
+        // The code grants what was chosen, to the person who chose it.
+        let grant =
+            f.h.state
+                .authorization_requests
+                .redeem(
+                    &code,
+                    &f.client_id,
+                    Some(CALLBACK),
+                    Some(RESOURCE),
+                    VERIFIER,
+                    f.h.state.clock.now(),
+                )
+                .expect("the code redeems");
+        assert_eq!(
+            (grant.scope, grant.owner.as_str(), grant.client_id.as_str()),
+            (granted, "dan@example.com", f.client_id.as_str()),
+            "{scope}"
+        );
+    }
 }
 
 /// Catches a refusal that hands out a code or writes an approval entry, and one without `state` or `iss`.
