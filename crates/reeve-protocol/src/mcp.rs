@@ -49,6 +49,14 @@ pub struct GetEpicInput {
     pub key: String,
 }
 
+/// `get_initiative`: read one initiative by key (`reeve initiative show <KEY>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetInitiativeInput {
+    /// The initiative's key.
+    pub key: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

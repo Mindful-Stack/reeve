@@ -280,3 +280,48 @@ async fn get_epic_answers_the_route_s_epic_with_a_long_brief_cut() {
         format!("No epic with key {}. Keys look like TST-123.", s.bobs)
     );
 }
+
+#[tokio::test]
+async fn get_initiative_answers_the_route_s_initiative_with_a_long_brief_cut() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+
+    let want = api(
+        &h,
+        &h.victim_token,
+        &format!("/api/v1/initiatives/{}", s.initiative),
+    )
+    .await;
+    // The control: the initiative has a brief and a progress to carry (two stories count under it, neither done).
+    assert_eq!(want["brief"], "Why bookings matter.");
+    assert_eq!(want["progress"], 0.0, "{want}");
+    assert_eq!(
+        answer(&h, &bob, "get_initiative", json!({"key": s.initiative})).await,
+        want
+    );
+
+    let brief = "é".repeat(10_002);
+    let long = key(&post(
+        &h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key": "rt-i2", "title": "Long", "horizon": "Now", "brief": brief}),
+    )
+    .await);
+    let mut want = api(&h, &h.victim_token, &format!("/api/v1/initiatives/{long}")).await;
+    assert_eq!(
+        want["brief"],
+        json!(brief),
+        "the control: the API route answers it whole"
+    );
+    want["brief"] = json!(format!("{}[cut: 2 more characters]", "é".repeat(10_000)));
+    assert_eq!(
+        answer(&h, &bob, "get_initiative", json!({"key": long})).await,
+        want
+    );
+
+    assert_eq!(
+        refusal(&h, &bob, "get_initiative", json!({"key": "TST-999999"})).await,
+        "No initiative with key TST-999999. Keys look like TST-123."
+    );
+}

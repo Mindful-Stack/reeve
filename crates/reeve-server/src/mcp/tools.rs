@@ -3,6 +3,7 @@
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod bound;
 mod get_epic;
+mod get_initiative;
 mod get_story;
 mod search_items;
 
@@ -71,6 +72,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         search_items::tool(key_prefix),
         get_story::tool(key_prefix),
         get_epic::tool(key_prefix),
+        get_initiative::tool(key_prefix),
     ]
 }
 
