@@ -16,7 +16,7 @@ mod story_context;
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
 pub(crate) use epics::{EpicQuery, get_epic, list_epics};
-pub(crate) use initiatives::get_initiative;
+pub(crate) use initiatives::{get_initiative, list_initiatives};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
 pub(crate) use search::{SearchQuery, search};

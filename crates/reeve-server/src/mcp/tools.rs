@@ -6,6 +6,7 @@ mod get_epic;
 mod get_initiative;
 mod get_story;
 mod list_epics;
+mod list_initiatives;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
@@ -75,6 +76,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         get_story::tool(key_prefix),
         list_epics::tool(),
         get_epic::tool(key_prefix),
+        list_initiatives::tool(),
         get_initiative::tool(key_prefix),
     ]
 }
@@ -209,16 +211,24 @@ mod tests {
         for tool in registry("TST") {
             assert!(!tool.title.is_empty(), "{}", tool.name);
             assert!(!tool.description.is_empty(), "{}", tool.name);
-            let properties = tool.input_schema["properties"]
-                .as_object()
-                .unwrap_or_else(|| panic!("{} has no properties", tool.name));
+            let properties = tool
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object);
+            // Only a tool that takes no arguments has no properties, and only `list_initiatives` is one.
+            assert_eq!(
+                properties.is_none_or(|p| p.is_empty()),
+                tool.name == "list_initiatives",
+                "{} has no properties, or should have none",
+                tool.name
+            );
             // Refusing an unknown argument is the input type's `deny_unknown_fields`, which the schema shows.
             assert_eq!(
                 tool.input_schema["additionalProperties"], false,
                 "{} accepts unknown arguments",
                 tool.name
             );
-            for (name, property) in properties {
+            for (name, property) in properties.into_iter().flatten() {
                 // Optional means absent from `required`: no null branch, no `oneOf`.
                 assert!(
                     property.get("oneOf").is_none() && !property["type"].is_array(),

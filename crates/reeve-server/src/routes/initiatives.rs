@@ -13,7 +13,7 @@ async fn list(
     State(s): State<AppState>,
     c: Caller,
 ) -> Result<Json<Response<Vec<InitiativeDto>>>, AppError> {
-    Ok(ok(s.handlers.list_initiatives(c.ctx().now).await?))
+    Ok(ok(crate::actions::list_initiatives(&s, &c.acting()).await?))
 }
 #[utoipa::path(post, path = "/initiatives", request_body = CreateInitiative, responses((status = 200, body = Response<InitiativeDto>)))]
 async fn create(

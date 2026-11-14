@@ -397,3 +397,61 @@ async fn list_epics_answers_the_route_s_epics_as_summaries() {
         "initiative must be a key such as TST-12, not \"bookings\"."
     );
 }
+
+/// An initiative as `list_initiatives` summarises it, written out by hand from the API's JSON.
+fn initiative_summary(initiative: &Value) -> Value {
+    json!({
+        "key": initiative["key"],
+        "title": initiative["title"],
+        "horizon": initiative["horizon"],
+        "target_month": initiative["target_month"],
+        "owner": initiative["owner"],
+        "version": initiative["version"],
+        "discovery_complete": initiative["discovery_complete"].is_object(),
+        "progress": initiative["progress"],
+    })
+}
+
+#[tokio::test]
+async fn list_initiatives_answers_the_route_s_initiatives_as_summaries() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    // A second initiative, with an owner, a target month and its discovery complete, so rows differ.
+    let made = post(
+        &h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key": "rt-i3", "title": "Payments", "horizon": "Now", "target_month": "2027-01", "owner": DAN}),
+    )
+    .await;
+    let payments = key(&made);
+    post(
+        &h,
+        &format!("/api/v1/initiatives/{payments}/discovery"),
+        json!({"version": made["version"], "complete": true}),
+    )
+    .await;
+
+    let all = api(&h, &h.victim_token, "/api/v1/initiatives").await;
+    let keys: Vec<String> = all.as_array().unwrap().iter().map(key).collect();
+    assert_eq!(
+        keys,
+        vec![s.initiative.clone(), payments.clone()],
+        "the control"
+    );
+    let summaries: Vec<Value> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(initiative_summary)
+        .collect();
+    let got = answer(&h, &bob, "list_initiatives", json!({})).await;
+    assert_eq!(got, json!({"initiatives": summaries, "omitted": 0}));
+    // The derived field differs between rows.
+    assert_eq!(got["initiatives"][1]["discovery_complete"], true);
+    assert_eq!(got["initiatives"][0]["discovery_complete"], false);
+
+    // It takes no arguments: one is refused, not ignored.
+    let unknown = refusal(&h, &bob, "list_initiatives", json!({"horizon": "Now"})).await;
+    assert!(unknown.contains("unknown field `horizon`"), "{unknown}");
+}
