@@ -420,7 +420,7 @@ async fn call_tool(
             .err()
     };
     let outcome = match over {
-        Some(again) => Err(ToolError::Told(limit::told(again, caller.now))),
+        Some(over) => Err(ToolError::Told(limit::told(over.again, over.now))),
         None if args.is_object() => (tool.run)(s, &who, args).await,
         None => Err(ToolError::Arguments(
             "the arguments must be a JSON object".into(),

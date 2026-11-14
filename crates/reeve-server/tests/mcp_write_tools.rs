@@ -514,7 +514,7 @@ async fn the_thirty_first_write_call_in_ten_minutes_is_refused_with_a_time() {
     assert_eq!(
         refusal(h, &one, "create_story", good("l1")).await,
         format!(
-            "Too many changes: one person may make at most 30 calls to tools that change the planner in 10 minutes. Nothing was written. Try again in 600 seconds (at {} UTC).",
+            "Too many changes: one person may make at most 30 calls to tools that change the planner in 10 minutes. Nothing was written. Try again in 600 seconds (at {} UTC). Tell the person; do not call a tool that changes the planner again before then.",
             (h.state.clock.now() + chrono::Duration::minutes(10)).format("%H:%M:%S")
         )
     );
