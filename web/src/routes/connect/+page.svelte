@@ -96,7 +96,10 @@
 				<label><input type="radio" name="scope" value="write" bind:group={scope} /> Read and change: also create, edit, comment on and move stories as you</label>
 			</fieldset>
 			<ul>
-				<li>What the app reads is sent to its provider.</li>
+				<li>
+					What you read through this app is sent to the app's provider.
+					{#if request.privacy_url}<a href={request.privacy_url} target="_blank" rel="noopener noreferrer">Privacy statement</a>{/if}
+				</li>
 				<li>It can never override the readiness gate, issue tokens or change who has access.</li>
 				<li>The connection ends after 30 days, and you can revoke it at any time.</li>
 			</ul>
