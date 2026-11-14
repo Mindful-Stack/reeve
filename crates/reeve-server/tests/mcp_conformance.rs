@@ -5,11 +5,12 @@ mod common;
 use common::*;
 use rmcp::{
     ClientLifecycleMode, ClientServiceExt, ServiceExt,
-    model::ProtocolVersion,
+    model::{CallToolRequestParams, ProtocolVersion},
     transport::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
+use serde_json::json;
 
 /// The harness's router on a loopback port of its own; returns the endpoint's URL.
 async fn serve(h: &Harness) -> String {
@@ -78,4 +79,74 @@ async fn the_sdk_client_shakes_hands_and_lists_tools_over_2025_11_25() {
         vec!["get_story"]
     );
     client.cancel().await.unwrap();
+}
+
+/// A story created through the API as the admin; returns its key.
+async fn a_story(h: &Harness) -> String {
+    let epic = ready_epic(h, "conf-e1").await;
+    let (st, story) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        "/api/v1/stories",
+        Some(json!({"idempotency_key": "conf-s1", "title": "Booking", "kind": "story", "epic": epic, "criteria": ["works"], "labels": []})),
+    )
+    .await;
+    assert_eq!(st, 200, "{story}");
+    story["value"]["key"].as_str().unwrap().to_string()
+}
+
+fn get_story_call(key: &str) -> CallToolRequestParams {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("key".into(), json!(key));
+    CallToolRequestParams::new("get_story").with_arguments(arguments)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sdk_client_calls_get_story_in_both_revisions_and_gets_the_same_answer() {
+    let h = mcp_harness().await;
+    let token = issue_mcp_token(&h, "dan@example.com").await.secret;
+    let key = a_story(&h).await;
+    let url = serve(&h).await;
+
+    let modern = ()
+        .serve_with_lifecycle(
+            StreamableHttpClientTransport::from_config(config(&url, &token)),
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("server/discover is answered");
+    let over_modern = modern
+        .call_tool(get_story_call(&key))
+        .await
+        .expect("tools/call is answered");
+    modern.cancel().await.unwrap();
+
+    let legacy = ()
+        .serve(StreamableHttpClientTransport::from_config(config(
+            &url, &token,
+        )))
+        .await
+        .expect("initialize is answered");
+    let over_legacy = legacy
+        .call_tool(get_story_call(&key))
+        .await
+        .expect("tools/call is answered");
+    legacy.cancel().await.unwrap();
+
+    for result in [&over_modern, &over_legacy] {
+        assert_eq!(result.is_error, Some(false));
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("structuredContent");
+        assert_eq!(structured["story"]["key"], json!(key));
+        assert_eq!(structured["comments_omitted"], 0);
+    }
+    assert_eq!(
+        over_modern.structured_content,
+        over_legacy.structured_content
+    );
 }
