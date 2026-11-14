@@ -49,7 +49,10 @@ async fn the_sdk_client_discovers_and_lists_tools_over_2026_07_28() {
         .list_all_tools()
         .await
         .expect("tools/list is answered");
-    assert!(tools.is_empty());
+    assert_eq!(
+        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
+        vec!["get_story"]
+    );
     client.cancel().await.unwrap();
 }
 
@@ -70,6 +73,9 @@ async fn the_sdk_client_shakes_hands_and_lists_tools_over_2025_11_25() {
         .list_all_tools()
         .await
         .expect("tools/list is answered");
-    assert!(tools.is_empty());
+    assert_eq!(
+        tools.iter().map(|t| &*t.name).collect::<Vec<&str>>(),
+        vec!["get_story"]
+    );
     client.cancel().await.unwrap();
 }

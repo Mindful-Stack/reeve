@@ -148,7 +148,6 @@ impl Caller {
 
 /// The caller of the MCP endpoint (kb/ADR-0029 R6): an MCP token in the bearer header and nothing else. It never
 /// reads cookies. Not an extractor: the endpoint calls `from_headers` itself, after its switch and origin check.
-#[allow(dead_code)] // the fields are read once a tool acts for the caller (GRA-659)
 pub(crate) struct McpCaller {
     pub(crate) principal: McpPrincipal,
     /// The instant the request was authenticated; the clock is read once per request, here.
@@ -192,7 +191,6 @@ impl McpCaller {
     }
 
     /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5).
-    #[allow(dead_code)] // called once `tools/call` runs a tool (GRA-659)
     pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
         crate::actions::Acting::new(
             &self.principal.email,

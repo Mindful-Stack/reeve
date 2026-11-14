@@ -17,6 +17,7 @@ use axum::{
 use protocol::{Headers, Message, Revision, RpcError};
 use reeve_identity::AuthError;
 use serde_json::{Value, json};
+use tools::ToolError;
 
 /// The largest request body read (step 5). A raw `Request` gets no default body limit, so this is the only one.
 const MAX_BODY: usize = 1024 * 1024;
@@ -33,12 +34,17 @@ fn server_info() -> Value {
     json!({"name": "reeve", "version": env!("CARGO_PKG_VERSION")})
 }
 
-/// A 2026-07-28 result that a client may cache: `resultType`, the server's identity and the caching hints.
-/// `cacheScope` is `public` while every caller sees the same list; it becomes `private` once scopes filter it
-/// (GRA-658).
-fn modern(mut result: Value) -> Value {
+/// A 2026-07-28 result: `resultType` and the server's identity.
+fn complete(mut result: Value) -> Value {
     result["resultType"] = json!("complete");
     result["_meta"] = json!({"io.modelcontextprotocol/serverInfo": server_info()});
+    result
+}
+
+/// A 2026-07-28 result that a client may cache: a complete one with the caching hints. `cacheScope` is `public`
+/// while every caller sees the same list; it becomes `private` once scopes filter it (GRA-658).
+fn modern(result: Value) -> Value {
+    let mut result = complete(result);
     result["ttlMs"] = json!(TTL_MS);
     result["cacheScope"] = json!("public");
     result
@@ -104,19 +110,19 @@ impl IntoResponse for McpError {
                 "the request body could not be read",
             )
                 .into_response(),
-            McpError::Internal(e) => {
-                tracing::error!(error = ?e, "mcp: internal error");
-                rpc_error(
-                    &RpcError::new(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        protocol::INTERNAL_ERROR,
-                        "Internal error",
-                    ),
-                    None,
-                )
-            }
+            McpError::Internal(e) => rpc_error(&internal(e), None),
         }
     }
+}
+
+/// An internal error: logged at `error`, answered 500 and -32603 with no detail, in either revision.
+fn internal(e: anyhow::Error) -> RpcError {
+    tracing::error!(error = ?e, "mcp: internal error");
+    RpcError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        protocol::INTERNAL_ERROR,
+        "Internal error",
+    )
 }
 
 /// A JSON-RPC error response, with the request's id when one was read.
@@ -157,14 +163,14 @@ pub fn mcp_startup_line(config: &crate::ServerConfig) -> String {
         config.public_url(),
         protocol::MODERN,
         protocol::LEGACY,
-        tools::list().len()
+        tools::list(&config.key_prefix).len()
     )
 }
 
 /// `ANY /mcp`. The first failing step answers and stops.
 pub(crate) async fn handle(State(s): State<AppState>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let (_caller, bytes) = match admit(&s, &parts.method, &parts.headers, body).await {
+    let (caller, bytes) = match admit(&s, &parts.method, &parts.headers, body).await {
         Ok(admitted) => admitted,
         Err(e) => return e.into_response(),
     };
@@ -186,7 +192,11 @@ pub(crate) async fn handle(State(s): State<AppState>, req: Request) -> Response 
         }
         .into_response();
     };
-    match revision.and_then(|revision| answer(revision, &msg)) {
+    let outcome = match revision {
+        Ok(revision) => answer(&s, &caller, revision, &msg).await,
+        Err(e) => Err(e),
+    };
+    match outcome {
         // 12.
         Ok(result) => Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response(),
         Err(e) => rpc_error(&e, Some(id)),
@@ -262,7 +272,12 @@ fn protocol_headers(headers: &HeaderMap) -> Result<Headers<'_>, RpcError> {
 }
 
 /// Step 11 for one classified request: its result.
-fn answer(revision: Revision, msg: &Message) -> Result<Value, RpcError> {
+async fn answer(
+    s: &AppState,
+    caller: &McpCaller,
+    revision: Revision,
+    msg: &Message,
+) -> Result<Value, RpcError> {
     // 11. The methods of each revision; anything else is not implemented.
     match (revision, msg.method.as_str()) {
         (Revision::Modern, "server/discover") => Ok(modern(
@@ -276,12 +291,13 @@ fn answer(revision: Revision, msg: &Message) -> Result<Value, RpcError> {
         })),
         (Revision::Legacy, "ping") => Ok(json!({})),
         (_, "tools/list") => {
-            let result = json!({"tools": tools::list()});
+            let result = json!({"tools": tools::list(&s.config.key_prefix)});
             Ok(match revision {
                 Revision::Modern => modern(result),
                 Revision::Legacy => result,
             })
         }
+        (_, "tools/call") => call_tool(s, caller, revision, msg).await,
         // 2026-07-28 answers an unknown method with 404. 2025-11-25's transport keeps 404 for an expired session
         // and carries a JSON-RPC error in an ordinary answer.
         _ => Err(RpcError::new(
@@ -293,6 +309,71 @@ fn answer(revision: Revision, msg: &Message) -> Result<Value, RpcError> {
             format!("Method not found: {}", msg.method),
         )),
     }
+}
+
+/// `tools/call`: look the tool up, run it, and shape its outcome. An unknown tool and a call without a name are
+/// protocol errors (-32602); a failure the model can act on is a result with `isError: true`.
+async fn call_tool(
+    s: &AppState,
+    caller: &McpCaller,
+    revision: Revision,
+    msg: &Message,
+) -> Result<Value, RpcError> {
+    // 400 in 2026-07-28; 2025-11-25 carries a JSON-RPC error in an ordinary answer, as for an unknown method.
+    let invalid = |message: String| {
+        RpcError::new(
+            match revision {
+                Revision::Modern => StatusCode::BAD_REQUEST,
+                Revision::Legacy => StatusCode::OK,
+            },
+            protocol::INVALID_PARAMS,
+            message,
+        )
+    };
+    let Some(name) = msg.params.get("name").and_then(Value::as_str) else {
+        return Err(invalid(
+            "Invalid params: tools/call requires params.name".into(),
+        ));
+    };
+    let registry = tools::registry(&s.config.key_prefix);
+    let Some(tool) = registry.iter().find(|t| t.name == name) else {
+        return Err(invalid(format!("Unknown tool: {name}")));
+    };
+    // `arguments` may be left out (no arguments); when present it must be a JSON object.
+    let args = msg
+        .params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let who = caller.acting();
+    let outcome = if args.is_object() {
+        (tool.run)(s, &who, args).await
+    } else {
+        Err(ToolError::Arguments(
+            "the arguments must be a JSON object".into(),
+        ))
+    };
+    let failure =
+        |message: String| json!({"content": [{"type": "text", "text": message}], "isError": true});
+    let result = match outcome {
+        Ok(value) => json!({
+            "content": [{"type": "text", "text": value.to_string()}],
+            "structuredContent": value,
+            "isError": false
+        }),
+        // The schema is the one `tools/list` shows, with this instance's example, so the model can correct itself.
+        Err(ToolError::Arguments(message)) => failure(format!(
+            "Invalid arguments: {message}. The arguments must match this schema: {}",
+            tool.input_schema
+        )),
+        Err(ToolError::Told(message)) => failure(message),
+        Err(ToolError::Internal(e)) => return Err(internal(e)),
+    };
+    // Not cacheable: no `ttlMs`, no `cacheScope`.
+    Ok(match revision {
+        Revision::Modern => complete(result),
+        Revision::Legacy => result,
+    })
 }
 
 #[cfg(test)]
@@ -308,7 +389,7 @@ mod tests {
         let on = crate::ServerConfig::parse(&format!("{BASE}[mcp]\nenabled = true\n")).unwrap();
         assert_eq!(
             mcp_startup_line(&on),
-            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 0 tools)"
+            "mcp endpoint enabled at https://reeve.example.com/mcp (protocol 2026-07-28 and 2025-11-25, 1 tools)"
         );
     }
 }
