@@ -15,7 +15,7 @@ mod story_context;
 
 use crate::state::AppState;
 use chrono::{DateTime, Utc};
-pub(crate) use epics::get_epic;
+pub(crate) use epics::{EpicQuery, get_epic, list_epics};
 pub(crate) use initiatives::get_initiative;
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Role, Via};
@@ -70,5 +70,39 @@ pub(crate) fn browse(s: &AppState, dto: &mut RequiredDecisionDto) {
                 .join("/");
             format!("{base}/blob/HEAD/{path}")
         });
+    }
+}
+
+/// An optional key input (a parent, a filter, `before`) resolved through `Handlers::resolve_ref`.
+pub(crate) async fn resolve_opt(
+    h: &reeve_planning::Handlers,
+    r: Option<&reeve_protocol::KeyRef>,
+    item: reeve_protocol::ItemType,
+) -> Result<Option<reeve_protocol::Key>, reeve_planning::HandlerError> {
+    match r {
+        Some(r) => Ok(Some(h.resolve_ref(r.as_str(), item).await?)),
+        None => Ok(None),
+    }
+}
+
+/// A list filter naming an item. A filter is a query, not an address: a reference that matches nothing (an external
+/// reference not imported yet) selects nothing, exactly as an unknown instance key does, so it is `Nothing` (200, empty
+/// list) and not `NotFound`. Path parameters and body fields keep 404, where naming a missing item is an error.
+pub(crate) enum FilterRef {
+    Unset,
+    Is(reeve_protocol::Key),
+    Nothing,
+}
+
+pub(crate) async fn resolve_filter(
+    h: &reeve_planning::Handlers,
+    r: Option<&reeve_protocol::KeyRef>,
+    item: reeve_protocol::ItemType,
+) -> Result<FilterRef, reeve_planning::HandlerError> {
+    match resolve_opt(h, r, item).await {
+        Ok(Some(k)) => Ok(FilterRef::Is(k)),
+        Ok(None) => Ok(FilterRef::Unset),
+        Err(reeve_planning::HandlerError::NotFound) => Ok(FilterRef::Nothing),
+        Err(e) => Err(e),
     }
 }

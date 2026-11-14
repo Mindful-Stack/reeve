@@ -5,10 +5,12 @@ mod bound;
 mod get_epic;
 mod get_initiative;
 mod get_story;
+mod list_epics;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState};
 use futures_util::future::BoxFuture;
+use reeve_protocol::KeyRef;
 use serde_json::{Value, json};
 
 /// The sentence every tool that returns people's text ends its description with. It lowers the exposure to
@@ -71,6 +73,7 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
     vec![
         search_items::tool(key_prefix),
         get_story::tool(key_prefix),
+        list_epics::tool(),
         get_epic::tool(key_prefix),
         get_initiative::tool(key_prefix),
     ]
@@ -142,6 +145,20 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
         bound::cut(&mut message, bound::MAX_OTHER_TEXT);
         ToolError::Arguments(message)
     })
+}
+
+/// A key argument as the route takes it: a key of this instance or an external reference. `name` is the property,
+/// so the message says which argument does not fit and what it accepts.
+fn key_ref(name: &str, raw: Option<String>, key_prefix: &str) -> Result<Option<KeyRef>, ToolError> {
+    raw.map(|text| {
+        text.parse::<KeyRef>().map_err(|_| {
+            ToolError::Told(format!(
+                "{name} must be a key such as {key_prefix}-12, not {:?}.",
+                bound::echo(&text)
+            ))
+        })
+    })
+    .transpose()
 }
 
 /// What an action failed with, as the model reads it: everything the planner said (not found, a validation error, a
@@ -260,6 +277,24 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn a_key_argument_is_the_route_s_key_or_a_message_that_names_the_property() {
+        assert!(key_ref("epic", None, "TST").is_ok_and(|k| k.is_none()));
+        assert!(
+            key_ref("epic", Some("TST-12".into()), "TST")
+                .is_ok_and(|k| k.is_some_and(|k| k.as_str() == "TST-12"))
+        );
+        // An external reference is accepted, as the route accepts it.
+        assert!(key_ref("epic", Some("SCRUM-11".into()), "TST").is_ok_and(|k| k.is_some()));
+        match key_ref("initiative", Some("bookings".into()), "TST") {
+            Err(ToolError::Told(message)) => assert_eq!(
+                message,
+                "initiative must be a key such as TST-12, not \"bookings\"."
+            ),
+            _ => panic!("text that is not a key was not told to the model"),
+        }
     }
 
     #[test]

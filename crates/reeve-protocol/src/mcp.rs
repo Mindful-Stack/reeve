@@ -2,7 +2,9 @@
 //! type, and its `inputSchema` is generated from that type; so an input type is flat (or uses `#[schema(inline)]`,
 //! never a reference to another schema) and refuses unknown fields.
 use crate::context::StoryContextDto;
-use crate::items::SearchHit;
+use crate::ids::Key;
+use crate::items::{EpicDto, SearchHit};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -49,6 +51,50 @@ pub struct GetEpicInput {
     pub key: String,
 }
 
+/// One epic in a list: what tells epics apart, without the brief or the nested marks. It carries the key, to read
+/// the epic whole with `get_epic`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EpicSummary {
+    pub key: Key,
+    pub title: String,
+    pub initiative: Option<Key>,
+    pub version: i64,
+    /// Whether the epic's discovery is marked complete.
+    pub discovery_complete: bool,
+    /// The date the epic is promised by, when it is.
+    pub promised_on: Option<NaiveDate>,
+}
+
+impl From<EpicDto> for EpicSummary {
+    fn from(epic: EpicDto) -> Self {
+        Self {
+            key: epic.key,
+            title: epic.title,
+            initiative: epic.initiative,
+            version: epic.version,
+            discovery_complete: epic.discovery_complete.is_some(),
+            promised_on: epic.promise.map(|promise| promise.fact.on),
+        }
+    }
+}
+
+/// `list_epics`: the epics, of one initiative when given (`reeve epic ls`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListEpicsInput {
+    /// Only the epics of this initiative: its key. A key that names nothing lists nothing.
+    pub initiative: Option<String>,
+}
+
+/// What `list_epics` answers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ListEpicsResult {
+    /// At most 200 epics, oldest first.
+    pub epics: Vec<EpicSummary>,
+    /// How many more epics there are than `epics` lists, left out to keep the answer small; 0 when all are listed.
+    pub omitted: usize,
+}
+
 /// `get_initiative`: read one initiative by key (`reeve initiative show <KEY>`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -76,5 +122,41 @@ mod tests {
                 .to_string();
             assert!(e.contains(names), "{e}");
         }
+    }
+
+    /// The summary's field names and derivations, pinned as literal JSON: a renamed field or a wrong derivation
+    /// changes what every chat reads.
+    #[test]
+    fn an_epic_summary_is_these_six_fields() {
+        let epic: EpicDto = serde_json::from_value(json!({
+            "key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "brief": "A long brief.",
+            "discovery_complete": {"at": "2026-11-01T10:00:00Z", "by": "dan@example.com"},
+            "external_ref": "JPD-7", "version": 3, "urgent_mark": null, "urgent_sources": [],
+            "promise": {
+                "fact": {"on": "2026-12-24", "by": "dan@example.com", "at": "2026-11-02T09:00:00Z", "to": null},
+                "due": "later", "past": false
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(EpicSummary::from(epic)).unwrap(),
+            json!({
+                "key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "version": 3,
+                "discovery_complete": true, "promised_on": "2026-12-24"
+            })
+        );
+        // Neither derived field is a constant: no mark and no promise read as false and null.
+        let bare: EpicDto = serde_json::from_value(json!({
+            "key": "TST-3", "title": "Loose ends", "initiative": null, "brief": "",
+            "discovery_complete": null, "external_ref": null, "version": 1
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(EpicSummary::from(bare)).unwrap(),
+            json!({
+                "key": "TST-3", "title": "Loose ends", "initiative": null, "version": 1,
+                "discovery_complete": false, "promised_on": null
+            })
+        );
     }
 }

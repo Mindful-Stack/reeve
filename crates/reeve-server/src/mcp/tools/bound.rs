@@ -14,6 +14,9 @@ pub(super) const MAX_OWN_TEXT: usize = 10_000;
 pub(super) const MAX_OTHER_TEXT: usize = 2_000;
 /// How many of a list that grows without limit (a story's comments) are sent: the most recent ones.
 pub(super) const MAX_RECENT: usize = 20;
+/// How many rows of a list of summaries that is not paged (epics, initiatives) are sent: the first ones, in the
+/// list's own order.
+pub(super) const MAX_LIST: usize = 200;
 /// The budget for a list's rows: their serialized size in bytes. Twice this, with the envelope, stays well under a
 /// client's limit.
 pub(super) const MAX_ANSWER: usize = 60_000;
@@ -42,6 +45,14 @@ pub(super) fn echo(text: &str) -> String {
 pub(super) fn most_recent<T>(items: &mut Vec<T>, keep: usize) -> usize {
     let omitted = items.len().saturating_sub(keep);
     items.drain(..omitted);
+    omitted
+}
+
+/// Keeps the first `keep` of `items` and returns how many were left out (0 when all fit). `keep` is `MAX_LIST` for
+/// summaries and `MAX_WHOLE_LIST` for whole items.
+pub(super) fn capped<T>(items: &mut Vec<T>, keep: usize) -> usize {
+    let omitted = items.len().saturating_sub(keep);
+    items.truncate(keep);
     omitted
 }
 
@@ -175,6 +186,20 @@ mod tests {
 
         let mut none: Vec<String> = Vec::new();
         assert_eq!(fit(&mut none, 0), 0);
+    }
+
+    #[test]
+    fn the_first_are_kept_and_the_rest_counted() {
+        // Exactly the cap: all kept, none left out.
+        let mut at_the_cap: Vec<usize> = (1..=MAX_LIST).collect();
+        assert_eq!(capped(&mut at_the_cap, MAX_LIST), 0);
+        assert_eq!(at_the_cap.len(), MAX_LIST);
+        // One more: the last is dropped and counted, the rest keep their order.
+        let mut one_over: Vec<usize> = (1..=MAX_LIST + 1).collect();
+        assert_eq!(capped(&mut one_over, MAX_LIST), 1);
+        assert_eq!(one_over, (1..=MAX_LIST).collect::<Vec<_>>());
+        let mut none: Vec<usize> = Vec::new();
+        assert_eq!(capped(&mut none, MAX_LIST), 0);
     }
 
     #[test]

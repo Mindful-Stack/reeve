@@ -1,4 +1,5 @@
-//! Wire types for the Reeve planner API. No behaviour beyond key parsing.
+//! Wire types for the Reeve planner API and its MCP tools. No behaviour beyond key parsing and the conversion of a
+//! DTO into its summary (`mcp.rs`).
 pub mod activity;
 pub mod attachments;
 pub mod context;

@@ -1,4 +1,5 @@
 use crate::{
+    actions::EpicQuery,
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
@@ -6,15 +7,7 @@ use crate::{
 };
 use axum::{Json, extract::State};
 use reeve_protocol::*;
-use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
-
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct EpicQuery {
-    /// An initiative key or external reference. A reference that matches nothing yields an empty list, not 404.
-    pub initiative: Option<KeyRef>,
-}
 
 #[utoipa::path(get, path = "/epics", params(EpicQuery), responses((status = 200, body = Response<Vec<EpicDto>>)))]
 async fn list(
@@ -22,18 +15,7 @@ async fn list(
     c: Caller,
     ApiQuery(q): ApiQuery<EpicQuery>,
 ) -> Result<Json<Response<Vec<EpicDto>>>, AppError> {
-    let initiative =
-        match super::resolve_filter(&s.handlers, q.initiative.as_ref(), ItemType::Initiative)
-            .await?
-        {
-            super::FilterRef::Nothing => return Ok(ok(Vec::new())),
-            super::FilterRef::Is(k) => Some(k),
-            super::FilterRef::Unset => None,
-        };
-    Ok(ok(s
-        .handlers
-        .epic_dtos(initiative.as_ref(), c.ctx().now)
-        .await?))
+    Ok(ok(crate::actions::list_epics(&s, &c.acting(), &q).await?))
 }
 #[utoipa::path(post, path = "/epics", request_body = CreateEpic, responses((status = 200, body = Response<EpicDto>)))]
 async fn create(

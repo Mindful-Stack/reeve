@@ -325,3 +325,75 @@ async fn get_initiative_answers_the_route_s_initiative_with_a_long_brief_cut() {
         "No initiative with key TST-999999. Keys look like TST-123."
     );
 }
+
+/// An epic as `list_epics` summarises it, written out from the API's JSON by hand, not through
+/// `EpicSummary::from`: mapping both sides through the conversion would compare it with itself.
+fn epic_summary(epic: &Value) -> Value {
+    json!({
+        "key": epic["key"],
+        "title": epic["title"],
+        "initiative": epic["initiative"],
+        "version": epic["version"],
+        "discovery_complete": epic["discovery_complete"].is_object(),
+        "promised_on": epic["promise"]["fact"]["on"],
+    })
+}
+
+#[tokio::test]
+async fn list_epics_answers_the_route_s_epics_as_summaries() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    // A third epic whose discovery is not complete, and a promise on the first: the summary's two derived fields
+    // then differ between rows.
+    let undiscovered = key(&post(
+        &h,
+        "/api/v1/epics",
+        json!({"idempotency_key": "rt-e4", "title": "Not looked into"}),
+    )
+    .await);
+    let in_a_week = chrono::Utc::now().date_naive() + chrono::Days::new(7);
+    post(
+        &h,
+        &format!("/api/v1/epics/{}/promise", s.epic),
+        json!({"on": in_a_week}),
+    )
+    .await;
+
+    let all = api(&h, &h.victim_token, "/api/v1/epics").await;
+    let keys: Vec<String> = all.as_array().unwrap().iter().map(key).collect();
+    assert_eq!(
+        keys,
+        vec![s.epic.clone(), s.loose_epic.clone(), undiscovered],
+        "the control: three epics, oldest first"
+    );
+    let summaries: Vec<Value> = all.as_array().unwrap().iter().map(epic_summary).collect();
+    let got = answer(&h, &bob, "list_epics", json!({})).await;
+    assert_eq!(got, json!({"epics": summaries, "omitted": 0}));
+    // The two derived fields differ between rows.
+    assert_eq!(got["epics"][0]["discovery_complete"], true);
+    assert_eq!(got["epics"][0]["promised_on"], json!(in_a_week));
+    assert_eq!(got["epics"][2]["discovery_complete"], false);
+    assert!(got["epics"][2]["promised_on"].is_null());
+
+    let of_initiative = api(
+        &h,
+        &h.victim_token,
+        &format!("/api/v1/epics?initiative={}", s.initiative),
+    )
+    .await;
+    assert_eq!(of_initiative.as_array().unwrap().len(), 1, "the control");
+    assert_eq!(
+        answer(&h, &bob, "list_epics", json!({"initiative": s.initiative})).await,
+        json!({"epics": [epic_summary(&of_initiative[0])], "omitted": 0})
+    );
+    // A key that names nothing lists nothing, as for the route; text that is no key is said to be none.
+    assert_eq!(
+        answer(&h, &bob, "list_epics", json!({"initiative": "TST-999999"})).await,
+        json!({"epics": [], "omitted": 0})
+    );
+    assert_eq!(
+        refusal(&h, &bob, "list_epics", json!({"initiative": "bookings"})).await,
+        "initiative must be a key such as TST-12, not \"bookings\"."
+    );
+}
