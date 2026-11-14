@@ -3,8 +3,11 @@
 //! `Accept` is ignored. The handler takes the raw request and runs its checks itself, in the numbered order below:
 //! an extractor argument would run before the switch and the origin check. A failure before the message is parsed
 //! is an `McpError`, one after it an `RpcError`; neither is ever an `AppError` (which renders the API's envelope).
+mod limit;
 mod protocol;
 mod tools;
+
+pub(crate) use limit::WriteLimit;
 
 use crate::{auth::McpCaller, state::AppState};
 use axum::{
@@ -408,12 +411,20 @@ async fn call_tool(
         .cloned()
         .unwrap_or_else(|| json!({}));
     let who = caller.acting();
-    let outcome = if args.is_object() {
-        (tool.run)(s, &who, args).await
+    // The limit on writes, after the scope and before the arguments: a refused call and a repeat count too.
+    let over = if tool.annotations.read_only {
+        None
     } else {
-        Err(ToolError::Arguments(
+        s.mcp_writes
+            .reserve(&caller.principal.email, caller.now)
+            .err()
+    };
+    let outcome = match over {
+        Some(again) => Err(ToolError::Told(limit::told(again, caller.now))),
+        None if args.is_object() => (tool.run)(s, &who, args).await,
+        None => Err(ToolError::Arguments(
             "the arguments must be a JSON object".into(),
-        ))
+        )),
     };
     let failure =
         |message: String| json!({"content": [{"type": "text", "text": message}], "isError": true});
