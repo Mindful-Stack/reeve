@@ -20,7 +20,8 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "get_epic",
         title: "Read an epic",
         description: format!(
-            "Read one epic by key (for example {key_prefix}-20): its title, brief, the initiative it belongs to, whether its discovery is complete (stories under an epic still in discovery are not ready), its promise if it has one, whether it is urgent, and its version. Use it when the person asks what an epic is about or why its stories are held. Its stories are not included: list them with list_stories and `epic`. Read-only. {}",
+            "Read one epic by key (for example {key_prefix}-20): its title, brief, the initiative it belongs to, whether its discovery is complete (stories under an epic still in discovery are not ready), its promise if it has one, whether it is urgent, and its version. Use it when the person asks what an epic is about or why its stories are held. Its stories are not included: list them with list_stories and `epic`. {} Read-only. {}",
+            super::CUT_TEXT,
             super::PEOPLES_TEXT
         ),
         input_schema,

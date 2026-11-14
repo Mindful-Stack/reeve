@@ -22,7 +22,8 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "get_story",
         title: "Read a story",
         description: format!(
-            "Read one story by key (for example {key_prefix}-596): its description, acceptance criteria, readiness and why it is not ready, blockers, required decisions, sprint goals, epic, initiative and its most recent comments. Read-only. {}",
+            "Read one story by key (for example {key_prefix}-596): its description, acceptance criteria, readiness and why it is not ready, blockers, required decisions, sprint goals, epic, initiative and its most recent comments. `comments_omitted` is the number of older comments left out. {} Read-only. {}",
+            super::CUT_TEXT,
             super::PEOPLES_TEXT
         ),
         input_schema,

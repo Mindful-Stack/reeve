@@ -21,7 +21,8 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "get_initiative",
         title: "Read an initiative",
         description: format!(
-            "Read one initiative by key (for example {key_prefix}-12): its title, brief, horizon, target month, owner, progress (the share of its stories completed, of those not dropped: 0 to 1, or null when nothing counts yet), whether its discovery is complete, whether it is urgent, and its version. Use it when the person asks what an initiative is for or how far along it is. Its epics are not included: list them with list_epics and `initiative`. Read-only. {}",
+            "Read one initiative by key (for example {key_prefix}-12): its title, brief, horizon, target month, owner, progress (the share of its stories completed, of those not dropped: 0 to 1, or null when nothing counts yet), whether its discovery is complete, whether it is urgent, and its version. Use it when the person asks what an initiative is for or how far along it is. Its epics are not included: list them with list_epics and `initiative`. {} Read-only. {}",
+            super::CUT_TEXT,
             super::PEOPLES_TEXT
         ),
         input_schema,

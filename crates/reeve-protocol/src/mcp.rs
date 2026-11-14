@@ -43,7 +43,7 @@ pub struct SearchItemsInput {
 pub struct SearchItemsResult {
     /// At most 50 hits, best match first.
     pub hits: Vec<SearchHit>,
-    /// How many more hits were found than `hits` lists, left out to keep the answer small; 0 when all are listed.
+    /// How many of the at most 50 hits were left out to keep the answer small.
     pub omitted: usize,
 }
 
@@ -79,7 +79,8 @@ pub struct StorySummary {
     pub reasons: Vec<Reason>,
     /// Whether the story is shown as urgent, through its own mark or its epic's or initiative's.
     pub urgent: bool,
-    /// The date the story is promised by (its own promise or the one it inherits from its epic), when it is.
+    /// The date the story is promised by (its own promise or the one it inherits from its epic), whatever the
+    /// promise's state: kept, late and dropped ones included. The `promised` filter selects the open or overdue.
     pub promised_on: Option<NaiveDate>,
 }
 
@@ -107,8 +108,9 @@ impl From<StoryWithReadiness> for StorySummary {
     }
 }
 
-/// `list_stories`: one page of the story list, filtered (`reeve story ls`). There is no `sort`: the answer is in
-/// backlog order.
+// `list_stories` (`reeve story ls`). There is no `sort`: the answer is in backlog order. The doc comment is the
+// schema's root description.
+/// One page of the story list, filtered.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListStoriesInput {
@@ -261,7 +263,8 @@ pub struct GetInitiativeInput {
     pub key: String,
 }
 
-/// `list_decisions`: required decisions (`reeve decision ls`). Not the queue view.
+// `list_decisions` (`reeve decision ls`, without `--queue`). The doc comment is the schema's root description.
+/// Required decisions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListDecisionsInput {
@@ -287,7 +290,7 @@ pub struct ListDecisionsResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetSprintInput {
-    /// The sprint's id. Left out: the current sprint, which is the active one, or the draft being planned when none is active.
+    /// The sprint's id. Left out: the current sprint, which is the active one, or the draft being planned when none is active. No tool lists earlier sprints: ask the person for the id.
     pub id: Option<i64>,
 }
 

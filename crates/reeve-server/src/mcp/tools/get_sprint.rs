@@ -14,7 +14,8 @@ pub(super) fn tool() -> Tool {
         name: "get_sprint",
         title: "Read a sprint",
         description: format!(
-            "Read one sprint: its state and dates, its goals (the outcome, how the team will know, the owner, the confidence recorded and the verdict once closed, and the items linked to each), the counts of work completed, in flight, in review and still to do per goal, the stories completed in its last seven days (the demo list), and the promises that fall due in it. Without `id` it reads the current sprint: the active one, or the draft being planned when none is active. Use it for how the sprint is going, what its goals are, or what is promised in it; list the stories serving its goals with list_stories and `goal`. For a closed sprint the counts are as of now, not as of its close. Read-only. {}",
+            "Read one sprint: its state and dates, its goals (the outcome, how the team will know, the owner, the confidence recorded and the verdict once closed, and the items linked to each), the counts of work completed, in flight, in review and still to do per goal, the stories completed in its last seven days (the demo list), and the promises that fall due in it. Without `id` it reads the current sprint: the active one, or the draft being planned when none is active. Use it for how the sprint is going, what its goals are, or what is promised in it; list the stories serving its goals with list_stories and `goal`. For a closed sprint the counts are as of now, not as of its close. {} Read-only. {}",
+            super::CUT_TEXT,
             super::PEOPLES_TEXT
         ),
         input_schema: super::input_schema::<GetSprintInput>(),
