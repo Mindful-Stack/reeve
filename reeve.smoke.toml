@@ -12,3 +12,10 @@ admins = ["smoke@example.com"]
 [oidc]
 provider = "static"
 static_email = "smoke@example.com"
+
+# MCP sign-in (kb/ADR-0029). The static provider admits a client on loopback and an http loopback redirect address;
+# the smoke's stand-in for an app listens on 127.0.0.1:7477 (web/tests/smoke.spec.ts).
+[mcp]
+enabled = true
+redirect_uris = ["http://127.0.0.1:7477/callback"]
+client_hosts = ["127.0.0.1"]

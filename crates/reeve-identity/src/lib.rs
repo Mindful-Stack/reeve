@@ -2,6 +2,7 @@
 mod access;
 mod access_handler;
 mod access_repo;
+mod authorization;
 mod client_fetch;
 mod clients;
 mod domain;
@@ -19,6 +20,11 @@ pub use access::{
 };
 pub use access_handler::{allow_entry, grant_admin, remove_entry, revoke_admin};
 pub use access_repo::{AccessStore, make_access_store};
+pub use authorization::{
+    AuthorizationRequests, CodeChallenge, CodeGrant, MAX_AUTHORIZATION_REQUESTS, REQUEST_MINUTES,
+    RedeemRefusal, RequestView, RequestsFull, ReturnAddress, approve_request, read_request,
+    refuse_request,
+};
 pub use client_fetch::make_client_fetcher;
 #[cfg(feature = "static-oidc")]
 pub use client_fetch::make_loopback_client_fetcher;
@@ -42,6 +48,7 @@ pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]
 pub use oidc::{GoogleOidcTestOptions, TestClock, make_google_oidc_for_tests, make_static_oidc};
 pub use ports::{IdentityActivity, IdentityEvent};
+pub use reeve_protocol::Scope;
 pub use reeve_protocol::Via;
 pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};
 pub fn migrator() -> sqlx::migrate::Migrator {

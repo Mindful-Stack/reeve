@@ -3,13 +3,13 @@
 //! the API's envelope. The `[mcp]` switch is inside each handler: off, each answers 404. `[mcp] enabled` loads only
 //! together with `[oidc]` (`ServerConfig::validate`), so an instance without sign-in answers 404 here as well.
 //!
-//! This file holds the two metadata documents. The authorization server's document names `/oauth/authorize`
-//! (GRA-657) and `/oauth/token` (GRA-658); those routes are added to `router()` by those stories.
+//! This file holds the two metadata documents and what the OAuth routes share. `/oauth/authorize` is in
+//! `authorize.rs`; `/oauth/token` (GRA-658) is added to `router()` by that story.
 use crate::{config::ServerConfig, state::AppState};
 use axum::{
     Json, Router,
     extract::State,
-    http::{Method, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::any,
 };
@@ -34,6 +34,111 @@ pub(crate) fn resource(config: &ServerConfig) -> String {
 /// The address of the protected resource's document: what the 401 from `/mcp` names (RFC 9728 section 5.1).
 pub(crate) fn resource_metadata_url(config: &ServerConfig) -> String {
     format!("{}{PROTECTED_RESOURCE_PATH}", config.issuer())
+}
+
+/// The parameters of an OAuth request, from a query or a form body, decoded strictly.
+pub(crate) struct Params(Vec<(String, String)>);
+
+/// A percent escape that is not two hex digits, or a name or value that is not UTF-8 once decoded.
+#[derive(Debug)]
+pub(crate) struct Malformed;
+
+/// The value of one hex digit; `None` for any other byte.
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// `application/x-www-form-urlencoded` decoding of one name or value: `+` is a space, `%XX` a byte.
+fn decode(raw: &str) -> Result<String, Malformed> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                let digit = |at: usize| bytes.get(at).copied().and_then(hex_digit).ok_or(Malformed);
+                out.push(digit(i + 1)? * 16 + digit(i + 2)?);
+                i += 2;
+            }
+            byte => out.push(byte),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).map_err(|_| Malformed)
+}
+
+impl Params {
+    /// Every `name=value` pair of `text`, in the order sent. Fails as a whole on anything malformed: nothing of
+    /// such a request is trusted.
+    pub(crate) fn parse(text: &str) -> Result<Self, Malformed> {
+        text.split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                Ok((decode(name)?, decode(value)?))
+            })
+            .collect::<Result<Vec<_>, Malformed>>()
+            .map(Self)
+    }
+
+    /// The first of `recognised` that was sent more than once (RFC 6749 section 3.1: "MUST NOT be included more
+    /// than once"). A route asks this for every parameter it knows before it reads any value. A parameter it
+    /// does not know may repeat: it is ignored.
+    pub(crate) fn repeated(&self, recognised: &[&'static str]) -> Option<&'static str> {
+        recognised
+            .iter()
+            .copied()
+            .find(|name| self.0.iter().filter(|(k, _)| k == name).count() > 1)
+    }
+
+    /// The value of `name`; `None` when it is absent or sent without a value (RFC 6749 section 3.1:
+    /// "Parameters sent without a value MUST be treated as if they were omitted").
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+            .filter(|v| !v.is_empty())
+    }
+}
+
+/// An authorization response: the client's validated redirect address with `answer`, then `state` when the
+/// client sent one, then `iss` (RFC 9207 section 2: on every authorization response, errors included). A query
+/// the address already has is kept (RFC 6749 section 3.1).
+pub(crate) fn answer_address(
+    redirect_uri: &str,
+    answer: &[(&str, &str)],
+    state: Option<&str>,
+    issuer: &str,
+) -> String {
+    let mut url = url::Url::parse(redirect_uri)
+        .expect("a validated redirect address is a URL ([mcp] redirect_uris is validated at load)");
+    {
+        let mut query = url.query_pairs_mut();
+        for (name, value) in answer {
+            query.append_pair(name, value);
+        }
+        if let Some(state) = state {
+            query.append_pair("state", state);
+        }
+        query.append_pair("iss", issuer);
+    }
+    url.into()
+}
+
+/// Marks an answer of the sign-in routes as one no cache may store (RFC 6749 section 5.1 for tokens; the same
+/// for a code, an approval value and the redirects that carry them).
+pub(crate) fn no_store(mut res: Response) -> Response {
+    let headers = res.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    res
 }
 
 fn protected_resource(config: &ServerConfig) -> Value {
@@ -91,8 +196,81 @@ async fn authorization_server_metadata(State(s): State<AppState>, method: Method
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route(PROTECTED_RESOURCE_PATH, any(protected_resource_metadata))
+        .route(AUTHORIZE_PATH, any(super::authorize::authorize))
         .route(
             AUTHORIZATION_SERVER_PATH,
             any(authorization_server_metadata),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Catches a repeated parameter read as its first value, an empty one read as present, a value that is not
+    /// decoded, and a malformed or non-UTF-8 escape accepted (the standard decoder replaces such bytes silently).
+    #[test]
+    fn parameters_are_decoded_strictly_and_counted() {
+        let p = Params::parse("a=1&b=&a=2&c=x%20y+z&d&e=%C3%A9&f=1&f=").unwrap();
+        assert_eq!(p.repeated(&["b", "a", "f"]), Some("a"));
+        assert_eq!(
+            p.repeated(&["f", "a"]),
+            Some("f"),
+            "an empty second value still repeats"
+        );
+        assert_eq!(p.repeated(&["b", "c", "missing"]), None);
+        assert_eq!(
+            (
+                p.get("a"),
+                p.get("b"),
+                p.get("c"),
+                p.get("d"),
+                p.get("e"),
+                p.get("missing")
+            ),
+            (Some("1"), None, Some("x y z"), None, Some("é"), None)
+        );
+        assert!(Params::parse("").unwrap().get("a").is_none());
+        for bad in ["a=%", "a=%2", "a=%zz", "a=%+1", "a=%ff", "%ff=1", "a=%C3"] {
+            assert!(Params::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// Read back by parsing, not by comparing text. Catches an answer that drops the address's own query, one
+    /// that does not encode a value (a `&` in `state` would add a parameter), and a missing `iss`.
+    #[test]
+    fn an_answer_keeps_the_address_and_adds_state_and_iss() {
+        let to = answer_address(
+            "https://client.example/cb?keep=1",
+            &[("code", "a b&c=d")],
+            Some("s&iss=https://evil.example"),
+            "https://reeve.example.com",
+        );
+        let url = url::Url::parse(&to).unwrap();
+        assert_eq!(
+            (url.scheme(), url.host_str(), url.path()),
+            ("https", Some("client.example"), "/cb")
+        );
+        let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        let expected = [
+            ("keep", "1"),
+            ("code", "a b&c=d"),
+            ("state", "s&iss=https://evil.example"),
+            ("iss", "https://reeve.example.com"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+        assert_eq!(pairs, expected);
+        let bare = answer_address(
+            "https://client.example/cb",
+            &[("error", "access_denied")],
+            None,
+            "https://reeve.example.com",
+        );
+        let names: Vec<String> = url::Url::parse(&bare)
+            .unwrap()
+            .query_pairs()
+            .map(|(k, _)| k.into_owned())
+            .collect();
+        assert_eq!(names, ["error", "iss"]);
+    }
 }

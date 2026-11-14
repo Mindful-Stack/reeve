@@ -155,6 +155,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/connection-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["read"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/connection-requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/connection-requests/{id}/refuse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["refuse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/decisions": {
         parameters: {
             query?: never;
@@ -1293,6 +1341,10 @@ export interface components {
             initiatives?: components["schemas"]["PlanInitiative"][];
             stories?: components["schemas"]["PlanStory"][];
         };
+        ApproveConnection: {
+            approval: string;
+            scope: components["schemas"]["Scope"];
+        };
         AttachmentDto: {
             /** Format: int64 */
             byte_size: number;
@@ -1379,6 +1431,25 @@ export interface components {
         };
         /** @enum {string} */
         Confidence: "on_track" | "at_risk" | "off_track";
+        /** @description Where the page sends the browser once the request is answered: the app's redirect address with the answer. */
+        ConnectionAnswerDto: {
+            redirect_to: string;
+        };
+        /** @description A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4). */
+        ConnectionRequestDto: {
+            /** @description The one-time value an answer must carry. A later read of the same request replaces it. */
+            approval: string;
+            /** @description The host of the app's client id: what the person is shown as the app's identity. */
+            client_host: string;
+            /** @description The name the app gives itself: a secondary label, shown as text. */
+            client_name: string;
+            /** @description The signed-in person who would approve. */
+            email: string;
+            /** @description The host the person is sent back to. */
+            redirect_host: string;
+            /** Format: date-time */
+            requested_at: string;
+        };
         CreateEpic: {
             /**
              * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
@@ -2251,6 +2322,9 @@ export interface components {
             record_id: string;
             repo: string;
         };
+        RefuseConnection: {
+            approval: string;
+        };
         RequireDecision: {
             decider: string;
             /** Format: date */
@@ -2333,6 +2407,75 @@ export interface components {
                 uploaded_by: string;
                 /** @description Where the image is served; the one source of its path. */
                 url: string;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_ConnectionAnswerDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description Where the page sends the browser once the request is answered: the app's redirect address with the answer. */
+            value: {
+                redirect_to: string;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_ConnectionRequestDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4). */
+            value: {
+                /** @description The one-time value an answer must carry. A later read of the same request replaces it. */
+                approval: string;
+                /** @description The host of the app's client id: what the person is shown as the app's identity. */
+                client_host: string;
+                /** @description The name the app gives itself: a secondary label, shown as text. */
+                client_name: string;
+                /** @description The signed-in person who would approve. */
+                email: string;
+                /** @description The host the person is sent back to. */
+                redirect_host: string;
+                /** Format: date-time */
+                requested_at: string;
             };
         } | {
             /** @enum {string} */
@@ -3769,6 +3912,11 @@ export interface components {
         /** @enum {string} */
         Role: "admin" | "member";
         /**
+         * @description What a connected app may do (kb/ADR-0029 R7). `write` includes `read`.
+         * @enum {string}
+         */
+        Scope: "read" | "write";
+        /**
          * @description One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the
          *     query named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.
          */
@@ -4766,6 +4914,239 @@ export interface operations {
             };
             /** @description unauthenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    read: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_ConnectionRequestDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description an interactive token only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveConnection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_ConnectionAnswerDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description an interactive token only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    refuse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefuseConnection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_ConnectionAnswerDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description an interactive token only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

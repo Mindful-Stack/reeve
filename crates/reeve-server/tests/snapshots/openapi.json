@@ -253,6 +253,21 @@
         ],
         "type": "object"
       },
+      "ApproveConnection": {
+        "properties": {
+          "approval": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "approval",
+          "scope"
+        ],
+        "type": "object"
+      },
       "AttachmentDto": {
         "properties": {
           "byte_size": {
@@ -608,6 +623,56 @@
           "off_track"
         ],
         "type": "string"
+      },
+      "ConnectionAnswerDto": {
+        "description": "Where the page sends the browser once the request is answered: the app's redirect address with the answer.",
+        "properties": {
+          "redirect_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "redirect_to"
+        ],
+        "type": "object"
+      },
+      "ConnectionRequestDto": {
+        "description": "A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4).",
+        "properties": {
+          "approval": {
+            "description": "The one-time value an answer must carry. A later read of the same request replaces it.",
+            "type": "string"
+          },
+          "client_host": {
+            "description": "The host of the app's client id: what the person is shown as the app's identity.",
+            "type": "string"
+          },
+          "client_name": {
+            "description": "The name the app gives itself: a secondary label, shown as text.",
+            "type": "string"
+          },
+          "email": {
+            "description": "The signed-in person who would approve.",
+            "type": "string"
+          },
+          "redirect_host": {
+            "description": "The host the person is sent back to.",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_host",
+          "client_name",
+          "redirect_host",
+          "email",
+          "requested_at",
+          "approval"
+        ],
+        "type": "object"
       },
       "CreateEpic": {
         "properties": {
@@ -3581,6 +3646,17 @@
         ],
         "type": "object"
       },
+      "RefuseConnection": {
+        "properties": {
+          "approval": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval"
+        ],
+        "type": "object"
+      },
       "RequireDecision": {
         "properties": {
           "decider": {
@@ -3887,6 +3963,208 @@
                   "byte_size",
                   "uploaded_by",
                   "uploaded_at"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_ConnectionAnswerDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "Where the page sends the browser once the request is answered: the app's redirect address with the answer.",
+                "properties": {
+                  "redirect_to": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "redirect_to"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_ConnectionRequestDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "A pending request to connect an app, as the approval page shows it (kb/ADR-0029 R4).",
+                "properties": {
+                  "approval": {
+                    "description": "The one-time value an answer must carry. A later read of the same request replaces it.",
+                    "type": "string"
+                  },
+                  "client_host": {
+                    "description": "The host of the app's client id: what the person is shown as the app's identity.",
+                    "type": "string"
+                  },
+                  "client_name": {
+                    "description": "The name the app gives itself: a secondary label, shown as text.",
+                    "type": "string"
+                  },
+                  "email": {
+                    "description": "The signed-in person who would approve.",
+                    "type": "string"
+                  },
+                  "redirect_host": {
+                    "description": "The host the person is sent back to.",
+                    "type": "string"
+                  },
+                  "requested_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "client_host",
+                  "client_name",
+                  "redirect_host",
+                  "email",
+                  "requested_at",
+                  "approval"
                 ],
                 "type": "object"
               }
@@ -8617,6 +8895,14 @@
         ],
         "type": "string"
       },
+      "Scope": {
+        "description": "What a connected app may do (kb/ADR-0029 R7). `write` includes `read`.",
+        "enum": [
+          "read",
+          "write"
+        ],
+        "type": "string"
+      },
       "SearchHit": {
         "description": "One item `GET /search` found: its level (and a story's kind) and which of its fields matched: `key` (the\nquery named its key), `title`, `brief` (an initiative's or an epic's), `description` (a story's) or `external_ref`.",
         "properties": {
@@ -10459,6 +10745,302 @@
           }
         ],
         "summary": "Gated like every route, so `sign_in_configured` serves signed-in pages (the token page's hints); the sign-in page\nlearns whether sign-in exists from `/auth/login` answering 303 or 404."
+      }
+    },
+    "/api/v1/connection-requests/{id}": {
+      "get": {
+        "operationId": "read",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_ConnectionRequestDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "an interactive token only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connection-requests/{id}/approve": {
+      "post": {
+        "operationId": "approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_ConnectionAnswerDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "an interactive token only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connection-requests/{id}/refuse": {
+      "post": {
+        "operationId": "refuse",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefuseConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_ConnectionAnswerDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "an interactive token only"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/api/v1/decisions": {

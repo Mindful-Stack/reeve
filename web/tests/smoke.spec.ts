@@ -1376,3 +1376,75 @@ test('triage from the keyboard: the count, place with criteria, undo, a phone, a
 	const back = await page.request.get(`/api/v1/stories/${b.key}`);
 	expect((await back.json()).value).toMatchObject({ delivery: 'todo' });
 });
+
+// MCP sign-in, part one of the journey (GRA-657): an app sends the browser to /oauth/authorize, the person signs in,
+// approves on /connect, and the browser lands on the app's redirect address with a code. The app is this test: a
+// server on 127.0.0.1:7477 that publishes the client's metadata document and answers its callback.
+test('an app asks to connect: sign in, approve, and land on the app with a code', async ({ browser }) => {
+	const { createServer } = await import('node:http');
+	const app = 'http://127.0.0.1:7477';
+	const clientId = `${app}/client.json`;
+	const callback = `${app}/callback`;
+	const stand = createServer((req, res) => {
+		const path = new URL(req.url ?? '/', app).pathname;
+		if (path === '/client.json') {
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ client_id: clientId, client_name: 'Smoke App', redirect_uris: [callback], token_endpoint_auth_method: 'none' }));
+		} else if (path === '/callback') {
+			res.writeHead(200, { 'content-type': 'text/html' });
+			res.end('<!doctype html><title>Smoke App</title><h1>Smoke App callback</h1>');
+		} else {
+			res.writeHead(404);
+			res.end();
+		}
+	});
+	await new Promise<void>((resolve, reject) => stand.once('error', reject).listen(7477, '127.0.0.1', resolve));
+	const context = await browser.newContext(); // signed out: the journey includes the sign-in
+	try {
+		const page = await context.newPage();
+		const reeve = env('REEVE_URL');
+		const authorize = new URL('/oauth/authorize', reeve);
+		for (const [name, value] of Object.entries({
+			response_type: 'code',
+			client_id: clientId,
+			redirect_uri: callback,
+			// RFC 7636, appendix B: the challenge of the verifier dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk.
+			code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+			code_challenge_method: 'S256',
+			resource: `${reeve}/mcp`,
+			scope: 'read write',
+			state: 'smoke-state'
+		})) {
+			authorize.searchParams.set(name, value);
+		}
+		await page.goto(authorize.href);
+		// Not signed in: the page's read answers 401 and the browser is on the sign-in page, with this page as `next`.
+		await expect(page).toHaveURL(/\/auth\/signin\?next=%2Fconnect%3Frequest%3D/);
+		const connect = (await context.cookies()).find((c) => c.name === 'reeve_connect');
+		expect(connect?.httpOnly).toBe(true);
+		expect(connect?.sameSite).toBe('Lax');
+		await page.getByRole('link', { name: 'Sign in with Google' }).click();
+		// Back on the approval page, signed in, with the request still bound to this browser.
+		await expect(page).toHaveURL(/\/connect\?request=[0-9a-f]{48}$/);
+		await expect(page.getByRole('heading', { name: '127.0.0.1 wants to connect to 127.0.0.1:7475' })).toBeVisible();
+		await expect(page.getByText('Signed in as smoke@example.com.')).toBeVisible();
+		await expect(page.getByText('You will be sent back to 127.0.0.1.')).toBeVisible();
+		const approve = page.getByRole('button', { name: 'Approve' });
+		await expect(approve).toBeDisabled();
+		await page.getByRole('radio', { name: /^Read: everything you can see/ }).check();
+		await approve.click();
+		// The browser left Reeve for the app's address.
+		await expect(page.getByRole('heading', { name: 'Smoke App callback' })).toBeVisible();
+		const landed = new URL(page.url());
+		expect(landed.origin + landed.pathname).toBe(callback);
+		expect(landed.searchParams.get('state')).toBe('smoke-state');
+		expect(landed.searchParams.get('iss')).toBe(reeve);
+		expect(landed.searchParams.get('code')).toMatch(/^reeve_code_[0-9a-f]{48}$/);
+		expect(landed.searchParams.get('error')).toBeNull();
+		// Answered: the connect cookie is gone, and the request cannot be opened again.
+		expect((await context.cookies(reeve)).find((c) => c.name === 'reeve_connect')).toBeUndefined();
+	} finally {
+		await context.close();
+		await new Promise((resolve) => stand.close(resolve));
+	}
+});

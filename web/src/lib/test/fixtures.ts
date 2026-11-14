@@ -7,6 +7,7 @@ import type {
 	DecisionQueue,
 	DecisionQueueEntry,
 	Comment,
+	ConnectionRequest,
 	Epic,
 	Goal,
 	GoalGates,
@@ -260,6 +261,19 @@ export function queueSummary(over: Partial<DecisionQueue['summary']> = {}): Deci
 		review: 0,
 		this_sprint: 0,
 		next_sprint: 0,
+		...over
+	};
+}
+
+/** A pending request from "Example App" on client.example, read by dan@example.com. */
+export function connectionRequest(over: Partial<ConnectionRequest> = {}): ConnectionRequest {
+	return {
+		client_host: 'client.example',
+		client_name: 'Example App',
+		redirect_host: 'callback.example',
+		email: 'dan@example.com',
+		requested_at: '2026-11-14T09:00:00Z',
+		approval: 'value-1',
 		...over
 	};
 }

@@ -33,8 +33,9 @@ export default defineConfig(({ mode }) => ({
 		assetsInlineLimit: 0
 	},
 	server: {
-		// `npm run dev` talks to a local reeve-server so the session cookie stays first-party.
-		proxy: { '/api': server, '/auth/login': server, '/auth/callback': server, '/auth/logout': server, '/auth/status': server }
+		// `npm run dev` talks to a local reeve-server so the session cookie stays first-party. `/oauth` too: authorize
+		// sets the connect cookie, which the approval page (/connect) on this origin must send back to the API.
+		proxy: { '/api': server, '/oauth': server, '/auth/login': server, '/auth/callback': server, '/auth/logout': server, '/auth/status': server }
 	},
 	// Tests load Svelte's browser build (with the jsdom environment in the file that needs it): under the server build
 	// `$effect` never runs, which would hide what #lib/events.svelte.ts does.

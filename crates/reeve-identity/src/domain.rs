@@ -40,6 +40,9 @@ pub struct Principal {
     pub email: String,
     pub role: Role,
     pub token_kind: TokenKind,
+    /// The id of the token this request authenticated with. A web session is one token; an approval value is
+    /// bound to the token that read the request (kb/ADR-0029 R4).
+    pub token_id: i64,
 }
 
 /// Who is calling the MCP endpoint (kb/ADR-0029 R6). A type of its own, without a token kind: code that takes a
@@ -96,10 +99,16 @@ pub fn hash_secret(secret: &str) -> String {
     hex::encode(Sha256::digest(secret.as_bytes()))
 }
 pub fn new_secret() -> String {
+    random_secret("reeve_")
+}
+
+/// `prefix` and 24 random bytes in hex. A code and a refresh token carry prefixes of their own, so one is never
+/// mistaken for a token in a log or a paste.
+pub(crate) fn random_secret(prefix: &str) -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 24];
     rand::thread_rng().fill_bytes(&mut bytes);
-    format!("reeve_{}", hex::encode(bytes))
+    format!("{prefix}{}", hex::encode(bytes))
 }
 
 #[cfg(test)]

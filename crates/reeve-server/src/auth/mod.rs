@@ -1,6 +1,7 @@
 //! Who is calling: the bearer header (CLI, automation) or the browser's session cookie, resolved to the same
 //! `Principal` on every request (kb/ADR-0015 R5). The browser sign-in flow lives in `routes`; the public OAuth
-//! surface of the MCP endpoint (kb/ADR-0029) lives in `oauth`.
+//! surface of the MCP endpoint (kb/ADR-0029) lives in `oauth` and `authorize`.
+pub(crate) mod authorize;
 pub(crate) mod oauth;
 pub mod routes;
 
@@ -102,7 +103,7 @@ impl FromRequestParts<AppState> for Caller {
             }
         };
         // Either way the token's kind, role, expiry and the owner's disabled flag are checked now, on this request.
-        let now = Utc::now();
+        let now = state.clock.now();
         // Loaded on every request, never cached (kb/ADR-0015 R5); a load failure is internal, never a fallback to the floor.
         let policy = state.access.load(&state.identity).await?;
         match authenticate_api(&*state.tokens, &policy, &secret, now).await {
@@ -181,7 +182,7 @@ impl McpCaller {
         let secret = bearer_secret(headers)
             .map_err(refuse)?
             .ok_or_else(|| refuse("no bearer header"))?;
-        let now = Utc::now();
+        let now = state.clock.now();
         // Loaded on every request, never cached (kb/ADR-0015 R5, kb/ADR-0029 R8).
         let policy = state.access.load(&state.identity).await?;
         let principal = authenticate_mcp(&*state.tokens, &policy, secret, now).await?;

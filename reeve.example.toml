@@ -44,16 +44,17 @@ admins = ["admin@example.com"]
 # [import]
 # enabled = true
 
-# The MCP endpoint at <public_url>/mcp, for MCP clients such as claude.ai and ChatGPT (kb/ADR-0029). Off by default:
-# /mcp and the two documents below answer 404. It needs [oidc]; the server refuses to start with [mcp] enabled and no
-# sign-in. Enabled, the server also answers, without a caller, the two documents a client reads to find where to
-# sign in, at /.well-known/oauth-protected-resource/mcp and /.well-known/oauth-authorization-server. Every address,
-# these two and the ones in the documents, is public_url as parsed (lower-case host, no default port), without its
-# trailing slash, followed by the path. The sign-in routes the documents name (/oauth/authorize and /oauth/token)
-# are not built yet, so no client can sign in: only tokens minted by `reeve-server mcp-token-issue` work, a
-# developer command that exists only in builds with `--features reeve-server/static-oidc`. Leave [mcp] off in
-# production until sign-in is complete. allowed_origins lists the Origin header values accepted (a request without
-# an Origin header always passes); unset, only public_url's own origin.
+# The MCP endpoint at <public_url>/mcp, for MCP clients such as claude.ai and ChatGPT (kb/ADR-0029). Off by
+# default: /mcp, the two documents below and /oauth/authorize answer 404. It needs [oidc]; the server refuses to
+# start with [mcp] enabled and no sign-in. Enabled, the server also answers, without a caller, the two documents a
+# client reads to find where to sign in, at /.well-known/oauth-protected-resource/mcp and
+# /.well-known/oauth-authorization-server. Every address, these two and the ones in the documents, is public_url as
+# parsed (lower-case host, no default port), without its trailing slash, followed by the path. An app sends a
+# person's browser to /oauth/authorize, and the person approves it on the page /connect. The route that issues
+# tokens (/oauth/token) is not built yet, so no client can finish connecting: only tokens minted by `reeve-server
+# mcp-token-issue` work, a developer command that exists only in builds with `--features reeve-server/static-oidc`.
+# Leave [mcp] off in production until sign-in is complete. allowed_origins lists the Origin header values accepted
+# (a request without an Origin header always passes); unset, only public_url's own origin.
 # Which apps may connect is two more lists, both empty by default, and empty means none. In redirect_uris, the
 # https addresses an app may be sent back to once a person has answered, compared exactly: an app is refused unless
 # its redirect address is here and in its own metadata document. In client_hosts, the hosts an app's metadata

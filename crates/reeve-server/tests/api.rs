@@ -233,9 +233,13 @@ fn body_reasons(b: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Walked with `[mcp]` on, so that every documented operation is served: the approval page's three routes
+/// (`/connection-requests`) check that switch before the caller and answer 404 to anyone when it is off
+/// (`tests/connection_requests.rs`, `off_the_three_routes_answer_404_first_even_for_a_live_request`). On, they
+/// must refuse a request without a caller like every other operation; the other operations do not read the switch.
 #[tokio::test]
 async fn every_documented_operation_is_gated() {
-    let h = harness().await;
+    let h = mcp_harness().await;
     let doc = reeve_server::openapi_json();
     let mut checked = 0;
     for (path, item) in doc["paths"].as_object().unwrap() {

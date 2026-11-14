@@ -7,6 +7,7 @@ pub mod activity;
 pub mod attachments;
 pub mod comments;
 pub mod config;
+pub mod connection_requests;
 pub mod decisions;
 pub mod epics;
 pub mod events;
@@ -122,7 +123,9 @@ async fn health(State(s): State<AppState>) -> (StatusCode, Json<serde_json::Valu
 }
 
 /// Nest under the prefix *before* splitting so the document's paths carry `/api/v1` and generated clients hit real routes.
-fn api_router() -> OpenApiRouter<AppState> {
+/// `mcp_enabled` is `[mcp] enabled`, which the connection-requests routes' middleware reads; the document does not
+/// depend on it.
+fn api_router(mcp_enabled: bool) -> OpenApiRouter<AppState> {
     let v1: OpenApiRouter<AppState> = OpenApiRouter::new()
         .merge(initiatives::router())
         .merge(epics::router())
@@ -136,6 +139,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .merge(users::router())
         .merge(access::router())
         .merge(config::router())
+        .merge(connection_requests::router(mcp_enabled))
         .merge(import::router())
         .merge(export::router())
         .merge(plans::router())
@@ -146,7 +150,7 @@ fn api_router() -> OpenApiRouter<AppState> {
 }
 /// The served document: split from the merged routers, then the bearer scheme and shared responses are applied to every operation.
 fn document() -> utoipa::openapi::OpenApi {
-    let (_, mut o) = api_router().split_for_parts();
+    let (_, mut o) = api_router(false).split_for_parts();
     utoipa::Modify::modify(&Security, &mut o);
     unique_operation_ids(&mut o);
     o
@@ -202,7 +206,7 @@ fn item_ops(
         .flatten()
 }
 pub fn app(state: AppState) -> Router {
-    let (api, _) = api_router().split_for_parts();
+    let (api, _) = api_router(state.config.mcp.enabled).split_for_parts();
     let openapi = document();
     Router::new()
         .route("/health", get(health))

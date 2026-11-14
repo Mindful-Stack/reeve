@@ -29,7 +29,8 @@
 	let { children }: LayoutProps = $props();
 
 	// /auth/* renders signed out: loading the session there would 401 and redirect to next=/auth/signin forever.
-	const signedOutPage = $derived(page.url.pathname.startsWith('/auth/'));
+	// /connect (the approval page of MCP sign-in) does too: it has states that need no session, and asks for one itself.
+	const signedOutPage = $derived(page.url.pathname.startsWith('/auth/') || page.url.pathname === '/connect');
 
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
