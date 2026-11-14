@@ -5,6 +5,8 @@ mod access_repo;
 mod clients;
 mod domain;
 #[cfg(feature = "static-oidc")]
+mod fake_client_host;
+#[cfg(feature = "static-oidc")]
 mod fake_issuer;
 mod handler;
 mod oidc;
@@ -24,6 +26,8 @@ pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
     normalise_email,
 };
+#[cfg(feature = "static-oidc")]
+pub use fake_client_host::{FakeAnswer, FakeClientHost};
 #[cfg(feature = "static-oidc")]
 pub use fake_issuer::{FakeIssuer, Grant, IdClaims, Signer};
 pub use handler::{
