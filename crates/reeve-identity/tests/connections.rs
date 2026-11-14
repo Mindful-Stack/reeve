@@ -403,7 +403,7 @@ async fn the_tables_refuse_what_the_rules_forbid() {
 }
 
 /// Catches a developer token without a connection of its own, a connection that is not the fixed developer
-/// client with scope write and thirty days, and a principal that does not carry them.
+/// client with scope write ending with its one token, and a principal that does not carry them.
 #[tokio::test]
 async fn the_developer_command_makes_a_connection_and_the_principal_carries_it() {
     let (_db, pool) = common::pg().await;
@@ -443,7 +443,7 @@ async fn the_developer_command_makes_a_connection_and_the_principal_carries_it()
                 "Developer command",
                 "write",
                 now(),
-                now() + Duration::days(30),
+                now() + Duration::hours(1),
                 None
             )
         );

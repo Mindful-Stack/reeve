@@ -321,7 +321,10 @@ async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing
     );
     let (status, _, body) = token(&f, &bare).await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["scope"], "read write", "a write connection may also read");
+    assert_eq!(
+        body["scope"], "read write",
+        "a write connection may also read"
+    );
 }
 
 /// kb/ADR-0029 R4: a code lives at most one minute. The clock is fixed, so the boundary is exact: 59 seconds

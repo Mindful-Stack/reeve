@@ -1,8 +1,6 @@
 use crate::{
     access::AccessPolicy,
-    connections::{
-        CONNECTION_DAYS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations,
-    },
+    connections::{DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations},
     domain::*,
     ports::*,
     repo::{TokenRow, TokenStore, TokenSummary, UserRow},
@@ -56,7 +54,7 @@ pub async fn issue_token(
 }
 
 /// Issues a token for the MCP endpoint without an approval: the developer command's path. It makes a connection of
-/// its own (the developer client, scope write, thirty days) and one access token in it: always interactive,
+/// its own (the developer client, scope write, ending when its token expires) and one access token in it: always interactive,
 /// always with an expiry at most one hour after `now` (kb/ADR-0029 R5, R6). No refresh token. A person's
 /// connection is made by `exchange_code` instead.
 #[allow(clippy::too_many_arguments)]
@@ -99,7 +97,8 @@ pub async fn issue_mcp_token(
             DEVELOPER_CLIENT_NAME,
             Scope::Write,
             now,
-            now + chrono::Duration::days(CONNECTION_DAYS),
+            // The connection ends with its one token: it has no refresh token to outlive it.
+            expires_at,
         )
         .await?;
     let secret = new_secret();
