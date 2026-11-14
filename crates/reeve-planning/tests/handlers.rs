@@ -8726,7 +8726,11 @@ async fn only_unfinished_promises_pull_decisions() {
     let e = es.iter().find(|e| e.decision.id() == d.id()).unwrap();
     assert_eq!(
         (e.needed_in, e.lane, e.needed_in_reason.clone()),
-        (NeededIn::Beyond, QueueLane::Beyond, None)
+        (
+            NeededIn::Beyond,
+            QueueLane::Beyond,
+            Some(NeededInReason::Held)
+        )
     );
     assert_eq!(e.decision.due(), due);
 
@@ -8752,7 +8756,7 @@ async fn only_unfinished_promises_pull_decisions() {
 
 /// Open promises through the real story list and `PromiseWindow::of`: with the active sprint planned to end 24 Nov and the
 /// draft 8 Dec, a decision on a story promised 20 Nov is needed this sprint, one promised 1 Dec next sprint, and one
-/// promised 20 Dec beyond, with no reason. Catches the due period lost or swapped between the DTO and the domain.
+/// promised 20 Dec in Now, ranked by what it holds. Catches the due period lost or swapped between the DTO and the domain.
 #[tokio::test]
 async fn open_promises_pull_decisions_by_due_period() {
     use reeve_protocol::{NeededIn, NeededInReason};
@@ -8796,7 +8800,7 @@ async fn open_promises_pull_decisions_by_due_period() {
     };
     assert_eq!(of(ids[0]), (NeededIn::ThisSprint, reason(0, nov(20))));
     assert_eq!(of(ids[1]), (NeededIn::NextSprint, reason(1, dec)));
-    assert_eq!(of(ids[2]), (NeededIn::Beyond, None));
+    assert_eq!(of(ids[2]), (NeededIn::Beyond, Some(NeededInReason::Held)));
 }
 
 /// Pauses the first entry it records once armed, inside the write that records it and so while that write still holds

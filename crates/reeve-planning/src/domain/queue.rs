@@ -1,11 +1,13 @@
 //! The readiness queue: pure, over decisions and the readiness the loader already computed. Nothing here derives
 //! readiness (kb/ADR-0018 R1, kb/ADR-0013 R4): affected stories and discovery rows are read off the reasons. Rows,
 //! `needed_in`, the next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
-//! Only goals and promises put work in this sprint or next.
+//! Only goals and promises put work in this sprint or next. Urgency orders Now rows only: it never places a row in a
+//! lane or counts (kb/ADR-0024 R7).
 
 use crate::domain::decision::RequiredDecision;
 use crate::domain::promise::{HeldBy, State, StoryPromise};
-use chrono::NaiveDate;
+use crate::domain::urgency::Urgency;
+use chrono::{Days, NaiveDate};
 use reeve_protocol::{
     CheckResult, DeliveryState, ItemType, Key, Kind, NeededIn, NeededInReason, NextStep,
     QueueGroup, QueueLane, Reason,
@@ -21,7 +23,8 @@ pub struct AffectedStory {
     pub kind: Kind,
     pub delivery: DeliveryState,
     pub owner: Option<String>,
-    /// Lineage urgency (kb/ADR-0017 R3), shown only; nothing here sorts or classifies by it (R5).
+    /// Urgent on the queue's snapshot (kb/ADR-0024 R5), shown only: the Now ranking reads the row's item, never this
+    /// flag, and nothing places or counts by urgency (kb/ADR-0024 R7).
     pub urgent: bool,
     /// The active sprint's goals the story serves, as (goal id, outcome), nearest link first.
     pub active_goals: Vec<(i64, String)>,
@@ -84,6 +87,10 @@ pub struct ClassifyInputs<'a> {
     pub first_bucket: Option<&'a str>,
     /// Configured repository names (`Settings.repos`).
     pub repos: &'a [String],
+    /// Urgency on the queue's snapshot (`Handlers::urgency_in`): rule 1 of the Now ranking, and nothing else.
+    pub urgency: &'a Urgency,
+    /// `settings.sprint_length_days` (kb/ADR-0016 R2): rule 3 counts a decision due within it from `today`.
+    pub sprint_length_days: u32,
 }
 
 /// A story a decision holds back (todo, in `held`) or that is under way without it (`under_way`).
@@ -409,13 +416,87 @@ fn discovery_rows(
     rows
 }
 
+/// What the Now ranking (spec §3) reads off a top-level row, in rule order.
+struct NowFacts {
+    /// Rule 1: the first urgency source of the row's item (a decision: its `on`).
+    urgent: Option<(Key, ItemType)>,
+    /// Rule 2: the row's initiative's target month, when it is `YYYY-MM`.
+    month: Option<String>,
+    /// Rule 3: the earliest due date within a sprint length, overdue included, and its decision's id (the decision
+    /// itself, or for a discovery row a nested one).
+    due: Option<(NaiveDate, i64)>,
+    /// Rule 4: held stories.
+    held: usize,
+}
+
+impl NowFacts {
+    /// The first rule that holds; rule 4 always does.
+    fn reason(&self) -> NeededInReason {
+        if let Some((key, level)) = &self.urgent {
+            NeededInReason::Urgent {
+                key: key.clone(),
+                level: *level,
+            }
+        } else if let Some(month) = &self.month {
+            NeededInReason::TargetMonth {
+                month: month.clone(),
+            }
+        } else if let Some((_, id)) = self.due {
+            NeededInReason::DecisionDue { id }
+        } else {
+            NeededInReason::Held
+        }
+    }
+}
+
+/// `Some` before `None`, then ascending.
+fn some_first<T: Ord>(a: &Option<T>, b: &Option<T>) -> Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// By the first rule that differs: urgent first; earlier month, then none; earlier near due (the date only), then
+/// none; more held.
+fn now_cmp(a: &NowFacts, b: &NowFacts) -> Ordering {
+    b.urgent
+        .is_some()
+        .cmp(&a.urgent.is_some())
+        .then_with(|| some_first(&a.month, &b.month))
+        .then_with(|| some_first(&a.due.map(|d| d.0), &b.due.map(|d| d.0)))
+        .then_with(|| b.held.cmp(&a.held))
+}
+
+/// The target month of `key`'s initiative when it is `YYYY-MM` naming a real month (text order then sorts by date);
+/// any other value ranks as none.
+fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
+    let m = inp
+        .lineage
+        .get(key)?
+        .first()?
+        .initiative_target_month
+        .as_deref()?;
+    (m.len() == 7 && NaiveDate::parse_from_str(&format!("{m}-01"), "%Y-%m-%d").is_ok())
+        .then(|| m.to_string())
+}
+
+/// `d`'s due date and id when it is on or before `limit` (overdue included).
+fn near_due(d: &RequiredDecision, limit: NaiveDate) -> Option<(NaiveDate, i64)> {
+    d.due().filter(|due| *due <= limit).map(|due| (due, d.id()))
+}
+
 /// The page order (spec §2): this sprint, next sprint, Now (`beyond` under the first bucket), Later (other `beyond`),
-/// Open, Accepted, Closed. Within a lane, discovery rows first (more held stories, then key number), then standalone
-/// decisions in `entry_order`; each row is directly followed by its nested decisions in `entry_order`, and its `at` is
+/// Open, Accepted, Closed. In this sprint, next sprint and Later, discovery rows first (more held stories, then key
+/// number), then standalone decisions in `entry_order`; in Now, the Now ranking over rows and standalone decisions, a
+/// full tie putting rows first, then key number or id, and each gets the reason of the first rule that holds for it
+/// (nested decisions keep their own); each row is directly followed by its nested decisions in `entry_order`, and its `at` is
 /// set. Rows come first because the discovery is what their decisions wait on.
 fn arrange(
-    entries: Vec<QueueEntry>,
-    rows: Vec<DiscoveryRow>,
+    mut entries: Vec<QueueEntry>,
+    mut rows: Vec<DiscoveryRow>,
     inp: &ClassifyInputs,
     today: NaiveDate,
 ) -> (Vec<QueueEntry>, Vec<DiscoveryRow>) {
@@ -424,6 +505,10 @@ fn arrange(
         Row(usize),
         Entry(usize),
     }
+    const NOW: u8 = 2;
+    let limit = today
+        .checked_add_days(Days::new(inp.sprint_length_days.into()))
+        .unwrap_or(NaiveDate::MAX);
     let section = |t: Top| -> u8 {
         let (lane, item) = match t {
             Top::Row(i) => (rows[i].lane, &rows[i].key),
@@ -432,7 +517,7 @@ fn arrange(
         match lane {
             QueueLane::ThisSprint => 0,
             QueueLane::NextSprint => 1,
-            QueueLane::Beyond if in_first_bucket(inp, item) => 2,
+            QueueLane::Beyond if in_first_bucket(inp, item) => NOW,
             QueueLane::Beyond => 3,
             QueueLane::Open => 4,
             QueueLane::Satisfied => 5,
@@ -440,17 +525,50 @@ fn arrange(
             QueueLane::Review => 7, // never produced
         }
     };
-    let mut tops: Vec<(Top, u8)> = (0..rows.len())
+    let facts = |t: Top| -> NowFacts {
+        match t {
+            Top::Row(i) => {
+                let r = &rows[i];
+                NowFacts {
+                    urgent: inp.urgency.sources(&r.key).first().cloned(),
+                    month: target_month(inp, &r.key),
+                    due: entries
+                        .iter()
+                        .filter(|e| live(e) && e.decision.on() == &r.key)
+                        .filter_map(|e| near_due(&e.decision, limit))
+                        .min(),
+                    held: r.held.len(),
+                }
+            }
+            Top::Entry(i) => {
+                let e = &entries[i];
+                NowFacts {
+                    urgent: inp.urgency.sources(e.decision.on()).first().cloned(),
+                    month: target_month(inp, e.decision.on()),
+                    due: near_due(&e.decision, limit),
+                    held: e.held.len(),
+                }
+            }
+        }
+    };
+    let mut tops: Vec<(Top, u8, Option<NowFacts>)> = (0..rows.len())
         .map(Top::Row)
         .chain(
             (0..entries.len())
                 .filter(|&i| entries[i].under.is_none())
                 .map(Top::Entry),
         )
-        .map(|t| (t, section(t)))
+        .map(|t| {
+            let s = section(t);
+            (t, s, (s == NOW).then(|| facts(t)))
+        })
         .collect();
-    tops.sort_by(|(a, sa), (b, sb)| {
-        sa.cmp(sb).then_with(|| match (*a, *b) {
+    tops.sort_by(|(a, sa, fa), (b, sb, fb)| {
+        let rank = match (fa, fb) {
+            (Some(x), Some(y)) => now_cmp(x, y),
+            _ => Ordering::Equal,
+        };
+        sa.cmp(sb).then(rank).then_with(|| match (*a, *b) {
             (Top::Row(x), Top::Row(y)) => rows[y]
                 .held
                 .len()
@@ -458,9 +576,20 @@ fn arrange(
                 .then_with(|| rows[x].key.number().cmp(&rows[y].key.number())),
             (Top::Row(_), Top::Entry(_)) => Ordering::Less,
             (Top::Entry(_), Top::Row(_)) => Ordering::Greater,
+            (Top::Entry(x), Top::Entry(y)) if *sa == NOW => {
+                entries[x].decision.id().cmp(&entries[y].decision.id())
+            }
             (Top::Entry(x), Top::Entry(y)) => entry_order(&entries[x], &entries[y], today),
         })
     });
+    for (t, _, f) in &tops {
+        if let Some(f) = f {
+            match *t {
+                Top::Row(i) => rows[i].needed_in_reason = Some(f.reason()),
+                Top::Entry(i) => entries[i].needed_in_reason = Some(f.reason()),
+            }
+        }
+    }
     let mut nested: HashMap<Key, Vec<usize>> = HashMap::new();
     for (i, e) in entries.iter().enumerate() {
         if let Some(k) = &e.under {
@@ -473,7 +602,7 @@ fn arrange(
     let mut slots: Vec<Option<QueueEntry>> = entries.into_iter().map(Some).collect();
     let mut row_slots: Vec<Option<DiscoveryRow>> = rows.into_iter().map(Some).collect();
     let (mut out, mut out_rows) = (Vec::with_capacity(slots.len()), Vec::new());
-    for (t, _) in tops {
+    for (t, _, _) in tops {
         match t {
             Top::Entry(i) => out.extend(slots[i].take()),
             Top::Row(i) => {
@@ -593,8 +722,11 @@ pub fn order(
 mod tests {
     use super::*;
     use crate::domain::decision::{RecordRef, RequiredDecision};
+    use crate::domain::urgency::{Lineage, MarkFact, Urgency, UrgentMark, urgency as urgency_of};
     use chrono::{DateTime, NaiveDate, TimeZone, Utc};
     use reeve_protocol::{CheckResult, ClosureKind, ItemType, Key, Reason, TokenKind};
+
+    static CALM: std::sync::LazyLock<Urgency> = std::sync::LazyLock::new(Urgency::default);
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 11, 3).unwrap()
@@ -716,7 +848,29 @@ mod tests {
             lineage,
             first_bucket: bucket,
             repos,
+            urgency: &CALM,
+            sprint_length_days: 14,
         }
+    }
+    /// An active mark on each epic in `keys`, set at 09:00 on `today()` (the domain's own `urgency`, so sources are
+    /// real: a mark makes its own item urgent).
+    fn urgent_on(keys: &[u64]) -> Urgency {
+        let at = Utc.with_ymd_and_hms(2026, 11, 3, 9, 0, 0).unwrap();
+        let marks: Vec<MarkFact> = keys
+            .iter()
+            .map(|&n| MarkFact {
+                item: ItemType::Epic,
+                key: key(n),
+                mark: UrgentMark {
+                    at,
+                    by: "dan".into(),
+                    reason: None,
+                },
+                parent: None,
+                done: false,
+            })
+            .collect();
+        urgency_of(&marks, &Lineage::default(), at, 14)
     }
     /// Todo stories by number, each named by the decisions in `pairs` (decision id → story numbers).
     fn todo_for(pairs: &[(i64, &[u64])]) -> Vec<AffectedStory> {
@@ -986,7 +1140,8 @@ mod tests {
     /// The first bucket is the configured one (spec §2): under "Soon", unmarked epic ABC-1 is a Now row with decision 2
     /// nested and decision 4 on a marked epic stays standalone in `beyond`; under another bucket, or with none
     /// configured, the row is left out and decision 2 stands alone. Catches the literal "Now" and a row kept without a
-    /// bucket.
+    /// bucket. The row and decision 4 carry `held` under the first bucket; nested decision 2 keeps no Now reason;
+    /// outside it neither has one. Catches a Later decision given a Now reason and a nested decision given one.
     #[test]
     fn needed_in_discovery_uses_configured_first_bucket() {
         let stories = [
@@ -1018,24 +1173,314 @@ mod tests {
             );
             (
                 es.iter()
-                    .map(|e| (e.decision.id(), e.lane, e.under.as_ref().map(Key::number)))
+                    .map(|e| {
+                        (
+                            e.decision.id(),
+                            e.lane,
+                            e.under.as_ref().map(Key::number),
+                            e.needed_in_reason.clone(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 rows.iter()
-                    .map(|r| (r.key.number(), r.lane, r.at))
+                    .map(|r| (r.key.number(), r.lane, r.at, r.needed_in_reason.clone()))
                     .collect::<Vec<_>>(),
             )
         };
         use QueueLane::Beyond;
+        let held = Some(NeededInReason::Held);
         assert_eq!(
             view(Some("Soon")),
             (
-                vec![(2, Beyond, Some(1)), (4, Beyond, None)],
-                vec![(1, Beyond, 0)]
+                vec![(2, Beyond, Some(1), None), (4, Beyond, None, held.clone())],
+                vec![(1, Beyond, 0, held)]
             )
         );
-        let elsewhere = (vec![(2, Beyond, None), (4, Beyond, None)], vec![]);
+        let elsewhere = (
+            vec![(2, Beyond, None, None), (4, Beyond, None, None)],
+            vec![],
+        );
         assert_eq!(view(Some("Now")), elsewhere);
         assert_eq!(view(None), elsewhere);
+    }
+
+    /// The Now ranking (spec §3), one table over fourteen top-level rows fed in reverse; today is 3 Nov, the sprint
+    /// length 14 days (limit 17 Nov). A (urgent, no month) beats B (a month); C (2026-12, no near due) beats D (2027-01,
+    /// due 5 Nov), and 2026-12 sorts before 2027-01 across the year; with no month, G (overdue, 30 Oct), row R (its
+    /// nested D111 due 10 Nov), D122 and D121 (both due 12 Nov: the larger id holds more and goes first, so the date
+    /// alone decides rule 3) and E (due 17 Nov, the boundary) rank by due, before F (18 Nov, one day out, holding 3);
+    /// then by held: F 3, H 2 (month "2026-13" ranks as none), row Y (key 140) and decision D131 1 each (a full tie: the
+    /// row first, although its key is larger than the decision's id), row Z holding none (one story under way). Every row's reason is the first rule that holds for it; D111,
+    /// nested, keeps its own (none). Catches a rule out of order, an exclusive or off-by-one boundary, a malformed month
+    /// ranked as a month, a row ignoring its nested decision's due, a decision before a row on a full tie (or a
+    /// key compared with an id), a due compared beyond the date (ids deciding before held), and an input-order sort.
+    #[test]
+    fn now_ranking_orders_and_says_which_rule_placed_each_row() {
+        let on = |id: i64, n: u64, due: Option<NaiveDate>| {
+            full(
+                id,
+                key(n),
+                due,
+                oct(1),
+                None,
+                None,
+                CheckResult::Unchecked,
+                None,
+            )
+        };
+        let held = |first: u64, n: u64, id: i64| {
+            (first..first + n)
+                .map(|s| story(s, DeliveryState::Todo, vec![unchecked(id)]))
+                .collect::<Vec<_>>()
+        };
+        let mut ds = vec![
+            on(101, 101, None),
+            on(102, 102, None),
+            on(103, 103, None),
+            on(104, 104, nov(5)),
+            on(105, 105, nov(17)),
+            on(106, 106, nov(18)),
+            on(107, 107, NaiveDate::from_ymd_opt(2026, 10, 30)),
+            on(108, 108, None),
+            on(111, 110, nov(10)),
+            on(121, 121, nov(12)),
+            on(122, 122, nov(12)),
+            on(131, 131, None),
+        ];
+        ds.reverse();
+        let mut stories: Vec<AffectedStory> = [
+            held(1010, 1, 101),
+            held(1020, 1, 102),
+            held(1030, 1, 103),
+            held(1040, 1, 104),
+            held(1050, 1, 105),
+            held(1060, 3, 106),
+            held(1070, 1, 107),
+            held(1080, 2, 108),
+            held(1210, 1, 121),
+            held(1220, 2, 122),
+            held(1310, 1, 131),
+        ]
+        .concat();
+        stories.push(story(
+            1100,
+            DeliveryState::Todo,
+            vec![adi(110), unchecked(111)],
+        ));
+        stories.push(story(1400, DeliveryState::Todo, vec![adi(140)]));
+        stories.push(story(1200, DeliveryState::InProgress, vec![adi(120)]));
+        stories.reverse();
+        let item = |n: u64, month: Option<&str>| {
+            (
+                n,
+                vec![LineageItem {
+                    initiative_target_month: month.map(String::from),
+                    ..li(n, ItemType::Epic, Some("Now"))
+                }],
+            )
+        };
+        // Rows R (110), Z (120) and Y (140) exist because their stories' reasons name them; the decisions' epics are
+        // marked (their stories carry no discovery reason).
+        let l = lineage(vec![
+            item(101, None),
+            item(102, Some("2026-11")),
+            item(103, Some("2026-12")),
+            item(104, Some("2027-01")),
+            item(105, None),
+            item(106, None),
+            item(107, None),
+            item(108, Some("2026-13")),
+            item(121, None),
+            item(122, None),
+            item(131, None),
+            item(110, None),
+            item(120, None),
+            item(140, None),
+        ]);
+        let r = repos();
+        let u = urgent_on(&[101]);
+        let inp = ClassifyInputs {
+            urgency: &u,
+            ..inputs(&stories, &l, Some("Now"), &r)
+        };
+        let (es, rows, _) = order(ds, &inp, today());
+        assert!(es.iter().all(|e| e.lane == QueueLane::Beyond));
+        use NeededInReason::{DecisionDue, Held, TargetMonth, Urgent};
+        let month = |m: &str| Some(TargetMonth { month: m.into() });
+        assert_eq!(
+            es.iter()
+                .map(|e| (e.decision.id(), e.needed_in_reason.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    101,
+                    Some(Urgent {
+                        key: key(101),
+                        level: ItemType::Epic
+                    })
+                ),
+                (102, month("2026-11")),
+                (103, month("2026-12")),
+                (104, month("2027-01")),
+                (107, Some(DecisionDue { id: 107 })),
+                (111, None),
+                (122, Some(DecisionDue { id: 122 })),
+                (121, Some(DecisionDue { id: 121 })),
+                (105, Some(DecisionDue { id: 105 })),
+                (106, Some(Held)),
+                (108, Some(Held)),
+                (131, Some(Held)),
+            ]
+        );
+        assert_eq!(es[5].under, Some(key(110)));
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.key.number(), r.at, r.needed_in_reason.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (110, 5, Some(DecisionDue { id: 111 })),
+                (140, 11, Some(Held)),
+                (120, 12, Some(Held))
+            ]
+        );
+    }
+
+    /// Urgency orders Now rows only (kb/ADR-0024 R7, spec §2). Marks on one decision's item in every live lane (this
+    /// sprint, next sprint, Now, Later, Open) leave the lanes, the summary, every reason but the Now row's and the order
+    /// outside Now as they were; inside Now the marked D6 moves above D5 (tied on rules 2-4) with reason `urgent`.
+    /// Catches urgency placing a row in a lane, counting, or ordering outside Now, and a row's
+    /// urgency read off the wrong key.
+    #[test]
+    fn urgency_orders_now_rows_only() {
+        let todo = |n: u64, id: i64| story(n, DeliveryState::Todo, vec![unchecked(id)]);
+        let active = |mut s: AffectedStory| {
+            s.active_goals = vec![(1, "A".into())];
+            s
+        };
+        let draft = |mut s: AffectedStory| {
+            s.draft_goals = vec![(2, "B".into())];
+            s
+        };
+        let stories = vec![
+            active(todo(21, 1)),
+            active(todo(22, 1)),
+            active(todo(23, 2)),
+            draft(todo(31, 3)),
+            draft(todo(32, 3)),
+            draft(todo(33, 4)),
+            todo(51, 5),
+            todo(61, 6),
+            todo(71, 7),
+            // A discovery row in Now: epic 19's own story.
+            story(91, DeliveryState::Todo, vec![adi(19)]),
+        ];
+        let l = lineage(
+            (11..=19)
+                .map(|n| {
+                    (
+                        n,
+                        vec![li(
+                            n,
+                            ItemType::Epic,
+                            Some(if n == 17 { "Later" } else { "Now" }),
+                        )],
+                    )
+                })
+                .collect(),
+        );
+        let ds = || {
+            (1..=8)
+                .map(|id| {
+                    full(
+                        id,
+                        key(10 + id as u64),
+                        None,
+                        oct(1),
+                        None,
+                        None,
+                        CheckResult::Unchecked,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let r = repos();
+        let marks = urgent_on(&[12, 14, 16, 17, 18, 19]);
+        let run_with = |u: &Urgency| {
+            let inp = ClassifyInputs {
+                urgency: u,
+                ..inputs(&stories, &l, Some("Now"), &r)
+            };
+            let (es, rows, s) = order(ds(), &inp, today());
+            (
+                es.iter()
+                    .map(|e| (e.decision.id(), e.lane, e.needed_in_reason.clone()))
+                    .collect::<Vec<_>>(),
+                rows.iter()
+                    .map(|r| (r.key.number(), r.lane, r.at, r.needed_in_reason.clone()))
+                    .collect::<Vec<_>>(),
+                s,
+            )
+        };
+        let (before, rows0, s0) = run_with(&CALM);
+        let (after, rows1, s1) = run_with(&marks);
+        assert_eq!(s0, s1);
+        // The row leads Now both times (a tie, then an urgent tie: rows first); only its reason changes.
+        assert_eq!(
+            rows0,
+            vec![(19, QueueLane::Beyond, 4, Some(NeededInReason::Held))]
+        );
+        assert_eq!(
+            rows1,
+            vec![(
+                19,
+                QueueLane::Beyond,
+                4,
+                Some(NeededInReason::Urgent {
+                    key: key(19),
+                    level: ItemType::Epic
+                })
+            )]
+        );
+        use QueueLane::*;
+        let (a, b, held) = (
+            Some(goal(1, "A")),
+            Some(goal(2, "B")),
+            Some(NeededInReason::Held),
+        );
+        assert_eq!(
+            before,
+            vec![
+                (1, ThisSprint, a.clone()),
+                (2, ThisSprint, a.clone()),
+                (3, NextSprint, b.clone()),
+                (4, NextSprint, b.clone()),
+                (5, Beyond, held.clone()),
+                (6, Beyond, held.clone()),
+                (7, Beyond, None),
+                (8, Open, None)
+            ]
+        );
+        assert_eq!(
+            after,
+            vec![
+                (1, ThisSprint, a.clone()),
+                (2, ThisSprint, a),
+                (3, NextSprint, b.clone()),
+                (4, NextSprint, b),
+                (
+                    6,
+                    Beyond,
+                    Some(NeededInReason::Urgent {
+                        key: key(16),
+                        level: ItemType::Epic
+                    })
+                ),
+                (5, Beyond, held),
+                (7, Beyond, None),
+                (8, Open, None)
+            ]
+        );
     }
 
     /// An affected story with no goals gives beyond; nothing affected gives none; closed and satisfied give none even

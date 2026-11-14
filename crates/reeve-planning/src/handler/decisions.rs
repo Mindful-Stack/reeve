@@ -493,6 +493,9 @@ impl Handlers {
             lineage: &lineage,
             first_bucket: self.settings.horizon_buckets.first().map(String::as_str),
             repos: &self.settings.repos,
+            // Already loaded for the stories' flags: no statement added (spec §5).
+            urgency: &urg,
+            sprint_length_days: self.settings.sprint_length_days,
         };
         let (entries, mut rows, summary) = queue::order(ds, &inp, now.date_naive());
         // Rows are built from every unfinished story, then returned by scope (spec §5): every row; an initiative's own
