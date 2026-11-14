@@ -16,9 +16,9 @@ mod list_stories;
 mod move_story;
 mod search_items;
 
-use crate::{actions::Acting, error::AppError, state::AppState};
+use crate::{actions::Acting, error::AppError, state::AppState, text};
 use futures_util::future::BoxFuture;
-use reeve_protocol::{KeyRef, Scope};
+use reeve_protocol::{KeyRef, Reason, Scope};
 use serde_json::{Value, json};
 
 /// The sentence every tool that returns people's text ends its description with. It lowers the exposure to
@@ -190,28 +190,41 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
     })
 }
 
-/// A refusal's text as the model is told it, whatever said it. A refusal of up to `bound::MAX_OTHER_TEXT`
-/// characters is told as it is. In a longer one, only a single word longer than `bound::MAX_OTHER_TEXT` is cut, at
-/// that bound, so a list of reasons (one word per reason) is never cut in its middle, and the whole is cut at
-/// `bound::MAX_OWN_TEXT`, a last guard. That guard would take a refusal's fixed explanation with it, so whatever
-/// says a refusal bounds what it repeats where it repeats it: a caller's value with `bound::echo`, the planner's
-/// reasons with room left for the sentences after them. Each cut carries its marker. `call_tool` calls this on
-/// every refusal before it is sent.
-pub(crate) fn bounded(message: String) -> String {
-    if message.chars().count() <= bound::MAX_OTHER_TEXT {
-        return message;
+/// The last guard on a refusal, whatever said it, which `call_tool` puts every refusal through. Each refusal bounds
+/// what it repeats where it formats it (a caller's value with `text::echo`, a refused move's reasons with
+/// `listed`), so a refusal is within `bound::MAX_OWN_TEXT` and told as it is, closing sentences and all. A longer
+/// one is cut so that, its marker included, it is within that bound.
+pub(crate) fn bounded(mut message: String) -> String {
+    text::cut_within(&mut message, bound::MAX_OWN_TEXT);
+    message
+}
+
+/// How much of a refusal its list of reasons may take, the count of those left out included: the rest of
+/// `bound::MAX_OWN_TEXT` is room for the sentences around it (a key repeated with `text::echo` and a few lines).
+const MAX_REASONS: usize = bound::MAX_OWN_TEXT - 2_000;
+
+/// A refused action's reasons as a refusal lists them, each as `get_story` lists it: one JSON object, a space after
+/// each comma between them. A reason is cut on its own, within `bound::MAX_OTHER_TEXT` with its marker; when the
+/// list would take more than `MAX_REASONS`, whole trailing reasons are left out and counted. `move_story` and `told`
+/// both list reasons with this.
+fn listed(reasons: &[Reason]) -> String {
+    // The brackets, and room for " … and N more reasons".
+    let mut size = 2 + " … and  more reasons".chars().count() + 20;
+    let mut shown = Vec::new();
+    for (n, reason) in reasons.iter().enumerate() {
+        let mut each = serde_json::to_string(reason).unwrap_or_default();
+        text::cut_within(&mut each, bound::MAX_OTHER_TEXT);
+        size += each.chars().count() + ", ".len();
+        if size > MAX_REASONS {
+            return format!(
+                "[{}] … and {} more reasons",
+                shown.join(", "),
+                reasons.len() - n
+            );
+        }
+        shown.push(each);
     }
-    let mut text = message
-        .split(' ')
-        .map(|word| {
-            let mut word = word.to_string();
-            bound::cut(&mut word, bound::MAX_OTHER_TEXT);
-            word
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    bound::cut(&mut text, bound::MAX_OWN_TEXT);
-    text
+    format!("[{}]", shown.join(", "))
 }
 
 /// A tool's answer as it is sent. `to_value` widens an `f32` to `f64`, so an initiative's `progress` of a third
@@ -274,10 +287,7 @@ fn told(e: AppError) -> ToolError {
     match e {
         AppError::NotFound => ToolError::Told("Not found.".into()),
         AppError::Validation(message) => ToolError::Told(message),
-        AppError::Refused(reasons) => ToolError::Told(format!(
-            "Refused: {}",
-            serde_json::to_string(&reasons).unwrap_or_default()
-        )),
+        AppError::Refused(reasons) => ToolError::Told(format!("Refused: {}", listed(&reasons))),
         // -1: a concurrent write, with no version to name (`AppError::from(sqlx::Error)`).
         AppError::Conflict { current } if current < 0 => {
             ToolError::Told("The item changed while this ran. Read it again and retry.".into())
@@ -595,7 +605,7 @@ mod tests {
                 Reason::NoCriteria
             ]))
             .as_deref(),
-            Some(r#"Refused: [{"reason":"untriaged"},{"reason":"no_criteria"}]"#)
+            Some(r#"Refused: [{"reason":"untriaged"}, {"reason":"no_criteria"}]"#)
         );
         assert_eq!(
             said(AppError::Conflict { current: 7 }).as_deref(),
@@ -613,42 +623,41 @@ mod tests {
         );
     }
 
+    /// The last guard leaves a refusal within the bound as it is, however long its words, and cuts a longer one
+    /// to the bound with its marker.
     #[test]
-    fn a_refusal_is_bounded_and_keeps_its_meaning() {
+    fn a_refusal_within_the_bound_is_told_as_it_is_and_a_longer_one_is_cut_to_it() {
         let short = "title must not be empty".to_string();
         assert_eq!(bounded(short.clone()), short);
-        // A long word in a refusal within the bound is not shortened: a list of reasons has no spaces.
-        let reasons = format!("Refused: [{}]", "{\"reason\":\"untriaged\"},".repeat(40));
-        assert_eq!(bounded(reasons.clone()), reasons);
-        // In a long refusal, only a word longer than the other-text bound is shortened, to that bound: a list of
-        // reasons of 1 500 characters stays whole, and the sentences around it too.
-        let list = format!("[{}]", "{\"reason\":\"untriaged\"},".repeat(60));
-        let long = format!("{} Reasons: {list}. Nothing changed.", "no ".repeat(400));
-        assert!(
-            long.chars().count() > bound::MAX_OTHER_TEXT
-                && list.chars().count() < bound::MAX_OTHER_TEXT
+        let at_the_bound = format!(
+            "{} is not an allowed user",
+            "e".repeat(bound::MAX_OWN_TEXT - " is not an allowed user".len())
         );
-        assert_eq!(bounded(long.clone()), long);
-        let long_word = format!(
-            "{}{} is not an allowed user",
-            "no ".repeat(400),
-            "e".repeat(5_000)
-        );
-        assert_eq!(
-            bounded(long_word),
-            format!(
-                "{}{}[cut: 3000 more characters] is not an allowed user",
-                "no ".repeat(400),
-                "e".repeat(bound::MAX_OTHER_TEXT)
-            )
-        );
-        // Many short words: the whole is cut.
+        assert_eq!(at_the_bound.chars().count(), bound::MAX_OWN_TEXT);
+        assert_eq!(bounded(at_the_bound.clone()), at_the_bound);
         let said = bounded("no ".repeat(10_000));
+        assert!(said.chars().count() <= bound::MAX_OWN_TEXT);
+        assert!(said.starts_with("no no ") && said.ends_with(" more characters]"));
+    }
+
+    /// The generic refusal lists reasons as `move_story` does: each cut on its own, the closing bracket kept.
+    #[test]
+    fn a_refusal_s_reasons_are_listed_one_at_a_time() {
+        let long = Reason::DecisionNoRecord {
+            decision_id: 7,
+            title: "t".repeat(3_000),
+        };
+        let said = said(AppError::Refused(vec![long.clone(), Reason::Untriaged])).unwrap();
         assert_eq!(
-            said.chars().count(),
-            bound::MAX_OWN_TEXT + "[cut: 20000 more characters]".len()
+            said,
+            format!("Refused: {}", listed(&[long, Reason::Untriaged]))
         );
-        assert!(said.ends_with("[cut: 20000 more characters]"));
+        assert!(
+            said.ends_with(r#" more characters], {"reason":"untriaged"}]"#),
+            "{}",
+            &said[said.len() - 80..]
+        );
+        assert!(said.chars().count() < bound::MAX_OTHER_TEXT * 2);
     }
 
     #[test]

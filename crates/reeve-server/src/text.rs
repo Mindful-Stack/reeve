@@ -14,6 +14,17 @@ pub(crate) fn cut(text: &mut String, limit: usize) {
     }
 }
 
+/// The most characters a cut's marker takes: its words and the most digits a count can have.
+const MAX_MARKER: usize = "[cut:  more characters]".len() + 20;
+
+/// Cuts `text` so that, its marker included, it is at most `limit` characters; a text within `limit` is left as
+/// it is. `limit` is larger than `MAX_MARKER`.
+pub(crate) fn cut_within(text: &mut String, limit: usize) {
+    if text.chars().count() > limit {
+        cut(text, limit - MAX_MARKER);
+    }
+}
+
 /// A caller's argument as an error message repeats it: its first `MAX_ECHO` characters, and how many were left out.
 /// Also where an action's refusal repeats a caller's value (`actions::stories`), so the words after it survive.
 pub(crate) fn echo(text: &str) -> String {
@@ -99,5 +110,20 @@ mod tests {
             echo(&"å".repeat(MAX_ECHO + 5)),
             format!("{}[cut: 5 more characters]", "å".repeat(MAX_ECHO))
         );
+    }
+
+    #[test]
+    fn a_text_cut_within_a_limit_is_at_most_that_long_with_its_marker() {
+        for text in ["a".repeat(2_000), "世".repeat(2_000)] {
+            let mut same = text.clone();
+            cut_within(&mut same, 2_000);
+            assert_eq!(same, text, "a text at the limit is left as it is");
+        }
+        for over in [1, 9, 1_000_000] {
+            let mut text = "å".repeat(2_000 + over);
+            cut_within(&mut text, 2_000);
+            assert!(text.chars().count() <= 2_000, "{over}");
+            assert!(text.ends_with(&format!("[cut: {} more characters]", over + MAX_MARKER)));
+        }
     }
 }
