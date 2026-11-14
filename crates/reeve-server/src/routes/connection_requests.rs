@@ -67,7 +67,7 @@ fn answered(
 }
 
 #[utoipa::path(get, path = "/connection-requests/{id}", params(("id" = String, Path)),
-    responses((status = 200, body = Response<ConnectionRequestDto>)))]
+    responses((status = 200, body = Response<ConnectionRequestDto>), (status = 403, body = Response<Empty>, description = "an interactive token only")))]
 async fn read(
     State(s): State<AppState>,
     c: Caller,
@@ -89,7 +89,7 @@ async fn read(
 
 #[utoipa::path(post, path = "/connection-requests/{id}/approve", params(("id" = String, Path)),
     request_body = ApproveConnection,
-    responses((status = 200, body = Response<ConnectionAnswerDto>), (status = 403, description = "an interactive token only")))]
+    responses((status = 200, body = Response<ConnectionAnswerDto>), (status = 403, body = Response<Empty>, description = "an interactive token only")))]
 async fn approve(
     State(s): State<AppState>,
     c: Caller,
@@ -123,7 +123,7 @@ async fn approve(
 
 #[utoipa::path(post, path = "/connection-requests/{id}/refuse", params(("id" = String, Path)),
     request_body = RefuseConnection,
-    responses((status = 200, body = Response<ConnectionAnswerDto>), (status = 403, description = "an interactive token only")))]
+    responses((status = 200, body = Response<ConnectionAnswerDto>), (status = 403, body = Response<Empty>, description = "an interactive token only")))]
 async fn refuse(
     State(s): State<AppState>,
     c: Caller,

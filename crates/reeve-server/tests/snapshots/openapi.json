@@ -10791,6 +10791,16 @@
             },
             "description": "unauthenticated"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "an interactive token only"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -10884,6 +10894,13 @@
             "description": "unauthenticated"
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
             "description": "an interactive token only"
           },
           "404": {
@@ -10979,6 +10996,13 @@
             "description": "unauthenticated"
           },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
             "description": "an interactive token only"
           },
           "404": {

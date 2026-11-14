@@ -4987,6 +4987,15 @@ export interface operations {
                     "application/json": components["schemas"]["Response_Empty"];
                 };
             };
+            /** @description an interactive token only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
             /** @description not found */
             404: {
                 headers: {
@@ -5062,7 +5071,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
             };
             /** @description not found */
             404: {
@@ -5139,7 +5150,9 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
             };
             /** @description not found */
             404: {
