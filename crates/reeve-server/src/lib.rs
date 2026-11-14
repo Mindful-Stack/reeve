@@ -17,6 +17,7 @@ pub use export::{
     ExportSources, SnapshotId, check_migrations, connect_offline, export_document,
     export_document_in, export_text, offline_export, offline_options,
 };
+pub use mcp::mcp_startup_line;
 pub use ops::{HEALTHCHECK_TIMEOUT, healthcheck, migration_listing};
 pub use routes::{app, openapi_json};
 pub use state::{
