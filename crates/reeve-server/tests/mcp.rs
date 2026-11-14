@@ -940,6 +940,14 @@ async fn a_tool_failure_is_a_result_the_model_can_read_and_a_malformed_call_is_a
         // The message carries the tool's input schema as `tools/list` shows it, with this instance's example.
         assert!(text.contains("TST-596"), "{arguments}: {text}");
     }
+    // 2025-11-25 answers an argument failure the same way: a tool result, HTTP 200.
+    let bad = json!({"name": "get_story", "arguments": {"key": 5}});
+    let (status, _, body) = send(&h.app, mcp_legacy(&t, Some(6), "tools/call", bad)).await;
+    let legacy = rpc(&body)["result"].clone();
+    assert_eq!((status, &legacy["isError"]), (200, &json!(true)), "{body}");
+    let text = legacy["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("TST-596"), "{text}");
+    assert!(legacy.get("resultType").is_none(), "{legacy}");
     // `arguments` left out altogether reads as no arguments.
     let (status, _, body) = send(
         &h.app,

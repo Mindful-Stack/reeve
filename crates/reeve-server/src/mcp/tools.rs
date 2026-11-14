@@ -79,16 +79,89 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
     serde_json::from_value(args).map_err(|e| ToolError::Arguments(e.to_string()))
 }
 
-/// What the planner said no with, as the model reads it. Anything else is an internal error. (A tool whose "not
-/// found" has a better wording, as `get_story`'s has, says it itself before calling this.)
+/// What an action failed with, as the model reads it: everything the planner said (not found, a validation error, a
+/// refusal with its reasons, a version conflict, forbidden) is told, in a default wording. A tool with a better
+/// wording for one of them, as `get_story` has for not found, says it itself before calling this. Exhaustive on
+/// purpose: a new `AppError` variant does not compile until someone decides whether the model is told.
 fn told(e: AppError) -> ToolError {
     match e {
+        AppError::NotFound => ToolError::Told("Not found.".into()),
         AppError::Validation(message) => ToolError::Told(message),
         AppError::Refused(reasons) => ToolError::Told(format!(
             "Refused: {}",
             serde_json::to_string(&reasons).unwrap_or_default()
         )),
+        // -1: a concurrent write, with no version to name (`AppError::from(sqlx::Error)`).
+        AppError::Conflict { current } if current < 0 => {
+            ToolError::Told("The item changed while this ran. Read it again and retry.".into())
+        }
+        AppError::Conflict { current } => ToolError::Told(format!(
+            "The item changed since it was read: its current version is {current}. Read it again and retry with that version."
+        )),
+        AppError::Forbidden => ToolError::Told("Forbidden: you are not allowed to do this.".into()),
         AppError::Internal(e) => ToolError::Internal(e),
-        other => ToolError::Internal(anyhow::anyhow!("an action failed with {other:?}")),
+        // None of these is an action's answer: the caller is authenticated before a tool runs, and the method and
+        // the body's size are the transport's.
+        e @ (AppError::Unauthenticated | AppError::MethodNotAllowed | AppError::TooLarge(_)) => {
+            ToolError::Internal(anyhow::anyhow!("an action failed with {e:?}"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reeve_protocol::Reason;
+
+    /// What the model is told; `None` for an internal error.
+    fn said(e: AppError) -> Option<String> {
+        match told(e) {
+            ToolError::Told(message) => Some(message),
+            ToolError::Internal(_) => None,
+            ToolError::Arguments(message) => panic!("an argument error: {message}"),
+        }
+    }
+
+    #[test]
+    fn what_the_planner_said_is_told_to_the_model() {
+        assert_eq!(said(AppError::NotFound).as_deref(), Some("Not found."));
+        assert_eq!(
+            said(AppError::Validation("title must not be empty".into())).as_deref(),
+            Some("title must not be empty")
+        );
+        assert_eq!(
+            said(AppError::Refused(vec![
+                Reason::Untriaged,
+                Reason::NoCriteria
+            ]))
+            .as_deref(),
+            Some(r#"Refused: [{"reason":"untriaged"},{"reason":"no_criteria"}]"#)
+        );
+        assert_eq!(
+            said(AppError::Conflict { current: 7 }).as_deref(),
+            Some(
+                "The item changed since it was read: its current version is 7. Read it again and retry with that version."
+            )
+        );
+        assert_eq!(
+            said(AppError::Conflict { current: -1 }).as_deref(),
+            Some("The item changed while this ran. Read it again and retry.")
+        );
+        assert_eq!(
+            said(AppError::Forbidden).as_deref(),
+            Some("Forbidden: you are not allowed to do this.")
+        );
+    }
+
+    #[test]
+    fn what_is_not_the_planners_answer_is_an_internal_error() {
+        for e in [
+            AppError::Internal(anyhow::anyhow!("the database is gone")),
+            AppError::Unauthenticated,
+            AppError::MethodNotAllowed,
+            AppError::TooLarge("too large".into()),
+        ] {
+            assert_eq!(said(e), None);
+        }
     }
 }
