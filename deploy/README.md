@@ -139,6 +139,35 @@ proxy's access log; keep that log as private as the dump. Caddy's `reverse_proxy
         proxy_pass http://127.0.0.1:7474;
     }
 
+## MCP sign-in at the reverse proxy
+
+With `[mcp] enabled = true` the server answers two documents without a caller, which an MCP client reads to find where to sign in (kb/ADR-0029 R2, R11):
+
+- `GET /.well-known/oauth-protected-resource/mcp`
+- `GET /.well-known/oauth-authorization-server`
+
+The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, these two answer 404 as well.
+
+The addresses in the documents are built from `public_url`, and a client compares them with the address the person typed, as text: the MCP endpoint is exactly `<public_url>/mcp`.
+
+The two documents send no CORS headers, so a client running in a browser page cannot read them; the supported clients fetch them from their servers.
+
+Limit both documents at the proxy. A chat provider's users all arrive from a few shared addresses (Claude's from `160.79.104.0/21`), so the limit is per address but sized for many people behind one; the documents are small and the same for everyone. For nginx, five requests a second per address:
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_oauth_meta:10m rate=5r/s;
+
+    # in the server block, before the general proxy location
+    location /.well-known/oauth- {
+        limit_req zone=reeve_oauth_meta burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is that proxy's address and every caller shares one limit. Make nginx use the real client address first (`set_real_ip_from <the CDN's ranges>;` and `real_ip_header X-Forwarded-For;`, module `ngx_http_realip_module`), or key the zone on the header your CDN sets.
+
+The sign-in routes the documents name, `/oauth/authorize` and `/oauth/token`, are not served yet; their limits are added here when they are.
+
 ## GitHub webhook
 
 Pull requests whose branch names a story (`ABC-12-fix-login`, `feature/abc-12`; the key starts the branch's last path segment, any case) show on that story with their status: draft, open, merged or closed. The status is informational only: a merged pull request never moves a story. Branches named after a Jira key from before the import (`SCRUM-11-old`) resolve to the story imported from that key when `SCRUM` is listed in `legacy_prefixes`: list the Jira delivery project key (stories, bugs, tasks), not the discovery project, whose ideas import as initiatives.

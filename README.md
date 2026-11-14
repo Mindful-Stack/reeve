@@ -115,8 +115,11 @@ tokens it accepts are ones a developer mints. Both need a binary built with the 
    claude mcp add --transport http reeve-local http://127.0.0.1:7474/mcp --header "Authorization: Bearer $TOKEN"
    ```
 
-What the refusals look like: `401` with `WWW-Authenticate: Bearer` for a missing, expired or non-MCP token (an API
-token from the Tokens page is refused here, and an MCP token is refused by the API); `403` when the request carries
+What the refusals look like: `401` with
+`WWW-Authenticate: Bearer resource_metadata="http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp"` (the
+address of the document that tells a client where to sign in) for a missing, expired or non-MCP token, with
+`error="invalid_token"` before `resource_metadata` when a bearer token was sent and refused (an API token from the
+Tokens page is refused here, and an MCP token is refused by the API); `403` when the request carries
 an `Origin` header that is not in `[mcp] allowed_origins` (by default only `public_url`'s own origin; add
 `http://localhost:6274` for the inspector's browser page); `404` with the text
 `MCP is not enabled on this instance ([mcp] enabled)` when the switch is off.
