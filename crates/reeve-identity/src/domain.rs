@@ -112,7 +112,7 @@ pub(crate) fn kind_from(s: &str) -> Option<TokenKind> {
 /// an MCP token is an interactive token whose audience is the MCP endpoint. A caller outside this crate chooses an
 /// audience only by calling `issue_token` or `issue_mcp_token`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Audience {
+pub(crate) enum Audience {
     /// The API, the event stream, attachments and the session cookie.
     Api,
     /// The MCP endpoint only.

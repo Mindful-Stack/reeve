@@ -37,8 +37,7 @@ pub use connections::{
     refresh_tokens, revoke_all_connections,
 };
 pub use domain::{
-    Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
-    normalise_email,
+    IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret, normalise_email,
 };
 #[cfg(feature = "static-oidc")]
 pub use fake_client_host::{FakeAnswer, FakeClientHost};

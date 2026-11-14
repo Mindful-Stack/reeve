@@ -32,27 +32,6 @@ pub struct IssuedToken {
     pub secret: String,
 }
 
-/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
-#[allow(clippy::too_many_arguments)]
-pub async fn issue_token(
-    pool: &PgPool,
-    store: &dyn TokenStore,
-    activity: &dyn IdentityActivity,
-    policy: &AccessPolicy,
-    actor: &str,
-    via: Via,
-    email: &str,
-    kind: TokenKind,
-    label: &str,
-    expires_at: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> Result<IssuedToken, AuthError> {
-    issue(
-        pool, store, activity, policy, actor, via, email, kind, label, expires_at, now,
-    )
-    .await
-}
-
 /// Issues a token for the MCP endpoint without an approval: the developer command's path. It makes a connection of
 /// its own (the developer client, scope write, ending when its token expires) and one access token in it: always interactive,
 /// always with an expiry at most one hour after `now` (kb/ADR-0029 R5, R6). No refresh token. A person's
@@ -130,10 +109,12 @@ pub async fn issue_mcp_token(
     Ok(IssuedToken { id, secret })
 }
 
+/// Issues an API token; an MCP token is issued by `issue_mcp_token` only. Handlers own the clock: `now` is passed in, never read here. `actor` is who performs the operation (the operator or, in plan B, the user on their token page); `via` is the channel it came through.
+///
 /// The one issuing path of an API token: the allowlist, an expiry in the future, then in one transaction the user
 /// row (a disabled user is refused), the token, and the `token_issued` activity entry last.
 #[allow(clippy::too_many_arguments)]
-async fn issue(
+pub async fn issue_token(
     pool: &PgPool,
     store: &dyn TokenStore,
     activity: &dyn IdentityActivity,
