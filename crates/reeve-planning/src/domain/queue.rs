@@ -383,7 +383,11 @@ fn discovery_rows(
         let (lane, needed_in_reason) = match w {
             NeededIn::ThisSprint => (QueueLane::ThisSprint, reason),
             NeededIn::NextSprint => (QueueLane::NextSprint, reason),
-            _ if in_first_bucket(inp, &key) => (QueueLane::Beyond, None),
+            _ if inp.first_bucket.is_some()
+                && me.initiative_horizon.as_deref() == inp.first_bucket =>
+            {
+                (QueueLane::Beyond, None)
+            }
             _ => continue,
         };
         let (held, under_way): (Vec<&AffectedStory>, Vec<&AffectedStory>) = stories
@@ -1206,14 +1210,14 @@ mod tests {
         let ds = vec![
             closed(dec(70, None, oct(1)), oct(9)),
             mk(40, nov(5), oct(5), false), // beyond, 1 story, dated
-            mk(10, nov(20), oct(1), true), // this sprint, review step
+            mk(10, nov(20), oct(1), true), // this sprint, 1 story, dated: last of the four
             accepted(dec(60, None, oct(1)), oct(9)),
             dec(50, None, oct(1)),         // open: no stories
-            mk(21, None, oct(7), false),   // this sprint, 2 stories
+            mk(21, None, oct(7), false),   // this sprint, 2 stories: after 11 (3)
             mk(41, None, oct(1), true),    // beyond, review step
             mk(30, None, oct(1), false),   // next sprint
-            mk(20, None, oct(1), false),   // this sprint, 1 story, older
-            mk(11, nov(25), oct(9), true), // this sprint, review step, 3 stories
+            mk(20, None, oct(1), false), // this sprint, 1 story, older: after 21 (2 stories), undated before 10
+            mk(11, nov(25), oct(9), true), // this sprint, 3 stories: first despite the later date
         ];
         let mut stories = todo_for(&[
             (10, &[1]),
@@ -1667,5 +1671,30 @@ mod tests {
         );
         // Nested decisions count in their lane.
         assert_eq!((s.this_sprint, s.next_sprint), (0, 3));
+    }
+
+    /// A decision nested under a row takes the row's lane but keeps its own window (spec §2). Row ABC-1 is in this
+    /// sprint through story 11's active goal; decision 1 on ABC-1 affects only goal-less story 12, so its own window is
+    /// beyond. Catches the nested decision staying in its own lane and the summary missing it.
+    #[test]
+    fn a_nested_decision_takes_the_rows_lane_and_keeps_its_window() {
+        let mut s11 = story(11, DeliveryState::Todo, vec![adi(1)]);
+        s11.active_goals = vec![(7, "G7".into())];
+        let s12 = story(12, DeliveryState::Todo, vec![adi(1), unchecked(1)]);
+        let l = lineage(vec![(1, vec![li(1, ItemType::Epic, Some("Now"))])]);
+        let stories = [s11, s12];
+        let r = repos();
+        let (es, rows, sum) = order(
+            vec![dec(1, None, oct(1))],
+            &inputs(&stories, &l, Some("Now"), &r),
+            today(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].lane, QueueLane::ThisSprint);
+        assert_eq!(
+            (es[0].lane, es[0].needed_in, es[0].under.clone()),
+            (QueueLane::ThisSprint, NeededIn::Beyond, Some(key(1)))
+        );
+        assert_eq!(sum.this_sprint, 1);
     }
 }

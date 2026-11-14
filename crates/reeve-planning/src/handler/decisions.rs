@@ -365,7 +365,8 @@ pub enum DecisionScope {
 
 impl Handlers {
     /// Spec §1: decisions, discovery rows and the readiness of every unfinished story, read in one REPEATABLE READ READ
-    /// ONLY snapshot, then grouped, nested and ordered by the pure queue. `now` is the caller's `Ctx.now`; its date decides what is overdue.
+    /// ONLY snapshot, then grouped, nested and ordered by the pure queue. `now` is the caller's `Ctx.now`; its date
+    /// decides what is overdue.
     pub async fn decision_queue(
         &self,
         scope: &DecisionScope,
