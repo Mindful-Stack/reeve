@@ -521,6 +521,15 @@ impl ServerConfig {
     pub fn https(&self) -> bool {
         self.public_url().scheme() == "https"
     }
+    /// The issuer of the authorization server for the MCP endpoint (kb/ADR-0029 R2): `public_url` without its
+    /// trailing slash, such as `https://reeve.example.com`. It is the `issuer` of the authorization server's
+    /// document, the entry of `authorization_servers`, the prefix of the resource (`<issuer>/mcp`) and the `iss`
+    /// of every authorization response. Clients compare it as a string (RFC 8414 section 3.3), so every place that
+    /// needs it calls this and none formats it by hand. `public_url` never has a path, a query or credentials
+    /// (`try_public_url`), so the text is scheme, host and a port that is not the scheme's default.
+    pub fn issuer(&self) -> String {
+        self.public_url().as_str().trim_end_matches('/').to_string()
+    }
     /// Whether `/mcp` accepts this `Origin` header value: one of `[mcp] allowed_origins`, or the origin of
     /// `public_url` when the list is unset. The comparison is exact, as origins are.
     pub fn mcp_origin_allowed(&self, origin: &str) -> bool {
@@ -1098,5 +1107,39 @@ mod tests {
                 "{bad}: {e}"
             );
         }
+    }
+
+    /// Catches an issuer that keeps the trailing slash the URL parser adds, one built from the text as typed
+    /// (upper case, a default port) instead of the parsed URL, and one that loses a real port.
+    #[test]
+    fn the_issuer_is_public_url_without_a_trailing_slash() {
+        for (public_url, issuer) in [
+            ("https://reeve.example.com", "https://reeve.example.com"),
+            ("https://reeve.example.com/", "https://reeve.example.com"),
+            ("HTTPS://Reeve.Example.com:443", "https://reeve.example.com"),
+            (
+                "https://reeve.example.com:8443/",
+                "https://reeve.example.com:8443",
+            ),
+            ("http://127.0.0.1:7474", "http://127.0.0.1:7474"),
+        ] {
+            let c = cfg(&format!("public_url = \"{public_url}\"")).unwrap();
+            assert_eq!(c.issuer(), issuer, "{public_url}");
+        }
+    }
+
+    /// Pins a rule the code already has for every configuration: with a path in public_url the issuer and the
+    /// well-known addresses built from it would not be the ones RFC 8414 and RFC 9728 give a client.
+    #[test]
+    fn mcp_is_refused_when_public_url_has_a_path() {
+        let with_path = GOOGLE.replace(
+            "https://reeve.example.com",
+            "https://reeve.example.com/planner",
+        );
+        let e = cfg(&format!("{with_path}[mcp]\nenabled = true")).unwrap_err();
+        assert!(
+            e.to_string().contains("public_url must not have a path"),
+            "{e}"
+        );
     }
 }
