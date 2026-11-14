@@ -68,7 +68,6 @@ async fn mcp_token(h: &Harness, email: &str) -> String {
 }
 
 /// What `seed` made.
-#[allow(dead_code)] // not every test names every item
 struct Seed {
     /// Discovery not complete, so the stories under it are not ready.
     initiative: String,

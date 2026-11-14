@@ -6,7 +6,7 @@ use crate::{
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{GetSprintInput, SprintViewDto};
+use reeve_protocol::GetSprintInput;
 use serde_json::Value;
 
 pub(super) fn tool() -> Tool {
@@ -48,19 +48,15 @@ fn run<'a>(
                 }
             }
         };
-        let view = actions::get_sprint(state, who, id)
+        let mut view = actions::get_sprint(state, who, id)
             .await
             .map_err(|e| match e {
                 AppError::NotFound => ToolError::Told(format!("No sprint with id {id}.")),
                 other => super::told(other),
             })?;
-        super::sent(bounded(view))
+        // The planner limits none of a goal's texts. The number of goals, promises and demo stories is not capped
+        // here; the last guard in `call_tool` holds for a sprint that carries too many.
+        view.sprint.goals.iter_mut().for_each(cut_goal);
+        super::sent(view)
     })
-}
-
-/// The view with each goal's texts cut: the planner limits none of them. The number of goals, promises and demo
-/// stories is not capped here; the last guard in `call_tool` holds for a sprint that carries too many.
-fn bounded(mut view: SprintViewDto) -> SprintViewDto {
-    view.sprint.goals.iter_mut().for_each(cut_goal);
-    view
 }
