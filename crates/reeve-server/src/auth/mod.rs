@@ -9,7 +9,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
-use reeve_identity::{AuthError, Principal, authenticate_api};
+use reeve_identity::{AuthError, McpPrincipal, Principal, authenticate_api, authenticate_mcp};
 
 /// The session cookie's name on an http instance (local development).
 pub const SESSION_COOKIE: &str = "reeve_session";
@@ -143,5 +143,54 @@ impl Caller {
             },
             now: self.1,
         }
+    }
+}
+
+/// The caller of the MCP endpoint (kb/ADR-0029 R6): an MCP token in the bearer header and nothing else. It never
+/// reads cookies. Not an extractor: the endpoint calls `from_headers` itself, after its switch and origin check.
+pub struct McpCaller {
+    pub principal: McpPrincipal,
+    /// The instant the request was authenticated; the clock is read once per request, here.
+    pub now: DateTime<Utc>,
+}
+
+impl McpCaller {
+    /// `Unauthenticated` for every refusal; `Db` when the access policy or the token could not be read, which is an
+    /// internal error and never a fallback to the floor. Each refusal is logged here once, at `warn`, with its
+    /// reason and what the request said about its protocol (never the secret): before sign-in exists, this line is
+    /// how it is learnt which revision a client speaks.
+    pub async fn from_headers(
+        state: &AppState,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<Self, AuthError> {
+        let text = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+        let refuse = |reason: &'static str| {
+            tracing::warn!(
+                path = "/mcp",
+                reason,
+                protocol_version = ?text("mcp-protocol-version"),
+                mcp_method = ?text("mcp-method"),
+                "request refused"
+            );
+            AuthError::Unauthenticated
+        };
+        let header = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .ok_or_else(|| refuse("no bearer header"))?
+            .to_str()
+            .map_err(|_| refuse("authorization header is not text"))?;
+        let secret = match header.split_once(' ') {
+            Some((scheme, secret)) if scheme.eq_ignore_ascii_case("bearer") => secret.trim(),
+            _ => return Err(refuse("authorization header is not a bearer token")),
+        };
+        let now = Utc::now();
+        // Loaded on every request, never cached (kb/ADR-0015 R5, kb/ADR-0029 R8).
+        let policy = state.access.load(&state.identity).await?;
+        let principal = match authenticate_mcp(&*state.tokens, &policy, secret, now).await {
+            Ok(principal) => principal,
+            Err(AuthError::Db(e)) => return Err(AuthError::Db(e)),
+            Err(_) => return Err(refuse("the token did not authenticate")),
+        };
+        Ok(Self { principal, now })
     }
 }
