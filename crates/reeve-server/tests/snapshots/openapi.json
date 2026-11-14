@@ -179,7 +179,7 @@
             "type": "string"
           },
           "urgent": {
-            "description": "Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it\nreads as false.",
+            "description": "Urgent on the queue's snapshot (kb/ADR-0024 R5), shown only: the queue orders Now rows by their item, never by\nthis flag, and never places or counts by urgency (kb/ADR-0024 R7). Servers always send it; JSON without it\nreads as false.",
             "type": "boolean"
           }
         },
@@ -873,8 +873,15 @@
       },
       "DecisionQueueDto": {
         "properties": {
+          "discoveries": {
+            "description": "The discovery rows, in page order. Servers always send it; JSON without it (an older server) reads as none.",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryEntryDto"
+            },
+            "type": "array"
+          },
           "entries": {
-            "description": "In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not\nre-sort.",
+            "description": "In page order: lanes in `QueueLane` declaration order (`beyond`: Now, then Later), server order within each\nlane; a nested decision (`under`) directly follows its row's `at`. Clients must not re-sort.",
             "items": {
               "$ref": "#/components/schemas/DecisionQueueEntryDto"
             },
@@ -886,6 +893,7 @@
         },
         "required": [
           "entries",
+          "discoveries",
           "summary"
         ],
         "type": "object"
@@ -920,7 +928,7 @@
               },
               {
                 "$ref": "#/components/schemas/NeededInReason",
-                "description": "Why it is needed this sprint or next; absent otherwise."
+                "description": "Why it is needed this sprint or next, or, in Now (standalone, `beyond` under the first bucket), the Now rule that\nplaced it; absent otherwise. A decision nested under a discovery row keeps its own (never a Now rule)."
               }
             ]
           },
@@ -932,6 +940,17 @@
               {
                 "$ref": "#/components/schemas/NextStep",
                 "description": "What the decision needs next; absent when closed or satisfied."
+              }
+            ]
+          },
+          "under": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Key",
+                "description": "The discovery row this decision is nested under (its `on`, when that item has a row); it then sits in the row's\nlane, directly after the row's `at`. Servers always send it; JSON without it reads as none."
               }
             ]
           },
@@ -951,12 +970,13 @@
           "needed_in_reason",
           "next_step",
           "blocks",
-          "under_way"
+          "under_way",
+          "under"
         ],
         "type": "object"
       },
       "DecisionQueueSummaryDto": {
-        "description": "Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once.",
+        "description": "Counts over open, unsatisfied decisions; `blocked_stories` counts each story once. Discovery rows are not counted\nhere: a client counts `discoveries` by lane.",
         "properties": {
           "blocked_stories": {
             "format": "int32",
@@ -969,7 +989,7 @@
             "type": "integer"
           },
           "next_sprint": {
-            "description": "Size of the next-sprint lane; reads as 0 without it.",
+            "description": "Decisions in the next-sprint lane, nested ones included; reads as 0 without it.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -985,13 +1005,13 @@
             "type": "integer"
           },
           "review": {
-            "description": "Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.",
+            "description": "Decisions whose next step is `review_record`, in any lane. Servers always send it; JSON without it (an older\nserver) reads as 0.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
           },
           "this_sprint": {
-            "description": "Size of the this-sprint lane; reads as 0 without it.",
+            "description": "Decisions in the this-sprint lane, nested ones included; reads as 0 without it.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -1031,6 +1051,78 @@
         "required": [
           "key",
           "title"
+        ],
+        "type": "object"
+      },
+      "DiscoveryEntryDto": {
+        "description": "A discovery row of the readiness queue: an initiative or epic without its discovery mark that holds unfinished\nstories (kb/ADR-0002 R3, read off readiness, never stored: kb/ADR-0018 R1).",
+        "properties": {
+          "also": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Key",
+                "description": "For an epic row: its initiative, when that initiative is without its discovery mark too."
+              }
+            ]
+          },
+          "at": {
+            "description": "The index in `entries` the row goes before (`entries.len()` at the end).",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "blocks": {
+            "description": "The todo stories whose discovery item this is.",
+            "items": {
+              "$ref": "#/components/schemas/AffectedStoryDto"
+            },
+            "type": "array"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "lane": {
+            "$ref": "#/components/schemas/QueueLane",
+            "description": "`this_sprint`, `next_sprint`, or `beyond` with a Now reason (Now, no goal yet)."
+          },
+          "level": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "needed_in_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NeededInReason",
+                "description": "The goal or promise that needs it, or the Now rule that placed it."
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "under_way": {
+            "description": "The started ones.",
+            "items": {
+              "$ref": "#/components/schemas/AffectedStoryDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "level",
+          "title",
+          "also",
+          "lane",
+          "needed_in_reason",
+          "blocks",
+          "under_way",
+          "at"
         ],
         "type": "object"
       },
@@ -2434,7 +2526,7 @@
         "type": "string"
       },
       "NeededInReason": {
-        "description": "Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason\nthis build does not know.",
+        "description": "Why a decision or a discovery row is needed this sprint or next, or, for a row in Now (`beyond` under the first\nhorizon bucket, standalone), which rule of the Now ranking placed it. Clients must accept `unknown`: a later server\nmay send a reason this build does not know.",
         "oneOf": [
           {
             "description": "An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).",
@@ -2461,7 +2553,7 @@
             "type": "object"
           },
           {
-            "description": "The decision's item, or an ancestor, is in discovery under the first horizon bucket. `level` says whether `key` is an\ninitiative or an epic, so a client can link to it. It defaults to `initiative` when absent, so a payload from before\nthe field existed still parses; a discovery item is never a story.",
+            "description": "No longer produced (only goals and promises put work in a sprint lane); kept so an older server's answer reads.\n`level` defaults to `initiative` when absent; a discovery item is never a story.",
             "properties": {
               "key": {
                 "$ref": "#/components/schemas/Key"
@@ -2511,6 +2603,83 @@
               "level",
               "on",
               "overdue",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Now, rule 1: the row's item (a decision: its `on`) is urgent; `key`/`level` name the item whose mark makes it so\n(the first of its urgency sources), so a client can link to it.",
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/Key"
+              },
+              "kind": {
+                "enum": [
+                  "urgent"
+                ],
+                "type": "string"
+              },
+              "level": {
+                "$ref": "#/components/schemas/ItemType"
+              }
+            },
+            "required": [
+              "key",
+              "level",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Now, rule 2: the target month (`YYYY-MM`) of the row's initiative.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "target_month"
+                ],
+                "type": "string"
+              },
+              "month": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "month",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Now, rule 3: decision `id` (the row itself, or a decision nested under the discovery row) is due within a sprint\nlength, overdue included; its date is that decision's `due`.",
+            "properties": {
+              "id": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "decision_due"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Now, rule 4: ranked by the stories it holds; the row's own lists say how many.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "held"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "kind"
             ],
             "type": "object"
@@ -3083,7 +3252,7 @@
         "type": "string"
       },
       "QueueLane": {
-        "description": "The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.",
+        "description": "The queue lane the web groups by; declaration order is the page order. Lanes are disjoint. `beyond` holds both Now\n(a row with a Now reason) and Later (no reason).",
         "enum": [
           "review",
           "this_sprint",
@@ -4052,8 +4221,15 @@
               },
               "value": {
                 "properties": {
+                  "discoveries": {
+                    "description": "The discovery rows, in page order. Servers always send it; JSON without it (an older server) reads as none.",
+                    "items": {
+                      "$ref": "#/components/schemas/DiscoveryEntryDto"
+                    },
+                    "type": "array"
+                  },
                   "entries": {
-                    "description": "In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not\nre-sort.",
+                    "description": "In page order: lanes in `QueueLane` declaration order (`beyond`: Now, then Later), server order within each\nlane; a nested decision (`under`) directly follows its row's `at`. Clients must not re-sort.",
                     "items": {
                       "$ref": "#/components/schemas/DecisionQueueEntryDto"
                     },
@@ -4065,6 +4241,7 @@
                 },
                 "required": [
                   "entries",
+                  "discoveries",
                   "summary"
                 ],
                 "type": "object"
@@ -4175,7 +4352,7 @@
                       },
                       {
                         "$ref": "#/components/schemas/NeededInReason",
-                        "description": "Why it is needed this sprint or next; absent otherwise."
+                        "description": "Why it is needed this sprint or next, or, in Now (standalone, `beyond` under the first bucket), the Now rule that\nplaced it; absent otherwise. A decision nested under a discovery row keeps its own (never a Now rule)."
                       }
                     ]
                   },
@@ -4187,6 +4364,17 @@
                       {
                         "$ref": "#/components/schemas/NextStep",
                         "description": "What the decision needs next; absent when closed or satisfied."
+                      }
+                    ]
+                  },
+                  "under": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Key",
+                        "description": "The discovery row this decision is nested under (its `on`, when that item has a row); it then sits in the row's\nlane, directly after the row's `at`. Servers always send it; JSON without it reads as none."
                       }
                     ]
                   },
@@ -4206,7 +4394,8 @@
                   "needed_in_reason",
                   "next_step",
                   "blocks",
-                  "under_way"
+                  "under_way",
+                  "under"
                 ],
                 "type": "object"
               }

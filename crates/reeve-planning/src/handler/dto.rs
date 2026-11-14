@@ -163,6 +163,7 @@ impl From<&QueueEntry> for DecisionQueueEntryDto {
             next_step: e.next_step.clone(),
             blocks: e.held.iter().map(AffectedStoryDto::from).collect(),
             under_way: e.under_way.iter().map(AffectedStoryDto::from).collect(),
+            under: None,
         }
     }
 }

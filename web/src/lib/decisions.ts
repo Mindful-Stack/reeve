@@ -1,6 +1,7 @@
 // Pure helpers for required decisions: the check label, the "mine" and "closed" filters, due dates and item links.
 import type { ClosureKind, NeededIn, NeededInReason, NextStep, QueueLane, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 import { age, dayLabel, plural } from '#lib/format.ts';
+import { decisionHref } from '#lib/drawer.ts';
 import { itemRoute } from '#lib/urgency.ts';
 
 export type CheckResult = RequiredDecision['check'];
@@ -169,13 +170,17 @@ function keyedParts(r: KeyedReason): ReasonParts {
 }
 
 /** `neededInText` split around the key of the item it names (in discovery, or holding a promise); null for a reason
- *  that names no item (a goal, or one this client does not know). */
+ *  that names no item (a goal, a Now rule, or one this client does not know). A Now rule reads off its queue row. */
 export function reasonParts(r: NeededInReason): ReasonParts | null {
 	switch (r.kind) {
 		case 'discovery':
 		case 'promise':
 			return keyedParts(r);
 		case 'goal':
+		case 'urgent':
+		case 'target_month':
+		case 'decision_due':
+		case 'held':
 		case 'unknown':
 			return null;
 		default: {
@@ -198,6 +203,11 @@ export function neededInText(r: NeededInReason): string {
 			const p = keyedParts(r);
 			return p.before + p.key + p.after;
 		}
+		// A Now rule reads off its queue row (what it holds, a decision's date): without the row it says nothing more.
+		case 'urgent':
+		case 'target_month':
+		case 'decision_due':
+		case 'held':
 		case 'unknown':
 			return 'needed (reason not shown)';
 		default: {
@@ -207,14 +217,19 @@ export function neededInText(r: NeededInReason): string {
 	}
 }
 
-/** Where the item a reason names opens: an initiative or epic page, or a story's drawer over `url`'s page. Null for a
- *  reason that names no item (a goal, or one this client does not know). */
+/** Where the item a reason names opens: an initiative or epic page, or a story's drawer over `url`'s page; for a Now
+ *  `decision_due`, that decision's drawer over `url`'s page. Null for a reason that names nothing to open. */
 export function reasonHref(r: NeededInReason, url: { readonly href: string }): string | null {
 	switch (r.kind) {
 		case 'discovery':
 		case 'promise':
+		case 'urgent':
 			return itemRoute({ item: r.level, key: r.key }, url);
+		case 'decision_due':
+			return decisionHref(url, r.id);
 		case 'goal':
+		case 'target_month':
+		case 'held':
 		case 'unknown':
 			return null;
 		default: {

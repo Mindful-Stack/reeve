@@ -172,7 +172,8 @@ pub struct AffectedStoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub owner: Option<String>,
-    /// Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it
+    /// Urgent on the queue's snapshot (kb/ADR-0024 R5), shown only: the queue orders Now rows by their item, never by
+    /// this flag, and never places or counts by urgency (kb/ADR-0024 R7). Servers always send it; JSON without it
     /// reads as false.
     #[serde(default)]
     #[schema(required = true)]
@@ -195,7 +196,8 @@ pub struct DecisionQueueEntryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub needed_in: NeededIn,
-    /// Why it is needed this sprint or next; absent otherwise.
+    /// Why it is needed this sprint or next, or, in Now (standalone, `beyond` under the first bucket), the Now rule that
+    /// placed it; absent otherwise. A decision nested under a discovery row keeps its own (never a Now rule).
     #[serde(default)]
     #[schema(required = true)]
     pub needed_in_reason: Option<NeededInReason>,
@@ -210,34 +212,68 @@ pub struct DecisionQueueEntryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub under_way: Vec<AffectedStoryDto>,
+    /// The discovery row this decision is nested under (its `on`, when that item has a row); it then sits in the row's
+    /// lane, directly after the row's `at`. Servers always send it; JSON without it reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub under: Option<Key>,
 }
 
-/// Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once.
+/// Counts over open, unsatisfied decisions; `blocked_stories` counts each story once. Discovery rows are not counted
+/// here: a client counts `discoveries` by lane.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionQueueSummaryDto {
     pub open: u32,
     pub blocking: u32,
     pub blocked_stories: u32,
     pub overdue: u32,
-    /// Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.
+    /// Decisions whose next step is `review_record`, in any lane. Servers always send it; JSON without it (an older
+    /// server) reads as 0.
     #[serde(default)]
     #[schema(required = true)]
     pub review: u32,
-    /// Size of the this-sprint lane; reads as 0 without it.
+    /// Decisions in the this-sprint lane, nested ones included; reads as 0 without it.
     #[serde(default)]
     #[schema(required = true)]
     pub this_sprint: u32,
-    /// Size of the next-sprint lane; reads as 0 without it.
+    /// Decisions in the next-sprint lane, nested ones included; reads as 0 without it.
     #[serde(default)]
     #[schema(required = true)]
     pub next_sprint: u32,
 }
 
+/// A discovery row of the readiness queue: an initiative or epic without its discovery mark that holds unfinished
+/// stories (kb/ADR-0002 R3, read off readiness, never stored: kb/ADR-0018 R1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DiscoveryEntryDto {
+    pub key: Key,
+    pub level: ItemType,
+    pub title: String,
+    /// For an epic row: its initiative, when that initiative is without its discovery mark too.
+    #[schema(required = true)]
+    pub also: Option<Key>,
+    /// `this_sprint`, `next_sprint`, or `beyond` with a Now reason (Now, no goal yet).
+    pub lane: QueueLane,
+    /// The goal or promise that needs it, or the Now rule that placed it.
+    #[schema(required = true)]
+    pub needed_in_reason: Option<NeededInReason>,
+    /// The todo stories whose discovery item this is.
+    pub blocks: Vec<AffectedStoryDto>,
+    /// The started ones.
+    pub under_way: Vec<AffectedStoryDto>,
+    /// The index in `entries` the row goes before (`entries.len()` at the end).
+    pub at: u32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionQueueDto {
-    /// In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
-    /// re-sort.
+    /// In page order: lanes in `QueueLane` declaration order (`beyond`: Now, then Later), server order within each
+    /// lane; a nested decision (`under`) directly follows its row's `at`. Clients must not re-sort.
     pub entries: Vec<DecisionQueueEntryDto>,
+    /// The discovery rows, in page order. Servers always send it; JSON without it (an older server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub discoveries: Vec<DiscoveryEntryDto>,
     pub summary: DecisionQueueSummaryDto,
 }
 

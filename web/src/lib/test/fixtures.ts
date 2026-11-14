@@ -246,6 +246,7 @@ export function queueEntry(over: Partial<DecisionQueueEntry> = {}): DecisionQueu
 		next_step: null,
 		blocks: [],
 		under_way: [],
+		under: null,
 		...over
 	};
 }

@@ -65,7 +65,7 @@ beforeEach(() => {
 		withReadiness({ key: 'ABC-2', title: 'Waits on a decision' }, [decisionReason(7)]),
 		withReadiness({ key: 'ABC-3', title: 'No criteria' }, [{ reason: 'no_criteria' }])
 	];
-	queue = { entries: [], summary: queueSummary({ review: 1, this_sprint: 2 }) };
+	queue = { entries: [], discoveries: [], summary: queueSummary({ review: 1, this_sprint: 2 }) };
 	net.handler = serve;
 });
 
@@ -108,7 +108,7 @@ describe('board decisions', () => {
 			flushSync();
 			expect(text(q('.queue-note'))).toBe('Could not load decisions · Retry');
 		});
-		queue = { entries: [], summary: queueSummary() };
+		queue = { entries: [], discoveries: [], summary: queueSummary() };
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
 		await vi.waitFor(() => {
 			flushSync();
@@ -118,7 +118,7 @@ describe('board decisions', () => {
 	});
 
 	it('says the counts may be out of date even when the last good summary had no parts, and Retry brings the banner', async () => {
-		queue = { entries: [], summary: queueSummary() };
+		queue = { entries: [], discoveries: [], summary: queueSummary() };
 		await mounted();
 		await vi.waitFor(() => expect(net.paths.filter((p) => p === '/api/v1/decisions/queue')).toHaveLength(1));
 		await settle();
@@ -131,7 +131,7 @@ describe('board decisions', () => {
 			expect(text(q('.queue-note'))).toBe('Decision counts may be out of date · Retry');
 		});
 		expect(q('nav.decision-banner')).toBeNull();
-		queue = { entries: [], summary: queueSummary({ this_sprint: 2 }) };
+		queue = { entries: [], discoveries: [], summary: queueSummary({ this_sprint: 2 }) };
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
 		await vi.waitFor(() => {
 			flushSync();
@@ -197,7 +197,7 @@ describe('board decisions', () => {
 		});
 		expect(q('nav.decision-banner')).toBeNull();
 		expect(q('[data-testid="card-ABC-2"]')).not.toBeNull();
-		queue = { entries: [], summary: queueSummary({ next_sprint: 1 }) };
+		queue = { entries: [], discoveries: [], summary: queueSummary({ next_sprint: 1 }) };
 		[...document.body.querySelectorAll<HTMLButtonElement>('.queue-note button')].find((b) => b.textContent === 'Retry')!.click();
 		await vi.waitFor(() => {
 			flushSync();
@@ -217,7 +217,7 @@ describe('board decisions', () => {
 		});
 		expect(text(q('nav.decision-banner'))).toBe('⚑ 1 record to review · 2 decisions needed this sprint');
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
-		queue = { entries: [], summary: queueSummary({ review: 3 }) };
+		queue = { entries: [], discoveries: [], summary: queueSummary({ review: 3 }) };
 		live.fns.forEach((f) => f());
 		await vi.waitFor(() => {
 			flushSync();

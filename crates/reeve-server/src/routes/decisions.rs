@@ -160,6 +160,7 @@ async fn queue(
     let (entries, summary) = s.handlers.decision_queue(&scope, c.ctx().now).await?;
     Ok(ok(DecisionQueueDto {
         entries: entries.iter().map(|e| entry_dto(&s, e)).collect(),
+        discoveries: Vec::new(),
         summary: summary.into(),
     }))
 }

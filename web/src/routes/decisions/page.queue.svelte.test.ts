@@ -29,7 +29,7 @@ vi.mock('#lib/me.svelte.ts', async (orig) => {
 	return real;
 });
 
-const empty: DecisionQueue = { entries: [], summary: queueSummary() };
+const empty: DecisionQueue = { entries: [], discoveries: [], summary: queueSummary() };
 const net = vi.hoisted(() => ({
 	queue: null as null | DecisionQueue,
 	queries: [] as string[],
@@ -87,7 +87,7 @@ function entry(lane: QueueLane, d: RequiredDecision, blocks: AffectedStory[] = [
 	return queueEntry({ group: GROUP[lane], lane, decision: d, blocks, ...more });
 }
 function queue(entries: ReturnType<typeof entry>[], summary = empty.summary): DecisionQueue {
-	return { entries, summary };
+	return { entries, discoveries: [], summary };
 }
 
 let app: ReturnType<typeof mount> | null = null;
