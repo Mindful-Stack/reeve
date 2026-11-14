@@ -3,7 +3,7 @@
 //! `Pragma: no-cache` (RFC 6749 section 5.1); every refusal after the switch is an OAuth error object (section
 //! 5.2), never the API's envelope. Clients are public: nothing authenticates them. Nothing a caller sent is ever
 //! logged: every reason is a fixed phrase.
-use super::oauth::{Params, no_store};
+use super::oauth::{self, Params, no_store};
 use crate::state::AppState;
 use axum::{
     Json,
@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use reeve_identity::{ExchangeRequest, GrantError, Issuing, TokenPair};
+use reeve_identity::{ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair};
 use serde_json::json;
 
 /// The largest body read. A raw `Request` gets no default limit, so this is the only one.
@@ -188,6 +188,19 @@ async fn grant(s: &AppState, headers: &HeaderMap, body: &[u8]) -> Result<TokenPa
                 verifier: need("code_verifier")?,
             };
             reeve_identity::exchange_code(with, request, &s.authorization_requests, now).await
+        }
+        "refresh_token" => {
+            let request = RefreshRequest {
+                refresh_token: need("refresh_token")?,
+                client_id: params.get("client_id"),
+                scope: params.get("scope"),
+                // RFC 8707: checked when sent.
+                resource_matches: params
+                    .get("resource")
+                    .is_none_or(|sent| sent == oauth::resource(&s.config)),
+            };
+            let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = s.activity.clone();
+            reeve_identity::refresh_tokens(with, &*log, request, now).await
         }
         _ => {
             return Err(bad(

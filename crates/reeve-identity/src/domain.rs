@@ -1,4 +1,4 @@
-use reeve_protocol::Scope;
+use reeve_protocol::{RevokedReason, Scope};
 pub use reeve_protocol::{Role, TokenKind};
 use sha2::{Digest, Sha256};
 
@@ -73,6 +73,28 @@ pub(crate) fn scope_from(s: &str) -> Option<Scope> {
         "write" => Some(Scope::Write),
         _ => None,
     }
+}
+
+/// The text stored in `connections.revoked_reason` and written in a `connection_revoked` entry.
+pub(crate) fn reason_text(reason: RevokedReason) -> &'static str {
+    match reason {
+        RevokedReason::Revoked => "revoked",
+        RevokedReason::RefreshTokenReused => "refresh_token_reused",
+        RevokedReason::UserDisabled => "user_disabled",
+        RevokedReason::Restored => "restored",
+    }
+}
+
+/// The one parser for the stored reason; `None` for text no `RevokedReason` writes.
+pub(crate) fn reason_from(s: &str) -> Option<RevokedReason> {
+    [
+        RevokedReason::Revoked,
+        RevokedReason::RefreshTokenReused,
+        RevokedReason::UserDisabled,
+        RevokedReason::Restored,
+    ]
+    .into_iter()
+    .find(|r| reason_text(*r) == s)
 }
 
 pub use reeve_protocol::normalise_email;

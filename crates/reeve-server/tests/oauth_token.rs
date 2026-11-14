@@ -489,3 +489,405 @@ async fn the_token_route_answers_post_only_and_nothing_when_off() {
             .starts_with("text/plain")
     );
 }
+
+/// The connection's `revoked_reason`; `None` while it is not revoked.
+async fn revoked(h: &Harness, connection_id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT revoked_reason FROM connections WHERE id = $1")
+        .bind(connection_id)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+async fn revocations(h: &Harness) -> Vec<Value> {
+    let (status, body) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/activity?action=connection_revoked",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    body["value"].as_array().unwrap().clone()
+}
+
+/// kb/ADR-0029 R5: a refresh token rotates on use. Catches a refresh that needs `client_id` (the standards make
+/// it optional here), one that hands back the same refresh token, one that leaves two live refresh tokens, one
+/// that changes the scope, and one that revokes the previous access token (the design keeps it until its hour
+/// ends: a call in flight must not fail).
+#[tokio::test]
+async fn a_refresh_issues_a_new_pair_and_retires_the_refresh_token() {
+    let f = flow().await;
+    let first = connect(&f, &f.h.admin_token, "write").await;
+    f.h.state.clock.advance(Duration::minutes(5));
+    let (status, headers, body) = token(&f, &refresh_form(&first.refresh_token)).await;
+    assert_eq!(status, 200, "without client_id: {body}");
+    assert_oauth_answer(&headers, &body, "refresh");
+    let (access, refresh) = (
+        body["access_token"].as_str().unwrap(),
+        body["refresh_token"].as_str().unwrap(),
+    );
+    assert_ne!(access, first.access_token);
+    assert_ne!(refresh, first.refresh_token);
+    assert_eq!(
+        (&body["token_type"], &body["scope"], &body["expires_in"]),
+        (&json!("Bearer"), &json!("write"), &json!(3600))
+    );
+    assert_eq!(mcp_status(&f, access).await, 200);
+    assert_eq!(
+        mcp_status(&f, &first.access_token).await,
+        200,
+        "the previous access token runs out on its own"
+    );
+    let rows: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT hash, used_at FROM refresh_tokens WHERE connection_id = $1 ORDER BY id",
+    )
+    .bind(first.connection_id)
+    .fetch_all(&f.h.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (
+                reeve_identity::hash_secret(&first.refresh_token),
+                Some(f.h.started + Duration::minutes(5))
+            ),
+            (reeve_identity::hash_secret(refresh), None),
+        ],
+        "the old one used at the refresh's instant, the new one live"
+    );
+    assert_eq!(
+        count(&f.h, "connections").await,
+        1,
+        "a refresh makes no connection"
+    );
+    assert!(revoked(&f.h, first.connection_id).await.is_none());
+    // With its client's id it works as well.
+    let with_id = form_with(refresh_form(refresh), "client_id", Some(&f.client_id));
+    assert_eq!(token(&f, &with_id).await.0, 200);
+}
+
+/// kb/ADR-0029 R5: "using a rotated refresh token again MUST revoke the whole connection". Catches a reuse that
+/// is merely refused, a revocation without its entry or with a person as its actor, tokens that keep working
+/// after it, and a second entry for a second reuse.
+#[tokio::test]
+async fn a_used_refresh_token_presented_again_revokes_the_connection() {
+    let f = flow().await;
+    let first = connect(&f, &f.h.admin_token, "read").await;
+    let (status, _, second) = token(&f, &refresh_form(&first.refresh_token)).await;
+    assert_eq!(status, 200, "{second}");
+    let (access2, refresh2) = (
+        second["access_token"].as_str().unwrap(),
+        second["refresh_token"].as_str().unwrap(),
+    );
+    assert!(
+        revocations(&f.h).await.is_empty(),
+        "the control: nothing is revoked yet"
+    );
+
+    refused(
+        &token(&f, &refresh_form(&first.refresh_token)).await,
+        400,
+        "invalid_grant",
+        "reuse",
+    );
+    assert_eq!(
+        revoked(&f.h, first.connection_id).await.as_deref(),
+        Some("refresh_token_reused")
+    );
+    let log = revocations(&f.h).await;
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert_eq!(
+        (
+            &log[0]["actor"],
+            &log[0]["via"],
+            &log[0]["entity_key"],
+            &log[0]["payload"]
+        ),
+        (
+            &json!("system"),
+            &json!("system"),
+            &json!("dan@example.com"),
+            &json!({"connection_id": first.connection_id, "client_id": f.client_id, "reason": "refresh_token_reused"})
+        )
+    );
+    // Everything of the connection stops at once: both access tokens and the newest refresh token.
+    assert_eq!(mcp_status(&f, &first.access_token).await, 401);
+    assert_eq!(mcp_status(&f, access2).await, 401);
+    refused(
+        &token(&f, &refresh_form(refresh2)).await,
+        400,
+        "invalid_grant",
+        "the newest refresh token",
+    );
+    // A further reuse changes nothing and writes nothing.
+    assert_eq!(token(&f, &refresh_form(&first.refresh_token)).await.0, 400);
+    assert_eq!(revocations(&f.h).await.len(), 1);
+}
+
+/// Each row is a refresh that must be refused without burning the token: the end shows the very same refresh
+/// token still works. Catches a used mark that survives a refused request (the person would lose the connection
+/// to a typo), a refresh that widens the scope, and one another client can use.
+#[tokio::test]
+async fn a_refused_refresh_rolls_back_and_the_token_still_works() {
+    let f = flow().await;
+    let c = connect(&f, &f.h.admin_token, "read").await;
+    let ok = refresh_form(&c.refresh_token);
+    let cases: Vec<Case> = vec![
+        (
+            "another client",
+            form_with(
+                ok.clone(),
+                "client_id",
+                Some("http://127.0.0.1:1/other.json"),
+            ),
+            "invalid_grant",
+        ),
+        (
+            "more than was granted",
+            form_with(ok.clone(), "scope", Some("read write")),
+            "invalid_scope",
+        ),
+        (
+            "a scope that does not exist",
+            form_with(ok.clone(), "scope", Some("admin")),
+            "invalid_scope",
+        ),
+        (
+            "another resource",
+            form_with(ok.clone(), "resource", Some(ISSUER)),
+            "invalid_target",
+        ),
+        (
+            "no refresh token",
+            form_with(ok.clone(), "refresh_token", None),
+            "invalid_request",
+        ),
+        (
+            "an unknown refresh token",
+            form_with(ok.clone(), "refresh_token", Some("reeve_refresh_0000")),
+            "invalid_grant",
+        ),
+        (
+            "the access token as refresh token",
+            form_with(ok.clone(), "refresh_token", Some(&c.access_token)),
+            "invalid_grant",
+        ),
+    ];
+    for (what, form, error) in cases {
+        refused(&token(&f, &form).await, 400, error, what);
+    }
+    assert!(
+        revoked(&f.h, c.connection_id).await.is_none(),
+        "none of these is a reuse"
+    );
+    // The same token, with what a client may send: the granted scope, offline_access and the resource.
+    let full = form_with(
+        form_with(ok.clone(), "scope", Some("read offline_access")),
+        "resource",
+        Some(RESOURCE),
+    );
+    let (status, _, body) = token(&f, &full).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["scope"], "read");
+}
+
+/// kb/ADR-0029 R5: "MUST stop working 30 days after the approval". Fixed clock, exact boundaries. Catches thirty
+/// days counted from the exchange or from the last refresh, an access token that outlives the connection, and a
+/// refresh at or after the end.
+#[tokio::test]
+async fn a_connection_ends_thirty_days_after_its_approval() {
+    let f = flow().await;
+    let clock = &f.h.state.clock;
+    let code = code_for(&f, &f.h.admin_token, "read").await; // approved at the start
+    clock.advance(Duration::seconds(50));
+    let (status, _, body) = token(&f, &code_form(&f, &code)).await; // exchanged 50 s later
+    assert_eq!(status, 200, "{body}");
+    let refresh = body["refresh_token"].as_str().unwrap().to_string();
+    // Thirty seconds before the thirtieth day after the approval.
+    clock.advance(Duration::days(30) - Duration::seconds(80));
+    let (status, _, body) = token(&f, &refresh_form(&refresh)).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["expires_in"], 30, "the token ends with the connection");
+    let access = body["access_token"].as_str().unwrap().to_string();
+    let refresh = body["refresh_token"].as_str().unwrap().to_string();
+    clock.advance(Duration::seconds(29));
+    assert_eq!(
+        mcp_status(&f, &access).await,
+        200,
+        "one second before the end"
+    );
+    clock.advance(Duration::seconds(1));
+    assert_eq!(mcp_status(&f, &access).await, 401, "at the end");
+    refused(
+        &token(&f, &refresh_form(&refresh)).await,
+        400,
+        "invalid_grant",
+        "at the end",
+    );
+}
+
+/// kb/ADR-0029 R5 ("MUST re-check the person's access when used") and kb/ADR-0015 R6 (losing access revokes
+/// nothing). Catches a refresh for a person who is no longer allowed, a connection revoked for it, and a used mark
+/// left behind: once access is back, the same refresh token works.
+#[tokio::test]
+async fn a_person_who_lost_access_cannot_refresh_and_the_connection_is_left_as_it_is() {
+    let f = flow().await;
+    let guest = guest(&f.h).await;
+    let c = connect(&f, &guest, "read").await;
+    assert_eq!(mcp_status(&f, &c.access_token).await, 200);
+    set_guest_allowed(&f.h, false).await;
+    assert_eq!(
+        mcp_status(&f, &c.access_token).await,
+        401,
+        "the access check of every call"
+    );
+    refused(
+        &token(&f, &refresh_form(&c.refresh_token)).await,
+        400,
+        "invalid_grant",
+        "no longer allowed",
+    );
+    assert!(
+        revoked(&f.h, c.connection_id).await.is_none(),
+        "left as it is"
+    );
+    set_guest_allowed(&f.h, true).await;
+    assert_eq!(
+        token(&f, &refresh_form(&c.refresh_token)).await.0,
+        200,
+        "the used mark was rolled back"
+    );
+}
+
+/// Two refreshes with one token at once: one pair is issued, and the loser is a reuse, which revokes the
+/// connection (no grace period, kb/ADR-0029 R5 as written). Both hold the owner's row in turn, so the outcome is
+/// the same for either order; the assertions hold for both. Catches two pairs from one refresh token.
+#[tokio::test]
+async fn two_refreshes_at_once_issue_one_pair_and_then_the_connection_is_revoked() {
+    let f = flow().await;
+    let c = connect(&f, &f.h.admin_token, "read").await;
+    let form = refresh_form(&c.refresh_token);
+    let (a, b) = tokio::join!(token(&f, &form), token(&f, &form));
+    let mut statuses = [a.0, b.0];
+    statuses.sort();
+    assert_eq!(statuses, [200, 400]);
+    assert_eq!(
+        revoked(&f.h, c.connection_id).await.as_deref(),
+        Some("refresh_token_reused")
+    );
+    let winner = if a.0 == 200 { &a.2 } else { &b.2 };
+    assert_eq!(
+        mcp_status(&f, winner["access_token"].as_str().unwrap()).await,
+        401
+    );
+}
+
+/// Catches expired MCP token rows piling up: a refresh deletes the connection's expired ones, and only those.
+#[tokio::test]
+async fn a_refresh_deletes_the_connections_expired_token_rows() {
+    let f = flow().await;
+    let c = connect(&f, &f.h.admin_token, "read").await;
+    let other = connect(&f, &f.h.admin_token, "read").await;
+    f.h.state.clock.advance(Duration::hours(1));
+    assert_eq!(token(&f, &refresh_form(&c.refresh_token)).await.0, 200);
+    let tokens_of = |id: i64| {
+        let pool = f.h.state.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tokens WHERE connection_id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        tokens_of(c.connection_id).await,
+        1,
+        "the expired row went, the new one stays"
+    );
+    assert_eq!(
+        tokens_of(other.connection_id).await,
+        1,
+        "another connection's rows are not this refresh's"
+    );
+}
+
+/// What the code logged while the guard is alive, as text (as in `tests/mcp.rs`).
+#[derive(Clone, Default)]
+struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+    fn make_writer(&'a self) -> Logs {
+        self.clone()
+    }
+}
+impl Logs {
+    fn capture() -> (Logs, tracing::subscriber::DefaultGuard) {
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .finish();
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+/// The operator gets one `warn` line per refusal and never a secret (the design, section 5). Catches a refusal
+/// that is not logged or logged twice, and a line that holds the code, the verifier, a refresh token or the
+/// client id the caller sent.
+#[tokio::test]
+async fn a_refused_token_request_is_logged_once_and_never_with_what_was_sent() {
+    let f = flow().await;
+    let code = code_for(&f, &f.h.admin_token, "read").await;
+    let wrong_verifier = "a-wrong-verifier-of-43-characters-000000000";
+    let sent_client = "http://127.0.0.1:1/sent-by-the-caller.json";
+    let (logs, guard) = Logs::capture();
+    let form = form_with(
+        form_with(code_form(&f, &code), "code_verifier", Some(wrong_verifier)),
+        "client_id",
+        Some(sent_client),
+    );
+    assert_eq!(token(&f, &form).await.0, 400);
+    let text = logs.text();
+    assert_eq!(text.matches("token request refused").count(), 1, "{text}");
+    for secret in [code.as_str(), wrong_verifier, sent_client, VERIFIER] {
+        assert!(!text.contains(secret), "{secret} in: {text}");
+    }
+    drop(guard);
+
+    let c = connect(&f, &f.h.admin_token, "read").await;
+    let (status, _, next) = token(&f, &refresh_form(&c.refresh_token)).await;
+    assert_eq!(status, 200);
+    let (logs, _guard) = Logs::capture();
+    let reuse = form_with(
+        refresh_form(&c.refresh_token),
+        "client_id",
+        Some(sent_client),
+    );
+    assert_eq!(token(&f, &reuse).await.0, 400);
+    let text = logs.text();
+    assert_eq!(text.matches("token request refused").count(), 1, "{text}");
+    for secret in [
+        c.refresh_token.as_str(),
+        next["refresh_token"].as_str().unwrap(),
+        next["access_token"].as_str().unwrap(),
+        sent_client,
+    ] {
+        assert!(!text.contains(secret), "{secret} in: {text}");
+    }
+}

@@ -10,11 +10,12 @@ use crate::{
     access::AccessPolicy,
     access_repo::AccessStore,
     authorization::{AuthorizationRequests, RedeemRefusal},
-    domain::{IdentityConfig, hash_secret, new_secret, random_secret},
+    domain::{IdentityConfig, hash_secret, new_secret, random_secret, reason_text},
+    ports::{IdentityActivity, IdentityEvent},
     repo::TokenStore,
 };
 use chrono::{DateTime, Duration, Utc};
-use reeve_protocol::Scope;
+use reeve_protocol::{RevokedReason, Scope, Via};
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// How long a connection lasts from its approval (kb/ADR-0029 R5).
@@ -31,6 +32,28 @@ pub(crate) fn is_live(
     now: DateTime<Utc>,
 ) -> bool {
     revoked_at.is_none() && ends_at > now
+}
+
+/// A connection: the one type the store hands out and the handlers and the server read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connection {
+    pub id: i64,
+    pub owner: String,
+    pub client_id: String,
+    pub client_name: String,
+    pub scope: Scope,
+    pub approved_at: DateTime<Utc>,
+    pub ends_at: DateTime<Utc>,
+    /// When the client last refreshed: the newest `used_at` of the connection's refresh tokens.
+    pub refreshed_at: Option<DateTime<Utc>>,
+    /// When and why it was revoked; `None` while it is not. Who did it is in the activity entry.
+    pub revoked: Option<(DateTime<Utc>, RevokedReason)>,
+}
+
+impl Connection {
+    pub fn is_live(&self, now: DateTime<Utc>) -> bool {
+        is_live(self.ends_at, self.revoked.map(|(at, _)| at), now)
+    }
 }
 
 /// What the token route answers a successful grant with (RFC 6749 section 5.1).
@@ -179,4 +202,182 @@ pub async fn exchange_code(
     .await?;
     tx.commit().await?;
     Ok(pair)
+}
+
+/// Who acts when no person does (a reused refresh token). The webhook's entries name `github` the same way.
+pub(crate) const SYSTEM: &str = "system";
+
+/// One `connection_revoked` entry per connection in `revoked`: the one writer of that action, for every way a
+/// connection is revoked. Called last in its transaction.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn record_revocations(
+    activity: &dyn IdentityActivity,
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &str,
+    via: Via,
+    owner: &str,
+    revoked: &[(i64, String)],
+    reason: RevokedReason,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    for (id, client_id) in revoked {
+        activity
+            .record(
+                tx,
+                IdentityEvent {
+                    at: now,
+                    actor: actor.into(),
+                    via,
+                    subject: owner.into(),
+                    action: "connection_revoked",
+                    payload: serde_json::json!({"connection_id": id, "client_id": client_id, "reason": reason_text(reason)}),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// A refresh request as the token route read it.
+pub struct RefreshRequest<'a> {
+    pub refresh_token: &'a str,
+    /// Optional at a refresh (RFC 6749 section 6); compared with the connection's client when sent.
+    pub client_id: Option<&'a str>,
+    /// The `scope` parameter, when sent.
+    pub scope: Option<&'a str>,
+    /// Whether the `resource` parameter was absent or named this endpoint.
+    pub resource_matches: bool,
+}
+
+/// Whether a requested scope stays within the granted one (OAuth 2.1 section 4.3.1: "MUST NOT include any scope
+/// not originally granted"). Omitted means the granted scope; `offline_access` asks for nothing.
+fn within(requested: Option<&str>, granted: Scope) -> bool {
+    requested.is_none_or(|scope| {
+        scope.split(' ').all(|name| match name {
+            "read" | "offline_access" => true,
+            "write" => granted == Scope::Write,
+            _ => false,
+        })
+    })
+}
+
+/// The refresh grant (kb/ADR-0029 R5): rotation, with reuse revoking the connection. One transaction: the
+/// owner's row first, then the refresh token's mark. A token that was used before revokes the connection, with
+/// its entry, and commits; every other refusal returns before the commit, so the dropped transaction rolls back
+/// the used mark and the same token can be presented again.
+pub async fn refresh_tokens(
+    with: Issuing<'_>,
+    activity: &dyn IdentityActivity,
+    request: RefreshRequest<'_>,
+    now: DateTime<Utc>,
+) -> Result<TokenPair, GrantError> {
+    let found = with
+        .store
+        .find_refresh_token(&hash_secret(request.refresh_token))
+        .await?;
+    let Some((id, connection_id, owner)) = found else {
+        return Err(GrantError::InvalidGrant("unknown refresh token"));
+    };
+    let policy = with.policy().await?;
+    let mut tx = with.pool.begin().await?;
+    let disabled = with.store.lock_user(&mut tx, &owner).await?;
+    let Some(connection) = with.store.connection(&mut tx, connection_id).await? else {
+        return Err(GrantError::InvalidGrant("the connection is gone"));
+    };
+    if !with.store.use_refresh_token(&mut tx, id, now).await? {
+        let revoked = with
+            .store
+            .revoke_connections(
+                &mut tx,
+                &owner,
+                Some(connection.id),
+                RevokedReason::RefreshTokenReused,
+                now,
+            )
+            .await?;
+        record_revocations(
+            activity,
+            &mut tx,
+            SYSTEM,
+            Via::System,
+            &owner,
+            &revoked,
+            RevokedReason::RefreshTokenReused,
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        return Err(GrantError::InvalidGrant(
+            "a used refresh token was presented again: the connection is revoked",
+        ));
+    }
+    // The checks. Each failure returns here; nothing has been committed.
+    if !connection.is_live(now) {
+        return Err(GrantError::InvalidGrant(
+            "the connection is revoked or has ended",
+        ));
+    }
+    if request
+        .client_id
+        .is_some_and(|sent| sent != connection.client_id)
+    {
+        return Err(GrantError::InvalidGrant(
+            "the refresh token was issued to another client",
+        ));
+    }
+    if !request.resource_matches {
+        return Err(GrantError::InvalidTarget);
+    }
+    if !within(request.scope, connection.scope) {
+        return Err(GrantError::InvalidScope);
+    }
+    if disabled != Some(false) {
+        return Err(GrantError::InvalidGrant("the owner is disabled"));
+    }
+    if !policy.is_allowed(&owner) {
+        return Err(GrantError::InvalidGrant("the owner is no longer allowed"));
+    }
+    let pair = issue_pair(
+        with.store,
+        &mut tx,
+        &owner,
+        connection.id,
+        &connection.client_name,
+        connection.scope,
+        connection.ends_at,
+        now,
+    )
+    .await?;
+    with.store
+        .delete_expired_mcp_tokens(&mut tx, connection.id, now)
+        .await?;
+    tx.commit().await?;
+    Ok(pair)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Catches a refresh that can widen a read connection, and one that refuses what a client may send.
+    #[test]
+    fn a_requested_scope_stays_within_the_grant() {
+        for (requested, granted, ok) in [
+            (None, Scope::Read, true),
+            (Some("read"), Scope::Read, true),
+            (Some("read offline_access"), Scope::Read, true),
+            (Some("write"), Scope::Read, false),
+            (Some("read write"), Scope::Read, false),
+            (Some("read write"), Scope::Write, true),
+            (Some("read"), Scope::Write, true),
+            (Some("admin"), Scope::Write, false),
+            (Some("read  write"), Scope::Write, false),
+        ] {
+            assert_eq!(
+                within(requested, granted),
+                ok,
+                "{requested:?} within {granted:?}"
+            );
+        }
+    }
 }

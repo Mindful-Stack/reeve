@@ -43,3 +43,16 @@ pub struct RefuseConnection {
 pub struct ConnectionAnswerDto {
     pub redirect_to: String,
 }
+
+/// Why a connection was revoked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevokedReason {
+    /// By its owner or an admin.
+    Revoked,
+    /// A refresh token that had been used was presented again (kb/ADR-0029 R5).
+    RefreshTokenReused,
+    UserDisabled,
+    /// The instance was restored from a backup, which ends every connection.
+    Restored,
+}

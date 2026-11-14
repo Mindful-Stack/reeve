@@ -1,7 +1,8 @@
+use crate::connections::Connection;
 use crate::domain::*;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use reeve_protocol::Scope;
+use reeve_protocol::{RevokedReason, Scope};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 
@@ -111,6 +112,45 @@ pub trait TokenStore: Send + Sync {
         owner: &str,
         before: DateTime<Utc>,
     ) -> Result<u64, sqlx::Error>;
+    /// The refresh token with this hash: its id, its connection and the connection's owner. A plain read: the
+    /// three never change, and the owner must be known before the owner's row can be locked.
+    async fn find_refresh_token(
+        &self,
+        hash: &str,
+    ) -> Result<Option<(i64, i64, String)>, sqlx::Error>;
+    /// Marks the refresh token used, if it is not yet. Returns whether this call marked it: `false` means it was
+    /// used before.
+    async fn use_refresh_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<bool, sqlx::Error>;
+    /// One connection, read in the caller's transaction without a lock of its own: a caller that holds the
+    /// owner's `users` row is alone with it; a caller that does not yet reads it to learn the owner.
+    async fn connection(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+    ) -> Result<Option<Connection>, sqlx::Error>;
+    /// Revokes the owner's live connections, or only the one named, and returns each one's id and client id, by
+    /// id. A connection that is revoked already or has ended is left as it is. The caller holds the owner's
+    /// `users` row lock.
+    async fn revoke_connections(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        only: Option<i64>,
+        reason: RevokedReason,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<(i64, String)>, sqlx::Error>;
+    /// Deletes the connection's MCP token rows that have expired by `now`.
+    async fn delete_expired_mcp_tokens(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        connection_id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error>;
     async fn find_by_hash(&self, hash: &str) -> Result<Option<TokenRow>, sqlx::Error>;
     async fn revoke_all_for(
         &self,
@@ -281,6 +321,79 @@ impl TokenStore for PgTokenStore {
             .await?
             .rows_affected())
     }
+    async fn find_refresh_token(
+        &self,
+        hash: &str,
+    ) -> Result<Option<(i64, i64, String)>, sqlx::Error> {
+        sqlx::query_as(
+            "SELECT r.id, r.connection_id, c.owner FROM refresh_tokens r JOIN connections c ON c.id = r.connection_id WHERE r.hash = $1",
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+    }
+    async fn use_refresh_token(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<bool, sqlx::Error> {
+        // Read Committed re-evaluates the WHERE after waiting for a concurrent update (PostgreSQL 16, 13.2.1), so
+        // exactly one transaction ever gets the row back.
+        let marked: Option<i64> = sqlx::query_scalar(
+            "UPDATE refresh_tokens SET used_at = $2 WHERE id = $1 AND used_at IS NULL RETURNING id",
+        )
+        .bind(id)
+        .bind(now)
+        .fetch_optional(&mut **tx)
+        .await?;
+        Ok(marked.is_some())
+    }
+    async fn connection(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: i64,
+    ) -> Result<Option<Connection>, sqlx::Error> {
+        let row = sqlx::query(&format!(
+            "SELECT {CONNECTION} FROM connections c WHERE c.id = $1"
+        ))
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        row.as_ref().map(connection_from).transpose()
+    }
+    async fn revoke_connections(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        owner: &str,
+        only: Option<i64>,
+        reason: RevokedReason,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<(i64, String)>, sqlx::Error> {
+        let mut rows: Vec<(i64, String)> = sqlx::query_as(
+            "UPDATE connections SET revoked_at = $3, revoked_reason = $4 \
+             WHERE owner = $1 AND ($2::bigint IS NULL OR id = $2) AND revoked_at IS NULL AND ends_at > $3 \
+             RETURNING id, client_id",
+        )
+        .bind(owner).bind(only).bind(now).bind(reason_text(reason))
+        .fetch_all(&mut **tx)
+        .await?;
+        rows.sort();
+        Ok(rows)
+    }
+    async fn delete_expired_mcp_tokens(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        connection_id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM tokens WHERE connection_id = $1 AND expires_at <= $2")
+            .bind(connection_id)
+            .bind(now)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
     async fn revoke_all_for(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -397,6 +510,45 @@ fn user_row(
         disabled,
         created_at,
     }
+}
+
+/// The columns of a connection, with when it last refreshed, for a query whose table alias is `c`.
+const CONNECTION: &str = "c.id, c.owner, c.client_id, c.client_name, c.scope, c.approved_at, c.ends_at, c.revoked_at, c.revoked_reason, \
+     (SELECT max(r.used_at) FROM refresh_tokens r WHERE r.connection_id = c.id) AS refreshed_at";
+
+/// The one place a stored connection becomes a `Connection`, as `list_for` builds a `TokenSummary`; text no code
+/// writes is a decode error, not a guess.
+fn connection_from(r: &sqlx::postgres::PgRow) -> Result<Connection, sqlx::Error> {
+    use sqlx::Row;
+    let unknown =
+        |what: &str, text: &str| sqlx::Error::Decode(format!("unknown {what} {text:?}").into());
+    let scope: String = r.try_get("scope")?;
+    let revoked_at: Option<DateTime<Utc>> = r.try_get("revoked_at")?;
+    let reason: Option<String> = r.try_get("revoked_reason")?;
+    let revoked = match (revoked_at, reason) {
+        (None, None) => None,
+        (Some(at), Some(text)) => Some((
+            at,
+            reason_from(&text).ok_or_else(|| unknown("revoked_reason", &text))?,
+        )),
+        // The table sets both or neither; a row that says otherwise is not read as live.
+        _ => {
+            return Err(sqlx::Error::Decode(
+                "revoked_at and revoked_reason are not set together".into(),
+            ));
+        }
+    };
+    Ok(Connection {
+        id: r.try_get("id")?,
+        owner: r.try_get("owner")?,
+        client_id: r.try_get("client_id")?,
+        client_name: r.try_get("client_name")?,
+        scope: scope_from(&scope).ok_or_else(|| unknown("scope", &scope))?,
+        approved_at: r.try_get("approved_at")?,
+        ends_at: r.try_get("ends_at")?,
+        refreshed_at: r.try_get("refreshed_at")?,
+        revoked,
+    })
 }
 
 /// Every user row, read on the caller's transaction (the export's snapshot). Only the user columns: no token is read.

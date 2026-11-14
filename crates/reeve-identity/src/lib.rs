@@ -32,7 +32,10 @@ pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
     ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, resolve_client,
 };
-pub use connections::{ExchangeRequest, GrantError, Issuing, TokenPair, exchange_code};
+pub use connections::{
+    Connection, ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair, exchange_code,
+    refresh_tokens,
+};
 pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
     normalise_email,
@@ -50,6 +53,7 @@ pub use oidc::{GoogleOidcConfig, OidcClient, OidcError, make_google_oidc};
 #[cfg(feature = "static-oidc")]
 pub use oidc::{GoogleOidcTestOptions, TestClock, make_google_oidc_for_tests, make_static_oidc};
 pub use ports::{IdentityActivity, IdentityEvent};
+pub use reeve_protocol::RevokedReason;
 pub use reeve_protocol::Scope;
 pub use reeve_protocol::Via;
 pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};
