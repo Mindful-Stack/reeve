@@ -58,11 +58,16 @@ enum Cmd {
         #[arg(long)]
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
-    /// Disable a user and revoke their tokens.
+    /// Disable a user and revoke their tokens and MCP connections.
     UserDisable {
         #[arg(long)]
         email: String,
     },
+    /// Operator command, run on the host with database access while the server is stopped: revoke every live MCP
+    /// connection, with an activity entry each (reason `restored`). The restore procedure runs it before the
+    /// server starts: a dump rewinds refresh tokens, so every connection must end and people connect again
+    /// (deploy/README.md, "Restore after an incident"). Prints how many it revoked.
+    ConnectionsRevokeAll,
     /// Operator command: print who may sign in and who is admin, merged from the configuration and the database, one
     /// `kind<TAB>value<TAB>source<TAB>flag` line per entry (flag is `not allowed` or empty; control characters in
     /// value and source are escaped). Read-only: connects read-only, never migrates and refuses a database at another
@@ -278,6 +283,22 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
+        }
+        Cmd::ConnectionsRevokeAll => {
+            let store = reeve_identity::make_token_store(pool.clone());
+            let log: std::sync::Arc<dyn reeve_identity::IdentityActivity> =
+                reeve_activity::make_activity_store(pool.clone());
+            let n = reeve_identity::revoke_all_connections(
+                &pool,
+                &*store,
+                &*log,
+                "operator",
+                reeve_protocol::Via::System,
+                reeve_identity::RevokedReason::Restored,
+                chrono::Utc::now(),
+            )
+            .await?;
+            println!("revoked {n} connections");
         }
         Cmd::AccessList => unreachable!("dispatched above, before the migrations"),
     }

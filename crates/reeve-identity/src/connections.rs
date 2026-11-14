@@ -355,6 +355,60 @@ pub async fn refresh_tokens(
     Ok(pair)
 }
 
+/// Revokes every live connection of every person, with one `connection_revoked` entry each: what an operator
+/// runs after a restore, which rewinds refresh-token rotation (reason `Restored`). In each transaction the
+/// owners' rows are locked first, in order, and the entries are written last. The owners are read before the
+/// transaction that locks them, so the read is repeated after each commit until no live connection is left: a
+/// connection made in between, by a server that was not stopped, ends as well. Returns how many were revoked.
+pub async fn revoke_all_connections(
+    pool: &PgPool,
+    store: &dyn TokenStore,
+    activity: &dyn IdentityActivity,
+    actor: &str,
+    via: Via,
+    reason: RevokedReason,
+    now: DateTime<Utc>,
+) -> Result<usize, sqlx::Error> {
+    let mut count = 0;
+    loop {
+        let owners = store.live_connection_owners(now).await?;
+        if owners.is_empty() {
+            return Ok(count);
+        }
+        let mut tx = pool.begin().await?;
+        for owner in &owners {
+            store.lock_user(&mut tx, owner).await?;
+        }
+        let mut revoked = vec![];
+        for owner in &owners {
+            revoked.push((
+                owner,
+                store
+                    .revoke_connections(&mut tx, owner, None, reason, now)
+                    .await?,
+            ));
+        }
+        for (owner, connections) in &revoked {
+            record_revocations(
+                activity,
+                &mut tx,
+                actor,
+                via,
+                owner,
+                connections,
+                reason,
+                now,
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        count += revoked
+            .iter()
+            .map(|(_, connections)| connections.len())
+            .sum::<usize>();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

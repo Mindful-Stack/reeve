@@ -144,6 +144,8 @@ pub trait TokenStore: Send + Sync {
         reason: RevokedReason,
         now: DateTime<Utc>,
     ) -> Result<Vec<(i64, String)>, sqlx::Error>;
+    /// The owners of live connections, in order: whose rows a revocation of everything must lock, one by one.
+    async fn live_connection_owners(&self, now: DateTime<Utc>) -> Result<Vec<String>, sqlx::Error>;
     /// Deletes the connection's MCP token rows that have expired by `now`.
     async fn delete_expired_mcp_tokens(
         &self,
@@ -380,6 +382,12 @@ impl TokenStore for PgTokenStore {
         .await?;
         rows.sort();
         Ok(rows)
+    }
+    async fn live_connection_owners(&self, now: DateTime<Utc>) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT DISTINCT owner FROM connections WHERE revoked_at IS NULL AND ends_at > $1 ORDER BY owner")
+            .bind(now)
+            .fetch_all(&self.pool)
+            .await
     }
     async fn delete_expired_mcp_tokens(
         &self,

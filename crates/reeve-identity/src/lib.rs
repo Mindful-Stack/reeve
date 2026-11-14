@@ -34,7 +34,7 @@ pub use clients::{
 };
 pub use connections::{
     Connection, ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair, exchange_code,
-    refresh_tokens,
+    refresh_tokens, revoke_all_connections,
 };
 pub use domain::{
     Audience, IdentityConfig, McpPrincipal, Principal, Role, TokenKind, hash_secret,
