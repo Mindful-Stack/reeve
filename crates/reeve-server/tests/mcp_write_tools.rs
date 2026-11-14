@@ -776,11 +776,11 @@ async fn edit_story_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
         ),
         (
             json!({"description": "As a cust[cut: 9990 more characters]"}),
-            "description ends with the marker of a text this server cut. Read the whole text first; a cut text cannot be written back.",
+            "description ends with the marker of a text get_story cut. The whole text cannot be read here, so it cannot be replaced here: tell the person to edit it in the CLI or the web client.",
         ),
         (
             json!({"criteria": ["a slot can be picked", "it is he[cut: 5 more characters]"]}),
-            "A criterion ends with the marker of a text this server cut. Read the whole text first; a cut text cannot be written back.",
+            "A criterion ends with the marker of a text get_story cut. The whole text cannot be read here, so it cannot be replaced here: tell the person to edit it in the CLI or the web client.",
         ),
     ];
     for (arguments, expected) in cases {

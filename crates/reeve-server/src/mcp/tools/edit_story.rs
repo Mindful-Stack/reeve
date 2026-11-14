@@ -17,9 +17,8 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "edit_story",
         title: "Edit a story",
         description: format!(
-            "Change one story's title, kind, epic, description, acceptance criteria, owner or labels. Only the fields you send are changed; what a field held before is replaced. {} Read the story first (get_story) and send its `version`: if someone changed the story since, the edit is refused and you are told the current version. {} Never send back a text that ends with that marker: read the whole text first. To move a story between states use move_story, not this. Answers a receipt: the story's key, title, delivery state and new version.",
-            super::WRITE_TEXT,
-            super::CUT_TEXT
+            "Change one story's title, kind, epic, description, acceptance criteria, owner or labels. Only the fields you send are changed; what a field held before is replaced. {} Read the story first (get_story) and send its `version`: if someone changed the story since, the edit is refused and you are told the current version. get_story shortens a long text and ends it with `[cut: N more characters]`. Such a text cannot be edited here: never send it back; leave that field out and tell the person to edit it in the CLI or the web client. To move a story between states use move_story, not this. Answers a receipt: the story's key, title, delivery state and new version.",
+            super::WRITE_TEXT
         ),
         input_schema,
         // It replaces what a field held (destructive). The same arguments again carry a version that is no longer
@@ -85,7 +84,7 @@ fn run<'a>(
         let input: EditStoryInput = super::arguments(args)?;
         let prefix = &state.config.key_prefix;
         let told = |message: &str| Err(ToolError::Told(message.to_string()));
-        const CUT: &str = "ends with the marker of a text this server cut. Read the whole text first; a cut text cannot be written back.";
+        const CUT: &str = "ends with the marker of a text get_story cut. The whole text cannot be read here, so it cannot be replaced here: tell the person to edit it in the CLI or the web client.";
         if input.detach_epic && input.epic.is_some() {
             return told("detach_epic and epic cannot be sent together.");
         }
