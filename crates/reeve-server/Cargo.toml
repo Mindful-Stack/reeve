@@ -53,3 +53,5 @@ reeve-testdb.workspace = true
 tempfile.workspace = true
 image.workspace = true
 img-parts.workspace = true
+# Test-only: the official SDK's client, for tests/mcp_conformance.rs. Never a dependency of the binary (kb/ADR-0006 R1).
+rmcp = { version = "3.10.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
