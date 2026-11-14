@@ -240,7 +240,7 @@ async fn an_answer_lacking_any_one_proof_is_refused_and_consumes_nothing() {
                 page_request("POST", &path, session, connect, body(value)),
             )
         };
-        // Every row but the last is an answer of the handler itself, and none of them may be stored by a cache.
+        // Every answer of these routes, an extractor's refusal included, may not be stored by a cache.
         let handled = (404, true);
         assert_eq!(
             post(Some(&dan), Some(&s.cookie), &stale).await,
@@ -280,15 +280,15 @@ async fn an_answer_lacking_any_one_proof_is_refused_and_consumes_nothing() {
             (403, true),
             "{action}: csrf, a cookie write without the client header"
         );
-        // The router's own answer, not a handler's: nothing of the request is in it.
+        // The router's own answer, not a handler's: nothing of the request is in it, and the routes' middleware
+        // marks it all the same.
         assert_eq!(
             status_of(
                 &f,
                 page_request("GET", &path, Some(&dan), Some(&s.cookie), None)
             )
-            .await
-            .0,
-            405,
+            .await,
+            (405, true),
             "{action}: a GET never answers"
         );
     }
@@ -426,8 +426,9 @@ async fn approve_and_refuse_at_once_give_exactly_one_answer() {
 }
 
 /// With `[mcp]` off the three routes answer 404 (not stored either) even for a request that is live in the
-/// store, and before the caller is looked at. The request is made with the feature on; a second router over the same state has it
-/// off. The end shows the request was live all along, so the 404s are the switch's.
+/// store, before the caller is looked at and before any extractor runs: a path that is not UTF-8, which the path
+/// extractor refuses with 400, is a 404 too. The request is made with the feature on; a second router over the
+/// same state has it off. The end shows the request was live all along, so the 404s are the switch's.
 #[tokio::test]
 async fn off_the_three_routes_answer_404_first_even_for_a_live_request() {
     let f = flow().await;
@@ -456,12 +457,41 @@ async fn off_the_three_routes_answer_404_first_even_for_a_live_request() {
             (404, true),
             "{method} {action}"
         );
-        let signed_out = page_request(method, &path, None, Some(&s.cookie), body);
+        let signed_out = page_request(method, &path, None, Some(&s.cookie), body.clone());
         let (status, headers, _) = answer_of(&off, signed_out).await;
         assert_eq!(
             (status, is_no_store(&headers)),
             (404, true),
             "{method} {action}: the switch comes before the caller"
+        );
+        let invalid = page_request(
+            method,
+            &format!("/api/v1/connection-requests/%FF{action}"),
+            Some(&dan),
+            Some(&s.cookie),
+            body.clone(),
+        );
+        let (status, headers, _) = answer_of(&off, invalid).await;
+        assert_eq!(
+            (status, is_no_store(&headers)),
+            (404, true),
+            "{method} {action}: the switch comes before the path"
+        );
+        let (status, headers, body) = answer_of(
+            &f.h.app,
+            page_request(
+                method,
+                &format!("/api/v1/connection-requests/%FF{action}"),
+                Some(&dan),
+                Some(&s.cookie),
+                body,
+            ),
+        )
+        .await;
+        assert_eq!(
+            (status, is_no_store(&headers)),
+            (400, true),
+            "{method} {action}: on, the path extractor's refusal is not stored either: {body}"
         );
     }
     assert_eq!(
