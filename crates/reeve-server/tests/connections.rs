@@ -116,6 +116,11 @@ async fn a_person_lists_their_own_connections_and_an_admin_anyones() {
         "an automation token lists its owner's"
     );
     assert_eq!(
+        ids(&list(h, &h.bot_token, Some("bob@example.com")).await.1),
+        [bobs.connection_id],
+        "an admin's automation token lists another person's"
+    );
+    assert_eq!(
         call(&h.app, None, "GET", "/api/v1/connections", None)
             .await
             .0,
@@ -323,11 +328,14 @@ async fn the_developer_commands_connection_is_listed_and_revocable() {
     assert_eq!(send(&h.app, discover()).await.0, 401);
 }
 
-/// A revoke and a refresh of one connection never interleave: each takes the owner's row first. First a revoke
-/// is in progress (its transaction holds the row and has revoked the connection, uncommitted) when a refresh
-/// arrives: the refresh waits and then refuses, burning nothing. Then a refresh is in progress when a revoke
-/// arrives: the revoke waits, having written nothing. Catches a refresh that reads the connection without the
-/// owner's row (it would see it live and issue a pair for a connection being revoked).
+/// A revoke and a refresh of one connection never interleave: each takes the owner's row first. First the
+/// owner's row is held, as a refresh in progress holds it, when a revoke arrives: the revoke waits, having
+/// written nothing to the connection, and succeeds once the row is let go. Then a revoke is in progress on
+/// another connection (a transaction holds the row and has marked the connection revoked, uncommitted) when a
+/// refresh arrives: the refresh waits and then refuses, burning nothing. That second half stands the revoke in
+/// with SQL, so it exercises the refresh side only. Catches a refresh that reads the connection without the
+/// owner's row (it would see it live and issue a pair for a connection being revoked), and a revoke that writes
+/// before it holds the row.
 #[tokio::test]
 async fn a_revoke_and_a_refresh_wait_for_each_other() {
     let f = flow().await;
