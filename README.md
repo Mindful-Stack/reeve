@@ -57,6 +57,9 @@ needs a Lorekeeper checkout next to this repository, or `LOREKEEPER_DIR`).
 
 ## Trying the MCP endpoint locally
 
+To connect an AI app such as Claude to a running instance, see
+[docs/connecting-an-ai-app.md](docs/connecting-an-ai-app.md); this section is for developers.
+
 The MCP endpoint (`/mcp`) is off unless `[mcp] enabled = true`. The quickest way to try it locally is a token a
 developer mints (connecting a real app is in `deploy/README.md`). Both need a binary built with the test sign-in
 feature:
