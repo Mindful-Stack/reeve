@@ -9,6 +9,7 @@ import { goto } from '$app/navigation';
 import { today } from '#lib/decisions.ts';
 import { sprintLine } from '#lib/home.ts';
 import { session } from '#lib/me.svelte.ts';
+import { RULE } from '#lib/sprint.ts';
 import { decision, goal, me, queueEntry, queueSummary, sprint, sprintView, withReadiness } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 import Home from './+page.svelte';
@@ -188,6 +189,46 @@ describe('home', () => {
 		expect(heading('The sprint')).toBeDefined();
 		(document.body.querySelector('[data-testid="goal-chip-7"]') as HTMLButtonElement).click();
 		expect(vi.mocked(goto)).toHaveBeenCalledWith('/board?goal=7');
+	});
+
+	it('the sprint strip shows each goal with counts and confidence, Upkeep with its share, and the counting rule', async () => {
+		const s = sprint({
+			goals: [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })]
+		});
+		net.state.sprints = {
+			active: sprintView(s, {
+				counts: {
+					completed: 3,
+					upkeep_completed: 1,
+					goals: [
+						{ goal_id: 1, completed: 2, in_flight: 1, todo: 4, in_review: 0, blocked_decisions: 0 },
+						{ goal_id: 2, completed: 0, in_flight: 0, todo: 1, in_review: 0, blocked_decisions: 0 }
+					]
+				}
+			}),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		await open();
+		const strip = document.body.querySelector('[data-testid="goals-strip"]')!;
+		const chip = (id: number | 'upkeep') => strip.querySelector<HTMLButtonElement>(`[data-testid="goal-chip-${id}"]`)!;
+		const chips = [...strip.querySelectorAll('button')];
+		expect(chips.map((b) => b.dataset.testid)).toEqual(['goal-chip-1', 'goal-chip-2', 'goal-chip-upkeep']);
+		expect(chip(1).textContent).toContain('Ship the import');
+		expect(chip(1).textContent).toContain('2 / 1 / 4');
+		expect(chip(1).querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('confidence: at risk');
+		expect(chip(2).querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('confidence: not recorded');
+		expect(chip('upkeep').textContent?.trim()).toBe('Upkeep');
+		expect(chip('upkeep').title).toBe('1 of 3 completed stories were upkeep (33%; team line 20%)');
+		// kb/ADR-0014 R2: the rule is a visible line where counts show, not only a tooltip.
+		expect(strip.getAttribute('title')).toBe(RULE);
+		expect(strip.querySelector('.rule')?.textContent).toBe(RULE);
+		// The pills open the board; they are not toggles and carry no pressed state.
+		expect(chips.some((b) => b.hasAttribute('aria-pressed'))).toBe(false);
+
+		chip('upkeep').click();
+		expect(vi.mocked(goto)).toHaveBeenCalledWith('/board?goal=none');
 	});
 
 	it('keeps the page and says so when a live reload fails', async () => {
