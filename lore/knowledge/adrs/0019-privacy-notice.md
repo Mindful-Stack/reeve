@@ -3,7 +3,7 @@ id: kb/ADR-0019
 title: "ADR-0019: Each instance serves a privacy notice from a statement kept with the code"
 description: "We decided that the repository carries the statement of what personal data Reeve processes, served unauthenticated at /privacy and completed from reeve.toml by the operator who controls the instance, because people in Reeve are owed that information and only the code can say truthfully what it processes."
 tags: [adr, reeve, identity, privacy, configuration]
-status: proposed
+status: accepted
 date: 2026-11-10
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-10.
+Accepted 2026-11-15 by Daniel Thyselius.
 
 ## Context
 kb/ADR-0015 lets admins add guests outside the company domain, who sign in with any Google account. For Google to let such an account in, the OAuth consent screen must be External and published to production, and Google refuses that until the Branding page names a home page and a privacy policy URL on an authorized domain. People who sign in are owed the information in GDPR Art. 13; people who appear in Reeve without signing in (an invited guest's entry, an imported or assigned author, someone mentioned) are owed the information in Art. 14.
