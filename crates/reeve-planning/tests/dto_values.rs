@@ -459,6 +459,7 @@ fn queue_entry_dto_carries_every_field() {
             key: k("ABC-33"),
             title: "third".into(),
         }],
+        under: Some(k("ABC-40")),
     };
     assert_eq!(
         v!(DecisionQueueEntryDto::from(&e)),
@@ -467,6 +468,7 @@ fn queue_entry_dto_carries_every_field() {
             "lane": "this_sprint", "needed_in": "this_sprint",
             "needed_in_reason": {"kind": "goal", "goal_id": 7, "outcome": "ship it"},
             "next_step": {"kind": "review_record", "pr_url": "https://github.com/acme/kb/pull/9"},
+            "under": "ABC-40",
             "blocks": [
                 {"key": "ABC-31", "title": "first", "kind": "bug", "delivery": "todo", "owner": "o@x", "urgent": true, "needed_in": "this_sprint"},
                 {"key": "ABC-32", "title": "second", "kind": "story", "delivery": "todo", "owner": null, "urgent": false, "needed_in": "beyond"}
@@ -474,6 +476,50 @@ fn queue_entry_dto_carries_every_field() {
             "under_way": [
                 {"key": "ABC-33", "title": "third", "kind": "chore", "delivery": "in_review", "owner": "p@x", "urgent": false, "needed_in": "next_sprint"}
             ]
+        })
+    );
+}
+
+#[test]
+fn discovery_entry_dto_carries_every_field() {
+    let r = DiscoveryRow {
+        key: k("ABC-40"),
+        level: ItemType::Epic,
+        title: "Tiers".into(),
+        also: Some(k("ABC-4")),
+        lane: QueueLane::Beyond,
+        needed_in_reason: Some(NeededInReason::Urgent {
+            key: k("ABC-4"),
+            level: ItemType::Initiative,
+        }),
+        held: vec![QueueStory {
+            key: k("ABC-41"),
+            title: "first".into(),
+            kind: Kind::Bug,
+            delivery: DeliveryState::Todo,
+            owner: Some("o@x".into()),
+            urgent: true,
+            needed_in: NeededIn::Beyond,
+        }],
+        under_way: vec![QueueStory {
+            key: k("ABC-42"),
+            title: "second".into(),
+            kind: Kind::Story,
+            delivery: DeliveryState::InProgress,
+            owner: None,
+            urgent: false,
+            needed_in: NeededIn::Beyond,
+        }],
+        at: 3,
+    };
+    assert_eq!(
+        v!(DiscoveryEntryDto::from(&r)),
+        json!({
+            "key": "ABC-40", "level": "epic", "title": "Tiers", "also": "ABC-4", "lane": "beyond",
+            "needed_in_reason": {"kind": "urgent", "key": "ABC-4", "level": "initiative"},
+            "blocks": [{"key": "ABC-41", "title": "first", "kind": "bug", "delivery": "todo", "owner": "o@x", "urgent": true, "needed_in": "beyond"}],
+            "under_way": [{"key": "ABC-42", "title": "second", "kind": "story", "delivery": "in_progress", "owner": null, "urgent": false, "needed_in": "beyond"}],
+            "at": 3
         })
     );
 }
@@ -495,13 +541,17 @@ fn queue_summary_dto_carries_every_count() {
     );
 }
 
-/// An old server's queue (no field added by the lanes change) still reads: a new client against an older server.
+/// An old server's queue (no field added by the lanes change or the readiness queue) still reads: a new client against
+/// an older server, its `review` lane included (no longer sent, still read). The `review` entry guards against removing
+/// `QueueLane::Review`: an older server still sends it.
 #[test]
 fn an_older_servers_queue_json_reads_with_defaults() {
     let old = json!({
         "entries": [{
             "decision": decision_json(), "group": "blocking",
             "blocks": [{"key": "ABC-31", "title": "first"}]
+        }, {
+            "decision": decision_json(), "group": "open", "lane": "review", "blocks": []
         }],
         "summary": {"open": 4, "blocking": 3, "blocked_stories": 2, "overdue": 1}
     });
@@ -511,6 +561,7 @@ fn an_older_servers_queue_json_reads_with_defaults() {
     assert_eq!(e.needed_in, NeededIn::None);
     assert_eq!(e.needed_in_reason, None);
     assert_eq!(e.next_step, None);
+    assert_eq!(e.under, None);
     assert!(e.under_way.is_empty());
     let b = &e.blocks[0];
     assert_eq!(
@@ -530,6 +581,8 @@ fn an_older_servers_queue_json_reads_with_defaults() {
         )
     );
     assert_eq!(e.decision.record.as_ref().unwrap().browse_url, None);
+    assert_eq!(q.entries[1].lane, QueueLane::Review);
+    assert!(q.discoveries.is_empty());
     let s = &q.summary;
     assert_eq!((s.review, s.this_sprint, s.next_sprint), (0, 0, 0));
 }
@@ -881,6 +934,35 @@ fn needed_in_reason_promise_carries_every_field() {
             overdue: false,
         }
     );
+}
+
+/// The Now rules a queue row can carry, in their wire shape: `target_month` the month as stored, `decision_due` only the
+/// decision's id (its date is that decision's `due`), `held` nothing (the row's own lists say how many).
+#[test]
+fn needed_in_reason_now_rules_carry_every_field() {
+    for (r, want) in [
+        (
+            NeededInReason::Urgent {
+                key: k("ABC-5"),
+                level: ItemType::Epic,
+            },
+            json!({"kind": "urgent", "key": "ABC-5", "level": "epic"}),
+        ),
+        (
+            NeededInReason::TargetMonth {
+                month: "2026-11".into(),
+            },
+            json!({"kind": "target_month", "month": "2026-11"}),
+        ),
+        (
+            NeededInReason::DecisionDue { id: 20 },
+            json!({"kind": "decision_due", "id": 20}),
+        ),
+        (NeededInReason::Held, json!({"kind": "held"})),
+    ] {
+        assert_eq!(v!(&r), want, "{r:?}");
+        assert_eq!(serde_json::from_value::<NeededInReason>(want).unwrap(), r);
+    }
 }
 
 /// A reason kind this build does not know decodes to `Unknown` rather than failing the whole queue.

@@ -1,4 +1,4 @@
-<!-- web/src/routes/triage/+page.svelte: the untriaged queue (kb/ADR-0018 R4), oldest first, one item at a time. The server
+<!-- web/src/routes/triage/+page.svelte: the untriaged queue (kb/ADR-0027 R4), oldest first, one item at a time. The server
 	filters (GET /stories?untriaged=true, kb/ADR-0021 R1); this page only sorts. Keys act only while focus is inside the
 	page's triage area (WCAG 2.1.4), and never while a drawer is open over it. -->
 <script lang="ts">
@@ -336,7 +336,7 @@
 			const server = await unwrap(api.GET('/api/v1/stories/{key}', { params: { path: { key } } }));
 			const where = whereNow(server);
 			if (where !== null) {
-				// No longer untriaged (kb/ADR-0018 R4): it leaves the queue and the page says where it went, as on a live change.
+				// No longer untriaged (kb/ADR-0027 R4): it leaves the queue and the page says where it went, as on a live change.
 				queue = queue.filter((x) => x.key !== key);
 				if (currentKey === key) left = server;
 				notice = { text: `${where}${tail}` };
@@ -402,7 +402,7 @@
 	}
 
 	/** Undo of a Drop always moves the item to todo, whatever it was: todo is not active work, so no readiness gate
-	 *  applies (kb/ADR-0018 R2) and Undo never needs an override. */
+	 *  applies (kb/ADR-0027 R2) and Undo never needs an override. */
 	function dropUndo(dropped: Story, duplicate: boolean): Undo {
 		return {
 			action: 'drop',

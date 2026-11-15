@@ -8,7 +8,7 @@ export const links = [
 	{ href: '/backlog', label: 'Backlog' },
 	{ href: '/board', label: 'Board' },
 	{ href: '/sprint', label: 'Sprint' },
-	{ href: '/decisions', label: 'Decisions' }
+	{ href: '/decisions', label: 'Readiness' }
 ];
 
 type Where = { pathname: string; search: string };

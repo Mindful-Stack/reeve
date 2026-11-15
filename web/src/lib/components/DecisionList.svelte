@@ -7,8 +7,8 @@
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
-	import { closeActions, dateLine, decisionStatus, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
-	import { age, errorMessage, short } from '#lib/format.ts';
+	import { closeActions, dateLine, decisionStatus, holdsLabel, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
+	import { age, errorMessage, plural, short } from '#lib/format.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
 	import { tick as nextRender, untrack, type Snippet } from 'svelte';
@@ -25,7 +25,9 @@
 	// thread (where ratification is discussed) and an Actions menu (Edit, Close) that opens its form under the row, so
 	// every view that lists decisions also carries the thread. The UI only links records; it writes nothing into them
 	// (kb/ADR-0004).
-	type Group = { id: string; folded: boolean; listId?: string };
+	// `always` renders the group's heading even with no rows placed in it (a discovery row, a lane heading); `labelledBy`
+	// names the element that labels the group's list (a discovery row's heading).
+	type Group = { id: string; folded: boolean; listId?: string; always?: boolean; labelledBy?: string };
 
 	let {
 		decisions,
@@ -43,7 +45,8 @@
 		blocks,
 		groupOf,
 		groups = [],
-		heading
+		heading,
+		inQueue = false
 	}: {
 		decisions: RequiredDecision[];
 		/** The stories each decision keeps out of active work, by decision id (the queue's `blocks`). A decision missing
@@ -79,9 +82,11 @@
 		groupOf?: (d: RequiredDecision) => string;
 		/** The groups in render order. A folded group shows only its heading; `listId` is its list's id when unfolded. */
 		groups?: Group[];
-		/** Rendered before each group that has a decision in it, folded or not, with the group and how many rows are placed
-		 *  in it (a row pinned in its old group counts there). */
+		/** Rendered before each group that has a decision in it, folded or not, or that is `always`, with the group and how
+		 *  many rows are placed in it (a row pinned in its old group counts there). */
 		heading?: Snippet<[string, number]>;
+		/** The queue page: a row's line is its reason alone (the lane heading says when), and a nested decision (`under`) shows none. */
+		inQueue?: boolean;
 	} = $props();
 	/** `rest` as two groups: the first always shown, the rest folded unless `showRest`. */
 	const FIRST = 'first';
@@ -338,10 +343,6 @@
 
 	function blockedOf(d: RequiredDecision): AffectedStory[] {
 		return blocks?.get(d.id) ?? entries?.get(d.id)?.blocks ?? [];
-	}
-
-	function stories(n: number): string {
-		return `${n} ${n === 1 ? 'story' : 'stories'}`;
 	}
 
 	function classifyItems(d: RequiredDecision): MenuItem[] {
@@ -611,7 +612,7 @@
 	{@const entry = entries?.get(d.id)}
 	{@const underWay = entry?.under_way ?? []}
 	{@const work = blocked.length + underWay.length > 0}
-	{@const holds = entry ? `Holds ${stories(blocked.length)}${underWay.length ? ` · ${underWay.length} under way` : ''}` : `Blocks ${stories(blocked.length)}`}
+	{@const holds = entry ? holdsLabel(blocked, underWay) : `Blocks ${plural(blocked.length, 'story', 'stories')}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
@@ -671,10 +672,12 @@
 		{#if entry && !d.closed}
 			{@const next = entry.next_step}
 			{@const reason = entry.needed_in_reason}
-			{#if next || entry.needed_in !== 'none'}
+			{@const label = inQueue ? null : neededLabel(entry)}
+			{@const showNeeded = inQueue ? !!reason && !entry.under : !!label || !!reason}
+			{#if next || showNeeded}
 				<div class="lines">
-					{#if entry.needed_in !== 'none'}
-						<p class="needed" data-testid="needed">{neededLabel(entry.needed_in)}{#if reason}{' · '}<NeededInReason {reason} />{/if}</p>
+					{#if showNeeded}
+						<p class="needed" data-testid="needed">{#if label}{label}{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} row={{ kind: 'decision', entry }} />{/if}</p>
 					{/if}
 					{#if next}
 						{@const link = next.kind === 'review_record' ? safePrUrl(next.pr_url) : null}
@@ -798,7 +801,7 @@
 						{/if}
 						{#if closing[d.id] === 'withdrawn' && blocked.length}
 							<div class="hint unblocks">
-								<p>Withdrawing lifts the gate on {stories(blocked.length)}:</p>
+								<p>Withdrawing lifts the gate on {plural(blocked.length, 'story', 'stories')}:</p>
 								<ul>
 									{#each blocked as s (s.key)}<li>{@render story(s)}</li>{/each}
 								</ul>
@@ -856,14 +859,14 @@
 
 <div class="decision-list" bind:this={root}>
 {#if groupOf}
-	{#if placed.every((g) => g.folded || g.rows.length === 0)}
+	{#if placed.every((g) => !g.always && (g.folded || g.rows.length === 0))}
 		<p class="empty">{empty}</p>
 	{/if}
 	{#each placed as g (g.id)}
-		{#if g.rows.length}
+		{#if g.rows.length || g.always}
 			{@render heading?.(g.id, g.rows.length)}
-			{#if !g.folded}
-				<ul class="decisions" id={g.listId}>
+			{#if !g.folded && g.rows.length}
+				<ul class="decisions" id={g.listId} aria-labelledby={g.labelledBy}>
 					{#each g.rows as d (d.id)}{@render row(d)}{/each}
 				</ul>
 			{/if}

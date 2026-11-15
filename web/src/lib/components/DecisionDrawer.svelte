@@ -91,11 +91,6 @@
 		return GROUPS.map((g) => ({ ...g, stories: stories.filter((s) => window(s) === g.key) })).filter((g) => g.stories.length);
 	}
 
-	/** An open, unsatisfied decision no goal, discovery or promise waits on yet: the strip says so instead of staying empty. */
-	function notNeeded(e: DecisionQueueEntry): boolean {
-		return e.needed_in === 'none' && !e.decision.closed && e.decision.check.kind !== 'accepted';
-	}
-
 	const list = $derived(entry ? [entry.decision] : []);
 
 	function keydown(e: KeyboardEvent) {
@@ -158,14 +153,15 @@
 			>
 		{/if}
 
-		{#if e.needed_in !== 'none' || notNeeded(e) || next}
+		{@const label = neededLabel(e)}
+		{@const reason = e.needed_in_reason}
+		{#if label || reason || next}
 			<div class="strip" data-testid="strip">
-				{#if e.needed_in !== 'none'}
+				{#if label || reason}
+					{@const row = { kind: 'decision' as const, entry: e }}
 					<p class="needed">
-						<strong>{neededLabel(e.needed_in)}</strong>{#if e.needed_in_reason}{' · '}<NeededInReason reason={e.needed_in_reason} />{/if}
+						{#if label}<strong>{label}</strong>{#if reason}{' · '}{/if}{/if}{#if reason}<NeededInReason {reason} {row} />{/if}
 					</p>
-				{:else if notNeeded(e)}
-					<p class="needed"><strong>{neededLabel('none')}</strong></p>
 				{/if}
 				{#if next}
 					<p class="next-step">

@@ -77,8 +77,9 @@ pub trait PlanningReads: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         stories: &[Key],
     ) -> Result<HashMap<Key, Vec<(i64, String, reeve_protocol::GoalVia)>>, RepoError>;
-    /// Each item's lineage for the decision queue, nearest first (a story starts at its epic), in one statement. An
-    /// item that does not exist is absent from the map, and so is a story without an epic.
+    /// Each item's lineage for the readiness queue, nearest first (a story starts at its epic; an epic or initiative
+    /// at itself), with each item's title and its initiative's horizon and target month, in one statement. An item
+    /// that does not exist is absent from the map, and so is a story without an epic.
     async fn decision_lineage_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,

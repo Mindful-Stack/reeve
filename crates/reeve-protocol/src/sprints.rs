@@ -188,7 +188,7 @@ pub struct CreatedGoalDto {
 }
 
 /// What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
-/// kb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+/// kb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct GoalGatesDto {
     pub goal_id: i64,
@@ -213,7 +213,7 @@ pub struct DiscoveryGateDto {
     pub title: String,
 }
 
-/// An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3).
+/// An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0027 R3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DecisionGateDto {
     pub on: Key,

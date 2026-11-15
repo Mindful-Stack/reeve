@@ -116,16 +116,16 @@ pub enum NeededIn {
     None,
 }
 
-/// Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason
-/// this build does not know.
+/// Why a decision or a discovery row is needed this sprint or next, or, for a row in Now (`beyond` under the first
+/// horizon bucket, standalone), which rule of the Now ranking placed it. Clients must accept `unknown`: a later server
+/// may send a reason this build does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NeededInReason {
     /// An affected story serves this goal (of the active sprint for `this_sprint`, the draft one for `next_sprint`).
     Goal { goal_id: i64, outcome: String },
-    /// The decision's item, or an ancestor, is in discovery under the first horizon bucket. `level` says whether `key` is an
-    /// initiative or an epic, so a client can link to it. It defaults to `initiative` when absent, so a payload from before
-    /// the field existed still parses; a discovery item is never a story.
+    /// No longer produced (only goals and promises put work in a sprint lane); kept so an older server's answer reads.
+    /// `level` defaults to `initiative` when absent; a discovery item is never a story.
     Discovery {
         key: Key,
         #[serde(default = "initiative_level")]
@@ -142,6 +142,16 @@ pub enum NeededInReason {
         #[schema(required = true)]
         overdue: bool,
     },
+    /// Now, rule 1: the row's item (a decision: its `on`) is urgent; `key`/`level` name the item whose mark makes it so
+    /// (the first of its urgency sources), so a client can link to it.
+    Urgent { key: Key, level: ItemType },
+    /// Now, rule 2: the target month (`YYYY-MM`) of the row's initiative.
+    TargetMonth { month: String },
+    /// Now, rule 3: decision `id` (the row itself, or a decision nested under the discovery row) is due within a sprint
+    /// length, overdue included; its date is that decision's `due`.
+    DecisionDue { id: i64 },
+    /// Now, rule 4: ranked by the stories it holds; the row's own lists say how many.
+    Held,
     /// A reason added after this client was built.
     #[serde(other)]
     Unknown,
@@ -170,7 +180,8 @@ pub enum NextStep {
     },
 }
 
-/// The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.
+/// The queue lane the web groups by; declaration order is the page order. Lanes are disjoint. `beyond` holds both Now
+/// (a row with a Now reason) and Later (no reason).
 #[derive(
     Debug,
     Clone,
@@ -187,6 +198,7 @@ pub enum NextStep {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum QueueLane {
+    /// No longer sent: a record awaiting review stays in its window's lane. Kept so this build reads an older server.
     Review,
     ThisSprint,
     NextSprint,

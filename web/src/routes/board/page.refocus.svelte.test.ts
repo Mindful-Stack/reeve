@@ -35,14 +35,18 @@ vi.mock('#lib/events.svelte.ts', () => ({
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const real = await orig<typeof import('#lib/api/client.ts')>();
 	const ok = (value: unknown) => Promise.resolve({ data: { outcome: 'ok', value }, response: { status: 200 } as Response });
-	const { story: storyDto, withReadiness } = await import('#lib/test/fixtures.ts');
+	const { story: storyDto, withReadiness, queueSummary } = await import('#lib/test/fixtures.ts');
 	const story = (): Story =>
 		storyDto({ key: 'ABC-1', title: 'The story', rank: 1, delivery: server.delivery, version: server.moves.length + 1 });
 	return {
 		...real,
 		api: {
 			GET: (path: string) =>
-				path === '/api/v1/stories' ? ok([withReadiness(story(), server.ready ? [] : [{ reason: 'no_criteria' }])]) : ok([]),
+				path === '/api/v1/stories'
+					? ok([withReadiness(story(), server.ready ? [] : [{ reason: 'no_criteria' }])])
+					: path === '/api/v1/decisions/queue'
+						? ok({ entries: [], discoveries: [], summary: queueSummary() })
+						: ok([]),
 			POST: (path: string, init: { body: { to: Story['delivery'] } }) => {
 				if (path !== '/api/v1/stories/{key}/move') throw new Error(`unexpected POST ${path}`);
 				server.moves.push(init.body);
