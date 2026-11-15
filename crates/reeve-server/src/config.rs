@@ -226,6 +226,11 @@ pub struct McpConfig {
     /// client can connect. Each is a host name in lower case: no scheme, port, path or address.
     #[serde(default)]
     pub client_hosts: Vec<String>,
+    /// Whether an app may register itself at `/oauth/register` (RFC 7591; kb/ADR-0029 R3) and connect with the
+    /// client id it is given. Off (the default): the route answers 404, the metadata does not name it, and a
+    /// registered client id is refused at authorize. An app can register only addresses in `redirect_uris`.
+    #[serde(default)]
+    pub dynamic_registration: bool,
     /// The instance's privacy statement, linked from the approval page. Unset (the default): no link. An https
     /// address without credentials or a fragment.
     #[serde(default)]

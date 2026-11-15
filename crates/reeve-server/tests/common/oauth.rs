@@ -40,6 +40,58 @@ pub async fn flow_with_privacy(privacy_url: &str) -> Flow {
     flow_from(&[CALLBACK], &format!("privacy_url = \"{privacy_url}\"\n")).await
 }
 
+/// The flow harness with `[mcp] dynamic_registration = true` and `CALLBACK` as the one redirect address.
+pub async fn registering_flow() -> Flow {
+    registering_flow_with(&[CALLBACK]).await
+}
+
+/// The same with the instance's redirect list as given.
+pub async fn registering_flow_with(redirect_uris: &[&str]) -> Flow {
+    flow_from(redirect_uris, "dynamic_registration = true\n").await
+}
+
+/// A registration request as a hosted app sends one, for `CALLBACK`.
+pub fn registration() -> Value {
+    serde_json::json!({"client_name": "Example Assistant", "redirect_uris": [CALLBACK]})
+}
+
+/// `POST /oauth/register` with `body` as JSON text.
+pub fn register_request(body: &str) -> Request<Body> {
+    Request::post("/oauth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+pub async fn register(f: &Flow, body: Value) -> (u16, axum::http::HeaderMap, Value) {
+    answer_of(&f.h.app, register_request(&body.to_string())).await
+}
+
+/// A registration that must be accepted: the client id it was given.
+pub async fn registered(f: &Flow, body: Value) -> String {
+    let (status, _, answer) = register(f, body).await;
+    assert_eq!(status, 201, "{answer}");
+    answer["client_id"].as_str().unwrap().to_string()
+}
+
+/// The router of `f`'s state with its configuration changed: what a restart with another `reeve.toml` serves,
+/// over the same database and clock.
+pub fn app_with(f: &Flow, patch: impl FnOnce(&mut ServerConfig)) -> axum::Router {
+    let mut state = f.h.state.clone();
+    let mut config = (*state.config).clone();
+    patch(&mut config);
+    state.config = std::sync::Arc::new(config);
+    app(state)
+}
+
+/// The number of stored registrations.
+pub async fn registrations(h: &Harness) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM registered_clients")
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
 async fn flow_from(redirect_uris: &[&str], mcp_lines: &str) -> Flow {
     let (h, host) = client_harness_with(redirect_uris, mcp_lines).await;
     let client_id = host.publish("/client.json", "Example App", &[CALLBACK]);

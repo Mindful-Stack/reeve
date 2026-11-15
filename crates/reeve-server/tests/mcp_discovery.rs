@@ -38,6 +38,7 @@ async fn off_nothing_under_oauth_or_well_known_answers_and_none_is_the_web_page(
         AUTHORIZATION_SERVER,
         "/oauth/authorize",
         "/oauth/token",
+        "/oauth/register",
         "/oauth",
         "/oauth/",
         "/oauth/nope",

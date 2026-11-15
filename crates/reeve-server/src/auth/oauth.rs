@@ -4,7 +4,7 @@
 //! together with `[oidc]` (`ServerConfig::validate`), so an instance without sign-in answers 404 here as well.
 //!
 //! This file holds the two metadata documents and what the OAuth routes share. `/oauth/authorize` is in
-//! `authorize.rs`; `/oauth/token` is in `token.rs`.
+//! `authorize.rs`; `/oauth/token` is in `token.rs`; `/oauth/register` is in `register.rs`.
 use crate::{config::ServerConfig, state::AppState};
 use axum::{
     Json, Router,
@@ -21,6 +21,7 @@ pub(crate) const PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-r
 pub(crate) const AUTHORIZATION_SERVER_PATH: &str = "/.well-known/oauth-authorization-server";
 pub(crate) const AUTHORIZE_PATH: &str = "/oauth/authorize";
 pub(crate) const TOKEN_PATH: &str = "/oauth/token";
+pub(crate) const REGISTER_PATH: &str = "/oauth/register";
 /// The two scopes on the wire (kb/ADR-0029 R7). A refresh token is always issued; `offline_access` is accepted at
 /// authorize and ignored, so it is not advertised.
 pub(crate) const SCOPES: [&str; 2] = ["read", "write"];
@@ -198,6 +199,7 @@ pub(crate) fn router() -> Router<AppState> {
         .route(PROTECTED_RESOURCE_PATH, any(protected_resource_metadata))
         .route(AUTHORIZE_PATH, any(super::authorize::authorize))
         .route(TOKEN_PATH, any(super::token::token))
+        .route(REGISTER_PATH, any(super::register::register))
         .route(
             AUTHORIZATION_SERVER_PATH,
             any(authorization_server_metadata),
