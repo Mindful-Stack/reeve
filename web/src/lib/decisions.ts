@@ -246,17 +246,15 @@ export function reasonLine(r: NeededInReason, row: QueueRow): ReasonParts {
 			const own = row.kind === 'decision';
 			const d = own ? row.entry.decision : row.nested.find((e) => e.decision.id === r.id)?.decision;
 			const when = d?.due ? ` due ${dayLabel(d.due)}` : '';
-			return own ? text(`Now ·${when}`) : { before: 'Now · ', key: `decision #${r.id}`, after: when };
+			return own ? text(when ? `Now ·${when}` : 'Now') : { before: 'Now · ', key: `decision #${r.id}`, after: when };
 		}
 		case 'held': {
 			const held = lists.blocks.length;
 			return text(held ? `Now · holds ${held}` : `Now · holds none, ${lists.under_way.length} under way`);
 		}
-		case 'unknown':
-			return text('needed (reason not shown)');
 		default: {
-			// A kind newer than the generated types: compile-time exhaustive, harmless at run time.
-			r satisfies never;
+			// `unknown`, or a kind newer than the generated types: compile-time exhaustive, harmless at run time.
+			r satisfies { kind: 'unknown' };
 			return text('needed (reason not shown)');
 		}
 	}
@@ -275,24 +273,35 @@ export function reasonHref(r: NeededInReason, url: { readonly href: string }): s
 		case 'goal':
 		case 'target_month':
 		case 'held':
-		case 'unknown':
 			return null;
 		default: {
-			r satisfies never;
+			// `unknown`, or a kind newer than the generated types.
+			r satisfies { kind: 'unknown' };
 			return null;
 		}
 	}
 }
 
-/** The sprint a decision is needed in outside the queue page (Home, item pages, the drawer), read off its lane, which
- *  is what the page, the banner and Home count, not off its own window; a decision nested under a discovery row adds
- *  "in discovery" (no key: the header already links the item). Null when its lane says nothing of a sprint (Now says
- *  it in its reason). */
+/** Where a decision is needed outside the queue page (Home, item pages, the drawer), read off its lane in the page's
+ *  words (`LANE_LABEL`), which is what the page, the banner and Home count, not off its own window; a decision nested
+ *  under a discovery row adds "in discovery" (no key: the header already links the item). A nested `beyond` decision
+ *  sits in Now (rows never sit in Later); a standalone `beyond` one is Later exactly when it has no reason, and in Now
+ *  its reason says so. An older server's `review` reads as Open. Null for Accepted, Closed and a standalone Now. */
 export function neededLabel(e: Pick<DecisionQueueEntry, 'lane' | 'needed_in_reason' | 'under'>): string | null {
-	const sprint = { this_sprint: 'Needed this sprint', next_sprint: 'Needed next sprint' } as const;
-	// A nested decision on a `beyond` row sits in Now (rows never sit in Later), whatever its own window says.
-	const later = e.lane === 'beyond' && !e.under && pageLane(e.lane, e.needed_in_reason) === 'later';
-	const base = e.lane === 'this_sprint' || e.lane === 'next_sprint' ? sprint[e.lane] : later ? 'Needed later' : null;
+	const base = (() => {
+		switch (e.lane) {
+			case 'this_sprint':
+			case 'next_sprint':
+				return LANE_LABEL[e.lane];
+			case 'open':
+			case 'review':
+				return LANE_LABEL.open;
+			case 'beyond':
+				return e.under ? LANE_LABEL.now : e.needed_in_reason == null ? 'Needed later' : null;
+			default:
+				return null;
+		}
+	})();
 	return [base, e.under ? 'in discovery' : null].filter(Boolean).join(' · ') || null;
 }
 

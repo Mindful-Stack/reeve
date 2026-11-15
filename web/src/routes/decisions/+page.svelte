@@ -37,7 +37,7 @@
 
 	/** A DecisionList group: a lane's own group (its heading, and its decisions before any discovery row), a discovery
 	 *  row's group (its nested decisions), or a run of standalone decisions after a row. */
-	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; row?: DiscoveryRow };
+	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; labelledBy?: string; row?: DiscoveryRow };
 
 	const me = $derived(mine ? session.me?.email : undefined);
 	/** In the server's order, never re-sorted. */
@@ -62,7 +62,8 @@
 			for (const r of rows) {
 				if (r.kind === 'discovery') {
 					const id = `row:${r.row.key}`;
-					groups.push({ id, lane, folded: false, listId: `decisions-row-${r.row.key}`, always: true, row: r });
+					const labelledBy = `discovery-${r.row.key}-heading`;
+					groups.push({ id, lane, folded: false, listId: `decisions-row-${r.row.key}`, always: true, labelledBy, row: r });
 					for (const e of r.nested) of.set(e.decision.id, id);
 					after = r.row.key;
 				} else {
@@ -81,10 +82,6 @@
 	/** The lanes with a row for the people shown (the Mine filter applies). */
 	const populated = $derived(new Set(LANE_ORDER.filter((l) => (lanes.get(l)?.length ?? 0) > 0)));
 	const firstOutside = $derived(LANE_ORDER.find((l) => OUTSIDE.has(l) && populated.has(l)));
-	/** Nothing is needed this sprint or next; said only when the queue has something, since an empty one says so itself. */
-	const nothingNeeded = $derived(
-		(queue?.entries.length ?? 0) + (queue?.discoveries.length ?? 0) > 0 && !populated.has('this_sprint') && !populated.has('next_sprint')
-	);
 	/** The server's counts (unfiltered by Mine); a zero part is left out. Now and Later carry their counts on their headings. */
 	const summaryParts = $derived.by(() => {
 		const s = queue?.summary;
@@ -189,7 +186,7 @@
 	{@const holds = holdsLabel(d.blocks, d.under_way)}
 	{@const open = storiesOpen.has(d.key)}
 	<div class="discovery" data-discovery={d.key}>
-		<h3 class="cell headline"><a class="item" href={itemRoute({ item: d.level, key: d.key }, page.url)}><Glyph level={d.level} /><span class="key">{d.key}</span> <span class="title">{d.title}</span></a></h3>
+		<h3 class="cell headline" id="discovery-{d.key}-heading"><a class="item" href={itemRoute({ item: d.level, key: d.key }, page.url)}><Glyph level={d.level} /><span class="key">{d.key}</span> <span class="title">{d.title}</span></a></h3>
 		<span class="cell holds"
 			><button
 				type="button"
@@ -246,9 +243,6 @@
 	{#if emptyLane}
 		<p class="lane-note muted" data-testid="empty-lane">Nothing needed in this lane right now.</p>
 	{/if}
-	{#if nothingNeeded}
-		<p class="quiet muted">{mine ? 'Nothing of yours needed' : 'Nothing needed'} this sprint or next.</p>
-	{/if}
 	<!-- The headings carry their own margins, so the list adds no gap between them and the groups. -->
 	<DecisionList
 		--decision-list-row-gap="0"
@@ -298,7 +292,6 @@
 	.summary {
 		margin: 0 0 4px;
 	}
-	.quiet,
 	.lane-note {
 		margin: 0 0 4px;
 	}

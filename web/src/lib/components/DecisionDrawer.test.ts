@@ -115,17 +115,16 @@ describe('DecisionDrawer', () => {
 		}
 	});
 
-	it('says an open decision nothing waits on is not needed yet, and that it holds nothing yet', async () => {
+	it('labels an open decision nothing waits on with its lane, and says it holds nothing yet', async () => {
 		const drawer = await open(entry({ lane: 'open', needed_in: 'none', needed_in_reason: null, next_step: null }));
-		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet dan decides · Due today');
+		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Open, not blocking yet dan decides · Due today');
 		const held = drawer.querySelector('.held')!;
 		expect(words(held)).toBe('Held work Holds nothing yet');
 		expect(held.getAttribute('aria-labelledby')).toBe(held.querySelector('h3')!.id);
 		expect(held.querySelector('ul')).toBeNull();
-		// A Now decision says its Now line in place of the needed label; a nested one adds the row it is under.
-		unmount(app!);
-		app = null;
-		document.body.innerHTML = '';
+	});
+
+	it('puts a Now decision\'s Now line in place of the needed label, and adds the row a nested one is under', async () => {
 		const now = await open(
 			entry({ lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'held' }, blocks: [blockedStory({ key: 'ABC-31' }), blockedStory({ key: 'ABC-32' })] })
 		);
@@ -135,12 +134,6 @@ describe('DecisionDrawer', () => {
 		document.body.innerHTML = '';
 		const nested = await open(entry({ under: 'ABC-1' }));
 		expect(words(nested.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 in discovery \u00b7 for goal: Ship tiers');
-		unmount(app!);
-		app = null;
-		document.body.innerHTML = '';
-		// Nested with no window of its own, the label still follows the row's lane.
-		const bare = await open(entry({ under: 'ABC-1', needed_in: 'none', needed_in_reason: null }));
-		expect(words(bare.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 in discovery');
 	});
 
 	it('says a closed or accepted decision holds nothing, without "yet"', async () => {

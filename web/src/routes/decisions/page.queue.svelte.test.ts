@@ -155,7 +155,6 @@ describe('decisions queue page', () => {
 		expect(dividers.map((d) => text(d))).toEqual(['No goal or promise needs these yet']);
 		expect(dividers[0].nextElementSibling?.tagName).toBe('H2');
 		expect(text(dividers[0].nextElementSibling)).toContain('Open, not blocking yet');
-		expect(document.body.textContent).not.toContain('Nothing needed this sprint or next.');
 	});
 
 	it('skips an empty lane for the divider (Now has rows: it leads)', async () => {
@@ -165,17 +164,9 @@ describe('decisions queue page', () => {
 		expect(text(divider.nextElementSibling)).toContain('Now, no goal yet');
 	});
 
-	it('does not say nothing is needed on a completely empty queue', async () => {
+	it('says a completely empty queue holds nothing back', async () => {
 		await open();
 		expect(document.body.textContent).toContain('Nothing holds work back');
-		expect(document.body.querySelector('.quiet')).toBeNull();
-	});
-
-	it('words the empty line for the caller under ?mine=1', async () => {
-		await route.fake!.goto('/decisions?mine=1');
-		net.queue = queue([entry('beyond', dec(1, 'Later'))]);
-		await open();
-		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing of yours needed this sprint or next.');
 	});
 
 	it('shows a discovery row: its item link, status, holds, reason and its nested decisions in a list of their own', async () => {
@@ -230,6 +221,10 @@ describe('decisions queue page', () => {
 		const nested = document.getElementById('decisions-row-RV-2')!;
 		expect(row.nextElementSibling).toBe(nested);
 		expect(titles('#decisions-row-RV-2')).toEqual(['Pick tiers']);
+		// The nested list is labelled by the row's heading.
+		const heading = document.body.querySelector('#discovery-RV-2-heading')!;
+		expect(heading.tagName).toBe('H3');
+		expect(document.body.querySelector('#decisions-row-RV-2')?.getAttribute('aria-labelledby')).toBe(heading.id);
 		expect(nested.querySelector('.needed')).toBeNull();
 		// A Now row holding none reads off its own lists; the standalone decision after it says its own Now line.
 		const now = document.body.querySelector('[data-discovery="RV-5"]')!;
@@ -255,11 +250,10 @@ describe('decisions queue page', () => {
 		expect(row.querySelector('[data-testid="reason"] a')?.getAttribute('href')).toBe('/decisions?mine=1&decision=4');
 		expect(titles('#decisions-row-RV-2')).toEqual(['Mine one']);
 		expect(document.body.textContent).not.toContain('Theirs');
-		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing of yours needed this sprint or next.');
 		expect(text(document.body.querySelector('.divider')?.nextElementSibling)).toContain('Now, no goal yet');
 	});
 
-	it('under Mine does not say nothing is needed when a row in this sprint nests one of mine, and says no sprint count (the lane headings carry them)', async () => {
+	it('under Mine says no sprint count when a row in this sprint nests one of mine (the lane headings carry them)', async () => {
 		await route.fake!.goto('/decisions?mine=1');
 		net.queue = {
 			entries: [
@@ -270,18 +264,11 @@ describe('decisions queue page', () => {
 			summary: queueSummary({ this_sprint: 2 })
 		};
 		await open();
-		expect(document.body.querySelector('.quiet')).toBeNull();
 		expect(document.body.querySelector('.summary')).toBeNull();
 		expect(document.body.querySelector('.divider')).toBeNull();
 	});
 
-	it('says nothing is needed this sprint or next when those lanes are empty', async () => {
-		net.queue = queue([entry('beyond', dec(1, 'Later'))]);
-		await open();
-		expect(text(document.body.querySelector('.quiet'))).toBe('Nothing needed this sprint or next.');
-	});
-
-	it('counts the records to review and the overdue, leaving out a zero part', async () => {
+	it('shows review and overdue only, with no lane count', async () => {
 		net.queue = queue(
 			[entry('this_sprint', dec(1, 'R'), [], { next_step: { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/1' } }), entry('beyond', dec(2, 'B1')), entry('beyond', dec(3, 'B2')), entry('open', dec(4, 'O'))],
 			queueSummary({ open: 4, review: 1, this_sprint: 0, next_sprint: 3, overdue: 2 })
@@ -289,15 +276,6 @@ describe('decisions queue page', () => {
 		await open();
 		// The lanes carry their own counts on their headings: the summary line has none of them.
 		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 2 overdue');
-	});
-
-	it('words each part of the summary', async () => {
-		net.queue = queue(
-			[entry('beyond', dec(1, 'B'))],
-			queueSummary({ review: 1, this_sprint: 2, next_sprint: 3, overdue: 5 })
-		);
-		await open();
-		expect(text(document.body.querySelector('.summary'))).toBe('1 to review · 5 overdue');
 	});
 
 	it('has no summary line when every part is zero', async () => {

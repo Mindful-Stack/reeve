@@ -8,7 +8,7 @@
 	import type { AffectedStory, ClosureKind, Comment, DecisionQueueEntry, RequiredDecision, Reversibility } from '#lib/api/types.ts';
 	import { COLUMN_LABEL, fullLabel } from '#lib/board.ts';
 	import { closeActions, dateLine, decisionStatus, holdsLabel, neededLabel, nextStepText, pruneExpanded, recordMismatch, REVERSIBILITY_TEXT, today } from '#lib/decisions.ts';
-	import { age, errorMessage, short } from '#lib/format.ts';
+	import { age, errorMessage, plural, short } from '#lib/format.ts';
 	import { draftKey } from '#lib/idempotency.ts';
 	import { decisionDrafts, draftFor } from '#lib/decisionDrafts.svelte.ts';
 	import { tick as nextRender, untrack, type Snippet } from 'svelte';
@@ -25,8 +25,9 @@
 	// thread (where ratification is discussed) and an Actions menu (Edit, Close) that opens its form under the row, so
 	// every view that lists decisions also carries the thread. The UI only links records; it writes nothing into them
 	// (kb/ADR-0004).
-	// `always` renders the group's heading even with no rows placed in it (a discovery row, a lane heading).
-	type Group = { id: string; folded: boolean; listId?: string; always?: boolean };
+	// `always` renders the group's heading even with no rows placed in it (a discovery row, a lane heading); `labelledBy`
+	// names the element that labels the group's list (a discovery row's heading).
+	type Group = { id: string; folded: boolean; listId?: string; always?: boolean; labelledBy?: string };
 
 	let {
 		decisions,
@@ -344,10 +345,6 @@
 		return blocks?.get(d.id) ?? entries?.get(d.id)?.blocks ?? [];
 	}
 
-	function stories(n: number): string {
-		return `${n} ${n === 1 ? 'story' : 'stories'}`;
-	}
-
 	function classifyItems(d: RequiredDecision): MenuItem[] {
 		return (['one_way', 'two_way'] as const).map((r) => ({
 			label: REVERSIBILITY_TEXT[r],
@@ -615,7 +612,7 @@
 	{@const entry = entries?.get(d.id)}
 	{@const underWay = entry?.under_way ?? []}
 	{@const work = blocked.length + underWay.length > 0}
-	{@const holds = entry ? holdsLabel(blocked, underWay) : `Blocks ${stories(blocked.length)}`}
+	{@const holds = entry ? holdsLabel(blocked, underWay) : `Blocks ${plural(blocked.length, 'story', 'stories')}`}
 	{@const mismatch = recordMismatch(d)}
 	<li class:closed={!!d.closed} data-decision-row="{uid}-{d.id}" onfocusin={(e) => remember(d.id, e)} onfocusout={forget}>
 		<!-- One line of cells in a fixed order, each present even when empty, so the list's columns line up. -->
@@ -804,7 +801,7 @@
 						{/if}
 						{#if closing[d.id] === 'withdrawn' && blocked.length}
 							<div class="hint unblocks">
-								<p>Withdrawing lifts the gate on {stories(blocked.length)}:</p>
+								<p>Withdrawing lifts the gate on {plural(blocked.length, 'story', 'stories')}:</p>
 								<ul>
 									{#each blocked as s (s.key)}<li>{@render story(s)}</li>{/each}
 								</ul>
@@ -869,7 +866,7 @@
 		{#if g.rows.length || g.always}
 			{@render heading?.(g.id, g.rows.length)}
 			{#if !g.folded && g.rows.length}
-				<ul class="decisions" id={g.listId}>
+				<ul class="decisions" id={g.listId} aria-labelledby={g.labelledBy}>
 					{#each g.rows as d (d.id)}{@render row(d)}{/each}
 				</ul>
 			{/if}

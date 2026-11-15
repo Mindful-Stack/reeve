@@ -12,6 +12,7 @@ import {
 	queueRows,
 	reasonLine,
 	type PageLane,
+	type DiscoveryRow,
 	type QueueRow,
 	reasonHref,
 	decisionStatus,
@@ -203,6 +204,7 @@ describe('next step and needed-in wording', () => {
 		const board = new URL('https://reeve.test/board');
 		const due = queueEntry({ decision: dec(4, { due: '2026-11-17' }), blocks: [blockedStory()], under_way: [] });
 		const dRow: QueueRow = { kind: 'decision', entry: due };
+		const undated: QueueRow = { kind: 'decision', entry: queueEntry({ decision: dec(5, { due: null }) }) };
 		const nested: QueueRow = { kind: 'discovery', row: discoveryEntry({ key: 'ABC-2', blocks: [], under_way: [blockedStory(), blockedStory()] }), nested: [due] };
 		const line = (r: NeededInReason, row: QueueRow) => {
 			const p = reasonLine(r, row);
@@ -222,6 +224,7 @@ describe('next step and needed-in wording', () => {
 			['urgent story', { kind: 'urgent', key: 'ABC-6', level: 'story' }, nested, 'Now · urgent via <ABC-6>', '/board?story=ABC-6'],
 			['target month', { kind: 'target_month', month: '2026-11' }, dRow, 'Now · target Nov 2026', null],
 			['due, a decision', { kind: 'decision_due', id: 4 }, dRow, 'Now · due 17 Nov', '/board?decision=4'],
+			['due, a decision with no due date', { kind: 'decision_due', id: 5 }, undated, 'Now', '/board?decision=5'],
 			['due, a row', { kind: 'decision_due', id: 4 }, nested, 'Now · <decision #4> due 17 Nov', '/board?decision=4'],
 			['held, a decision', { kind: 'held' }, dRow, 'Now · holds 1', null],
 			['held, a row holding none', { kind: 'held' }, nested, 'Now · holds none, 2 under way', null],
@@ -236,12 +239,14 @@ describe('next step and needed-in wording', () => {
 		expect(neededLabel(e({ lane: 'this_sprint', needed_in: 'beyond' }))).toBe('Needed this sprint');
 		expect(neededLabel(e({ lane: 'next_sprint' }))).toBe('Needed next sprint');
 		expect(neededLabel(e({ lane: 'beyond' }))).toBe('Needed later');
-		// Now says so in its reason; open, accepted and closed decisions are needed nowhere.
+		// Open (an older server's review too) in the page's words; Now says so in its reason; accepted and closed say nothing.
+		expect(neededLabel(e({ lane: 'open' }))).toBe('Open, not blocking yet');
+		expect(neededLabel(e({ lane: 'review' }))).toBe('Open, not blocking yet');
 		expect(neededLabel(e({ lane: 'beyond', needed_in_reason: { kind: 'held' } }))).toBeNull();
-		for (const lane of ['open', 'satisfied', 'closed'] as const) expect(neededLabel(e({ lane }))).toBeNull();
-		// Nested: the row's lane, "in discovery" even with no window of its own; under a Now row it is not Later.
+		for (const lane of ['satisfied', 'closed'] as const) expect(neededLabel(e({ lane }))).toBeNull();
+		// Nested: the row's lane, "in discovery" even with no window of its own; under a Now row it is Now, not Later.
 		expect(neededLabel(e({ lane: 'next_sprint', needed_in: 'none', under: 'ABC-2' }))).toBe('Needed next sprint \u00b7 in discovery');
-		expect(neededLabel(e({ lane: 'beyond', under: 'ABC-2' }))).toBe('in discovery');
+		expect(neededLabel(e({ lane: 'beyond', under: 'ABC-2' }))).toBe('Now, no goal yet \u00b7 in discovery');
 	});
 
 	it('says what a row holds, and only the stories under way when it holds none', () => {
@@ -322,8 +327,8 @@ describe('queueRows', () => {
 			open: [6],
 			closed: [7]
 		});
-		// The kept row's reason names bob's D4, and its date is found although D4 is not mine.
-		const row = mine.get('now')![0];
-		expect(reasonLine({ kind: 'decision_due', id: 4 }, row)).toEqual({ before: 'Now · ', key: 'decision #4', after: ' due 17 Nov' });
+		// The kept row keeps bob's D4 beside my D8, so its reason can name D4.
+		const row = mine.get('now')![0] as DiscoveryRow;
+		expect(row.nested.map((e) => e.decision.id)).toEqual([4, 8]);
 	});
 });

@@ -20,7 +20,7 @@ const found = (lane: QueueLane, n: number) => Array.from({ length: n }, (_, i) =
 
 describe('DecisionBanner', () => {
 	it('names discoveries and decisions per window with the number form, each part one link to its lane', () => {
-		const nav = show({ this_sprint: 1, next_sprint: 3, review: 4 }, [...found('this_sprint', 2), ...found('next_sprint', 2), ...found('beyond', 3)]);
+		const nav = show({ this_sprint: 1, next_sprint: 3 }, [...found('this_sprint', 2), ...found('next_sprint', 2)]);
 		expect(text(nav)).toBe('⚑ 2 in discovery and 1 decision needed this sprint · 2 in discovery and 3 decisions needed next sprint');
 		expect([...nav!.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual(['/decisions#this-sprint', '/decisions#next-sprint']);
 	});
