@@ -261,6 +261,24 @@ async fn seed(h: &Harness) -> Seeded {
     .execute(&h.state.pool)
     .await
     .unwrap();
+    // A client that registered itself, and the host kept with a connection (migration 2006), written with SQL
+    // for the same reason.
+    sqlx::query(
+        "INSERT INTO registered_clients (client_id, client_name, redirect_uris, created_at, last_used_at) \
+         SELECT 'dyn_' || repeat('0', 48), 'Backup Restore', ARRAY['https://client.example/callback'], created_at, created_at \
+         FROM tokens WHERE id = $1",
+    )
+    .bind(mcp.id)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE connections SET client_host = 'client.example' WHERE id = (SELECT connection_id FROM tokens WHERE id = $1)",
+    )
+    .bind(mcp.id)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
     Seeded { todo, active }
 }
 

@@ -5,8 +5,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-/// The longest `client_name` accepted: it is shown to a person and stored with a connection.
-const MAX_CLIENT_NAME_CHARS: usize = 200;
+/// The longest `client_name` accepted, a metadata document's and a registration's alike: it is shown to a person
+/// and stored with a connection.
+pub(crate) const MAX_CLIENT_NAME_CHARS: usize = 200;
 
 /// Why a client is refused. The text is for the operator's log and never holds a secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
