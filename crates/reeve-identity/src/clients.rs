@@ -121,19 +121,23 @@ impl ClientDocument {
             return Err(bad("it carries a client secret"));
         }
         // Reeve's clients are public: the server offers only `none` (PKCE, no client authentication), so a client
-        // must be able to connect that way. Either its preferred method is `none` (absent means `none`: draft 03,
-        // never RFC 7591's default), or it lists `none` among the methods it supports, as ChatGPT does beside its
-        // preferred `private_key_jwt`.
-        let prefers_none = object
-            .get("token_endpoint_auth_method")
-            .is_none_or(|method| method.as_str() == Some("none"));
-        let supports_none = object
-            .get("token_endpoint_auth_methods_supported")
-            .and_then(Value::as_array)
-            .filter(|list| list.iter().all(Value::is_string))
-            .is_some_and(|list| list.iter().any(|method| method.as_str() == Some("none")));
-        if !prefers_none && !supports_none {
-            return Err(bad("it cannot connect without authenticating itself"));
+        // must be able to connect that way. A published `token_endpoint_auth_methods_supported` is authoritative
+        // and must list `none`, as ChatGPT's does beside its preferred `private_key_jwt`. Only without that list
+        // does the singular `token_endpoint_auth_method` decide: `none`, or absent (draft 03, never RFC 7591's
+        // default).
+        let can_be_public = match object.get("token_endpoint_auth_methods_supported") {
+            Some(list) => list.as_array().is_some_and(|list| {
+                list.iter().all(Value::is_string)
+                    && list.iter().any(|method| method.as_str() == Some("none"))
+            }),
+            None => object
+                .get("token_endpoint_auth_method")
+                .is_none_or(|method| method.as_str() == Some("none")),
+        };
+        if !can_be_public {
+            return Err(bad(
+                "none is not among its token endpoint authentication methods",
+            ));
         }
         Ok(ClientDocument {
             client_name: client_name.to_string(),
@@ -348,7 +352,10 @@ mod tests {
         assert_eq!(chatgpt.client_name, "ChatGPT");
         assert_eq!(chatgpt.redirect_uris, [CHATGPT_CALLBACK]);
         // The id is checked against the address it was fetched from.
-        assert!(ClientDocument::parse(ID, CHATGPT_2026_11_15.as_bytes()).is_err());
+        assert_eq!(
+            ClientDocument::parse(ID, CHATGPT_2026_11_15.as_bytes()).unwrap_err(),
+            ClientRefusal::BadDocument("its client_id is not the address it was fetched from")
+        );
     }
 
     /// ChatGPT resolves once the instance lists its host and redirect address, and an instance that lists only
@@ -432,7 +439,7 @@ mod tests {
             refused(|v| v["client_secret_expires_at"] = json!(0)),
             secret
         );
-        let not_public = bad("it cannot connect without authenticating itself");
+        let not_public = bad("none is not among its token endpoint authentication methods");
         assert_eq!(
             refused(|v| v["token_endpoint_auth_method"] = json!("client_secret_basic")),
             not_public
@@ -446,6 +453,18 @@ mod tests {
                 v["token_endpoint_auth_method"] = json!("private_key_jwt");
                 v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
             }),
+            not_public
+        );
+        // A published list is authoritative: the singular method decides only when the list is absent.
+        assert_eq!(
+            refused(|v| {
+                remove(v, "token_endpoint_auth_method");
+                v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
+            }),
+            not_public
+        );
+        assert_eq!(
+            refused(|v| v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"])),
             not_public
         );
         for not_a_list in [json!("none"), json!({"none": true}), json!(["none", 7])] {
