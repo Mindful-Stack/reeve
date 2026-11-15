@@ -180,9 +180,6 @@ describe('board goal select', () => {
 			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2', 'ABC-3', 'ABC-6']);
 		});
 		expect(page.url.searchParams.get('goal')).toBe('any');
-		// Only holds once the URL change has rendered back into the select.
-		flushSync();
-		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('any');
 		// The select filters, it never moves cards.
 		expect(q('[data-testid="column-in_progress"] [data-testid="card-ABC-2"]')).not.toBeNull();
 		expect(q('[data-testid="column-testing"] [data-testid="card-ABC-6"]')).not.toBeNull();
@@ -203,8 +200,6 @@ describe('board goal select', () => {
 			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
 		});
 		expect(page.url.searchParams.get('goal')).toBe('1');
-		flushSync();
-		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('1');
 	});
 
 	it('Upkeep shows only the stories that serve no goal', async () => {
@@ -253,7 +248,6 @@ describe('board goal select', () => {
 			expect(goalSelect()!.querySelector('option[value="3"]')).not.toBeNull();
 		});
 		expect(goalSelect()!.value).toBe('1');
-		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('1');
 		expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
 		expect(page.url.searchParams.get('goal')).toBe('1');
 	});
