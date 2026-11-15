@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
+	import { focusIsFree } from '#lib/focus.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import type { DecisionQueue, Epic, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
 	import {
@@ -134,11 +135,12 @@
 		return goto(url, { replace: true, reset: false });
 	}
 
-	/** Clear filters: one navigation, then focus to the Owner select, since the button has just removed itself. */
+	/** Clear filters: one navigation, then focus to the Owner select, since the button has just removed itself,
+	 *  unless the user already moved focus to another control meanwhile. */
 	async function clearFilters() {
 		await goto(withoutBoardFilters(new URL(page.url.href)), { replace: true, reset: false });
 		await tick();
-		ownerSelect?.focus();
+		if (focusIsFree(null)) ownerSelect?.focus();
 	}
 
 	/** "Show not ready" under "Nothing ready": opens the disclosure, then focuses its summary (the button goes away). */

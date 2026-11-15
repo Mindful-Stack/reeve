@@ -213,7 +213,7 @@ export function applyFilters(stories: StoryWithReadiness[], f: Filters): StoryWi
 }
 
 /** The board's owner filter from its URL: `owner=none` (trimmed, in any case) is the unowned stories, `owner=me` (the
- *  same) the signed-in person's, as `mine=1` is (nobody's while signed out), any other `owner` that person's, else
+ *  same) the signed-in person's, as `mine=1` is (no filter while signed out), any other `owner` that person's, else
  *  `mine=1`. `owner` wins when both are set. `none` and `me` are the board's own URL values, reserved because a real
  *  address contains `@`: the server's `owner` parameter takes an email, and the board sends neither. */
 export function ownerFilter(query: Pick<URLSearchParams, 'get'>, me: string | null | undefined): string | 'none' | undefined {

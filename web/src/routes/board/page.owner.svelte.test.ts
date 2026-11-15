@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The board's Owner select: the people offered are the owners of the loaded cards, and the choice lives in
-// ?mine=1 or ?owner=.
+// ?mine=1 or ?owner=. Also covers Clear filters (n): its count, its one navigation and where focus goes after it.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { page } from '$app/state';
@@ -218,11 +218,10 @@ describe('board owner select', () => {
 		stories = stories.filter((s) => s.story.owner !== 'ana@example.com');
 		for (const f of live.fns) f();
 		await shows([]);
-		// The refetch has landed: the other columns' cards are in the data, and ana's are gone from it.
+		// The selection survives the refetch: still not "all stories", and still an option.
 		const value = ownerSelect().value;
 		expect(value).not.toBe('');
 		expect(options().map(([v]) => v)).toContain(value);
-		expect(shownKeys()).toEqual([]);
 	});
 
 	it('opens on ?owner=NONE with Unowned selected and only unowned cards', async () => {
@@ -236,6 +235,15 @@ describe('board owner select', () => {
 		(page.url as URL).href = 'http://localhost/board?mine=1';
 		await mounted();
 		expect(ownerSelect().value).toBe('');
+		expect(clear()).toBeNull();
+	});
+
+	it('?owner=me while signed out filters nothing and selects all stories', async () => {
+		(session as { me: unknown }).me = null;
+		(page.url as URL).href = 'http://localhost/board?owner=me';
+		await mounted();
+		expect(ownerSelect().value).toBe('');
+		expect(clear()).toBeNull();
 	});
 
 	it('?owner=me is the signed-in person, never a person called me', async () => {
@@ -257,12 +265,30 @@ describe('board clear filters', () => {
 		await mounted(['ABC-3']);
 		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
 
+		// Keyboard activation: focus starts on the button, and the click removes it.
+		clear()!.focus();
 		clear()!.click();
 		await shows(ALL);
 		expect(page.url.search).toBe('?notready=1');
 		expect(clear()).toBeNull();
 		expect(ownerSelect().value).toBe('');
 		await vi.waitFor(() => expect(document.activeElement).toBe(ownerSelect()));
+	});
+
+	it('does not take focus the user has already moved to another control', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=ana@example.com&kind=bug';
+		await mounted(['ABC-3']);
+		const kind = [...document.body.querySelectorAll<HTMLSelectElement>('select')].find((s) =>
+			s.closest('label')?.textContent?.includes('Kind')
+		)!;
+		clear()!.focus();
+		clear()!.click();
+		// Before any microtask runs, so the navigation has not settled: focus moves on by itself.
+		kind.focus();
+		await shows(ALL);
+		await vi.waitFor(() => expect(clear()).toBeNull());
+		await new Promise((r) => setTimeout(r, 0));
+		expect(document.activeElement).toBe(kind);
 	});
 
 	it('counts applied filters, not URL parameters: a stale goal and mine beside owner add nothing', async () => {

@@ -189,7 +189,7 @@ describe('ownerFilter', () => {
 		expect(read('owner=%20ana@x.se%20')).toBe('ana@x.se');
 	});
 
-	it('reads owner=me, in any case, as the signed-in person, and nobody while signed out', () => {
+	it('reads owner=me, in any case, as the signed-in person, and no filter while signed out', () => {
 		expect(read('owner=me')).toBe('me@x.se');
 		expect(read('owner=ME')).toBe('me@x.se');
 		expect(read('owner=%20Me%20')).toBe('me@x.se');
