@@ -633,43 +633,21 @@ mod tests {
             .to_utc()
     }
 
-    /// A store that holds `rows` and counts its reads.
+    /// A store that holds `rows` and counts its reads; `broken`, it cannot be read.
     struct Registry {
         rows: Vec<RegisteredClient>,
         finds: AtomicUsize,
+        broken: bool,
     }
 
     #[async_trait]
     impl RegisteredClients for Registry {
         async fn find(&self, client_id: &str) -> Result<Option<RegisteredClient>, sqlx::Error> {
             self.finds.fetch_add(1, Ordering::SeqCst);
+            if self.broken {
+                return Err(sqlx::Error::PoolClosed);
+            }
             Ok(self.rows.iter().find(|r| r.client_id == client_id).cloned())
-        }
-        async fn insert_capped(
-            &self,
-            _: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-            _: &RegisteredClient,
-            _: i64,
-        ) -> Result<bool, sqlx::Error> {
-            unreachable!("resolving only reads")
-        }
-        async fn mark_used(
-            &self,
-            _: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, sqlx::Error> {
-            unreachable!("resolving only reads")
-        }
-    }
-
-    /// A store that cannot be read.
-    struct Broken;
-
-    #[async_trait]
-    impl RegisteredClients for Broken {
-        async fn find(&self, _: &str) -> Result<Option<RegisteredClient>, sqlx::Error> {
-            Err(sqlx::Error::PoolClosed)
         }
         async fn insert_capped(
             &self,
@@ -700,6 +678,7 @@ mod tests {
                 last_used_at,
             }],
             finds: AtomicUsize::new(0),
+            broken: false,
         }
     }
 
@@ -964,7 +943,11 @@ mod tests {
             );
         }
         // A store that cannot be read refuses, and is not "not enabled".
-        let refused = resolve_client(&fetcher, Some(&Broken), &enabled, DYN, CALLBACK, at()).await;
+        let broken = Registry {
+            broken: true,
+            ..registry(None)
+        };
+        let refused = resolve_client(&fetcher, Some(&broken), &enabled, DYN, CALLBACK, at()).await;
         assert!(
             matches!(&refused, Err(RegistryUnavailable(_)) if !refused.as_ref().unwrap_err().not_enabled()),
             "{refused:?}"

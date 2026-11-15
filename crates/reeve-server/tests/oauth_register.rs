@@ -481,66 +481,6 @@ async fn a_registered_client_starts_a_connect_only_while_it_may() {
     );
 }
 
-/// A registered client's id names no host, and everything else it says of itself is its own claim. Catches a
-/// connection that is listed by the name alone, an approval entry that names the app by its id only, and a
-/// change recorded as made through `dyn_…`: each names the host of the redirect address, kept with the
-/// connection.
-#[tokio::test]
-async fn a_registered_clients_connection_and_its_changes_name_its_redirect_host() {
-    let mut f = registering_flow().await;
-    f.client_id = registered(&f, registration()).await;
-    let h = &f.h;
-    let connected = connect(&f, &h.admin_token, "write").await;
-
-    let listed = api(h, &h.admin_token, "/api/v1/connections").await;
-    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
-    assert_eq!(
-        json!([
-            listed[0]["client_id"],
-            listed[0]["client_host"],
-            listed[0]["client_name"]
-        ]),
-        json!([f.client_id, "client.example", "Example Assistant"])
-    );
-    let approvals = api(
-        h,
-        &h.admin_token,
-        "/api/v1/activity?action=connection_approved",
-    )
-    .await;
-    assert_eq!(
-        approvals[0]["payload"],
-        json!({
-            "client_id": f.client_id,
-            "client_host": "client.example",
-            "client_name": "Example Assistant",
-            "scope": "write",
-        })
-    );
-
-    let epic = ready_epic(h, "reg-e1").await;
-    answer(
-        h,
-        &connected.access_token,
-        "add_comment",
-        json!({"item": epic, "idempotency_key": "c1", "body": "Through a registered app."}),
-    )
-    .await;
-    let entries = api(
-        h,
-        &h.admin_token,
-        &format!("/api/v1/activity?entity_key={epic}"),
-    )
-    .await;
-    let entry = entries
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["action"] == "commented")
-        .unwrap_or_else(|| panic!("no comment entry: {entries}"));
-    assert_eq!(entry["payload"]["client"], "client.example", "{entry}");
-}
-
 /// When the registration `client_id` was last used.
 async fn last_used(h: &Harness, client_id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     sqlx::query_scalar("SELECT last_used_at FROM registered_clients WHERE client_id = $1")
@@ -553,9 +493,9 @@ async fn last_used(h: &Harness, client_id: &str) -> Option<chrono::DateTime<chro
 /// The whole journey of an app that registers itself, every step through the real router: it registers, a
 /// person approves it on a page that names the redirect host, it exchanges its code, calls the endpoint,
 /// refreshes, and is listed by its redirect host and its name. Catches a registered client that cannot finish
-/// any one of these, an approval that does not mark the registration used (before any exchange), and a
-/// connection that depends on its registration: dropped, the connection goes on and only a new connect is
-/// refused.
+/// any one of these, an approval that does not mark the registration used (before any exchange), a connection
+/// that depends on its registration (dropped, the connection goes on and only a new connect is refused), and a
+/// change recorded as made through `dyn_…` rather than the redirect host.
 #[tokio::test]
 async fn a_registered_client_connects_calls_refreshes_and_is_listed_by_its_name() {
     let mut f = registering_flow().await;
@@ -649,4 +589,28 @@ async fn a_registered_client_connects_calls_refreshes_and_is_listed_by_its_name(
         went(f, &h.app, &client_id, CALLBACK).await,
         "/connect?problem=invalid_request"
     );
+
+    // 9. And its provenance outlives the registration: a change through it is recorded as made through the
+    // redirect host kept with the connection, never as `dyn_…`.
+    let epic = ready_epic(h, "reg-e1").await;
+    answer(
+        h,
+        pair["access_token"].as_str().unwrap(),
+        "add_comment",
+        json!({"item": epic, "idempotency_key": "c1", "body": "Through a registered app."}),
+    )
+    .await;
+    let entries = api(
+        h,
+        &h.admin_token,
+        &format!("/api/v1/activity?entity_key={epic}"),
+    )
+    .await;
+    let entry = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "commented")
+        .unwrap_or_else(|| panic!("no comment entry: {entries}"));
+    assert_eq!(entry["payload"]["client"], "client.example", "{entry}");
 }

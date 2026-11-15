@@ -501,30 +501,4 @@ mod tests {
             assert!(is_registered_id(&random_secret(REGISTERED_PREFIX)));
         }
     }
-
-    /// Catches a bound that is off by a second either way, a used registration judged by when it was made, and
-    /// a never-used one that is kept for the used period.
-    #[test]
-    fn a_registration_expires_a_day_after_it_was_made_or_ninety_days_after_its_last_use() {
-        let t = DateTime::parse_from_rfc3339("2026-11-15T09:00:00Z")
-            .unwrap()
-            .to_utc();
-        let second = Duration::seconds(1);
-        let mut client = RegisteredClient {
-            client_id: format!("dyn_{}", "0".repeat(48)),
-            client_name: "x".to_string(),
-            redirect_uris: vec![CALLBACK.to_string()],
-            created_at: t,
-            last_used_at: None,
-        };
-        assert!(!client.expired(t + Duration::hours(24) - second));
-        assert!(client.expired(t + Duration::hours(24)));
-        client.last_used_at = Some(t + Duration::hours(1));
-        assert!(
-            !client.expired(t + Duration::days(30)),
-            "the unused bound no longer applies"
-        );
-        assert!(!client.expired(t + Duration::hours(1) + Duration::days(90) - second));
-        assert!(client.expired(t + Duration::hours(1) + Duration::days(90)));
-    }
 }

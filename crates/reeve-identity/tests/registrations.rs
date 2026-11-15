@@ -585,7 +585,7 @@ async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
     let store = make_registered_clients(pool.clone());
     let requests = AuthorizationRequests::default();
     let log = Recorder::new(false);
-    let approve = |id: String, approval: String| {
+    let approve = |request: String, approval: String| {
         let (pool, store) = (pool.clone(), store.clone());
         let (requests, log) = (&requests, &log);
         async move {
@@ -595,7 +595,7 @@ async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
                 &*store,
                 log,
                 &dan(),
-                &id,
+                &request,
                 &approval,
                 Scope::Read,
                 t0(),
@@ -607,15 +607,15 @@ async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
 
     // The approval wins: a store that is full with it keeps it.
     let first = registered(&pool, &*store, "First").await;
-    let (id, approval) = pending(&requests, &*store, &first).await;
-    assert!(approve(id, approval).await.is_some());
+    let (request, approval) = pending(&requests, &*store, &first).await;
+    assert!(approve(request, approval).await.is_some());
     assert!(!insert(&pool, &*store, &row(9, t0(), None), 1).await);
     assert_eq!(ids(&pool).await, std::slice::from_ref(&first));
     assert_eq!(log.entries.lock().unwrap().len(), 1);
 
     // The eviction wins: the newcomer takes the place of a registration whose approval page is open.
     let second = registered(&pool, &*store, "Second").await;
-    let (id, approval) = pending(&requests, &*store, &second).await;
+    let (request, approval) = pending(&requests, &*store, &second).await;
     assert!(
         insert(
             &pool,
@@ -625,10 +625,10 @@ async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
         )
         .await
     );
-    let mut kept = [first, id_of(9)];
+    let mut kept = [first, id(9)];
     kept.sort();
     assert_eq!(ids(&pool).await, kept, "the never-used one went");
-    assert!(approve(id.clone(), approval.clone()).await.is_none());
+    assert!(approve(request.clone(), approval.clone()).await.is_none());
     assert_eq!(
         log.entries.lock().unwrap().len(),
         1,
@@ -636,11 +636,7 @@ async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
     );
     assert_eq!(ids(&pool).await, kept, "the row is not made again");
     assert!(
-        requests.read(&id, TOKEN_ID, t0()).is_none(),
+        requests.read(&request, TOKEN_ID, t0()).is_none(),
         "the request is forgotten: the person connects again"
     );
-}
-
-fn id_of(n: u8) -> String {
-    id(n)
 }
