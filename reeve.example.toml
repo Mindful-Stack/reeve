@@ -64,18 +64,20 @@ admins = ["admin@example.com"]
 # values below enable Claude (https://claude.ai/api/mcp/auth_callback, claude.ai) and ChatGPT
 # (https://chatgpt.com/connector_platform_oauth_redirect, chatgpt.com); keep only the apps you want. ChatGPT is
 # expected to need no allowed_origins entry: its servers send no Origin header.
-# An app that publishes no metadata document registers itself instead, at /oauth/register (RFC 7591). That is off
-# unless dynamic_registration = true; on, an app can register only redirect addresses listed in redirect_uris
-# (client_hosts plays no part for such an app), and is shown to people by its redirect address's host
-# (deploy/README.md, "Apps that register themselves"). It needs at least one entry in redirect_uris.
 # [mcp]
 # enabled = true
 # allowed_origins = ["https://claude.ai"]
 # redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "https://chatgpt.com/connector_platform_oauth_redirect"]
 # client_hosts = ["claude.ai", "chatgpt.com"]
-# dynamic_registration = true
 # The privacy statement the approval page links (an https address); unset, the page shows no link.
 # privacy_url = "https://example.com/privacy"
+# The setting below lets apps that publish no metadata document register themselves instead, at /oauth/register
+# (RFC 7591); off by default, and the apps above connect without it. On, any caller can register a client for an
+# address in redirect_uris and start a connect to it, so client_hosts no longer limits who can start a connect to
+# a listed address. Such an app is shown to people by its redirect address's host (deploy/README.md, "Apps that
+# register themselves"). It needs at least one entry in redirect_uris. Leave it off unless an app that registers
+# itself needs it.
+# dynamic_registration = true
 
 # The board's done column shows only stories done within this many days (1 to 3650); older ones stay one `?done=all` away.
 # [board]
