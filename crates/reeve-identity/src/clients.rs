@@ -1,7 +1,7 @@
-//! MCP clients (kb/ADR-0029 R3). A client is the software that connects (claude.ai). Its id is the https address
-//! of a metadata document it publishes (OAuth Client ID Metadata Documents, draft 03). This file holds what such a
-//! client id and such a document must say, the port that fetches the document's bytes, and the one function that
-//! decides whether a client may connect.
+//! MCP clients (kb/ADR-0029 R3). A client is the software that connects (claude.ai, ChatGPT). Its id is the https
+//! address of a metadata document it publishes (OAuth Client ID Metadata Documents, draft 03). This file holds what
+//! such a client id and such a document must say, the port that fetches the document's bytes, and the one function
+//! that decides whether a client may connect.
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -120,13 +120,24 @@ impl ClientDocument {
         if object.contains_key("client_secret") || object.contains_key("client_secret_expires_at") {
             return Err(bad("it carries a client secret"));
         }
-        // Reeve's clients are public: the only method is `none`. Absent means `none` (draft 03, never RFC 7591's
+        // Reeve's clients are public: the server offers only `none` (PKCE, no client authentication), so a client
+        // must be able to connect that way. A published `token_endpoint_auth_methods_supported` is authoritative
+        // and must list `none`, as ChatGPT's does beside its preferred `private_key_jwt`. Only without that list
+        // does the singular `token_endpoint_auth_method` decide: `none`, or absent (draft 03, never RFC 7591's
         // default).
-        let method_is_none = object
-            .get("token_endpoint_auth_method")
-            .is_none_or(|method| method.as_str() == Some("none"));
-        if !method_is_none {
-            return Err(bad("its token endpoint authentication is not none"));
+        let can_be_public = match object.get("token_endpoint_auth_methods_supported") {
+            Some(list) => list.as_array().is_some_and(|list| {
+                list.iter().all(Value::is_string)
+                    && list.iter().any(|method| method.as_str() == Some("none"))
+            }),
+            None => object
+                .get("token_endpoint_auth_method")
+                .is_none_or(|method| method.as_str() == Some("none")),
+        };
+        if !can_be_public {
+            return Err(bad(
+                "none is not among its token endpoint authentication methods",
+            ));
         }
         Ok(ClientDocument {
             client_name: client_name.to_string(),
@@ -307,6 +318,81 @@ mod tests {
         assert!(
             ClientDocument::parse(ID, &body(|v| remove(v, "token_endpoint_auth_method"))).is_ok()
         );
+        // Another preferred method is fine when the client also supports none.
+        assert!(
+            ClientDocument::parse(
+                ID,
+                &body(|v| {
+                    v["token_endpoint_auth_method"] = json!("client_secret_basic");
+                    v["token_endpoint_auth_methods_supported"] =
+                        json!(["client_secret_basic", "none"]);
+                })
+            )
+            .is_ok()
+        );
+    }
+
+    /// Claude's document as published at its client id, fetched 2026-11-15, verbatim.
+    const CLAUDE_ID: &str = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    const CLAUDE_2026_11_15: &str = r#"{"client_id":"https://claude.ai/oauth/mcp-oauth-client-metadata","client_name":"Claude","client_uri":"https://claude.ai","redirect_uris":["https://claude.ai/api/mcp/auth_callback"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"token_endpoint_auth_method":"none"}"#;
+    /// ChatGPT's document as published at its client id, fetched 2026-11-15, verbatim. It prefers
+    /// `private_key_jwt` and lists `none` among the methods it supports.
+    const CHATGPT_ID: &str = "https://chatgpt.com/oauth/client.json";
+    const CHATGPT_CALLBACK: &str = "https://chatgpt.com/connector_platform_oauth_redirect";
+    const CHATGPT_2026_11_15: &str = r#"{"client_id":"https://chatgpt.com/oauth/client.json","client_uri":"https://chatgpt.com/","redirect_uris":["https://chatgpt.com/connector_platform_oauth_redirect"],"token_endpoint_auth_method":"private_key_jwt","token_endpoint_auth_methods_supported":["none","private_key_jwt"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"client_name":"ChatGPT","logo_uri":"https://persistent.oaistatic.com/sonic/misc/openai-logo.png","token_endpoint_auth_signing_alg":"RS256","jwks_uri":"https://chatgpt.com/oauth/jwks.json"}"#;
+
+    /// The two apps' real documents are read. Catches a rule that refuses ChatGPT for preferring
+    /// `private_key_jwt` while it can also connect as a public client.
+    #[test]
+    fn the_real_claude_and_chatgpt_documents_are_read() {
+        let claude = ClientDocument::parse(CLAUDE_ID, CLAUDE_2026_11_15.as_bytes()).unwrap();
+        assert_eq!(claude.client_name, "Claude");
+        assert_eq!(claude.redirect_uris, [CALLBACK]);
+        let chatgpt = ClientDocument::parse(CHATGPT_ID, CHATGPT_2026_11_15.as_bytes()).unwrap();
+        assert_eq!(chatgpt.client_name, "ChatGPT");
+        assert_eq!(chatgpt.redirect_uris, [CHATGPT_CALLBACK]);
+        // The id is checked against the address it was fetched from.
+        assert_eq!(
+            ClientDocument::parse(ID, CHATGPT_2026_11_15.as_bytes()).unwrap_err(),
+            ClientRefusal::BadDocument("its client_id is not the address it was fetched from")
+        );
+    }
+
+    /// ChatGPT resolves once the instance lists its host and redirect address, and an instance that lists only
+    /// claude.ai refuses it as not enabled before any fetch.
+    #[tokio::test]
+    async fn chatgpt_resolves_when_enabled_and_is_not_enabled_otherwise() {
+        struct Chatgpt(AtomicUsize);
+        #[async_trait]
+        impl ClientDocumentFetcher for Chatgpt {
+            async fn fetch(&self, _client_id: &url::Url) -> Result<Vec<u8>, ClientRefusal> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(CHATGPT_2026_11_15.as_bytes().to_vec())
+            }
+        }
+        let fetcher = Chatgpt(AtomicUsize::new(0));
+
+        let claude_only = policy(&["claude.ai"], &[CALLBACK]);
+        let refused = resolve_client(&fetcher, &claude_only, CHATGPT_ID, CHATGPT_CALLBACK)
+            .await
+            .unwrap_err();
+        assert!(refused.not_enabled(), "{refused}");
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 0);
+
+        let enabled = policy(&["chatgpt.com"], &[CHATGPT_CALLBACK]);
+        let client = resolve_client(&fetcher, &enabled, CHATGPT_ID, CHATGPT_CALLBACK)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                client.client_id(),
+                client.client_host(),
+                client.client_name(),
+                client.redirect_uri()
+            ),
+            (CHATGPT_ID, "chatgpt.com", "ChatGPT", CHATGPT_CALLBACK)
+        );
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 1);
     }
 
     /// One case per rule; each names the rule that failed. Catches a rule that is not checked at all and two
@@ -353,11 +439,44 @@ mod tests {
             refused(|v| v["client_secret_expires_at"] = json!(0)),
             secret
         );
-        let not_none = bad("its token endpoint authentication is not none");
+        let not_public = bad("none is not among its token endpoint authentication methods");
         assert_eq!(
             refused(|v| v["token_endpoint_auth_method"] = json!("client_secret_basic")),
-            not_none
+            not_public
         );
+        assert_eq!(
+            refused(|v| v["token_endpoint_auth_method"] = json!("private_key_jwt")),
+            not_public
+        );
+        assert_eq!(
+            refused(|v| {
+                v["token_endpoint_auth_method"] = json!("private_key_jwt");
+                v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
+            }),
+            not_public
+        );
+        // A published list is authoritative: the singular method decides only when the list is absent.
+        assert_eq!(
+            refused(|v| {
+                remove(v, "token_endpoint_auth_method");
+                v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
+            }),
+            not_public
+        );
+        assert_eq!(
+            refused(|v| v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"])),
+            not_public
+        );
+        for not_a_list in [json!("none"), json!({"none": true}), json!(["none", 7])] {
+            assert_eq!(
+                refused(|v| {
+                    v["token_endpoint_auth_method"] = json!("private_key_jwt");
+                    v["token_endpoint_auth_methods_supported"] = not_a_list.clone();
+                }),
+                not_public,
+                "{not_a_list}"
+            );
+        }
         // The name is shown to a person on the approval page.
         assert_eq!(
             refused(|v| v["client_name"] = json!("Clau\u{7}de")),

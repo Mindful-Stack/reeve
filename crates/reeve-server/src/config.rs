@@ -1330,9 +1330,12 @@ mod tests {
         );
         assert_eq!(
             c.mcp.redirect_uris,
-            ["https://claude.ai/api/mcp/auth_callback"]
+            [
+                "https://claude.ai/api/mcp/auth_callback",
+                "https://chatgpt.com/connector_platform_oauth_redirect"
+            ]
         );
-        assert_eq!(c.mcp.client_hosts, ["claude.ai"]);
+        assert_eq!(c.mcp.client_hosts, ["claude.ai", "chatgpt.com"]);
     }
 
     /// Catches an issuer that keeps the trailing slash the URL parser adds, one built from the text as typed
