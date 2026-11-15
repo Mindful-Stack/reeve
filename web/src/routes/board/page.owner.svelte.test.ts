@@ -47,7 +47,7 @@ function serve(c: Call): unknown {
 	const { method, path } = c;
 	if (method === 'GET' && path === '/api/v1/stories') return stories;
 	if (method === 'GET' && path === '/api/v1/epics') return [];
-	// No active sprint: the Goal select is absent, so the Owner select is the only select named by test id.
+	// The fake server stays minimal: no active sprint, so no Goal select and no goal data to serve.
 	if (method === 'GET' && path === '/api/v1/sprints') return { active: null, closed: [], draft: null, today: '2026-11-12' };
 	throw new Error(`unexpected ${method} ${path}`);
 }
@@ -130,29 +130,35 @@ describe('board owner select', () => {
 	});
 
 	it('Me, a person and Unowned each write one parameter, drop the other and show the matching cards', async () => {
+		(page.url as URL).href = 'http://localhost/board?notready=1';
 		await mounted();
+		const kept = () => page.url.searchParams.get('notready');
 		choose(ownerSelect(), 'me');
 		await shows(['ABC-1']);
-		expect(page.url.search).toBe('?mine=1');
+		expect(page.url.search).toBe('?notready=1&mine=1');
+		expect(kept()).toBe('1');
 
 		choose(ownerSelect(), 'ana@example.com');
 		await shows(['ABC-3', 'ABC-5']);
 		expect(page.url.searchParams.get('owner')).toBe('ana@example.com');
 		expect(page.url.searchParams.has('mine')).toBe(false);
+		expect(kept()).toBe('1');
 		// A person's cards stay in their own columns: the select filters, it never moves cards.
 		expect(q('[data-testid="column-testing"] [data-testid="card-ABC-5"]')).not.toBeNull();
 
 		choose(ownerSelect(), 'none');
 		await shows(['ABC-4']);
 		expect(page.url.searchParams.get('owner')).toBe('none');
+		expect(kept()).toBe('1');
 
 		choose(ownerSelect(), 'me');
 		await shows(['ABC-1']);
 		expect(page.url.searchParams.has('owner')).toBe(false);
+		expect(kept()).toBe('1');
 
 		choose(ownerSelect(), '');
 		await shows(ALL);
-		expect(page.url.search).toBe('');
+		expect(page.url.search).toBe('?notready=1');
 	});
 
 	it('opens on ?mine=1, and on ?owner=<my email>, with Me selected', async () => {
@@ -203,5 +209,38 @@ describe('board owner select', () => {
 		});
 		expect(ownerSelect().value).toBe('ana@example.com');
 		expect(shownKeys().sort()).toEqual(['ABC-3', 'ABC-5']);
+	});
+
+	it('an owner spelled in another case whose cards all go away keeps an option and keeps filtering', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=ANA@example.com';
+		await mounted(['ABC-3', 'ABC-5']);
+		stories = stories.filter((s) => s.story.owner !== 'ana@example.com');
+		for (const f of live.fns) f();
+		await shows([]);
+		// The refetch has landed: the other columns' cards are in the data, and ana's are gone from it.
+		const value = ownerSelect().value;
+		expect(value).not.toBe('');
+		expect(options().map(([v]) => v)).toContain(value);
+		expect(shownKeys()).toEqual([]);
+	});
+
+	it('opens on ?owner=NONE with Unowned selected and only unowned cards', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=NONE';
+		await mounted(['ABC-4']);
+		expect(ownerSelect().value).toBe('none');
+	});
+
+	it('?mine=1 while signed out filters nothing and selects all stories', async () => {
+		(session as { me: unknown }).me = null;
+		(page.url as URL).href = 'http://localhost/board?mine=1';
+		await mounted();
+		expect(ownerSelect().value).toBe('');
+	});
+
+	it('?owner=me is the signed-in person, never a person called me', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=me';
+		await mounted(['ABC-1']);
+		expect(ownerSelect().value).toBe('me');
+		expect(options().filter(([v]) => v === 'me')).toEqual([['me', 'Me']]);
 	});
 });

@@ -12,7 +12,7 @@
 		accepts,
 		afterPart,
 		applyFilters,
-	boardOwners,
+		boardOwners,
 		COLUMN_LABEL,
 		columnHeading,
 		COLUMNS,
@@ -24,7 +24,7 @@
 		neighbourBefore,
 		ownerFilter,
 		orderAfterDrop,
-	ownerSelectValue,
+		ownerSelectValue,
 		resolutionsFor,
 		splitUpNext,
 		type Column,
@@ -62,6 +62,8 @@
 	let loadError = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
+	/** The Owner select, where focus goes when Clear filters removes itself. */
+	let ownerSelect = $state<HTMLSelectElement | null>(null);
 	let dragging = $state<{ item: StoryWithReadiness; from: Column } | null>(null);
 	/** A drop into done waiting for its resolution. */
 	let resolving = $state<Move | null>(null);
@@ -91,11 +93,10 @@
 		typeof filters.goal === 'number' ? (active?.sprint.goals.find((g) => g.id === filters.goal) ?? null) : null
 	);
 	/** The Owner select's people: who owns a loaded card (every column, before filtering), and the owner the URL names. */
-	const owners = $derived(
-		boardOwners(columns ? COLUMNS.flatMap((c) => columns![c]) : [], session.me?.email, filters.owner)
-	);
-	/** The Owner select, where focus goes when Clear filters removes itself. */
-	let ownerSelect = $state<HTMLSelectElement | null>(null);
+	const owners = $derived.by(() => {
+		const cols = columns;
+		return boardOwners(cols ? COLUMNS.flatMap((c) => cols[c]) : [], session.me?.email, filters.owner);
+	});
 	const visible = $derived.by(() => {
 		if (!columns) return null;
 		const cols = columns;

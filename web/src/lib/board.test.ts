@@ -188,6 +188,15 @@ describe('ownerFilter', () => {
 	it('trims an email', () => {
 		expect(read('owner=%20ana@x.se%20')).toBe('ana@x.se');
 	});
+
+	it('reads owner=me, in any case, as the signed-in person, and nobody while signed out', () => {
+		expect(read('owner=me')).toBe('me@x.se');
+		expect(read('owner=ME')).toBe('me@x.se');
+		expect(read('owner=%20Me%20')).toBe('me@x.se');
+		expect(read('mine=1&owner=me')).toBe('me@x.se');
+		expect(read('owner=me', null)).toBeUndefined();
+		expect(read('owner=ME', null)).toBeUndefined();
+	});
 });
 
 describe('boardOwners', () => {
