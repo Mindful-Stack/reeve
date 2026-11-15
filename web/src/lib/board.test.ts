@@ -4,6 +4,9 @@ import {
 	accepts,
 	afterPart,
 	applyFilters,
+	BOARD_FILTER_PARAMS,
+	boardFilterCount,
+	boardOwners,
 	columnHeading,
 	columnise,
 	COLUMNS,
@@ -11,12 +14,15 @@ import {
 	fullLabel,
 	hitState,
 	neighbourBefore,
+	ownerFilter,
+	ownerSelectValue,
 	orderAfterDrop,
 	resolutionsFor,
 	shortLabel,
 	shortReason,
 	splitUpNext,
-	storyStatus
+	storyStatus,
+	withoutBoardFilters
 } from '#lib/board.ts';
 import { withReadiness } from '#lib/test/fixtures.ts';
 
@@ -98,12 +104,16 @@ describe('applyFilters', () => {
 
 	it('filters by owner, epic, kind and untriaged, and combines them', () => {
 		expect(keys({})).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5', 'ABC-6', 'ABC-8']);
-		expect(keys({ mine: 'ana@x.se' })).toEqual(['ABC-2']);
+		expect(keys({ owner: 'ana@x.se' })).toEqual(['ABC-2']);
+		// Emails compare as `sameEmail` does: a URL typed in another case still matches.
+		expect(keys({ owner: ' ANA@x.se ' })).toEqual(['ABC-2']);
+		// `'none'` keeps the unowned stories only.
+		expect(keys({ owner: 'none' })).toEqual(['ABC-4', 'ABC-5', 'ABC-6', 'ABC-8']);
 		expect(keys({ epic: 'ABC-7' })).toEqual(['ABC-3']);
 		expect(keys({ kind: 'bug' })).toEqual(['ABC-2']);
 		// Only the server's untriaged reason counts, whatever the kind (the client never re-derives it from kind and epic).
 		expect(keys({ untriaged: true })).toEqual(['ABC-4', 'ABC-5']);
-		expect(keys({ mine: 'ana@x.se', kind: 'story' })).toEqual([]);
+		expect(keys({ owner: 'ana@x.se', kind: 'story' })).toEqual([]);
 	});
 
 	it('filters by the goals the server says a story serves: one goal, or none (upkeep)', () => {
@@ -118,6 +128,7 @@ describe('applyFilters', () => {
 		expect(by({ goal: 1 })).toEqual(['ABC-2', 'ABC-3']);
 		expect(by({ goal: 2 })).toEqual(['ABC-3', 'ABC-4']);
 		expect(by({ goal: 'none' })).toEqual(['ABC-5']);
+		expect(by({ goal: 'any' })).toEqual(['ABC-2', 'ABC-3', 'ABC-4']);
 		expect(by({ goal: null })).toEqual(['ABC-2', 'ABC-3', 'ABC-4', 'ABC-5']);
 		expect(by({ goal: 1, kind: 'bug' })).toEqual([]);
 	});
@@ -149,6 +160,91 @@ describe('applyFilters', () => {
 		expect(by({ promised: null })).toHaveLength(7);
 		// The done column is empty while the filter is set.
 		expect(columnise(applyFilters(rows, { promised: 'this_sprint' })).done).toEqual([]);
+	});
+});
+
+describe('ownerFilter', () => {
+	const read = (search: string, me: string | null = 'me@x.se') => ownerFilter(new URLSearchParams(search), me);
+
+	it('reads mine=1 as the signed-in person, owner as an email or none, and lets owner win', () => {
+		expect(read('')).toBeUndefined();
+		expect(read('mine=1')).toBe('me@x.se');
+		// Signed out there is nobody "mine" could mean.
+		expect(read('mine=1', null)).toBeUndefined();
+		expect(read('mine=0')).toBeUndefined();
+		expect(read('owner=ana@x.se')).toBe('ana@x.se');
+		expect(read('owner=none')).toBe('none');
+		expect(read('owner=')).toBeUndefined();
+		expect(read('mine=1&owner=ana@x.se')).toBe('ana@x.se');
+		expect(read('mine=1&owner=none')).toBe('none');
+	});
+});
+
+describe('boardOwners', () => {
+	const rows = [
+		sw('ABC-2', { owner: 'bo@x.se' }),
+		sw('ABC-3', { owner: 'ana@x.se', delivery: 'done' }),
+		sw('ABC-4', { owner: 'BO@x.se', delivery: 'in_progress' }),
+		sw('ABC-5', { owner: 'me@x.se' }),
+		sw('ABC-6')
+	];
+
+	it('lists each other owner once, by local part, sorted; never the signed-in person or the unowned', () => {
+		expect(boardOwners(rows, 'me@x.se', undefined)).toEqual([
+			{ email: 'ana@x.se', label: 'ana' },
+			{ email: 'bo@x.se', label: 'bo' }
+		]);
+	});
+
+	it('signed out, everyone who owns a card is listed', () => {
+		expect(boardOwners(rows, null, undefined).map((o) => o.label)).toEqual(['ana', 'bo', 'me']);
+	});
+
+	it('adds a selected owner who has no card, but not none, the signed-in person or one already listed', () => {
+		expect(boardOwners(rows, 'me@x.se', 'cy@x.se').map((o) => o.email)).toEqual(['ana@x.se', 'bo@x.se', 'cy@x.se']);
+		expect(boardOwners(rows, 'me@x.se', 'none')).toHaveLength(2);
+		expect(boardOwners(rows, 'me@x.se', 'ME@x.se')).toHaveLength(2);
+		expect(boardOwners(rows, 'me@x.se', 'ANA@x.se')).toHaveLength(2);
+	});
+
+	it('shows the full email for owners who share a local part, the signed-in person and a selected owner included', () => {
+		const shared = [sw('ABC-2', { owner: 'ana@x.se' }), sw('ABC-3', { owner: 'ana@y.se' }), sw('ABC-4', { owner: 'bo@x.se' })];
+		expect(boardOwners(shared, null, undefined).map((o) => o.label)).toEqual(['ana@x.se', 'ana@y.se', 'bo']);
+		// The signed-in person is "Me" in the select, but their local part still makes a namesake ambiguous.
+		expect(boardOwners([sw('ABC-2', { owner: 'me@y.se' })], 'me@x.se', undefined).map((o) => o.label)).toEqual(['me@y.se']);
+		expect(boardOwners([sw('ABC-2', { owner: 'cy@x.se' })], null, 'cy@y.se').map((o) => o.label)).toEqual(['cy@x.se', 'cy@y.se']);
+	});
+});
+
+describe('ownerSelectValue', () => {
+	const options = [{ email: 'ana@x.se', label: 'ana' }];
+
+	it('is the option value the select must hold: empty, me, none, or the listed email exactly as listed', () => {
+		expect(ownerSelectValue(undefined, 'me@x.se', options)).toBe('');
+		expect(ownerSelectValue('none', 'me@x.se', options)).toBe('none');
+		expect(ownerSelectValue('ME@x.se', 'me@x.se', options)).toBe('me');
+		// The option's value is the email as the board holds it; the URL's spelling would select nothing.
+		expect(ownerSelectValue('ANA@x.se', 'me@x.se', options)).toBe('ana@x.se');
+		// Signed out, an owner is never "me".
+		expect(ownerSelectValue('me@x.se', null, [{ email: 'me@x.se', label: 'me' }])).toBe('me@x.se');
+	});
+});
+
+describe('board filter count and clear', () => {
+	it('counts each filter the board applies once', () => {
+		expect(boardFilterCount({})).toBe(0);
+		expect(boardFilterCount({ goal: null, promised: null, untriaged: false })).toBe(0);
+		expect(boardFilterCount({ owner: 'none' })).toBe(1);
+		expect(boardFilterCount({ owner: 'ana@x.se', goal: 'any', epic: 'ABC-7', kind: 'bug', promised: 'overdue', untriaged: true })).toBe(6);
+	});
+
+	it('removes every filter parameter and nothing else', () => {
+		const url = new URL('http://localhost/board?mine=1&owner=a@x.se&goal=any&epic=ABC-7&kind=bug&promised=overdue&untriaged=1&notready=1');
+		const next = withoutBoardFilters(url);
+		expect(next.search).toBe('?notready=1');
+		// A new URL: the caller's is not changed.
+		expect(url.searchParams.get('goal')).toBe('any');
+		expect([...BOARD_FILTER_PARAMS].sort()).toEqual(['epic', 'goal', 'kind', 'mine', 'owner', 'promised', 'untriaged']);
 	});
 });
 

@@ -21,6 +21,7 @@
 		isKind,
 		KINDS,
 		neighbourBefore,
+		ownerFilter,
 		orderAfterDrop,
 		resolutionsFor,
 		splitUpNext,
@@ -77,7 +78,7 @@
 		return {
 			// Only a goal of the active sprint: without one the strip is gone, and a stale `?goal=` must not hide every card.
 			goal: goalFilter(query.get('goal'), active ? active.sprint.goals.map((g) => g.id) : null),
-			mine: query.get('mine') === '1' ? session.me?.email : undefined,
+			owner: ownerFilter(query, session.me?.email),
 			epic: query.get('epic') || undefined,
 			kind: isKind(kind) ? kind : undefined,
 			untriaged: query.get('untriaged') === '1',
