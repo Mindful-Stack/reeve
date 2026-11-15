@@ -413,7 +413,11 @@ async fn an_approval_that_commits_while_the_eviction_runs_keeps_its_registration
     // Joined while the approval is still open: an eviction that waited for its row would not answer.
     assert!(joined(eviction).await, "the newcomer is stored");
     approval.commit().await.unwrap();
-    assert_eq!(ids(&pool).await, [id(1), id(3), id(9)], "the next never-used one went");
+    assert_eq!(
+        ids(&pool).await,
+        [id(1), id(3), id(9)],
+        "the next never-used one went"
+    );
     assert_eq!(last_used(&pool, &id(1)).await, Some(t0()));
 }
 

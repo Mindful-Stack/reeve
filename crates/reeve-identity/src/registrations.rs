@@ -29,6 +29,8 @@ const _: () = assert!(USED_DAYS > 2 * CONNECTION_DAYS);
 const MAX_REDIRECT_URIS: usize = 5;
 /// The longest path of a refused redirect address that is logged.
 const MAX_LOGGED_PATH_CHARS: usize = 200;
+/// The longest host of a refused redirect address that is logged: a DNS name's longest.
+const MAX_LOGGED_HOST_CHARS: usize = 253;
 
 /// How long registrations are kept, as the two instants `now` puts the bounds at: a never-used registration made
 /// at or before the first has expired, and so has a used one last used at or before the second. The one place
@@ -133,11 +135,12 @@ fn strings<'a>(object: &'a Map<String, Value>, key: &str) -> Result<Option<Vec<&
         .ok_or(())
 }
 
-/// The host and the path of an address, for the log: never its query, its user information or its fragment.
+/// The host and the path of an address, for the log, each cut to a bound: never its query, its user information or its fragment.
 fn host_and_path(address: &str) -> (Option<String>, Option<String>) {
     match url::Url::parse(address) {
         Ok(url) => (
-            url.host_str().map(str::to_string),
+            url.host_str()
+                .map(|host| host.chars().take(MAX_LOGGED_HOST_CHARS).collect()),
             Some(url.path().chars().take(MAX_LOGGED_PATH_CHARS).collect()),
         ),
         Err(_) => (None, None),
@@ -459,6 +462,10 @@ mod tests {
         }));
         assert_eq!(host.as_deref(), Some("wanted.example"));
         assert_eq!(path.unwrap().chars().count(), 200);
+        let (host, _) = redirect(parsed(|v| {
+            v["redirect_uris"] = json!([format!("https://{}example/cb", "abcdefghi.".repeat(30))])
+        }));
+        assert_eq!(host.unwrap().chars().count(), 253, "the host is cut too");
         // The addresses are judged last: a request with a bad name and an unlisted address is refused for the
         // name.
         assert_eq!(
