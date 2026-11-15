@@ -153,7 +153,7 @@ fn protected_resource(config: &ServerConfig) -> Value {
 
 fn authorization_server(config: &ServerConfig) -> Value {
     let issuer = config.issuer();
-    json!({
+    let mut document = json!({
         "issuer": issuer.as_str(),
         "authorization_endpoint": format!("{issuer}{AUTHORIZE_PATH}"),
         "token_endpoint": format!("{issuer}{TOKEN_PATH}"),
@@ -164,7 +164,12 @@ fn authorization_server(config: &ServerConfig) -> Value {
         "client_id_metadata_document_supported": true,
         "authorization_response_iss_parameter_supported": true,
         "scopes_supported": SCOPES,
-    })
+    });
+    // RFC 8414 section 2: named exactly when this instance accepts registrations.
+    if config.mcp.dynamic_registration {
+        document["registration_endpoint"] = json!(format!("{issuer}{REGISTER_PATH}"));
+    }
+    document
 }
 
 /// One metadata document. The switch comes first, so a switched-off instance says nothing about itself whatever
