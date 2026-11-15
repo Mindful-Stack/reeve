@@ -160,9 +160,10 @@ pub(crate) struct McpCaller {
     policy: reeve_identity::AccessPolicy,
 }
 
-/// A client as an activity entry names it (kb/ADR-0029 R9): the host of the connection's client id, which is the
-/// address of the client's metadata document. A client id without a host (the developer command's
-/// `urn:reeve:developer-command`) is recorded as it is, so an entry always names something.
+/// A client as an activity entry names it (kb/ADR-0029 R9) when its connection kept no host: the host of the
+/// connection's client id, which is then the address of the client's metadata document. A client id without a
+/// host (the developer command's `urn:reeve:developer-command`, and a registered client's `dyn_…` id) is
+/// recorded as it is, so an entry always names something.
 fn client_label(client_id: &str) -> String {
     url::Url::parse(client_id)
         .ok()
@@ -206,14 +207,20 @@ impl McpCaller {
     }
 
     /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5), and
-    /// its writes name the connection's client (R9).
+    /// its writes name the connection's client (R9): by the host kept with the connection, which for a client
+    /// that registered itself is the host of its redirect address, else by `client_label`.
     pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
         crate::actions::Acting::new(
             &self.principal.email,
             reeve_protocol::Via::Interactive,
             self.now,
             &self.policy,
-            Some(client_label(&self.principal.client_id)),
+            Some(
+                self.principal
+                    .client_host
+                    .clone()
+                    .unwrap_or_else(|| client_label(&self.principal.client_id)),
+            ),
         )
     }
 }
@@ -237,5 +244,9 @@ mod tests {
             "urn:reeve:developer-command"
         );
         assert_eq!(client_label("not a url"), "not a url");
+        // A client that registered itself: its id names no host. Its entries name the host kept with its
+        // connection instead (`McpCaller::acting`); only without one is the id recorded.
+        let registered = format!("dyn_{}", "0".repeat(48));
+        assert_eq!(client_label(&registered), registered);
     }
 }

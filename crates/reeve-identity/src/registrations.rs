@@ -40,6 +40,16 @@ pub(crate) fn retention(now: DateTime<Utc>) -> (DateTime<Utc>, DateTime<Utc>) {
     )
 }
 
+/// Whether `client_id` has the shape of an id this server made: the prefix and 48 lower-case hex digits. Such
+/// text has no `:`, so it is no URL; and no URL has this shape.
+pub(crate) fn is_registered_id(client_id: &str) -> bool {
+    client_id
+        .strip_prefix(REGISTERED_PREFIX)
+        .is_some_and(|hex| {
+            hex.len() == 48 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
 /// A stored registration.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct RegisteredClient {
@@ -457,6 +467,31 @@ mod tests {
             })),
             "client_name is not a string"
         );
+    }
+
+    /// Catches a shape test that is loose (a registered id could then be a URL, or a URL reach the store) and
+    /// an id of this server's making that does not pass it.
+    #[test]
+    fn an_id_of_this_servers_making_is_never_a_url() {
+        const DYN: &str = "dyn_0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert!(is_registered_id(DYN));
+        assert!(url::Url::parse(DYN).is_err());
+        for other in [
+            format!("dyn_{}", "0".repeat(47)),
+            format!("dyn_{}", "ABCDEF".repeat(8)),
+            format!("{DYN}0"),
+            "dyn_x".to_string(),
+            String::new(),
+            format!("DYN_{}", "0".repeat(48)),
+            format!(" {DYN}"),
+            "https://claude.ai/oauth/client.json".to_string(),
+            format!("https://claude.ai/{DYN}"),
+        ] {
+            assert!(!is_registered_id(&other), "{other:?}");
+        }
+        for _ in 0..8 {
+            assert!(is_registered_id(&random_secret(REGISTERED_PREFIX)));
+        }
     }
 
     /// Catches a bound that is off by a second either way, a used registration judged by when it was made, and

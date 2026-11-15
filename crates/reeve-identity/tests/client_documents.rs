@@ -9,6 +9,11 @@ use reeve_identity::{
 use serde_json::json;
 use std::sync::Arc;
 
+/// A metadata document's client is judged at no particular time: any instant will do.
+fn now() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH
+}
+
 const CALLBACK: &str = "https://claude.ai/api/mcp/auth_callback";
 const LIMIT: usize = 64 * 1024;
 
@@ -156,7 +161,7 @@ async fn a_fetched_document_is_judged_against_the_address_it_came_from() {
     );
     let differs = host.client_id("/differs.json");
     assert_eq!(
-        resolve_client(&*fetcher, &policy, &differs, CALLBACK).await,
+        resolve_client(&*fetcher, None, &policy, &differs, CALLBACK, now()).await,
         Err(ClientRefusal::BadDocument(
             "its client_id is not the address it was fetched from"
         ))
@@ -166,7 +171,7 @@ async fn a_fetched_document_is_judged_against_the_address_it_came_from() {
         (1, 0)
     );
     let id = host.publish("/client.json", "Example App", &[CALLBACK]);
-    let client = resolve_client(&*fetcher, &policy, &id, CALLBACK)
+    let client = resolve_client(&*fetcher, None, &policy, &id, CALLBACK, now())
         .await
         .unwrap();
     assert_eq!(

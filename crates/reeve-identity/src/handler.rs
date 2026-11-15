@@ -75,6 +75,8 @@ pub async fn issue_mcp_token(
             &mut tx,
             &email,
             DEVELOPER_CLIENT_ID,
+            // Nobody was shown a host: the listing shows the name alone.
+            None,
             DEVELOPER_CLIENT_NAME,
             Scope::Write,
             now,
@@ -272,6 +274,7 @@ pub async fn authenticate_mcp(
         email: owner,
         connection_id,
         client_id,
+        client_host: row.connection_client_host.clone(),
         scope,
     })
 }

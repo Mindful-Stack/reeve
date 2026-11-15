@@ -390,3 +390,153 @@ async fn the_cap_holds_and_never_drops_a_used_registration() {
     registered(&f, registration()).await;
     assert_eq!(registrations(&f.h).await, 1);
 }
+
+/// Where authorize sends the browser for `client_id` and `redirect_uri` on `app`.
+async fn went(f: &Flow, app: &axum::Router, client_id: &str, redirect_uri: &str) -> String {
+    let params = with(
+        with(authorize_params(f), "client_id", Some(client_id)),
+        "redirect_uri",
+        Some(redirect_uri),
+    );
+    let res = call_raw(app, authorize_request(&params)).await;
+    assert_eq!(res.status(), 303);
+    res.headers()["location"].to_str().unwrap().to_string()
+}
+
+/// One row per reason a registered client may not start a connect; the first row is the one that may. Catches
+/// a client sent to an address it did not register or the instance no longer lists, an id this server never
+/// gave out, a dropped or an expired registration that still works, and an instance that accepts registered
+/// clients with the setting off. A refusal never goes to the client's address.
+#[tokio::test]
+async fn a_registered_client_starts_a_connect_only_while_it_may() {
+    let f = registering_flow_with(&[CALLBACK, OTHER]).await;
+    let id = registered(&f, registration()).await;
+    let invalid = "/connect?problem=invalid_request";
+    let not_enabled = "/connect?problem=app_not_enabled";
+
+    let to = went(&f, &f.h.app, &id, CALLBACK).await;
+    assert!(to.starts_with("/connect?request="), "{to}");
+
+    let refusals = [
+        (
+            "an address the instance lists and the client did not register",
+            went(&f, &f.h.app, &id, OTHER).await,
+            invalid,
+        ),
+        (
+            "an id this server did not give out",
+            went(&f, &f.h.app, &format!("dyn_{}", "0".repeat(48)), CALLBACK).await,
+            invalid,
+        ),
+        (
+            "the address left the instance's list",
+            went(
+                &f,
+                &app_with(&f, |c| c.mcp.redirect_uris = vec![OTHER.into()]),
+                &id,
+                CALLBACK,
+            )
+            .await,
+            not_enabled,
+        ),
+        (
+            "the setting is off: the remedy is the admin's",
+            went(
+                &f,
+                &app_with(&f, |c| c.mcp.dynamic_registration = false),
+                &id,
+                CALLBACK,
+            )
+            .await,
+            not_enabled,
+        ),
+    ];
+    for (what, to, expected) in &refusals {
+        assert_eq!(to, expected, "{what}");
+        assert!(!to.contains("client.example"), "{what}: {to}");
+    }
+
+    // Dropped.
+    sqlx::query("DELETE FROM registered_clients WHERE client_id = $1")
+        .bind(&id)
+        .execute(&f.h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(went(&f, &f.h.app, &id, CALLBACK).await, invalid, "dropped");
+
+    // Expired: the row is still stored (nothing deletes it until the next registration), and is refused.
+    let fresh = registered(&f, registration()).await;
+    let one_second = chrono::Duration::seconds(1);
+    f.h.state
+        .clock
+        .advance(chrono::Duration::hours(24) - one_second);
+    let to = went(&f, &f.h.app, &fresh, CALLBACK).await;
+    assert!(to.starts_with("/connect?request="), "a second short: {to}");
+    f.h.state.clock.advance(one_second);
+    assert_eq!(registrations(&f.h).await, 1, "still stored");
+    assert_eq!(
+        went(&f, &f.h.app, &fresh, CALLBACK).await,
+        invalid,
+        "expired"
+    );
+}
+
+/// A registered client's id names no host, and everything else it says of itself is its own claim. Catches a
+/// connection that is listed by the name alone, an approval entry that names the app by its id only, and a
+/// change recorded as made through `dyn_…`: each names the host of the redirect address, kept with the
+/// connection.
+#[tokio::test]
+async fn a_registered_clients_connection_and_its_changes_name_its_redirect_host() {
+    let mut f = registering_flow().await;
+    f.client_id = registered(&f, registration()).await;
+    let h = &f.h;
+    let connected = connect(&f, &h.admin_token, "write").await;
+
+    let listed = api(h, &h.admin_token, "/api/v1/connections").await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(
+        json!([
+            listed[0]["client_id"],
+            listed[0]["client_host"],
+            listed[0]["client_name"]
+        ]),
+        json!([f.client_id, "client.example", "Example Assistant"])
+    );
+    let approvals = api(
+        h,
+        &h.admin_token,
+        "/api/v1/activity?action=connection_approved",
+    )
+    .await;
+    assert_eq!(
+        approvals[0]["payload"],
+        json!({
+            "client_id": f.client_id,
+            "client_host": "client.example",
+            "client_name": "Example Assistant",
+            "scope": "write",
+        })
+    );
+
+    let epic = ready_epic(h, "reg-e1").await;
+    answer(
+        h,
+        &connected.access_token,
+        "add_comment",
+        json!({"item": epic, "idempotency_key": "c1", "body": "Through a registered app."}),
+    )
+    .await;
+    let entries = api(
+        h,
+        &h.admin_token,
+        &format!("/api/v1/activity?entity_key={epic}"),
+    )
+    .await;
+    let entry = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "commented")
+        .unwrap_or_else(|| panic!("no comment entry: {entries}"));
+    assert_eq!(entry["payload"]["client"], "client.example", "{entry}");
+}

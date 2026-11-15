@@ -3,13 +3,16 @@
 //! Real PostgreSQL; every instant is passed in, and nothing sleeps: a test that needs an order holds a lock and
 //! watches for the waiter.
 mod common;
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reeve_identity::{
-    ClientPolicy, RegisteredClient, RegisteredClients, RegistrationRefusal,
-    make_registered_clients, register_client,
+    AuthorizationRequests, ClientDocumentFetcher, ClientPolicy, ClientRefusal, CodeChallenge,
+    IdentityActivity, IdentityEvent, Principal, RegisteredClient, RegisteredClients,
+    RegistrationRefusal, Role, Scope, TokenKind, approve_request, make_registered_clients,
+    register_client, resolve_client,
 };
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const CALLBACK: &str = "https://client.example/callback";
 const OTHER: &str = "https://other.example/cb";
@@ -399,4 +402,228 @@ async fn an_approval_that_commits_while_the_eviction_waits_keeps_its_registratio
     assert!(!eviction.await.unwrap(), "nothing was stored");
     assert_eq!(ids(&pool).await, [id(1), id(2), id(3)]);
     assert_eq!(last_used(&pool, &id(1)).await, Some(t0()));
+}
+
+/// A registered client is never fetched: resolving one with this fetcher proves it.
+struct Never;
+#[async_trait]
+impl ClientDocumentFetcher for Never {
+    async fn fetch(&self, _client_id: &url::Url) -> Result<Vec<u8>, ClientRefusal> {
+        unreachable!("a registered client causes no fetch")
+    }
+}
+
+/// An activity log in memory; `fail` makes its write fail.
+struct Recorder {
+    entries: Mutex<Vec<IdentityEvent>>,
+    fail: bool,
+}
+
+impl Recorder {
+    fn new(fail: bool) -> Self {
+        Self {
+            entries: Mutex::new(vec![]),
+            fail,
+        }
+    }
+}
+
+#[async_trait]
+impl IdentityActivity for Recorder {
+    async fn record(
+        &self,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        e: IdentityEvent,
+    ) -> Result<(), sqlx::Error> {
+        if self.fail {
+            return Err(sqlx::Error::Protocol("boom".into()));
+        }
+        self.entries.lock().unwrap().push(e);
+        Ok(())
+    }
+}
+
+/// RFC 7636, appendix B.
+const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+const TOKEN_ID: i64 = 7;
+
+fn dan() -> Principal {
+    Principal {
+        email: "dan@example.com".to_string(),
+        role: Role::Member,
+        token_kind: TokenKind::Interactive,
+        token_id: TOKEN_ID,
+    }
+}
+
+/// A client registered at `t0` for `CALLBACK` under `name`.
+async fn registered(pool: &PgPool, store: &dyn RegisteredClients, name: &str) -> String {
+    let body = format!(r#"{{"client_name":"{name}","redirect_uris":["{CALLBACK}"]}}"#);
+    register_client(pool, store, &listing(&[CALLBACK]), body.as_bytes(), t0())
+        .await
+        .unwrap()
+        .client_id
+}
+
+/// A pending request of the registered client `client_id`, read by `dan`'s token: its id and approval value.
+async fn pending(
+    requests: &AuthorizationRequests,
+    store: &dyn RegisteredClients,
+    client_id: &str,
+) -> (String, String) {
+    let client = resolve_client(
+        &Never,
+        Some(store),
+        &listing(&[CALLBACK]),
+        client_id,
+        CALLBACK,
+        t0(),
+    )
+    .await
+    .unwrap();
+    let challenge = CodeChallenge::parse(CHALLENGE).unwrap();
+    let id = requests
+        .open(
+            &client,
+            challenge,
+            "https://reeve.example.com/mcp",
+            None,
+            t0(),
+        )
+        .unwrap();
+    let approval = requests.read(&id, TOKEN_ID, t0()).unwrap().approval;
+    (id, approval)
+}
+
+/// Catches an approval that does not mark its registration (the cap could then drop it), one that marks
+/// another, a mark that outlives an entry that could not be written, and an entry that names a registered
+/// client by its id alone: the id says nothing to a reader, so the entry also holds the host the person was
+/// shown and the name the app gave itself.
+#[tokio::test]
+async fn approving_marks_a_registered_client_used_and_no_other() {
+    let (_db, pool) = common::pg().await;
+    let store = make_registered_clients(pool.clone());
+    let requests = AuthorizationRequests::default();
+    let approved = registered(&pool, &*store, "Example Assistant").await;
+    let other = registered(&pool, &*store, "Another").await;
+    let at = t0() + Duration::minutes(5);
+
+    // The entry cannot be written: nothing is marked, and no code is returned.
+    let (id, approval) = pending(&requests, &*store, &approved).await;
+    let failed = approve_request(
+        &pool,
+        &requests,
+        &*store,
+        &Recorder::new(true),
+        &dan(),
+        &id,
+        &approval,
+        Scope::Write,
+        at,
+    )
+    .await;
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(last_used(&pool, &approved).await, None);
+
+    let (id, approval) = pending(&requests, &*store, &approved).await;
+    let log = Recorder::new(false);
+    let answer = approve_request(
+        &pool,
+        &requests,
+        &*store,
+        &log,
+        &dan(),
+        &id,
+        &approval,
+        Scope::Write,
+        at,
+    )
+    .await
+    .unwrap();
+    assert!(answer.is_some());
+    assert_eq!(last_used(&pool, &approved).await, Some(at));
+    assert_eq!(last_used(&pool, &other).await, None, "no other is marked");
+    let entries = log.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].action, "connection_approved");
+    assert_eq!(
+        entries[0].payload,
+        serde_json::json!({
+            "client_id": approved,
+            "client_host": "client.example",
+            "client_name": "Example Assistant",
+            "scope": "write",
+        })
+    );
+}
+
+/// The two orders of an approval and an eviction. The approval first: the registration is used, and a full store
+/// then refuses the newcomer and keeps it. The eviction first (the person had the approval page open while the
+/// registration was dropped): the approval fails cleanly, with no code, no entry and the request forgotten, and
+/// the registration is not made again outside the cap. Catches an approval that answers a code for a client
+/// that no longer exists, and one that recreates the row.
+#[tokio::test]
+async fn an_approval_and_an_eviction_in_either_order_leave_no_half_state() {
+    let (_db, pool) = common::pg().await;
+    let store = make_registered_clients(pool.clone());
+    let requests = AuthorizationRequests::default();
+    let log = Recorder::new(false);
+    let approve = |id: String, approval: String| {
+        let (pool, store) = (pool.clone(), store.clone());
+        let (requests, log) = (&requests, &log);
+        async move {
+            approve_request(
+                &pool,
+                requests,
+                &*store,
+                log,
+                &dan(),
+                &id,
+                &approval,
+                Scope::Read,
+                t0(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // The approval wins: a store that is full with it keeps it.
+    let first = registered(&pool, &*store, "First").await;
+    let (id, approval) = pending(&requests, &*store, &first).await;
+    assert!(approve(id, approval).await.is_some());
+    assert!(!insert(&pool, &*store, &row(9, t0(), None), 1).await);
+    assert_eq!(ids(&pool).await, std::slice::from_ref(&first));
+    assert_eq!(log.entries.lock().unwrap().len(), 1);
+
+    // The eviction wins: the newcomer takes the place of a registration whose approval page is open.
+    let second = registered(&pool, &*store, "Second").await;
+    let (id, approval) = pending(&requests, &*store, &second).await;
+    assert!(
+        insert(
+            &pool,
+            &*store,
+            &row(9, t0() + Duration::seconds(1), None),
+            2
+        )
+        .await
+    );
+    let mut kept = [first, id_of(9)];
+    kept.sort();
+    assert_eq!(ids(&pool).await, kept, "the never-used one went");
+    assert!(approve(id.clone(), approval.clone()).await.is_none());
+    assert_eq!(
+        log.entries.lock().unwrap().len(),
+        1,
+        "no entry for the failed approval"
+    );
+    assert_eq!(ids(&pool).await, kept, "the row is not made again");
+    assert!(
+        requests.read(&id, TOKEN_ID, t0()).is_none(),
+        "the request is forgotten: the person connects again"
+    );
+}
+
+fn id_of(n: u8) -> String {
+    id(n)
 }

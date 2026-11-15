@@ -66,7 +66,7 @@ async fn pending(requests: &AuthorizationRequests) -> (String, String, String, F
         redirect_uris: vec![CALLBACK.to_string()],
     };
     let fetcher = make_loopback_client_fetcher().unwrap();
-    let client = resolve_client(&*fetcher, &policy, &client_id, CALLBACK)
+    let client = resolve_client(&*fetcher, None, &policy, &client_id, CALLBACK, now())
         .await
         .unwrap();
     let id = requests
@@ -94,6 +94,7 @@ async fn approving_writes_the_entry_and_returns_the_requests_code() {
     let (back, code) = approve_request(
         &pool,
         &requests,
+        &*reeve_identity::make_registered_clients(pool.clone()),
         &log,
         &who,
         &id,
@@ -124,7 +125,12 @@ async fn approving_writes_the_entry_and_returns_the_requests_code() {
         assert!(matches!(e.via, Via::Interactive));
         assert_eq!(
             e.payload,
-            serde_json::json!({"client_id": client_id, "scope": "write"})
+            serde_json::json!({
+                "client_id": client_id,
+                "client_host": "127.0.0.1",
+                "client_name": "Example App",
+                "scope": "write",
+            })
         );
         assert!(
             !e.payload.to_string().contains(&code),
@@ -148,6 +154,7 @@ async fn approving_writes_the_entry_and_returns_the_requests_code() {
     let again = approve_request(
         &pool,
         &requests,
+        &*reeve_identity::make_registered_clients(pool.clone()),
         &log,
         &who,
         &id,
@@ -173,6 +180,7 @@ async fn an_approval_whose_entry_cannot_be_written_returns_no_code() {
     let failed = approve_request(
         &pool,
         &requests,
+        &*reeve_identity::make_registered_clients(pool.clone()),
         &Failing,
         &who,
         &id,
@@ -200,6 +208,7 @@ async fn an_automation_token_can_neither_read_nor_approve_nor_refuse() {
     let approved = approve_request(
         &pool,
         &requests,
+        &*reeve_identity::make_registered_clients(pool.clone()),
         &log,
         &bot,
         &id,

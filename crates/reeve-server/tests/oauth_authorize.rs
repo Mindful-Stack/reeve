@@ -367,9 +367,11 @@ async fn a_store_full_of_requests_people_are_looking_at_answers_temporarily_unav
     let s = &f.h.state;
     let client = reeve_identity::resolve_client(
         &*s.client_fetcher,
+        None,
         &s.config.client_policy(),
         &f.client_id,
         CALLBACK,
+        s.clock.now(),
     )
     .await
     .unwrap();

@@ -166,11 +166,20 @@ async fn answer(s: AppState, method: Method, uri: Uri, jar: CookieJar) -> Respon
         );
         return problem("invalid_request");
     };
+    // The clock is read once for the whole request.
+    let now = s.clock.now();
+    let registered: Option<&dyn reeve_identity::RegisteredClients> = s
+        .config
+        .mcp
+        .dynamic_registration
+        .then_some(&*s.registered_clients);
     let client = match resolve_client(
         &*s.client_fetcher,
+        registered,
         &s.config.client_policy(),
         client_id,
         redirect_uri,
+        now,
     )
     .await
     {
@@ -216,7 +225,7 @@ async fn answer(s: AppState, method: Method, uri: Uri, jar: CookieJar) -> Respon
         challenge,
         &resource,
         state.map(str::to_string),
-        s.clock.now(),
+        now,
     );
     match opened {
         Ok(id) => (

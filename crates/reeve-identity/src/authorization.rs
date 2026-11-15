@@ -8,6 +8,7 @@ use crate::{
     domain::{Principal, hash_secret, random_secret},
     handler::AuthError,
     ports::{IdentityActivity, IdentityEvent},
+    registrations::{RegisteredClients, is_registered_id},
 };
 use chrono::{DateTime, Duration, Utc};
 use reeve_protocol::{Scope, TokenKind, Via};
@@ -75,6 +76,8 @@ pub struct ReturnAddress {
 pub struct CodeGrant {
     pub owner: String,
     pub client_id: String,
+    /// The app's host as the approval page showed it; kept with the connection.
+    pub client_host: String,
     pub client_name: String,
     pub scope: Scope,
     pub approved_at: DateTime<Utc>,
@@ -87,6 +90,14 @@ pub enum RedeemRefusal {
     InvalidGrant,
     /// Presented for another resource.
     InvalidTarget,
+}
+
+/// The client of an approved request, for the approval's activity entry and its registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApprovedClient {
+    pub(crate) client_id: String,
+    pub(crate) client_host: String,
+    pub(crate) client_name: String,
 }
 
 /// Every held request has been read by someone, so none can be dropped to make room.
@@ -229,7 +240,7 @@ impl AuthorizationRequests {
     }
 
     /// Approve: checks the answer and gives the request a code for `owner` with `scope`, in one step. Returns
-    /// where to send the browser, the code, and the request's client id (for the activity entry).
+    /// where to send the browser, the code, and the request's client (for the activity entry).
     pub(crate) fn approve(
         &self,
         id: &str,
@@ -238,7 +249,7 @@ impl AuthorizationRequests {
         owner: &str,
         scope: Scope,
         now: DateTime<Utc>,
-    ) -> Option<(ReturnAddress, String, String)> {
+    ) -> Option<(ReturnAddress, String, ApprovedClient)> {
         let mut entries = self.entries();
         let e = entries
             .get_mut(id)
@@ -251,7 +262,12 @@ impl AuthorizationRequests {
             scope,
             approved_at: now,
         };
-        Some((e.return_address(), code, e.client_id.clone()))
+        let client = ApprovedClient {
+            client_id: e.client_id.clone(),
+            client_host: e.client_host.clone(),
+            client_name: e.client_name.clone(),
+        };
+        Some((e.return_address(), code, client))
     }
 
     /// Refuse: checks the answer and removes the request, in one step. Returns where to send the browser.
@@ -272,7 +288,8 @@ impl AuthorizationRequests {
         entries.remove(id).map(|e| e.return_address())
     }
 
-    /// Drops a request whatever its state: an approval whose activity entry could not be written.
+    /// Drops a request whatever its state: an approval whose activity entry could not be written, or whose
+    /// client's registration is gone.
     pub(crate) fn forget(&self, id: &str) {
         self.entries().remove(id);
     }
@@ -304,6 +321,7 @@ impl AuthorizationRequests {
                 CodeGrant {
                     owner: owner.clone(),
                     client_id: e.client_id.clone(),
+                    client_host: e.client_host.clone(),
                     client_name: e.client_name.clone(),
                     scope: *scope,
                     approved_at: *approved_at,
@@ -358,12 +376,17 @@ pub fn read_request(
 /// Approve (kb/ADR-0029 R4, R9): the request gets its code, the `connection_approved` entry is written and
 /// committed, and only then is the code returned. If the entry cannot be written the request is forgotten and
 /// the error returned: no code reaches anyone unless the entry committed, and the person connects again.
+/// For a client that registered itself the approval is also recorded on its registration, in the same
+/// transaction, so that from here the cap never drops it (kb/ADR-0029 R3). If that registration is gone (it was
+/// dropped to make room while the page was open), nothing is written, the request is forgotten and the answer is
+/// `Ok(None)`: the registration is never made again here, and the person connects again.
 /// `Ok(None)`: the request is unknown, expired, answered, or the value or token is not the current one.
 /// `Forbidden`: an automation token.
 #[allow(clippy::too_many_arguments)]
 pub async fn approve_request(
     pool: &PgPool,
     requests: &AuthorizationRequests,
+    clients: &dyn RegisteredClients,
     activity: &dyn IdentityActivity,
     who: &Principal,
     id: &str,
@@ -372,13 +395,20 @@ pub async fn approve_request(
     now: DateTime<Utc>,
 ) -> Result<Option<(ReturnAddress, String)>, AuthError> {
     interactive(who)?;
-    let Some((back, code, client_id)) =
+    let Some((back, code, client)) =
         requests.approve(id, approval, who.token_id, &who.email, scope, now)
     else {
         return Ok(None);
     };
-    let written: Result<(), sqlx::Error> = async {
+    // Whether the entry was written: `false` when the client's registration is gone.
+    let written: Result<bool, sqlx::Error> = async {
         let mut tx = pool.begin().await?;
+        // Before the entry: activity entries are written last. Returning here drops the transaction.
+        if is_registered_id(&client.client_id)
+            && !clients.mark_used(&mut tx, &client.client_id, now).await?
+        {
+            return Ok(false);
+        }
         activity
             .record(
                 &mut tx,
@@ -388,18 +418,36 @@ pub async fn approve_request(
                     via: Via::Interactive,
                     subject: who.email.clone(),
                     action: "connection_approved",
-                    payload: serde_json::json!({"client_id": client_id, "scope": scope}),
+                    // The host and the name as the page showed them: a registered client's id (`dyn_…`) says
+                    // nothing to a reader of the log.
+                    payload: serde_json::json!({
+                        "client_id": client.client_id,
+                        "client_host": client.client_host,
+                        "client_name": client.client_name,
+                        "scope": scope,
+                    }),
                 },
             )
             .await?;
-        tx.commit().await
+        tx.commit().await?;
+        Ok(true)
     }
     .await;
-    if let Err(e) = written {
-        requests.forget(id);
-        return Err(e.into());
+    match written {
+        Ok(true) => Ok(Some((back, code))),
+        Ok(false) => {
+            requests.forget(id);
+            tracing::warn!(
+                client_id = %client.client_id,
+                "connection approval refused: the client's registration is gone"
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            requests.forget(id);
+            Err(e.into())
+        }
     }
-    Ok(Some((back, code)))
 }
 
 /// Refuse: the same proofs as Approve, no entry (nothing was granted). `Ok(None)` and `Forbidden` as there.
@@ -581,7 +629,7 @@ mod tests {
         assert!(try_approve("not the value", TOKEN_ID, t0()).is_none());
         assert!(try_approve(&current, TOKEN_ID, after(600)).is_none());
         // The right answer, once.
-        let (back, code, client_id) = try_approve(&current, TOKEN_ID, after(599)).unwrap();
+        let (back, code, client) = try_approve(&current, TOKEN_ID, after(599)).unwrap();
         assert_eq!(
             back,
             ReturnAddress {
@@ -590,7 +638,14 @@ mod tests {
             }
         );
         assert!(code.starts_with("reeve_code_"), "{code}");
-        assert_eq!(client_id, CLIENT);
+        assert_eq!(
+            client,
+            ApprovedClient {
+                client_id: CLIENT.to_string(),
+                client_host: "client.example".to_string(),
+                client_name: "Example App".to_string(),
+            }
+        );
         assert!(try_approve(&current, TOKEN_ID, after(599)).is_none());
         assert!(store.refuse(&id, &current, TOKEN_ID, after(599)).is_none());
         // Refuse wins the same way, and removes the request.
@@ -663,6 +718,7 @@ mod tests {
             Ok(CodeGrant {
                 owner: DAN.to_string(),
                 client_id: CLIENT.to_string(),
+                client_host: "client.example".to_string(),
                 client_name: "Example App".to_string(),
                 scope: Scope::Read,
                 approved_at: after(1),

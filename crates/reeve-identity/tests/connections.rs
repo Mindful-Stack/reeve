@@ -165,7 +165,11 @@ async fn migration_2005_deletes_the_developer_mcp_tokens_and_leaves_api_tokens_a
         (0, 0),
         "the developer tokens are gone"
     );
-    // Today's code reads the migrated rows: an API token with a NULL connection authenticates.
+    // Today's code reads the migrated rows, on today's schema (it reads `connections.client_host`, which a later
+    // migration adds): an API token with a NULL connection authenticates.
+    reeve_identity::migrator().run(&pool).await.unwrap();
+    let after: Vec<ApiRow> = sqlx::query_as(API_ROWS).fetch_all(&pool).await.unwrap();
+    assert_eq!(before, after, "no later migration changes an API token");
     let store = make_token_store(pool.clone());
     let who = authenticate_api(&*store, &policy(), "reeve_live-api", t)
         .await
