@@ -17,17 +17,19 @@ has to turn this on for your instance first; if the steps below fail at the star
 
 ## ChatGPT
 
+Not yet tried against ChatGPT itself; the steps follow OpenAI's documentation and may differ in wording.
+
 Your admin must have enabled ChatGPT for your instance; enabling Claude does not enable it. Whether you can add a
 custom connector in ChatGPT depends on your ChatGPT plan and your workspace's settings.
 
 1. In ChatGPT's settings for connectors (apps), add a custom connector and give it the address of your instance
    followed by `/mcp`, for example `https://reeve.example.com/mcp`.
-2. ChatGPT sends you to Reeve. Sign in if you are asked to.
+2. ChatGPT should send you to Reeve. Sign in if you are asked to.
 3. Reeve shows which app wants to connect. Before you approve: what you read through the app is sent to the app's
    provider (OpenAI for ChatGPT), under your own account with that provider. When your instance has a privacy
    statement, this page links it. Choose **Read** or **Read and change**, then **Approve**. If you did not start this
    yourself (someone sent you the link), choose **Refuse**.
-4. You are sent back to ChatGPT, and the connector is ready.
+4. You should then be sent back to ChatGPT, with the connector ready to use.
 
 ## What the app can do
 

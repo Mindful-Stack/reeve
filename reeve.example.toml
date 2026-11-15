@@ -62,7 +62,8 @@ admins = ["admin@example.com"]
 # its redirect address is here and in its own metadata document. In client_hosts, the hosts an app's metadata
 # document may be fetched from (an app's client id is the https address of that document), compared exactly. The
 # values below enable Claude (https://claude.ai/api/mcp/auth_callback, claude.ai) and ChatGPT
-# (https://chatgpt.com/connector_platform_oauth_redirect, chatgpt.com); keep only the apps you want.
+# (https://chatgpt.com/connector_platform_oauth_redirect, chatgpt.com); keep only the apps you want. ChatGPT is
+# expected to need no allowed_origins entry: its servers send no Origin header.
 # [mcp]
 # enabled = true
 # allowed_origins = ["https://claude.ai"]
