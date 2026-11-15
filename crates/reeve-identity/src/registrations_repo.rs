@@ -48,12 +48,15 @@ impl RegisteredClients for PgRegisteredClients {
             .fetch_one(&mut **tx)
             .await?;
         if stored >= cap {
-            // The cap (R3): the oldest row nobody has approved a connection for. `last_used_at IS NULL` is
-            // repeated on the row deleted, so a row approved since the subquery chose it is not deleted.
+            // The cap (R3): the oldest row nobody has approved a connection for. A row an approval is marking
+            // is locked by it and skipped, so the next never-used one goes and nothing waits for the approval.
+            // The subquery locks the row it chooses, judged as it then is; `last_used_at IS NULL` is repeated on
+            // the row deleted all the same. Refused only when every stored row has been used or is being
+            // approved.
             let dropped = sqlx::query(
                 "DELETE FROM registered_clients WHERE last_used_at IS NULL AND client_id = \
                  (SELECT client_id FROM registered_clients WHERE last_used_at IS NULL \
-                  ORDER BY created_at, client_id LIMIT 1)",
+                  ORDER BY created_at, client_id LIMIT 1 FOR UPDATE SKIP LOCKED)",
             )
             .execute(&mut **tx)
             .await?

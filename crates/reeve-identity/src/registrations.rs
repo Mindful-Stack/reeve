@@ -81,8 +81,8 @@ pub trait RegisteredClients: Send + Sync {
     async fn find(&self, client_id: &str) -> Result<Option<RegisteredClient>, sqlx::Error>;
     /// Stores `client`, in the caller's transaction, one registration at a time: deletes the registrations that
     /// have expired at `client.created_at` (`retention`); then, when `cap` rows remain, deletes the oldest
-    /// never-used one. `false`, with nothing stored, when there is none to delete (the expired ones stay
-    /// deleted if the caller commits).
+    /// never-used one that no approval is marking at that moment. `false`, with nothing stored, when there is
+    /// none to delete (the expired ones stay deleted if the caller commits).
     async fn insert_capped(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -113,7 +113,8 @@ pub enum RegistrationRefusal {
     /// RFC 7591's `invalid_client_metadata`.
     #[error("the client metadata is not acceptable: {0}")]
     InvalidMetadata(&'static str),
-    /// Every stored registration has been used, so none can be dropped to make room.
+    /// Every stored registration has been used (or is being approved at that moment), so none can be dropped
+    /// to make room. While a never-used one remains, a registration is never refused for room.
     #[error("every stored registration has been used")]
     Full,
     #[error(transparent)]

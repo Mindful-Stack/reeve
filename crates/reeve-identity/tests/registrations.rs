@@ -103,6 +103,15 @@ async fn until_waiting<T>(pool: &PgPool, n: i64, tasks: &[&tokio::task::JoinHand
         .expect("neither a waiter nor an answer within ten seconds");
 }
 
+/// The task's answer, or a failed test if it gives none within ten seconds (a task that waits for a lock it is
+/// never granted).
+async fn joined<T>(task: tokio::task::JoinHandle<T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("no answer within ten seconds")
+        .unwrap()
+}
+
 fn listing(addresses: &[&str]) -> ClientPolicy {
     ClientPolicy {
         client_hosts: vec![],
@@ -365,20 +374,25 @@ async fn two_registrations_at_the_cap_are_made_one_at_a_time() {
     };
     let (first, second) = (start(8), start(9));
     until_waiting(&pool, 2, &[&first, &second]).await;
+    assert!(
+        !first.is_finished() && !second.is_finished(),
+        "both registrations wait for the store's lock"
+    );
     held.commit().await.unwrap();
-    assert!(first.await.unwrap() && second.await.unwrap());
+    let outcomes = (joined(first).await, joined(second).await);
+    assert_eq!(outcomes, (true, true), "both are stored");
     let kept = ids(&pool).await;
     assert_eq!(kept.len(), 3, "the cap: {kept:?}");
     assert_eq!(kept[..2], [id(1), id(2)], "the used ones stay");
 }
 
-/// A registration is being dropped to make room while a person approves a connection for it: the approval's
-/// transaction (held open by the test) has marked the row, and the eviction is known to wait for that row. The
-/// approval commits first, so the row is used and stays; the registration that wanted its place is refused (a
-/// rare refusal while a never-used row remains, towards never dropping a used one). Catches a delete that does
-/// not ask again, of the row as it then is, whether it was never used.
+/// A registration is being dropped to make room while a person approves a connection for the oldest never-used
+/// one: the approval's transaction (held open by the test) has marked that row. The eviction skips the row being
+/// approved and drops the next never-used one, without waiting for the approval, so nobody is refused while a
+/// never-used registration remains; the approval then commits and its row stays, used. Catches an eviction that
+/// waits for the row (the bounded join fails), one that refuses the newcomer, and one that drops the approved row.
 #[tokio::test]
-async fn an_approval_that_commits_while_the_eviction_waits_keeps_its_registration() {
+async fn an_approval_that_commits_while_the_eviction_runs_keeps_its_registration() {
     let (_db, pool) = common::pg().await;
     let store = make_registered_clients(pool.clone());
     seed(
@@ -396,11 +410,10 @@ async fn an_approval_that_commits_while_the_eviction_waits_keeps_its_registratio
         let (pool, store) = (pool.clone(), store.clone());
         tokio::spawn(async move { insert(&pool, &*store, &row(9, t0(), None), 3).await })
     };
-    until_waiting(&pool, 1, &[&eviction]).await;
-    assert!(!eviction.is_finished(), "the eviction waits for the row");
+    // Joined while the approval is still open: an eviction that waited for its row would not answer.
+    assert!(joined(eviction).await, "the newcomer is stored");
     approval.commit().await.unwrap();
-    assert!(!eviction.await.unwrap(), "nothing was stored");
-    assert_eq!(ids(&pool).await, [id(1), id(2), id(3)]);
+    assert_eq!(ids(&pool).await, [id(1), id(3), id(9)], "the next never-used one went");
     assert_eq!(last_used(&pool, &id(1)).await, Some(t0()));
 }
 
