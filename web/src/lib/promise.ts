@@ -183,10 +183,11 @@ const PROMISED_LABELS: Record<PromisedFilter, string> = {
 	overdue: 'Overdue'
 };
 
-/** The Promise select's empty option (no filter). The other selects say "any"; here that word is one of the values. */
-export const PROMISED_NONE = 'all stories';
+/** The empty option (no filter) of a select where "any" is one of the values or would mislead: Promise, and the
+ *  board's Goal and Owner. The other selects say "any". */
+export const ALL_STORIES = 'all stories';
 
-/** The Promise filter's options on the board and the backlog, after the empty `PROMISED_NONE`, in the labels' order. */
+/** The Promise filter's options on the board and the backlog, after the empty `ALL_STORIES`, in the labels' order. */
 export const PROMISED_OPTIONS: readonly { value: PromisedFilter; label: string }[] = (Object.keys(PROMISED_LABELS) as PromisedFilter[]).map(
 	(value) => ({ value, label: PROMISED_LABELS[value] })
 );

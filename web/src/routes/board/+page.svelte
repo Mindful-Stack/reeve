@@ -30,7 +30,7 @@
 	import { session } from '#lib/me.svelte.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
-	import { isPromisedFilter, PROMISED_NONE, PROMISED_OPTIONS } from '#lib/promise.ts';
+	import { isPromisedFilter, ALL_STORIES, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import { rankStory } from '#lib/rank.ts';
 	import { goalFilter, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
 	import DecisionBanner from '#lib/components/DecisionBanner.svelte';
@@ -374,7 +374,7 @@
 	<label class="field inline">
 		Promise
 		<select value={filters.promised ?? ''} onchange={(e) => setFilter('promised', e.currentTarget.value || null)}>
-			<option value="">{PROMISED_NONE}</option>
+			<option value="">{ALL_STORIES}</option>
 			{#each PROMISED_OPTIONS as o (o.value)}
 				<option value={o.value}>{o.label}</option>
 			{/each}
