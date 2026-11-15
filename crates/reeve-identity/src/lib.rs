@@ -57,8 +57,8 @@ pub use ports::{IdentityActivity, IdentityEvent};
 pub use reeve_protocol::Scope;
 pub use reeve_protocol::Via;
 pub use registrations::{
-    MAX_REGISTERED_CLIENTS, REGISTERED_PREFIX, RegisteredClient, RegisteredClients,
-    RegistrationRefusal, register_client,
+    MAX_REGISTERED_CLIENTS, RegisteredClient, RegisteredClients, RegistrationRefusal,
+    register_client,
 };
 pub use registrations_repo::make_registered_clients;
 pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};

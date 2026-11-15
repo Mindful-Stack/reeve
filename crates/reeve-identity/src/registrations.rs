@@ -15,7 +15,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 /// What every registered client id starts with; 24 random bytes in hex follow. It has no `:`, so such an id is
 /// never a URL and is never mistaken for the address of a metadata document.
-pub const REGISTERED_PREFIX: &str = "dyn_";
+pub(crate) const REGISTERED_PREFIX: &str = "dyn_";
 /// At most this many registrations are stored (kb/ADR-0029 R3: "Stored registrations MUST be capped").
 pub const MAX_REGISTERED_CLIENTS: i64 = 1000;
 /// A registration nobody approved a connection for expires this long after it was made (R3: "unused ones MUST
