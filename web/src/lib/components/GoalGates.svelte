@@ -1,6 +1,6 @@
 <!-- web/src/lib/components/GoalGates.svelte: what a goal's work waits on, derived on read by the server
      (`GET /sprints/planning`): the initiatives and epics among its items without a discovery mark, and its open required
-     decisions that are not satisfied, each with what it needs (kb/ADR-0018 R3), then how many of each are done. These
+     decisions that are not satisfied, each with what it needs (kb/ADR-0027 R3), then how many of each are done. These
      are not sprint-membership counts, so the panel's rule line (kb/ADR-0014 R2) is not repeated here. -->
 <script lang="ts">
 	import { page } from '$app/state';

@@ -239,9 +239,8 @@ describe('next step and needed-in wording', () => {
 		expect(neededLabel(e({ lane: 'this_sprint', needed_in: 'beyond' }))).toBe('Needed this sprint');
 		expect(neededLabel(e({ lane: 'next_sprint' }))).toBe('Needed next sprint');
 		expect(neededLabel(e({ lane: 'beyond' }))).toBe('Needed later');
-		// Open (an older server's review too) in the page's words; Now says so in its reason; accepted and closed say nothing.
+		// Open in the page's words; Now says so in its reason; accepted and closed say nothing.
 		expect(neededLabel(e({ lane: 'open' }))).toBe('Open, not blocking yet');
-		expect(neededLabel(e({ lane: 'review' }))).toBe('Open, not blocking yet');
 		expect(neededLabel(e({ lane: 'beyond', needed_in_reason: { kind: 'held' } }))).toBeNull();
 		for (const lane of ['satisfied', 'closed'] as const) expect(neededLabel(e({ lane }))).toBeNull();
 		// Nested: the row's lane, "in discovery" even with no window of its own; under a Now row it is Now, not Later.

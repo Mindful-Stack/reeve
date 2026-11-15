@@ -1,5 +1,5 @@
 // web/src/lib/triage.ts: the triage page's pure rules. The queue's order, an item's draft against the base it was loaded
-// with, the Place and Undo bodies (only changed fields, kb/ADR-0018 R4: placing sets the epic, nothing else marks an
+// with, the Place and Undo bodies (only changed fields, kb/ADR-0027 R4: placing sets the epic, nothing else marks an
 // item triaged), the merge after a reload or a conflict, and duplicate drops.
 import type { EditItem, Story } from '#lib/api/types.ts';
 import type { Kind } from '#lib/board.ts';
@@ -116,7 +116,7 @@ export const duplicateText = (dup: string) => `Duplicate of ${dup}.`;
 /** One comment per item and duplicate: a retry, or a drop again after Undo, never posts a second one. */
 export const duplicateCommentKey = (key: string, dup: string) => `triage-dup:${key}:${dup}`;
 
-/** Where an item went once it is no longer untriaged (it has an epic, or it is done: kb/ADR-0018 R4), else null. The one
+/** Where an item went once it is no longer untriaged (it has an epic, or it is done: kb/ADR-0027 R4), else null. The one
  *  place the client re-derives that: `GET /stories/{key}` carries no readiness, and the list that did say so is stale. */
 export function whereNow(s: Story): string | null {
 	if (s.delivery === 'done') return `${s.key} is done${s.resolution ? ` (${s.resolution})` : ''}.`;

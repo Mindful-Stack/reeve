@@ -5609,7 +5609,7 @@ async fn decision_queue_over_real_readiness() {
 /// Why each Now item sits where it does, through the real wiring (spec §3, kb/ADR-0024 R5). All three are in the first
 /// bucket with no goal or promise. Epic EU (unmarked) holds S1 and its initiative IU, not the row's own item, is
 /// marked urgent: its reason is `urgent` naming IU (lineage). Epic ET's initiative has target month 2026-11 and
-/// nothing is urgent under it: `target_month`. A marked epic's story has a decision due within the sprint length
+/// nothing is urgent under it: `target_month`. A marked epic's story has a decision due within the sprint length (10 days
 /// (today 26 Oct, due 2 Nov): that decision's reason is `decision_due`; one due a day past the configured sprint
 /// length is only `held`. Order: urgent, month, due, held. Catches the urgency read off the row's own key only, the
 /// initiative's month not reaching a row, a due date not read, and a window other than the sprint length.
@@ -5617,7 +5617,9 @@ async fn decision_queue_over_real_readiness() {
 async fn decision_queue_now_reasons_over_real_readiness() {
     use reeve_protocol::NeededInReason;
     let (_c, pool) = common::pg().await;
-    let (h, _sink) = mk(pool);
+    let (mut h, _sink) = mk(pool);
+    // A sprint length unlike any other 14-day setting, so the window is the sprint length's and nothing else's.
+    h.settings.sprint_length_days = 10;
     let dan = ctx("dan@example.com", false);
     let epic_with_story = |tag: &'static str, month: Option<&'static str>| {
         let (h, dan) = (h.clone(), dan.clone());
@@ -5683,7 +5685,7 @@ async fn decision_queue_now_reasons_over_real_readiness() {
         .unwrap();
     // One day past the configured sprint length: not `decision_due`, only `held`.
     let past =
-        dan.now.date_naive() + chrono::Days::new(u64::from(settings().sprint_length_days) + 1);
+        dan.now.date_naive() + chrono::Days::new(u64::from(h.settings.sprint_length_days) + 1);
     let held = h
         .require_decision(
             &dan,

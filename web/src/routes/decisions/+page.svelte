@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, type ComponentProps } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -37,7 +37,9 @@
 
 	/** A DecisionList group: a lane's own group (its heading, and its decisions before any discovery row), a discovery
 	 *  row's group (its nested decisions), or a run of standalone decisions after a row. */
-	type Group = { id: string; lane: PageLane; folded: boolean; listId: string; always?: boolean; labelledBy?: string; row?: DiscoveryRow };
+	type Group = NonNullable<ComponentProps<typeof DecisionList>['groups']>[number] & { lane: PageLane; listId: string; row?: DiscoveryRow };
+	/** A discovery row's heading, which labels its nested list. */
+	const headingId = (key: string) => `discovery-${key}-heading`;
 
 	const me = $derived(mine ? session.me?.email : undefined);
 	/** In the server's order, never re-sorted. */
@@ -62,8 +64,7 @@
 			for (const r of rows) {
 				if (r.kind === 'discovery') {
 					const id = `row:${r.row.key}`;
-					const labelledBy = `discovery-${r.row.key}-heading`;
-					groups.push({ id, lane, folded: false, listId: `decisions-row-${r.row.key}`, always: true, labelledBy, row: r });
+					groups.push({ id, lane, folded: false, listId: `decisions-row-${r.row.key}`, always: true, labelledBy: headingId(r.row.key), row: r });
 					for (const e of r.nested) of.set(e.decision.id, id);
 					after = r.row.key;
 				} else {
@@ -186,7 +187,7 @@
 	{@const holds = holdsLabel(d.blocks, d.under_way)}
 	{@const open = storiesOpen.has(d.key)}
 	<div class="discovery" data-discovery={d.key}>
-		<h3 class="cell headline" id="discovery-{d.key}-heading"><a class="item" href={itemRoute({ item: d.level, key: d.key }, page.url)}><Glyph level={d.level} /><span class="key">{d.key}</span> <span class="title">{d.title}</span></a></h3>
+		<h3 class="cell headline" id={headingId(d.key)}><a class="item" href={itemRoute({ item: d.level, key: d.key }, page.url)}><Glyph level={d.level} /><span class="key">{d.key}</span> <span class="title">{d.title}</span></a></h3>
 		<span class="cell holds"
 			><button
 				type="button"

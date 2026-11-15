@@ -164,11 +164,6 @@ describe('decisions queue page', () => {
 		expect(text(divider.nextElementSibling)).toContain('Now, no goal yet');
 	});
 
-	it('says a completely empty queue holds nothing back', async () => {
-		await open();
-		expect(document.body.textContent).toContain('Nothing holds work back');
-	});
-
 	it('shows a discovery row: its item link, status, holds, reason and its nested decisions in a list of their own', async () => {
 		const goal = { kind: 'goal' as const, goal_id: 3, outcome: 'Ship tiers' };
 		net.queue = {

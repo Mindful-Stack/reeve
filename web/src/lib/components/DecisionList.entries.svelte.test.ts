@@ -88,6 +88,12 @@ describe('DecisionList entries', () => {
 		expect(row.querySelector('.needed')?.textContent).toBe('Needed this sprint \u00b7 in discovery');
 	});
 
+	it('labels an open decision outside the queue page with its lane', () => {
+		const d = decision(PR);
+		const { row } = mountWith(d, { entries: entryFor(d, { lane: 'open', needed_in: 'none', needed_in_reason: null }) });
+		expect(row.querySelector('.needed')?.textContent).toBe('Open, not blocking yet');
+	});
+
 	it('links the promised item: a story opens its drawer over the lane it is in, an epic its page', () => {
 		for (const [level, key, href, reset] of [
 			['story', 'ABC-12', '/decisions?story=ABC-12#next-sprint', 'false'],

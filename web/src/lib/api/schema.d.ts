@@ -1459,7 +1459,7 @@ export interface components {
             done: boolean;
             text: string;
         };
-        /** @description An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3). */
+        /** @description An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0027 R3). */
         DecisionGateDto: {
             on: components["schemas"]["Key"];
             reason: components["schemas"]["Reason"];
@@ -1755,7 +1755,7 @@ export interface components {
         };
         /**
          * @description What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
-         *     kb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+         *     kb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
          */
         GoalGatesDto: {
             /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */

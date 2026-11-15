@@ -181,7 +181,7 @@ fn serving(
     out
 }
 
-/// One goal's gates: what its work waits on, derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
+/// One goal's gates: what its work waits on, derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0027 R1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GoalGates {
     pub goal_id: i64,

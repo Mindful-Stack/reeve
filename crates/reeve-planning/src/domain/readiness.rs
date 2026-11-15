@@ -73,7 +73,7 @@ pub fn decision_fact(d: &RequiredDecision) -> DecisionFact {
     }
 }
 
-/// The reason an open, unsatisfied decision gives (kb/ADR-0018 R3), or None for a closed or satisfied one. Readiness
+/// The reason an open, unsatisfied decision gives (kb/ADR-0027 R3), or None for a closed or satisfied one. Readiness
 /// and the sprint planning read both call it, so a gate and a story's reason never disagree.
 pub fn decision_reason(d: &DecisionFact) -> Option<Reason> {
     if d.closed {

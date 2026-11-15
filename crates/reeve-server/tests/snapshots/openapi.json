@@ -856,7 +856,7 @@
         "type": "object"
       },
       "DecisionGateDto": {
-        "description": "An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3).",
+        "description": "An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0027 R3).",
         "properties": {
           "on": {
             "$ref": "#/components/schemas/Key"
@@ -1861,7 +1861,7 @@
         "type": "object"
       },
       "GoalGatesDto": {
-        "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
+        "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
         "properties": {
           "decisions": {
             "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",
@@ -7664,7 +7664,7 @@
               },
               "value": {
                 "items": {
-                  "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
+                  "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
                   "properties": {
                     "decisions": {
                       "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",

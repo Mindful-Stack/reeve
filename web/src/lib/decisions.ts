@@ -286,7 +286,8 @@ export function reasonHref(r: NeededInReason, url: { readonly href: string }): s
  *  words (`LANE_LABEL`), which is what the page, the banner and Home count, not off its own window; a decision nested
  *  under a discovery row adds "in discovery" (no key: the header already links the item). A nested `beyond` decision
  *  sits in Now (rows never sit in Later); a standalone `beyond` one is Later exactly when it has no reason, and in Now
- *  its reason says so. An older server's `review` reads as Open. Null for Accepted, Closed and a standalone Now. */
+ *  its reason says so. Later alone reads "Needed later" rather than its heading: a strip label needs the verb. Null
+ *  for Accepted, Closed and a standalone Now. */
 export function neededLabel(e: Pick<DecisionQueueEntry, 'lane' | 'needed_in_reason' | 'under'>): string | null {
 	const base = (() => {
 		switch (e.lane) {
@@ -294,7 +295,6 @@ export function neededLabel(e: Pick<DecisionQueueEntry, 'lane' | 'needed_in_reas
 			case 'next_sprint':
 				return LANE_LABEL[e.lane];
 			case 'open':
-			case 'review':
 				return LANE_LABEL.open;
 			case 'beyond':
 				return e.under ? LANE_LABEL.now : e.needed_in_reason == null ? 'Needed later' : null;

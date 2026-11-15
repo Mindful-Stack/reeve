@@ -154,11 +154,6 @@ pub struct QueueSummary {
     pub next_sprint: u32,
 }
 
-/// The earlier of two windows: `this_sprint` < `next_sprint` < `beyond` < `none` (the declaration order `Ord` follows).
-fn earlier(a: NeededIn, b: NeededIn) -> NeededIn {
-    a.min(b)
-}
-
 /// A story's own window: the earlier of its goals' (`beyond` without any) and its promise's (kb/ADR-0025 R7). A
 /// promise window of `none` (later, or no longer open) never moves it.
 fn story_window(s: &AffectedStory) -> NeededIn {
@@ -169,9 +164,7 @@ fn story_window(s: &AffectedStory) -> NeededIn {
     } else {
         NeededIn::Beyond
     };
-    s.promise
-        .as_ref()
-        .map_or(goals, |p| earlier(goals, p.window))
+    s.promise.as_ref().map_or(goals, |p| goals.min(p.window))
 }
 
 /// When `stories` are needed: one candidate per rule, in tie order: an active goal (`this_sprint`), a draft goal
@@ -393,9 +386,9 @@ fn discovery_rows(
             _ if in_first_bucket(inp, &key) => (QueueLane::Beyond, None),
             _ => continue,
         };
-        let (held, under_way): (Vec<&AffectedStory>, Vec<&AffectedStory>) = stories
+        let (held, under_way): (Vec<QueueStory>, Vec<QueueStory>) = stories
             .iter()
-            .copied()
+            .map(|s| story_of(s))
             .partition(|s| s.delivery == DeliveryState::Todo);
         rows.push(DiscoveryRow {
             level: me.level,
@@ -404,8 +397,8 @@ fn discovery_rows(
             also,
             lane,
             needed_in_reason,
-            held: held.iter().map(|s| story_of(s)).collect(),
-            under_way: under_way.iter().map(|s| story_of(s)).collect(),
+            held,
+            under_way,
             at: 0,
         });
     }
