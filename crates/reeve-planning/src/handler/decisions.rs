@@ -499,7 +499,8 @@ impl Handlers {
         };
         let (entries, mut rows, summary) = queue::order(ds, &inp, now.date_naive());
         // Rows are built from every unfinished story, then returned by scope (spec §5): every row; an initiative's own
-        // row and its epics'; one item's own row. `decision_context` (scope `On(d.on())`) so sees the page's row.
+        // row and its epics'; one item's own row. `decision_context` (scope `On(d.on())`) reads an entry whose `under`
+        // and lane match the page's because nesting runs before this filter.
         rows.retain(|r| match scope {
             DecisionScope::All { .. } => true,
             DecisionScope::On(k) => &r.key == k,

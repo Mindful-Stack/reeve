@@ -5368,6 +5368,15 @@ async fn decision_queue_over_real_readiness() {
         .await
         .unwrap();
     let s4 = story_in(&h, &dan, "q-s4", "S4", epic2.key()).await;
+    // A marked epic under I with one goal-less todo story: its discovery item is I itself.
+    let epic3 = h
+        .create_epic(&dan, "q-e3", "E3", Some(ini.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.mark_discovery(&dan, ItemType::Epic, epic3.key(), epic3.version(), true)
+        .await
+        .unwrap();
+    let s5 = story_in(&h, &dan, "q-s5", "S5", epic3.key()).await;
     let d1 = h
         .require_decision(
             &dan,
@@ -5489,6 +5498,15 @@ async fn decision_queue_over_real_readiness() {
                 vec![],
                 1
             ),
+            (
+                ini.key().clone(),
+                QueueLane::Beyond,
+                None,
+                Some(NeededInReason::Held),
+                vec![s5.key().clone()],
+                vec![],
+                2
+            ),
         ]
     );
     assert_eq!(
@@ -5527,10 +5545,25 @@ async fn decision_queue_over_real_readiness() {
     assert_eq!(
         i_rows
             .iter()
-            .map(|r| (r.key.clone(), r.at))
+            .map(|r| (r.key.clone(), r.lane, r.also.clone(), r.at))
             .collect::<Vec<_>>(),
-        vec![(epic.key().clone(), 0), (epic2.key().clone(), 1)]
+        vec![
+            (
+                epic.key().clone(),
+                QueueLane::ThisSprint,
+                Some(ini.key().clone()),
+                0
+            ),
+            (
+                epic2.key().clone(),
+                QueueLane::ThisSprint,
+                Some(ini.key().clone()),
+                1
+            ),
+            (ini.key().clone(), QueueLane::Beyond, None, 2),
+        ]
     );
+    assert_eq!(i_rows[2].needed_in_reason, Some(NeededInReason::Held));
     let c1 = h.decision_context(d1.id(), dan.now).await.unwrap();
     assert_eq!((c1.under, c1.lane), (Some(epic.key().clone()), es[0].lane));
 
@@ -5577,8 +5610,9 @@ async fn decision_queue_over_real_readiness() {
 /// bucket with no goal or promise. Epic EU (unmarked) holds S1 and its initiative IU, not the row's own item, is
 /// marked urgent: its reason is `urgent` naming IU (lineage). Epic ET's initiative has target month 2026-11 and
 /// nothing is urgent under it: `target_month`. A marked epic's story has a decision due within the sprint length
-/// (today 26 Oct, due 2 Nov): that decision's reason is `decision_due`. Order: urgent, month, due. Catches the
-/// urgency read off the row's own key only, the initiative's month not reaching a row, and a due date not read.
+/// (today 26 Oct, due 2 Nov): that decision's reason is `decision_due`; one due a day past the configured sprint
+/// length is only `held`. Order: urgent, month, due, held. Catches the urgency read off the row's own key only, the
+/// initiative's month not reaching a row, a due date not read, and a window other than the sprint length.
 #[tokio::test]
 async fn decision_queue_now_reasons_over_real_readiness() {
     use reeve_protocol::NeededInReason;
@@ -5634,7 +5668,7 @@ async fn decision_queue_now_reasons_over_real_readiness() {
     h.mark_urgent(&dan, ItemType::Initiative, &iu, None)
         .await
         .unwrap();
-    let (_marked, ms) = marked_epic_with_stories(&h, &dan, "d", 1).await;
+    let (_marked, ms) = marked_epic_with_stories(&h, &dan, "d", 2).await;
     let due = h
         .require_decision(
             &dan,
@@ -5647,13 +5681,28 @@ async fn decision_queue_now_reasons_over_real_readiness() {
         )
         .await
         .unwrap();
+    // One day past the configured sprint length: not `decision_due`, only `held`.
+    let past =
+        dan.now.date_naive() + chrono::Days::new(u64::from(settings().sprint_length_days) + 1);
+    let held = h
+        .require_decision(
+            &dan,
+            "d-held",
+            ms[1].key(),
+            "H",
+            "dan@example.com",
+            Some(past),
+            None,
+        )
+        .await
+        .unwrap();
     let all = DecisionScope::All {
         include_closed: false,
     };
     let (es, rows, _) = h.decision_queue(&all, dan.now).await.unwrap();
     assert_eq!(
         rows.iter()
-            .map(|r| (r.key.clone(), r.lane, r.needed_in_reason.clone()))
+            .map(|r| (r.key.clone(), r.lane, r.needed_in_reason.clone(), r.at))
             .collect::<Vec<_>>(),
         vec![
             (
@@ -5662,14 +5711,16 @@ async fn decision_queue_now_reasons_over_real_readiness() {
                 Some(NeededInReason::Urgent {
                     key: iu,
                     level: ItemType::Initiative
-                })
+                }),
+                0
             ),
             (
                 et,
                 reeve_protocol::QueueLane::Beyond,
                 Some(NeededInReason::TargetMonth {
                     month: "2026-11".into()
-                })
+                }),
+                0
             ),
         ]
     );
@@ -5677,7 +5728,10 @@ async fn decision_queue_now_reasons_over_real_readiness() {
         es.iter()
             .map(|e| (e.decision.id(), e.needed_in_reason.clone()))
             .collect::<Vec<_>>(),
-        vec![(due.id(), Some(NeededInReason::DecisionDue { id: due.id() }))]
+        vec![
+            (due.id(), Some(NeededInReason::DecisionDue { id: due.id() })),
+            (held.id(), Some(NeededInReason::Held)),
+        ]
     );
 }
 

@@ -466,8 +466,8 @@ fn now_cmp(a: &NowFacts, b: &NowFacts) -> Ordering {
         .then_with(|| b.held.cmp(&a.held))
 }
 
-/// The target month of `key`'s initiative when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12 (text order then sorts by date);
-/// any other value ranks as none.
+/// The target month of `key`'s initiative when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12
+/// (text order then sorts by date); any other value ranks as none.
 fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
     let m = inp
         .lineage
@@ -511,9 +511,7 @@ fn arrange(
         .checked_add_days(Days::new(inp.sprint_length_days.into()))
         .unwrap_or(NaiveDate::MAX);
     let section = |t: Top| -> u8 {
-        // A row is only ever `beyond` under the first bucket, so there it is Now by construction.
         let (lane, item) = match t {
-            Top::Row(i) if rows[i].lane == QueueLane::Beyond => return NOW,
             Top::Row(i) => (rows[i].lane, &rows[i].key),
             Top::Entry(i) => (entries[i].lane, entries[i].decision.on()),
         };
@@ -1952,8 +1950,7 @@ mod tests {
             ),
         ]);
         let r = repos();
-        let (es, rows, _) = order(vec![], &inputs(&stories, &l, now, &r), today());
-        assert!(es.is_empty());
+        let (_, rows, _) = order(vec![], &inputs(&stories, &l, now, &r), today());
         let got: Vec<_> = rows
             .iter()
             .map(|r| {
