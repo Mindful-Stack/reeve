@@ -81,16 +81,7 @@ function serve(c: Call): unknown {
 }
 
 const view = (goals = [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })]) =>
-	sprintView(sprint({ goals }), {
-		counts: {
-			completed: 3,
-			upkeep_completed: 1,
-			goals: [
-				{ goal_id: 1, completed: 2, in_flight: 1, todo: 4, in_review: 0, blocked_decisions: 0 },
-				{ goal_id: 2, completed: 0, in_flight: 0, todo: 1, in_review: 0, blocked_decisions: 0 }
-			]
-		}
-	});
+	sprintView(sprint({ goals }));
 
 beforeEach(() => {
 	stories = [
@@ -338,6 +329,32 @@ describe('board goal select', () => {
 			expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
 		});
 		expect(goalSelect()).toBeNull();
+	});
+});
+
+describe('board clear filters with a goal set', () => {
+	it('counts an applied goal, and one click removes goal and mine but keeps notready', async () => {
+		// Two cards are mine; only ABC-1 of them serves goal 1, so goal=1&mine=1 is a strict, non-empty subset.
+		stories = stories.map((s) =>
+			s.story.key === 'ABC-1' || s.story.key === 'ABC-3' ? { ...s, story: { ...s.story, owner: 'me@example.com' } } : s
+		);
+		(page.url as URL).href = 'http://localhost/board?goal=1&mine=1&notready=1';
+		app = mount(Page, { target: document.body });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys()).toEqual(['ABC-1']);
+		});
+		const clear = () => q('[data-testid="clear-filters"]');
+		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
+
+		clear()!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(page.url.search).toBe('?notready=1');
+		expect(goalSelect()!.value).toBe('');
+		expect(clear()).toBeNull();
 	});
 });
 

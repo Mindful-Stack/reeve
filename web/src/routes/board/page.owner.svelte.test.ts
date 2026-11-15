@@ -292,7 +292,7 @@ describe('board clear filters', () => {
 	});
 
 	it('counts applied filters, not URL parameters: a stale goal and mine beside owner add nothing', async () => {
-		// No active sprint in this file's server: ?goal=99 and ?goal=any filter nothing. mine=1 yields to owner.
+		// No active sprint in this file's server, so ?goal=99 applies no filter and adds nothing; mine=1 yields to owner.
 		(page.url as URL).href = 'http://localhost/board?goal=99&mine=1&owner=ana@example.com&kind=bug&notready=1';
 		await mounted(['ABC-3']);
 		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
