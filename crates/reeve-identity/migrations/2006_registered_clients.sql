@@ -15,8 +15,6 @@ CREATE TABLE registered_clients (
   CONSTRAINT registered_clients_id_shape CHECK (client_id ~ '^dyn_[0-9a-f]{48}$'),
   CONSTRAINT registered_clients_redirect_count CHECK (cardinality(redirect_uris) BETWEEN 1 AND 5)
 );
--- The oldest never-used row, which is the one dropped to make room.
-CREATE INDEX registered_clients_unused_idx ON registered_clients (created_at) WHERE last_used_at IS NULL;
 
 -- The app's identity as people are shown it, kept with the connection: for a client that registered itself the
 -- client id (`dyn_…`) names no host, and its registration can be dropped while the connection lives. NULL (every
