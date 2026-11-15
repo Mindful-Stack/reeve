@@ -21,16 +21,25 @@ async fn the_state_resolves_a_client_through_the_configured_lists() {
     // The client lists it, `[mcp] redirect_uris` does not: the instance decides, before any fetch.
     let refused = resolve_client(
         &*s.client_fetcher,
+        None,
         &s.config.client_policy(),
         &id,
         ELSEWHERE,
+        s.clock.now(),
     )
     .await;
     assert_eq!(refused, Err(ClientRefusal::RedirectNotEnabled));
     assert_eq!(host.hits("/client.json"), 0);
-    let client = resolve_client(&*s.client_fetcher, &s.config.client_policy(), &id, CALLBACK)
-        .await
-        .unwrap();
+    let client = resolve_client(
+        &*s.client_fetcher,
+        None,
+        &s.config.client_policy(),
+        &id,
+        CALLBACK,
+        s.clock.now(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (
             client.client_id(),

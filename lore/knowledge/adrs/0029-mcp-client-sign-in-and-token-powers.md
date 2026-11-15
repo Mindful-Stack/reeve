@@ -106,6 +106,31 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   visibility, accepted because an admin who must cut a connection has to find it first, and because the
   `connection_approved` and `connection_revoked` activity entries already show every signed-in person which app
   someone connected. No trigger fired; the decision holds.
+- 2026-11-15 (GRA-668, dynamic registration): we built the registration that R3 names and the first observation
+  deferred. It is off by default, an instance turns it on in its configuration, and a client that registered
+  itself is refused while it is off.
+  We built it for the story's aim: connecting hosted apps that publish no metadata document and register
+  themselves when a person adds a connector. That such apps exist and behave so is an expectation taken from
+  their documentation and from third-party guides; we did not verify it against any such app.
+  R3's cap and expiry are met so: at most 1,000 registrations are stored; one that no person has approved a
+  connection for expires 24 hours after it was made; one that was approved expires 90 days after its last
+  approval, which is after every connection made with it has left the lists; when the store is full the oldest
+  never-approved registration is dropped to make room (one being approved at that moment is passed over), and a
+  registration is refused only when every stored one has been approved. An app whose registration was dropped or
+  has expired holds a client id that no longer works, and its person adds the connector again. R3's exact match
+  on both lists holds as for a document: a registered client can register only addresses in the instance's
+  configuration, and at every authorize its address must still be there and be one it registered, compared as
+  text. No secret is issued or stored.
+  Everything a registered client says about itself is its own claim, its name included, so people are shown it by
+  the host of its redirect address: the approval page (R4) names it by that host and shows its name as what the
+  app calls itself; the host is kept with the connection, which is listed by it with the name (R9); the
+  approval's entry holds the client id, the host and the name; and every write made through it records that host
+  as the client (R9). With registration on, the list of client hosts no longer limits who may start a connect to
+  a listed redirect address; the deployment guide tells operators to list only a provider's own callback.
+  The record's trigger about registration ("both clients identify themselves by metadata document only ⇒ record
+  it as an observation and drop registration") no longer matches what is built: registration now serves apps
+  other than the two clients. If that trigger fires, or if no app we operate an instance for has needed
+  registration by 2027-05-15, the record should be replaced rather than observed again. No trigger has fired.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)

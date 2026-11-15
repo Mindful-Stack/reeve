@@ -31,6 +31,13 @@ custom connector in ChatGPT depends on your ChatGPT plan and your workspace's se
    yourself (someone sent you the link), choose **Refuse**.
 4. You should then be sent back to ChatGPT, with the connector ready to use.
 
+## Other apps
+
+Other hosted assistants can be connected in the same way when your admin has enabled them: add a custom connector
+with the address of your instance followed by `/mcp`. Reeve then names the app by the address it sends you back
+to, and shows the name the app gives itself beside it; check that the address belongs to the app you are adding. If
+such an app later says it cannot connect, remove the connector in the app and add it again.
+
 ## What the app can do
 
 With **Read** it can search Reeve, list and open stories, epics and initiatives, list the required decisions (the

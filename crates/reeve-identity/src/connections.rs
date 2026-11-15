@@ -43,6 +43,13 @@ pub(crate) fn is_live(
     revoked_at.is_none() && ends_at > now
 }
 
+/// The one rule for which app people are shown: the host `kept` with the connection (for a client that registered
+/// itself, the host of its redirect address), else the host of its client id; `None` when neither names one (the
+/// developer command's client id is not an address).
+pub(crate) fn shown_host(kept: Option<&str>, client_id: &str) -> Option<String> {
+    kept.map(str::to_string).or_else(|| host_of(client_id))
+}
+
 /// A connection as the store hands it out: to the refresh grant, and to the listing of a person's connections
 /// (kb/ADR-0029 R9).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +57,9 @@ pub struct Connection {
     pub id: i64,
     pub owner: String,
     pub client_id: String,
+    /// The app's host as it was shown when the connection was approved; `None` for a connection made before
+    /// the host was kept, and for the developer command's. Read by `client_host()`, which is what people are shown.
+    pub(crate) client_host: Option<String>,
     pub client_name: String,
     pub scope: Scope,
     pub approved_at: DateTime<Utc>,
@@ -61,10 +71,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// The app's identity as people are shown it: the host of its client id, empty for a client id that is not
-    /// an address (the developer command's).
+    /// The app's identity as people are shown it: the host kept with the connection (for a client that
+    /// registered itself, the host of its redirect address), else the host of its client id, else empty (the
+    /// developer command's client id is not an address).
     pub fn client_host(&self) -> String {
-        host_of(&self.client_id).unwrap_or_default()
+        shown_host(self.client_host.as_deref(), &self.client_id).unwrap_or_default()
     }
 
     pub fn is_live(&self, now: DateTime<Utc>) -> bool {
@@ -199,6 +210,7 @@ pub async fn exchange_code(
             &mut tx,
             &grant.owner,
             &grant.client_id,
+            Some(&grant.client_host),
             &grant.client_name,
             grant.scope,
             grant.approved_at,
@@ -500,6 +512,50 @@ pub async fn revoke_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Catches a listing that shows a registered client by its name alone (its id names no host), one that
+    /// ignores the host kept with the connection, and a changed answer for the connections made before the
+    /// host was kept.
+    #[test]
+    fn a_connection_shows_the_host_kept_with_it_or_else_the_host_of_its_client_id() {
+        let at = DateTime::parse_from_rfc3339("2026-11-15T09:00:00Z")
+            .unwrap()
+            .to_utc();
+        let connection = |client_id: &str, client_host: Option<&str>| Connection {
+            id: 1,
+            owner: "dan@example.com".to_string(),
+            client_id: client_id.to_string(),
+            client_host: client_host.map(str::to_string),
+            client_name: "Example Assistant".to_string(),
+            scope: Scope::Read,
+            approved_at: at,
+            ends_at: at + Duration::days(CONNECTION_DAYS),
+            refreshed_at: None,
+            revoked: None,
+        };
+        let registered = format!("dyn_{}", "0".repeat(48));
+        for (client_id, kept, shown) in [
+            (
+                registered.as_str(),
+                Some("client.example"),
+                "client.example",
+            ),
+            (registered.as_str(), None, ""),
+            ("https://claude.ai/oauth/client.json", None, "claude.ai"),
+            (
+                "https://claude.ai/oauth/client.json",
+                Some("claude.ai"),
+                "claude.ai",
+            ),
+            (DEVELOPER_CLIENT_ID, None, ""),
+        ] {
+            assert_eq!(
+                connection(client_id, kept).client_host(),
+                shown,
+                "{client_id} {kept:?}"
+            );
+        }
+    }
 
     /// Catches a refresh that can widen a read connection, and one that refuses what a client may send.
     #[test]

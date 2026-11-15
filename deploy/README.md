@@ -146,7 +146,7 @@ With `[mcp] enabled = true` the server answers, without a caller, two documents 
 - `GET /.well-known/oauth-protected-resource/mcp`
 - `GET /.well-known/oauth-authorization-server`
 
-The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` and `/oauth/token` (below); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents, `/oauth/authorize` and `/oauth/token` answer 404 as well.
+The proxy must forward both to the server. `location /` does; a proxy or CDN that answers `/.well-known/` itself (for certificate challenges) must still pass these two on. Under `/oauth/` the server answers `/oauth/authorize` and `/oauth/token` (below) and, when `dynamic_registration` is on, `/oauth/register` ("Apps that register themselves"); every other path under `/.well-known/` and `/oauth/` answers 404 from the server. With `[mcp]` off, the two documents, `/oauth/authorize`, `/oauth/token` and `/oauth/register` answer 404 as well.
 
 The addresses in the documents are built from `public_url` as the server parses it (lower-case host, no default port), without its trailing slash, followed by the path: `public_url = "https://reeve.example.com/"` gives the MCP endpoint `https://reeve.example.com/mcp`. A client compares them with the address the person typed, as text, so that is the address to give people.
 
@@ -170,7 +170,7 @@ When a CDN or another proxy sits in front of this one, `$binary_remote_addr` is 
 
 ### The authorize route
 
-`GET /oauth/authorize` is where an app sends a person's browser to connect. It answers without a caller, and each accepted request is held in memory for ten minutes; the server keeps at most 1 000. When it is full it drops the oldest request nobody has opened, and only when every request has been opened does it answer the app `temporarily_unavailable`. (Pending sign-ins, `/auth/login`, refuse instead of dropping: there every entry is a person halfway through signing in. Here an anonymous caller can open requests without end, since an app's client id and redirect address are public, so the ones nobody is looking at are the ones to give up.) A flood can therefore cost a person a second Connect, never a request they are looking at. Each request for an app the instance lists also makes the server fetch that app's metadata document. A restart of the server loses the requests it holds: a person who was on the approval page connects again from the app.
+`GET /oauth/authorize` is where an app sends a person's browser to connect. It answers without a caller, and each accepted request is held in memory for ten minutes; the server keeps at most 1 000. When it is full it drops the oldest request nobody has opened, and only when every request has been opened does it answer the app `temporarily_unavailable`. (Pending sign-ins, `/auth/login`, refuse instead of dropping: there every entry is a person halfway through signing in. Here an anonymous caller can open requests without end, since an app's client id and redirect address are public, so the ones nobody is looking at are the ones to give up.) A flood of requests can therefore cost a person a second Connect, never a request they are looking at. That holds for apps with a metadata document. With `dynamic_registration` on ("Apps that register themselves", below), a flood of registrations can drop the never-used registration of a request whose approval page a person has open; that approval then fails, and the person connects again. Each request for an app the instance lists also makes the server fetch that app's metadata document (an app that registered itself has none, and causes no fetch). A restart of the server loses the requests it holds: a person who was on the approval page connects again from the app.
 
 Limit it per client address, as `/auth/login` is: here the caller is a person's own browser, not a provider's shared address. For nginx, 10 requests a minute per address:
 
@@ -215,18 +215,55 @@ A person who connected an app can list and revoke their connections (kb/ADR-0029
 
 ### Which apps may connect
 
-An app (an MCP client) is known by the https address of a metadata document it publishes; that address is its client id. Two lists in `[mcp]` decide which apps can connect, and both are empty by default, which means none:
+An app (an MCP client) is known by the https address of a metadata document it publishes; that address is its client id. Or it registers itself, below. Two lists in `[mcp]` decide which apps with a metadata document can connect, and both are empty by default, which means none (an app that registers itself needs only its redirect address in the second list, and the setting described below):
 
 - `client_hosts`: the hosts such a document may be fetched from, compared exactly (`claude.ai`, not `*.claude.ai`).
 - `redirect_uris`: the https addresses an app may be sent back to once a person has answered, compared exactly. An app is refused unless its redirect address is in this list and in its own document.
 
 An app must be able to connect as a public client: it signs in with PKCE and does not authenticate itself to the server. Its document must say so: `none` among its `token_endpoint_auth_methods_supported` when it publishes that list; otherwise `token_endpoint_auth_method` `none` or absent. Claude and ChatGPT both publish such documents; their values are in "Turning it on". OpenAI documents that ChatGPT uses this stable client id and redirect address only when the server tells it which server answered (`iss`, RFC 9207), which Reeve does.
 
-An app whose host or redirect address is not listed is refused without any request leaving the server. For a listed one the server fetches the document itself at each connect, over HTTPS on port 443, directly from the listed host: it must be able to reach those hosts, and it does not use an HTTP proxy for this (`HTTPS_PROXY` is ignored). It follows no redirect, reads at most 64 KiB within 5 seconds, refuses a host that resolves to any address that is not public, and fetches at most four documents at once. A refusal is one `warn` line, `mcp client refused`, with the app's host and the reason.
+An app with a metadata document whose host or redirect address is not listed is refused without any request leaving the server. For a listed one the server fetches the document itself at each connect, over HTTPS on port 443, directly from the listed host: it must be able to reach those hosts, and it does not use an HTTP proxy for this (`HTTPS_PROXY` is ignored). It follows no redirect, reads at most 64 KiB within 5 seconds, refuses a host that resolves to any address that is not public, and fetches at most four documents at once. A refusal is one `warn` line, `mcp client refused`, with the app's host and the reason.
 
 #### Apps that cannot connect yet
 
-Apps that register themselves dynamically, or that need a client id and secret created for them (many other hosted assistants), cannot connect. Apps that redirect to the person's own machine (editors and command-line tools) are meant to use the `reeve` command line instead.
+Apps that need a client id and secret created for them cannot connect. Apps that register themselves dynamically (many other hosted assistants) can connect when `dynamic_registration` is on and their redirect address is in `redirect_uris`; without both they cannot ("Apps that register themselves", below). Apps that redirect to the person's own machine or to an address made for each installation (editors and command-line tools) cannot connect either way, since such an address cannot be listed; they are meant to use the `reeve` command line instead.
+
+### Apps that register themselves
+
+Some hosted apps publish no metadata document. They ask the server for a client id instead (OAuth 2.0 Dynamic Client Registration, RFC 7591), at `POST /oauth/register`. That is off by default: the route answers 404, the authorization server document does not name it, and a client id the server once gave out is refused ("This app is not enabled …. Ask an admin."). Turn it on with `dynamic_registration = true` in `[mcp]`; it needs at least one entry in `redirect_uris`, and the server refuses to start without one.
+
+An app can register only redirect addresses that are in `redirect_uris`, compared exactly; `client_hosts` plays no part for such an app. With registration on, `client_hosts` therefore no longer limits who can start a connect to a listed address: anyone can register a client for it. So list only a provider's own callback address, never an address on a host where others can receive what is sent there (a host that serves its users' pages, or one with an open redirect).
+
+Everything else an app says when it registers is its own claim, its name included. The approval page therefore names it by the host of its redirect address ("… wants to connect"), shows the name as what the app calls itself, and says where the person is sent back. That host is kept with the connection: under "Connected apps", on the Users page and in `reeve auth connections` the connection is listed by it, with the name beside it; the `connection_approved` entry holds the client id (`dyn_…`), that host and the name; and each change made through the app is recorded as made through that host ("via <host>"). A `connection_revoked` entry names the app by its client id. What an app asks for beyond its name and its redirect addresses is replaced, not refused: every registration is a public client (PKCE, no secret) for the authorization code and refresh token grants, and the answer says so. An app that sends no name is called by the host of its first redirect address.
+
+Removing an address from `redirect_uris` and restarting cuts off every app that uses it at its next connect; connections that exist run until they end or are revoked.
+
+What is stored, in the table `registered_clients`: the client id (`dyn_` and 48 hex digits; not a secret), the name, the redirect addresses, when it was made and when a person last approved a connection for it. No secret is issued or stored. A registration nobody approved a connection for expires 24 hours after it was made; one that was used expires 90 days after its last approval, which is after every connection made with it has left the lists. At most 1 000 are stored, the used ones included. Expired ones are deleted when the next registration is made; when the table is still full the oldest never-used one is dropped (one a person is approving at that moment is passed over for the next), and only when every stored registration has been used is a request refused, with 503 and `Retry-After`. An anonymous flood can therefore cost a person who was halfway through connecting a second attempt, never a registration somebody approved before it would have been dropped. A person who has the approval page open for a registration that is dropped meanwhile cannot approve it: the request is gone when they answer, and they connect again.
+
+An app whose registration was dropped or has expired holds a client id that no longer works. It is refused at its next connect ("This connection request was not valid"); the person removes the connector in the app and adds it again, which registers anew.
+
+Used registrations count toward the 1 000, each for 90 days after its last approval, so the room for new ones shrinks as people connect apps; with 1 000 used ones every registration is refused until some expire. Any signed-in person can use up that room by registering and approving again and again; each approval is a `connection_approved` entry in the activity log naming them. To make room sooner, delete rows from `registered_clients`, the longest unused first, for example:
+
+    DELETE FROM registered_clients WHERE last_used_at < now() - interval '45 days';
+
+Connections are unaffected: each runs until it ends or is revoked. An app whose row was deleted is refused when it next starts a connect, and its person adds the connector again.
+
+`POST /oauth/register` is called by the app's servers, as the token route is, so limit it per address at a rate sized for many people behind one. An app registers once per person who adds the connector, far less often than it refreshes. For nginx, one request a second per address:
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_oauth_register:10m rate=1r/s;
+
+    # in the server block, before the general proxy location
+    location = /oauth/register {
+        limit_req zone=reeve_oauth_register burst=10 nodelay;
+        limit_req_status 429;
+        client_max_body_size 16k;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+The route reads at most 16 KiB, makes no outbound request and answers within one database transaction.
+
+To find the redirect address an app wants: turn the setting on, try to connect from the app, and read the server's log. A registration for an address that is not listed is refused with `invalid_redirect_uri` and one `warn` line, `mcp client registration refused: a redirect address is not in [mcp] redirect_uris`, with `redirect_host` and `redirect_path` (never the query). Anyone who can reach the route can cause that line, with any host and path, so it says what was asked for and not who asked: before you list an address, check against the provider's own documentation that it is the provider's callback. Then add `https://<host><path>` to `redirect_uris` and restart. Any other refused registration is one `warn` line with a fixed reason, and each accepted one an `info` line, `mcp client registered`, with the client id.
 
 ### Seeing and cutting connections
 
@@ -237,8 +274,8 @@ A person sees the apps they connected on the Tokens page, under "Connected apps"
 Once the endpoint is on, what people read in Reeve can leave the instance through an app they connect. Your privacy statement must say so:
 
 - What a person reads through a connected app is sent to that app's provider (for example Anthropic for Claude, OpenAI for ChatGPT), under the person's own account with that provider and that provider's terms.
-- Each approval and each revocation of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id. Each change made through an app is recorded as the person's, with the app it was made through (the host of its client id); the activity feed shows it as "via <client>".
-- A connection (the person, the app, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
+- Each approval and each revocation of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id; an approval also holds the app's host and the name the app gave itself. Each change made through an app is recorded as the person's, with the app it was made through (the host of its client id, or, for an app that registered itself, the host of its redirect address); the activity feed shows it as "via <client>".
+- A connection (the person, the app with its host and name, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
 
 Set `[mcp] privacy_url` to the statement's https address: the approval page links it beside the choice a person makes. Unset, the page shows no link.
 
@@ -258,10 +295,10 @@ In this order:
         client_hosts = ["claude.ai", "chatgpt.com"]
         privacy_url = "https://example.com/privacy"
 
-3. The proxy rules of this section are in place: the limits on the two documents, `/oauth/authorize` and `/oauth/token`, the real client address when a CDN sits in front, and `/mcp` unbuffered.
-4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id, and the connection is listed under "Connected apps" on the Tokens page. The person also adds a comment through the app (with a connection that may read and change) and checks that its entry in the activity feed names the app ("via <client>").
+3. The proxy rules of this section are in place: the limits on the two documents, `/oauth/authorize` and `/oauth/token` (and, when `dynamic_registration` is on, `/oauth/register`), the real client address when a CDN sits in front, and `/mcp` unbuffered.
+4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id (with its host and name), and the connection is listed under "Connected apps" on the Tokens page. The person also adds a comment through the app (with a connection that may read and change) and checks that its entry in the activity feed names the app ("via <client>").
 
-To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
+To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token`, `/oauth/register` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
 
 ## GitHub webhook
 
@@ -475,6 +512,8 @@ past this release therefore restores the pre-release backup (see "Restore after 
 uploaded since that backup is lost; the Markdown that showed them keeps links that answer 404 after the next upgrade.
 
 Migration 2005 adds MCP connections and refresh tokens and gives every MCP token a connection. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and every connection made since that backup is lost: people connect again.
+
+Migration 2006 adds the table of apps that registered themselves, and to each connection the app's host as people were shown it. A rollback past the release that carries it restores the pre-release backup (see "Restore after an incident"); apps that registered since that backup register again (the person removes the connector in the app and adds it again).
 
 Migration 1009 adds the urgent-mark columns to the initiative, epic and story tables. A rollback past the release that carries it therefore restores the pre-release backup (see "Restore after an incident"), and urgent marks made since that backup are lost. The image from before this release has no `reeve-server export --at` (its export computes no urgency, so there is nothing to pin to an instant): with that image, the step 5 check runs `export` without `--at`, as its snippet does when `export --help` does not list it, and `scripts/restore-rehearsal.sh` probes the same way.
 

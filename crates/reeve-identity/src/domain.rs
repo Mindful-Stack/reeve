@@ -55,6 +55,9 @@ pub struct McpPrincipal {
     pub role: Role,
     pub connection_id: i64,
     pub client_id: String,
+    /// The app's host as people are shown it (`Connection::client_host`'s rule): the host kept with the
+    /// connection, else the host of its client id; `None` when neither names one (the developer command's).
+    pub client_host: Option<String>,
     pub scope: Scope,
 }
 
