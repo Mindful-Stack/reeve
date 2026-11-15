@@ -61,12 +61,13 @@ admins = ["admin@example.com"]
 # https addresses an app may be sent back to once a person has answered, compared exactly: an app is refused unless
 # its redirect address is here and in its own metadata document. In client_hosts, the hosts an app's metadata
 # document may be fetched from (an app's client id is the https address of that document), compared exactly. The
-# values below are claude.ai's.
+# values below enable Claude (https://claude.ai/api/mcp/auth_callback, claude.ai) and ChatGPT
+# (https://chatgpt.com/connector_platform_oauth_redirect, chatgpt.com); keep only the apps you want.
 # [mcp]
 # enabled = true
 # allowed_origins = ["https://claude.ai"]
-# redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
-# client_hosts = ["claude.ai"]
+# redirect_uris = ["https://claude.ai/api/mcp/auth_callback", "https://chatgpt.com/connector_platform_oauth_redirect"]
+# client_hosts = ["claude.ai", "chatgpt.com"]
 # The privacy statement the approval page links (an https address); unset, the page shows no link.
 # privacy_url = "https://example.com/privacy"
 

@@ -220,7 +220,13 @@ An app (an MCP client) is known by the https address of a metadata document it p
 - `client_hosts`: the hosts such a document may be fetched from, compared exactly (`claude.ai`, not `*.claude.ai`).
 - `redirect_uris`: the https addresses an app may be sent back to once a person has answered, compared exactly. An app is refused unless its redirect address is in this list and in its own document.
 
+An app must be able to connect as a public client: it signs in with PKCE and does not authenticate itself to the server. Its document must say so, with `token_endpoint_auth_method` `none` (or absent), or with `none` among its `token_endpoint_auth_methods_supported`. Claude and ChatGPT both publish such documents; their values are in "Turning it on". ChatGPT uses this stable client id and redirect address only when the server tells it which server answered (`iss`, RFC 9207), which Reeve does.
+
 An app whose host or redirect address is not listed is refused without any request leaving the server. For a listed one the server fetches the document itself at each connect, over HTTPS on port 443, directly from the listed host: it must be able to reach those hosts, and it does not use an HTTP proxy for this (`HTTPS_PROXY` is ignored). It follows no redirect, reads at most 64 KiB within 5 seconds, refuses a host that resolves to any address that is not public, and fetches at most four documents at once. A refusal is one `warn` line, `mcp client refused`, with the app's host and the reason.
+
+#### Apps that cannot connect yet
+
+Apps that register themselves dynamically, or that need a client id and secret created for them (many other hosted assistants), cannot connect. Apps that redirect to the person's own machine (editors and command-line tools) are meant to use the `reeve` command line instead.
 
 ### Seeing and cutting connections
 
@@ -241,12 +247,15 @@ Set `[mcp] privacy_url` to the statement's https address: the approval page link
 In this order:
 
 1. The privacy statement says what the section above lists, and `[mcp] privacy_url` points at it.
-2. `[mcp] enabled = true`, with `redirect_uris` and `client_hosts` set. For claude.ai:
+2. `[mcp] enabled = true`, with `redirect_uris` and `client_hosts` set. Claude's values are `https://claude.ai/api/mcp/auth_callback` and `claude.ai`; ChatGPT's are `https://chatgpt.com/connector_platform_oauth_redirect` and `chatgpt.com`. For both:
 
         [mcp]
         enabled = true
-        redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
-        client_hosts = ["claude.ai"]
+        redirect_uris = [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://chatgpt.com/connector_platform_oauth_redirect",
+        ]
+        client_hosts = ["claude.ai", "chatgpt.com"]
         privacy_url = "https://example.com/privacy"
 
 3. The proxy rules of this section are in place: the limits on the two documents, `/oauth/authorize` and `/oauth/token`, the real client address when a CDN sits in front, and `/mcp` unbuffered.
