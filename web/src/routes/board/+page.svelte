@@ -12,6 +12,7 @@
 		accepts,
 		afterPart,
 		applyFilters,
+	boardOwners,
 		COLUMN_LABEL,
 		columnHeading,
 		COLUMNS,
@@ -23,6 +24,7 @@
 		neighbourBefore,
 		ownerFilter,
 		orderAfterDrop,
+	ownerSelectValue,
 		resolutionsFor,
 		splitUpNext,
 		type Column,
@@ -41,7 +43,6 @@
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
 
 	type Move = { item: StoryWithReadiness; to: Column; resolution?: Resolution };
 
@@ -89,6 +90,12 @@
 	const selectedGoal = $derived(
 		typeof filters.goal === 'number' ? (active?.sprint.goals.find((g) => g.id === filters.goal) ?? null) : null
 	);
+	/** The Owner select's people: who owns a loaded card (every column, before filtering), and the owner the URL names. */
+	const owners = $derived(
+		boardOwners(columns ? COLUMNS.flatMap((c) => columns![c]) : [], session.me?.email, filters.owner)
+	);
+	/** The Owner select, where focus goes when Clear filters removes itself. */
+	let ownerSelect = $state<HTMLSelectElement | null>(null);
 	const visible = $derived.by(() => {
 		if (!columns) return null;
 		const cols = columns;
@@ -108,6 +115,17 @@
 		const url = new URL(page.url.href);
 		if (value) url.searchParams.set(name, value);
 		else url.searchParams.delete(name);
+		return goto(url, { replace: true, reset: false });
+	}
+
+	/** The Owner select's choice, as one navigation: `me` is `?mine=1` (the backlog's and the decisions page's word),
+	 *  a person or `none` is `?owner=`, and each removes the other. */
+	function setOwner(value: string): Promise<void> {
+		const url = new URL(page.url.href);
+		url.searchParams.delete('mine');
+		url.searchParams.delete('owner');
+		if (value === 'me') url.searchParams.set('mine', '1');
+		else if (value) url.searchParams.set('owner', value);
 		return goto(url, { replace: true, reset: false });
 	}
 
@@ -348,15 +366,27 @@
 <svelte:head><title>Board · Reeve</title></svelte:head>
 
 <PageHeader title="Board">
-	<Toggle
-		label="Whose"
-		options={[
-			{ value: 'all', label: 'All' },
-			{ value: 'mine', label: 'Mine' }
-		]}
-		value={query.get('mine') === '1' ? 'mine' : 'all'}
-		onchange={(v) => setFilter('mine', v === 'mine' ? '1' : null)}
-	/>
+	<label class="field inline">
+		Owner
+		<select
+			class="owner"
+			data-testid="owner-filter"
+			bind:this={ownerSelect}
+			value={ownerSelectValue(filters.owner, session.me?.email, owners)}
+			onchange={(e) => setOwner(e.currentTarget.value)}
+		>
+			<option value="">{ALL_STORIES}</option>
+			{#if session.me}<option value="me">Me</option>{/if}
+			<option value="none">Unowned</option>
+			{#if owners.length > 0}
+				<optgroup label="On this board">
+					{#each owners as o (o.email)}
+						<option value={o.email}>{o.label}</option>
+					{/each}
+				</optgroup>
+			{/if}
+		</select>
+	</label>
 	{#if active && active.sprint.state === 'active'}
 		<label class="field inline">
 			Goal
@@ -581,6 +611,10 @@
 	/* The closed control clips a long outcome; the open list shows it whole. */
 	select.goal {
 		max-width: 16rem;
+	}
+	/* Fixed: the options change as cards come and go, and a select sized to its widest option would shift the header. */
+	select.owner {
+		width: 11rem;
 	}
 	.check {
 		display: inline-flex;
