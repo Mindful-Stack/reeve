@@ -223,15 +223,20 @@ pub async fn resolve_client(
     now: DateTime<Utc>,
 ) -> Result<ValidatedClient, ClientRefusal> {
     let outcome = resolve(fetcher, registered, policy, client_id, redirect_uri, now).await;
-    if let Err(refusal) = &outcome {
+    match &outcome {
+        // A database failure, not a refused client.
+        Err(e @ ClientRefusal::RegistryUnavailable(_)) => {
+            tracing::error!(error = %e, "mcp client could not be resolved")
+        }
         // The one line per refusal: the host and the reason, never the whole request. A registered id names no
         // host and is no secret, so the line carries the id itself.
-        tracing::warn!(
+        Err(refusal) => tracing::warn!(
             client_host = ?host_of(client_id),
             client_id = ?is_registered_id(client_id).then_some(client_id),
             reason = %refusal,
             "mcp client refused"
-        );
+        ),
+        Ok(_) => {}
     }
     outcome
 }
