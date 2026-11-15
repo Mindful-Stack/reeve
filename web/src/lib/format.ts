@@ -46,6 +46,11 @@ export function short(email: string): string {
 	return at > 0 ? email.slice(0, at) : email;
 }
 
+/** Emails compare case-insensitively and without surrounding whitespace. */
+export function sameEmail(a: string, b: string): boolean {
+	return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /** The text to show for anything thrown: an Error's message (an `ApiError` carries the server's), or the value itself. */
 export function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);

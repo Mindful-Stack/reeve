@@ -3,13 +3,12 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
-	import { errorMessage } from '#lib/format.ts';
+	import { errorMessage, sameEmail } from '#lib/format.ts';
 	import type { Initiative, RequiredDecision } from '#lib/api/types.ts';
 	import InitiativeCard from '#lib/components/InitiativeCard.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import WarRoom from '#lib/components/WarRoom.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { sameEmail } from '#lib/decisions.ts';
 	import { initiativeCreate, type InitiativeDraft } from '#lib/forms.ts';
 	import { CreateCycle } from '#lib/idempotency.ts';
 	import { session } from '#lib/me.svelte.ts';
