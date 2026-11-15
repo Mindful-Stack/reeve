@@ -146,7 +146,7 @@ async fn a_code_becomes_a_one_hour_token_and_a_refresh_token_once() {
 /// Each row is one wrong request with a live code; each is refused with the standard's error and changes
 /// nothing, which the end shows by exchanging the very same code correctly, as an OAuth 2.1 client sends it (no
 /// `redirect_uri`, no `resource`). Catches a code that anyone who saw it can spend, a wrong error code, an
-/// accepted client secret, a repeated parameter the grant does not read slipping through, a lenient decoder, an
+/// accepted client secret or client assertion, a repeated parameter the grant does not read slipping through, a lenient decoder, an
 /// answer in the API's envelope or without `no-store`, and a required `redirect_uri`.
 #[tokio::test]
 async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing() {
@@ -257,6 +257,21 @@ async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing
         (
             "a client secret",
             also("client_secret", "s3cret"),
+            "invalid_client",
+        ),
+        // private_key_jwt (RFC 7523 section 2.2): refused as a client secret is, never half-understood.
+        // One row per half, so each half of the check is pinned on its own.
+        (
+            "a client assertion alone",
+            also("client_assertion", "eyJhbGciOiJSUzI1NiJ9.e30.c2ln"),
+            "invalid_client",
+        ),
+        (
+            "a client assertion type alone",
+            also(
+                "client_assertion_type",
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            ),
             "invalid_client",
         ),
     ];
@@ -619,7 +634,7 @@ async fn a_used_refresh_token_presented_again_revokes_the_connection() {
 
 /// Each row is a refresh that must be refused without burning the token: the end shows the very same refresh
 /// token still works. Catches a used mark that survives a refused request (the person would lose the connection
-/// to a typo), a refresh that widens the scope, and one another client can use.
+/// to a typo), a refresh that widens the scope, one another client can use, and a client assertion let through.
 #[tokio::test]
 async fn a_refused_refresh_rolls_back_and_the_token_still_works() {
     let f = flow().await;
@@ -664,6 +679,25 @@ async fn a_refused_refresh_rolls_back_and_the_token_still_works() {
             "the access token as refresh token",
             form_with(ok.clone(), "refresh_token", Some(&c.access_token)),
             "invalid_grant",
+        ),
+        // private_key_jwt, one row per half of the check.
+        (
+            "a client assertion alone",
+            form_with(
+                ok.clone(),
+                "client_assertion",
+                Some("eyJhbGciOiJSUzI1NiJ9.e30.c2ln"),
+            ),
+            "invalid_client",
+        ),
+        (
+            "a client assertion type alone",
+            form_with(
+                ok.clone(),
+                "client_assertion_type",
+                Some("urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
+            ),
+            "invalid_client",
         ),
     ];
     for (what, form, error) in cases {

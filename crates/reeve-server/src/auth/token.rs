@@ -17,10 +17,12 @@ use serde_json::json;
 /// The largest body read. A raw `Request` gets no default limit, so this is the only one.
 const MAX_BODY: usize = 16 * 1024;
 /// Every parameter this route reads, for either grant. Each may be sent once.
-const RECOGNISED: [&str; 9] = [
+const RECOGNISED: [&str; 11] = [
     "grant_type",
     "client_id",
     "client_secret",
+    "client_assertion",
+    "client_assertion_type",
     "code",
     "code_verifier",
     "redirect_uri",
@@ -164,6 +166,15 @@ async fn grant(s: &AppState, headers: &HeaderMap, body: &[u8]) -> Result<TokenPa
         return Err(bad(
             "invalid_client",
             "a client_secret: this server accepts public clients only",
+        ));
+    }
+    // `private_key_jwt` (RFC 7523 section 2.2), which ChatGPT prefers. The server advertises only `none`, so a
+    // well-behaved client sends neither parameter. One that does is refused as a client secret is: ignoring the
+    // assertion would issue tokens to a client that believes it authenticated, so it fails loudly instead.
+    if params.get("client_assertion").is_some() || params.get("client_assertion_type").is_some() {
+        return Err(bad(
+            "invalid_client",
+            "a client_assertion: this server accepts public clients only",
         ));
     }
     let need = |name: &'static str| {
