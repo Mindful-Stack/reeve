@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalProgress, SprintCounts, Sprints } from '#lib/api/types.ts';
-import { sprint, sprintView } from '#lib/test/fixtures.ts';
+import { goal, sprint, sprintView } from '#lib/test/fixtures.ts';
 import words from './promise.fixture.json';
 import {
 	promisesHeading,
@@ -9,6 +9,7 @@ import {
 	confidenceTone,
 	countsDiffer,
 	goalFilter,
+	goalOptionLabel,
 	nowThen,
 	nudgeStillDue,
 	RULE,
@@ -136,14 +137,28 @@ describe('nudgeStillDue', () => {
 });
 
 describe('goalFilter', () => {
-	it('reads a goal of the active sprint or none; anything else, or no active sprint, filters nothing', () => {
+	it('reads a goal of the active sprint, any or none; anything else, or no active sprint, filters nothing', () => {
 		expect(goalFilter('1', [1, 2])).toBe(1);
 		expect(goalFilter('none', [1, 2])).toBe('none');
+		expect(goalFilter('any', [1, 2])).toBe('any');
+		// An active sprint with no goals still has the filter: every story is upkeep, and `any` shows none of them.
+		expect(goalFilter('any', [])).toBe('any');
 		expect(goalFilter('99', [1, 2])).toBeNull();
 		expect(goalFilter('x', [1, 2])).toBeNull();
 		expect(goalFilter(null, [1, 2])).toBeNull();
 		expect(goalFilter('1', null)).toBeNull();
 		expect(goalFilter('none', null)).toBeNull();
+		expect(goalFilter('any', null)).toBeNull();
+	});
+});
+
+describe('goalOptionLabel', () => {
+	it('is the full outcome, with the confidence as a suffix only when the goal is at risk or off track', () => {
+		const long = 'Ship the importer for every team that still plans in the old tracker';
+		expect(goalOptionLabel(goal({ outcome: long, confidence: null }))).toBe(long);
+		expect(goalOptionLabel(goal({ outcome: 'Ship it', confidence: 'on_track' }))).toBe('Ship it');
+		expect(goalOptionLabel(goal({ outcome: 'Ship it', confidence: 'at_risk' }))).toBe('Ship it (at risk)');
+		expect(goalOptionLabel(goal({ outcome: 'Ship it', confidence: 'off_track' }))).toBe('Ship it (off track)');
 	});
 });
 

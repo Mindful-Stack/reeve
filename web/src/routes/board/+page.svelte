@@ -392,7 +392,7 @@
 
 {#if notice}<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>{/if}
 
-<GoalsStrip view={active} selected={filters.goal} onselect={(g) => setFilter('goal', g === null ? null : String(g))} />
+<GoalsStrip view={active} selected={filters.goal === 'any' ? null : filters.goal} onselect={(g) => setFilter('goal', g === null ? null : String(g))} />
 
 {#if readiness}
 	<DecisionBanner queue={readiness} />

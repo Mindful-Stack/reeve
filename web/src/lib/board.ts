@@ -181,7 +181,7 @@ export type Filters = {
 	epic?: string;
 	kind?: Kind;
 	untriaged?: boolean;
-	goal?: number | 'none' | null;
+	goal?: number | 'any' | 'none' | null;
 	/** The server's promise state and period, read through `promisedMatches`; only unfinished stories match. */
 	promised?: PromisedFilter | null;
 };

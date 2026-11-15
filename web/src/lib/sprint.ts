@@ -1,4 +1,4 @@
-import type { Confidence, GoalProgress, PromiseShortcut, SprintCounts, SprintWarning, Sprints, Story, Verdict } from '#lib/api/types.ts';
+import type { Confidence, Goal, GoalProgress, PromiseShortcut, SprintCounts, SprintWarning, Sprints, Story, Verdict } from '#lib/api/types.ts';
 import { dayLabel } from '#lib/format.ts';
 
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
@@ -18,11 +18,12 @@ export function nudgeStillDue(s: Pick<Story, 'delivery' | 'goals'>): boolean {
 	return ACTIVE.has(s.delivery) && s.goals.length === 0;
 }
 
-/** The board's `?goal=` value as a filter: a goal of the active sprint, `'none'` (upkeep), or null. Without an active
- *  sprint, or for an id that is not one of its goals, nothing is filtered: the strip that could clear it is not there. */
-export function goalFilter(param: string | null, activeGoalIds: number[] | null): number | 'none' | null {
+/** The board's `?goal=` value as a filter: a goal of the active sprint, `'any'` (some goal of it), `'none'` (upkeep),
+ *  or null. The values are the server's (`GET /stories?goal=`, kb/ADR-0021). Without an active sprint, or for an id
+ *  that is not one of its goals, nothing is filtered: the select that could clear it is not there. */
+export function goalFilter(param: string | null, activeGoalIds: number[] | null): number | 'any' | 'none' | null {
 	if (!activeGoalIds || !param) return null;
-	if (param === 'none') return 'none';
+	if (param === 'any' || param === 'none') return param;
 	const id = /^\d+$/.test(param) ? Number(param) : NaN;
 	return activeGoalIds.includes(id) ? id : null;
 }
@@ -58,6 +59,14 @@ const CONFIDENCE_LABEL: Record<Confidence, string> = {
 };
 
 export const confidenceLabel = (c: Confidence): string => CONFIDENCE_LABEL[c];
+
+/** A goal's text in the board's Goal select: the whole outcome (two goals may share a prefix, so it is never cut),
+ *  then the confidence in parentheses when it is at risk or off track. On track and not recorded add nothing. */
+export function goalOptionLabel(g: Pick<Goal, 'outcome' | 'confidence'>): string {
+	return g.confidence === 'at_risk' || g.confidence === 'off_track'
+		? `${g.outcome} (${confidenceLabel(g.confidence)})`
+		: g.outcome;
+}
 
 /** `text` cut to at most `max` characters, the last an ellipsis when cut (show the full text as a `title`). */
 export function truncate(text: string, max: number): string {
