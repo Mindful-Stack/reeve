@@ -260,16 +260,10 @@ async fn a_wrong_exchange_is_refused_as_the_standard_words_it_and_spends_nothing
             "invalid_client",
         ),
         // private_key_jwt (RFC 7523 section 2.2): refused as a client secret is, never half-understood.
+        // One row per half, so each half of the check is pinned on its own.
         (
-            "a client assertion",
-            {
-                let mut t = also("client_assertion", "eyJhbGciOiJSUzI1NiJ9.e30.c2ln");
-                t.push((
-                    "client_assertion_type",
-                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-                ));
-                t
-            },
+            "a client assertion alone",
+            also("client_assertion", "eyJhbGciOiJSUzI1NiJ9.e30.c2ln"),
             "invalid_client",
         ),
         (
@@ -686,14 +680,20 @@ async fn a_refused_refresh_rolls_back_and_the_token_still_works() {
             form_with(ok.clone(), "refresh_token", Some(&c.access_token)),
             "invalid_grant",
         ),
+        // private_key_jwt, one row per half of the check.
         (
-            "a client assertion (private_key_jwt)",
+            "a client assertion alone",
             form_with(
-                form_with(
-                    ok.clone(),
-                    "client_assertion",
-                    Some("eyJhbGciOiJSUzI1NiJ9.e30.c2ln"),
-                ),
+                ok.clone(),
+                "client_assertion",
+                Some("eyJhbGciOiJSUzI1NiJ9.e30.c2ln"),
+            ),
+            "invalid_client",
+        ),
+        (
+            "a client assertion type alone",
+            form_with(
+                ok.clone(),
                 "client_assertion_type",
                 Some("urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
             ),
