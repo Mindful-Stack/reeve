@@ -76,6 +76,7 @@ afterEach(() => {
 const q = <T extends Element = HTMLElement>(sel: string) => document.body.querySelector<T>(sel);
 const shownKeys = () =>
 	[...document.body.querySelectorAll<HTMLElement>('[data-testid^="card-"]')].map((c) => c.dataset.testid!.slice(5));
+const clear = () => q('[data-testid="clear-filters"]');
 const ownerSelect = () => q<HTMLSelectElement>('[data-testid="owner-filter"]')!;
 const options = () => [...ownerSelect().querySelectorAll('option')].map((o) => [o.value, o.textContent]);
 const ALL = ['ABC-1', 'ABC-2', 'ABC-3', 'ABC-4', 'ABC-5'];
@@ -242,5 +243,38 @@ describe('board owner select', () => {
 		await mounted(['ABC-1']);
 		expect(ownerSelect().value).toBe('me');
 		expect(options().filter(([v]) => v === 'me')).toEqual([['me', 'Me']]);
+	});
+});
+
+describe('board clear filters', () => {
+	it('is absent while nothing is filtered', async () => {
+		await mounted();
+		expect(clear()).toBeNull();
+	});
+
+	it('counts the filters set, and one click removes them all, shows every card and focuses Owner', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=ana@example.com&kind=bug&notready=1';
+		await mounted(['ABC-3']);
+		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
+
+		clear()!.click();
+		await shows(ALL);
+		expect(page.url.search).toBe('?notready=1');
+		expect(clear()).toBeNull();
+		expect(ownerSelect().value).toBe('');
+		await vi.waitFor(() => expect(document.activeElement).toBe(ownerSelect()));
+	});
+
+	it('counts applied filters, not URL parameters: a stale goal and mine beside owner add nothing', async () => {
+		// No active sprint in this file's server: ?goal=99 and ?goal=any filter nothing. mine=1 yields to owner.
+		(page.url as URL).href = 'http://localhost/board?goal=99&mine=1&owner=ana@example.com&kind=bug&notready=1';
+		await mounted(['ABC-3']);
+		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
+	});
+
+	it('does not count a goal filter the board cannot apply', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=any';
+		await mounted();
+		expect(clear()).toBeNull();
 	});
 });

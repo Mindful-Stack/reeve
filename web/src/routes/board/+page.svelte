@@ -12,6 +12,7 @@
 		accepts,
 		afterPart,
 		applyFilters,
+		boardFilterCount,
 		boardOwners,
 		COLUMN_LABEL,
 		columnHeading,
@@ -27,6 +28,7 @@
 		ownerSelectValue,
 		resolutionsFor,
 		splitUpNext,
+		withoutBoardFilters,
 		type Column,
 		type Resolution
 	} from '#lib/board.ts';
@@ -97,6 +99,8 @@
 		const cols = columns;
 		return boardOwners(cols ? COLUMNS.flatMap((c) => cols[c]) : [], session.me?.email, filters.owner);
 	});
+	/** How many filters are applied: the number on Clear filters, which shows only when it is not zero. */
+	const filterCount = $derived(boardFilterCount(filters));
 	const visible = $derived.by(() => {
 		if (!columns) return null;
 		const cols = columns;
@@ -128,6 +132,13 @@
 		if (value === 'me') url.searchParams.set('mine', '1');
 		else if (value) url.searchParams.set('owner', value);
 		return goto(url, { replace: true, reset: false });
+	}
+
+	/** Clear filters: one navigation, then focus to the Owner select, since the button has just removed itself. */
+	async function clearFilters() {
+		await goto(withoutBoardFilters(new URL(page.url.href)), { replace: true, reset: false });
+		await tick();
+		ownerSelect?.focus();
 	}
 
 	/** "Show not ready" under "Nothing ready": opens the disclosure, then focuses its summary (the button goes away). */
@@ -447,6 +458,9 @@
 		/>
 		Untriaged
 	</label>
+	{#if filterCount > 0}
+		<button type="button" data-testid="clear-filters" onclick={clearFilters}>Clear filters ({filterCount})</button>
+	{/if}
 </PageHeader>
 
 {#if notice}<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>{/if}
