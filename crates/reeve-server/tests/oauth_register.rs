@@ -540,3 +540,113 @@ async fn a_registered_clients_connection_and_its_changes_name_its_redirect_host(
         .unwrap_or_else(|| panic!("no comment entry: {entries}"));
     assert_eq!(entry["payload"]["client"], "client.example", "{entry}");
 }
+
+/// When the registration `client_id` was last used.
+async fn last_used(h: &Harness, client_id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    sqlx::query_scalar("SELECT last_used_at FROM registered_clients WHERE client_id = $1")
+        .bind(client_id)
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+/// The whole journey of an app that registers itself, every step through the real router: it registers, a
+/// person approves it on a page that names the redirect host, it exchanges its code, calls the endpoint,
+/// refreshes, and is listed by its redirect host and its name. Catches a registered client that cannot finish
+/// any one of these, an approval that does not mark the registration used (before any exchange), and a
+/// connection that depends on its registration: dropped, the connection goes on and only a new connect is
+/// refused.
+#[tokio::test]
+async fn a_registered_client_connects_calls_refreshes_and_is_listed_by_its_name() {
+    let mut f = registering_flow().await;
+    let h = &f.h;
+    // 1. Register.
+    let client_id = registered(&f, registration()).await;
+    assert_eq!(last_used(h, &client_id).await, None);
+    f.client_id = client_id.clone();
+    let (f, h) = (&f, &f.h);
+
+    // 2. Authorize; the page names the redirect host as the app and as where the person is sent.
+    let s = authorize(f).await;
+    let (status, _, page) = read(f, &h.victim_token, &s).await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(
+        json!([
+            page["value"]["client_host"],
+            page["value"]["client_name"],
+            page["value"]["redirect_host"]
+        ]),
+        json!(["client.example", "Example Assistant", "client.example"])
+    );
+
+    // 3. Approve: a code at the client's address, and the registration is used from this moment.
+    let approval = page["value"]["approval"].as_str().unwrap();
+    let (status, _, body) = approve(f, &h.victim_token, &s, approval, "write").await;
+    assert_eq!(status, 200, "{body}");
+    let redirect_to = url::Url::parse(body["value"]["redirect_to"].as_str().unwrap()).unwrap();
+    assert_eq!(without_query(&redirect_to), CALLBACK);
+    let code = param(&redirect_to, "code").expect("a code");
+    assert_eq!(
+        last_used(h, &client_id).await,
+        Some(h.state.clock.now()),
+        "set by the approval, before any exchange"
+    );
+
+    // 4. Exchange and call.
+    let (status, _, pair) = token(f, &code_form(f, &code)).await;
+    assert_eq!(status, 200, "{pair}");
+    let access_token = pair["access_token"].as_str().unwrap().to_string();
+    let refresh_token = pair["refresh_token"].as_str().unwrap().to_string();
+    assert_eq!(mcp_status(f, &access_token).await, 200);
+
+    // 5. Refresh.
+    h.state.clock.advance(chrono::Duration::minutes(5));
+    let (status, _, pair) = token(f, &refresh_form(&refresh_token)).await;
+    assert_eq!(status, 200, "{pair}");
+    let refreshed = pair["access_token"].as_str().unwrap().to_string();
+    let second_refresh = pair["refresh_token"].as_str().unwrap().to_string();
+    assert_ne!(refreshed, access_token);
+    assert_eq!(mcp_status(f, &refreshed).await, 200);
+
+    // 6. Listed once, by the redirect host, with the name the app gave itself.
+    let listed = api(h, &h.victim_token, "/api/v1/connections").await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(
+        json!([
+            listed[0]["client_id"],
+            listed[0]["client_host"],
+            listed[0]["client_name"]
+        ]),
+        json!([client_id, "client.example", "Example Assistant"])
+    );
+
+    // 7. The approval's entry.
+    let approvals = api(
+        h,
+        &h.admin_token,
+        "/api/v1/activity?action=connection_approved",
+    )
+    .await;
+    assert_eq!(approvals.as_array().unwrap().len(), 1, "{approvals}");
+    assert_eq!(
+        json!([
+            approvals[0]["payload"]["client_id"],
+            approvals[0]["payload"]["client_host"],
+            approvals[0]["payload"]["client_name"]
+        ]),
+        json!([client_id, "client.example", "Example Assistant"])
+    );
+
+    // 8. A connection does not depend on its registration: the token and a refresh go on; a new connect does not.
+    sqlx::query("DELETE FROM registered_clients")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(mcp_status(f, &refreshed).await, 200);
+    let (status, _, pair) = token(f, &refresh_form(&second_refresh)).await;
+    assert_eq!(status, 200, "{pair}");
+    assert_eq!(
+        went(f, &h.app, &client_id, CALLBACK).await,
+        "/connect?problem=invalid_request"
+    );
+}
