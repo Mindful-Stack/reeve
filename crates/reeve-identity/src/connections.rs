@@ -43,6 +43,13 @@ pub(crate) fn is_live(
     revoked_at.is_none() && ends_at > now
 }
 
+/// The one rule for which app people are shown: the host `kept` with the connection (for a client that registered
+/// itself, the host of its redirect address), else the host of its client id; `None` when neither names one (the
+/// developer command's client id is not an address).
+pub(crate) fn shown_host(kept: Option<&str>, client_id: &str) -> Option<String> {
+    kept.map(str::to_string).or_else(|| host_of(client_id))
+}
+
 /// A connection as the store hands it out: to the refresh grant, and to the listing of a person's connections
 /// (kb/ADR-0029 R9).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,8 +58,8 @@ pub struct Connection {
     pub owner: String,
     pub client_id: String,
     /// The app's host as it was shown when the connection was approved; `None` for a connection made before
-    /// the host was kept, and for the developer command's.
-    pub client_host: Option<String>,
+    /// the host was kept, and for the developer command's. Read by `client_host()`, which is what people are shown.
+    pub(crate) client_host: Option<String>,
     pub client_name: String,
     pub scope: Scope,
     pub approved_at: DateTime<Utc>,
@@ -68,10 +75,7 @@ impl Connection {
     /// registered itself, the host of its redirect address), else the host of its client id, else empty (the
     /// developer command's client id is not an address).
     pub fn client_host(&self) -> String {
-        self.client_host
-            .clone()
-            .or_else(|| host_of(&self.client_id))
-            .unwrap_or_default()
+        shown_host(self.client_host.as_deref(), &self.client_id).unwrap_or_default()
     }
 
     pub fn is_live(&self, now: DateTime<Utc>) -> bool {

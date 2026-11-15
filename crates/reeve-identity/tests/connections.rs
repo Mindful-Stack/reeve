@@ -461,6 +461,7 @@ async fn the_developer_command_makes_a_connection_and_the_principal_carries_it()
             who.role,
             who.connection_id,
             who.client_id.as_str(),
+            who.client_host.as_deref(),
             who.scope
         ),
         (
@@ -468,6 +469,7 @@ async fn the_developer_command_makes_a_connection_and_the_principal_carries_it()
             Role::Admin,
             rows[0].0,
             "urn:reeve:developer-command",
+            None,
             Scope::Write
         )
     );

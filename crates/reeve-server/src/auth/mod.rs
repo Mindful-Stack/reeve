@@ -160,17 +160,6 @@ pub(crate) struct McpCaller {
     policy: reeve_identity::AccessPolicy,
 }
 
-/// A client as an activity entry names it (kb/ADR-0029 R9) when its connection kept no host: the host of the
-/// connection's client id, which is then the address of the client's metadata document. A client id without a
-/// host (the developer command's `urn:reeve:developer-command`, and a registered client's `dyn_…` id) is
-/// recorded as it is, so an entry always names something.
-fn client_label(client_id: &str) -> String {
-    url::Url::parse(client_id)
-        .ok()
-        .and_then(|address| address.host_str().map(str::to_string))
-        .unwrap_or_else(|| client_id.to_string())
-}
-
 impl McpCaller {
     /// `Unauthenticated` for every refusal; `Db` when the access policy or the token could not be read, which is an
     /// internal error and never a fallback to the floor. Each refusal is logged once at `warn`, never with the
@@ -207,8 +196,8 @@ impl McpCaller {
     }
 
     /// What an action needs to know about this caller. An MCP token is always interactive (kb/ADR-0029 R5), and
-    /// its writes name the connection's client (R9): by the host kept with the connection, which for a client
-    /// that registered itself is the host of its redirect address, else by `client_label`.
+    /// its writes name the connection's client (R9): by the host people are shown for it (identity decides
+    /// which), else, for a client id that names no host (the developer command's), by the id itself.
     pub(crate) fn acting(&self) -> crate::actions::Acting<'_> {
         crate::actions::Acting::new(
             &self.principal.email,
@@ -219,34 +208,8 @@ impl McpCaller {
                 self.principal
                     .client_host
                     .clone()
-                    .unwrap_or_else(|| client_label(&self.principal.client_id)),
+                    .unwrap_or_else(|| self.principal.client_id.clone()),
             ),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::client_label;
-
-    #[test]
-    fn a_client_is_named_by_the_host_of_its_id_or_by_the_id_when_it_has_no_host() {
-        assert_eq!(
-            client_label("https://claude.ai/oauth/client-metadata.json"),
-            "claude.ai"
-        );
-        assert_eq!(
-            client_label("http://127.0.0.1:4455/client.json"),
-            "127.0.0.1"
-        );
-        assert_eq!(
-            client_label("urn:reeve:developer-command"),
-            "urn:reeve:developer-command"
-        );
-        assert_eq!(client_label("not a url"), "not a url");
-        // A client that registered itself: its id names no host. Its entries name the host kept with its
-        // connection instead (`McpCaller::acting`); only without one is the id recorded.
-        let registered = format!("dyn_{}", "0".repeat(48));
-        assert_eq!(client_label(&registered), registered);
     }
 }
