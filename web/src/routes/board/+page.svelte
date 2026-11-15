@@ -17,15 +17,15 @@
 		boardOwners,
 		COLUMN_LABEL,
 		columnHeading,
-		COLUMNS,
 		columnise,
+		COLUMNS,
 		dropBefore,
 		fullLabel,
 		isKind,
 		KINDS,
 		neighbourBefore,
-		ownerFilter,
 		orderAfterDrop,
+		ownerFilter,
 		ownerSelectValue,
 		resolutionsFor,
 		splitUpNext,
@@ -36,7 +36,7 @@
 	import { session } from '#lib/me.svelte.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
-	import { isPromisedFilter, ALL_STORIES, PROMISED_OPTIONS } from '#lib/promise.ts';
+	import { ALL_STORIES, isPromisedFilter, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import { rankStory } from '#lib/rank.ts';
 	import { goalFilter, goalOptionLabel, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
 	import DecisionBanner from '#lib/components/DecisionBanner.svelte';
@@ -54,7 +54,9 @@
 	let epics = $state<Epic[]>([]);
 	/** The sprints as the server last reported them; only the active one shows here (the Goal select, the nudge). */
 	let sprints = $state<Sprints | null>(null);
-	const active = $derived(sprints?.active ?? null);
+	/** The active sprint's view: the one condition for the Goal select, the goal filter and the nudge. Only a sprint whose
+	 *  state is `active` counts (the server fills the slot for no other). */
+	const active = $derived(sprints?.active?.sprint.state === 'active' ? sprints.active : null);
 	/** The readiness queue's counts and discovery rows as last loaded. A failed refetch keeps the last good ones (`queueStale`); a failed first
 	 *  load has none (`queueFailed`). The decisions are an extra: the cards never wait for them or depend on them. */
 	let readiness = $state<Pick<DecisionQueue, 'summary' | 'discoveries'> | null>(null);
@@ -100,6 +102,10 @@
 		const cols = columns;
 		return boardOwners(cols ? COLUMNS.flatMap((c) => cols[c]) : [], session.me?.email, filters.owner);
 	});
+	/** The Owner select's value, and its option when it is a person: the select is a fixed width, so a full email may be
+	 *  clipped exactly where the domain tells two people apart; the option's label is its tooltip. */
+	const ownerValue = $derived(ownerSelectValue(filters.owner, session.me?.email, owners));
+	const ownerTitle = $derived(owners.find((o) => o.email === ownerValue)?.label);
 	/** How many filters are applied: the number on Clear filters, which shows only when it is not zero. */
 	const filterCount = $derived(boardFilterCount(filters));
 	const visible = $derived.by(() => {
@@ -386,7 +392,8 @@
 			class="owner"
 			data-testid="owner-filter"
 			bind:this={ownerSelect}
-			value={ownerSelectValue(filters.owner, session.me?.email, owners)}
+			value={ownerValue}
+			title={ownerTitle}
 			onchange={(e) => setOwner(e.currentTarget.value)}
 		>
 			<option value="">{ALL_STORIES}</option>
@@ -401,7 +408,7 @@
 			{/if}
 		</select>
 	</label>
-	{#if active && active.sprint.state === 'active'}
+	{#if active}
 		<label class="field inline">
 			Goal
 			<select

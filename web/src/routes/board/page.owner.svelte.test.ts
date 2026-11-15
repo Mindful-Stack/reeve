@@ -117,6 +117,29 @@ describe('board owner select', () => {
 		expect(document.body.textContent).not.toContain('Whose');
 	});
 
+	it('has the selected colleague\'s option label as its tooltip, and none for all, Me or Unowned', async () => {
+		(page.url as URL).href = 'http://localhost/board?owner=bo@example.com';
+		await mounted(['ABC-2']);
+		expect(ownerSelect().title).toBe('bo');
+		for (const search of ['?mine=1', '?owner=none', '']) {
+			(page.url as URL).href = `http://localhost/board${search}`;
+			await vi.waitFor(() => {
+				flushSync();
+				expect(ownerSelect().hasAttribute('title')).toBe(false);
+			});
+		}
+	});
+
+	it('shows the full email as the tooltip when two colleagues share a local part', async () => {
+		stories = [
+			withReadiness({ key: 'ABC-1', owner: 'ann@one.example' }),
+			withReadiness({ key: 'ABC-2', owner: 'ann@two.example' })
+		];
+		(page.url as URL).href = 'http://localhost/board?owner=ann@two.example';
+		await mounted(['ABC-2']);
+		expect(ownerSelect().title).toBe('ann@two.example');
+	});
+
 	it('signed out there is no Me, and every owner is in the group', async () => {
 		(session as { me: unknown }).me = null;
 		await mounted();

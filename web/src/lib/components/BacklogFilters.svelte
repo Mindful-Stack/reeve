@@ -30,7 +30,7 @@
 	import { activeFilterCount, backlogState, backlogText, backlogView, stateParam, withoutFilters, withoutText, withPromised, type BacklogState, type BacklogView } from '#lib/backlog.ts';
 	import { isKind, KINDS } from '#lib/board.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { isPromisedFilter, ALL_STORIES, PROMISED_OPTIONS } from '#lib/promise.ts';
+	import { ALL_STORIES, isPromisedFilter, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import Toggle from '#lib/ui/Toggle.svelte';
 
 	let {

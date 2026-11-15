@@ -332,6 +332,25 @@ describe('board goal select', () => {
 	});
 });
 
+describe('board with a draft sprint in the active slot', () => {
+	it('shows no Goal select and does not apply ?goal=', async () => {
+		sprints = {
+			active: sprintView(sprint({ id: 2, state: 'draft', goals: [goal({ id: 1, outcome: 'Ship the import' })] })),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		app = mount(Page, { target: document.body });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(goalSelect()).toBeNull();
+		expect(q('[data-testid="clear-filters"]')).toBeNull();
+	});
+});
+
 describe('board clear filters with a goal set', () => {
 	it('counts an applied goal, and one click removes goal and mine but keeps notready', async () => {
 		// Two cards are mine; only ABC-1 of them serves goal 1, so goal=1&mine=1 is a strict, non-empty subset.
