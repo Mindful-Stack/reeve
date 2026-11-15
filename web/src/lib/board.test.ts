@@ -178,6 +178,16 @@ describe('ownerFilter', () => {
 		expect(read('mine=1&owner=ana@x.se')).toBe('ana@x.se');
 		expect(read('mine=1&owner=none')).toBe('none');
 	});
+
+	it('reads the unowned value in any case, padded or not', () => {
+		expect(read('owner=NONE')).toBe('none');
+		expect(read('owner=None')).toBe('none');
+		expect(read('owner=%20none%20')).toBe('none');
+	});
+
+	it('trims an email', () => {
+		expect(read('owner=%20ana@x.se%20')).toBe('ana@x.se');
+	});
 });
 
 describe('boardOwners', () => {
@@ -225,8 +235,10 @@ describe('ownerSelectValue', () => {
 		expect(ownerSelectValue('ME@x.se', 'me@x.se', options)).toBe('me');
 		// The option's value is the email as the board holds it; the URL's spelling would select nothing.
 		expect(ownerSelectValue('ANA@x.se', 'me@x.se', options)).toBe('ana@x.se');
-		// Signed out, an owner is never "me".
-		expect(ownerSelectValue('me@x.se', null, [{ email: 'me@x.se', label: 'me' }])).toBe('me@x.se');
+		// Signed out, an owner is never "me": the value comes from the option lookup, not the fallback.
+		expect(ownerSelectValue('ME@x.se', undefined, [{ email: 'me@x.se', label: 'me' }])).toBe('me@x.se');
+		// An owner with no option is returned as given (the select then shows no option).
+		expect(ownerSelectValue('cy@x.se', 'me@x.se', options)).toBe('cy@x.se');
 	});
 });
 
@@ -239,9 +251,10 @@ describe('board filter count and clear', () => {
 	});
 
 	it('removes every filter parameter and nothing else', () => {
-		const url = new URL('http://localhost/board?mine=1&owner=a@x.se&goal=any&epic=ABC-7&kind=bug&promised=overdue&untriaged=1&notready=1');
+		const url = new URL('http://localhost/board?mine=1&owner=a@x.se&goal=any&epic=ABC-7&kind=bug&promised=overdue&untriaged=1&notready=1#x');
 		const next = withoutBoardFilters(url);
 		expect(next.search).toBe('?notready=1');
+		expect(next.hash).toBe('#x');
 		// A new URL: the caller's is not changed.
 		expect(url.searchParams.get('goal')).toBe('any');
 		expect([...BOARD_FILTER_PARAMS].sort()).toEqual(['epic', 'goal', 'kind', 'mine', 'owner', 'promised', 'untriaged']);

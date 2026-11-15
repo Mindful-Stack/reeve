@@ -212,12 +212,13 @@ export function applyFilters(stories: StoryWithReadiness[], f: Filters): StoryWi
 	});
 }
 
-/** The board's owner filter from its URL: `owner=none` is the unowned stories, any other `owner` that person's, else
+/** The board's owner filter from its URL: `owner=none` (trimmed, in any case) is the unowned stories, any other `owner`
+ *  that person's, else
  *  `mine=1` the signed-in person's (nobody's while signed out). `owner` wins when both are set. `owner=none` is the
  *  board's own URL value: the server's `owner` parameter takes an email, and the board sends neither. */
 export function ownerFilter(query: Pick<URLSearchParams, 'get'>, me: string | null | undefined): string | 'none' | undefined {
 	const owner = query.get('owner')?.trim();
-	if (owner) return owner;
+	if (owner) return owner.toLowerCase() === 'none' ? 'none' : owner;
 	return query.get('mine') === '1' && me ? me : undefined;
 }
 
@@ -257,7 +258,8 @@ export function boardOwners(
 
 /** The Owner select's value for a filter: `''` (no filter), `'me'`, `'none'`, or the email exactly as its option
  *  holds it. A select shows the option whose value is identical to its own, so the URL's spelling of an email (another
- *  case, padded) would show none. */
+ *  case, padded) would show none. `options` is expected to come from `boardOwners(…, owner)`, which always includes the
+ *  selected owner; if it does not, the URL's spelling is returned and the select shows no option. */
 export function ownerSelectValue(
 	owner: string | 'none' | undefined,
 	me: string | null | undefined,
