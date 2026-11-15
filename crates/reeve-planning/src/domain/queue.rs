@@ -1,6 +1,6 @@
 //! The readiness queue: pure, over decisions and the readiness the loader already computed. Nothing here derives
-//! readiness (kb/ADR-0018 R1, kb/ADR-0013 R4): affected stories and discovery rows are read off the reasons. Rows,
-//! `needed_in`, the next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0018 R1).
+//! readiness (kb/ADR-0027 R1, kb/ADR-0013 R4): affected stories and discovery rows are read off the reasons. Rows,
+//! `needed_in`, the next step and the lane are derived on read and never stored (kb/ADR-0014 R6, kb/ADR-0027 R1).
 //! Only goals and promises put work in this sprint or next. Urgency orders Now rows only: it never places a row in a
 //! lane or counts (kb/ADR-0024 R7).
 
@@ -15,7 +15,7 @@ use reeve_protocol::{
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// An unfinished story with the facts the queue classifies by (kb/ADR-0018 R5: unfinished is delivery not done).
+/// An unfinished story with the facts the queue classifies by (unfinished: delivery not done).
 #[derive(Debug, Clone)]
 pub struct AffectedStory {
     pub key: Key,

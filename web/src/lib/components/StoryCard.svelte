@@ -67,7 +67,7 @@
 		...(onresolve ? [{ label: 'Change resolution', onselect: onresolve, disabled: busy }] : [])
 	]);
 	const note = $derived(freshNote(live.recent, s.key, session.me?.email));
-	// The readiness word is the server's answer rendered short (kb/ADR-0018 R1); a done card shows its resolution.
+	// The readiness word is the server's answer rendered short (kb/ADR-0027 R1); a done card shows its resolution.
 	const status = $derived(storyStatus(item));
 	// Urgent: the server's sources are non-empty (a done story has none). The ring is an inset shadow, distinct from
 	// `.fresh`'s accent border, and the chip keeps the word so it is never colour alone.

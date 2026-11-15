@@ -2,7 +2,7 @@
 //! written: names, references, and each item's own rules (the same constructors the creates use). Then the items are
 //! created through the ordinary create handlers, in dependency order, each under the idempotency key
 //! `plan:<len(id)>:<id>:<name>`, so a second apply of the same plan answers every item as existing and writes nothing. Nothing
-//! here bypasses a rule a single create keeps: activity entries, external references and blocker cycles are checked
+//! here bypasses a rule a single create keeps: activity entries, external references and blocker targets are checked
 //! by the handlers the plan calls. A story carrying a migrated ticket's active state is grandfathered as the
 //! importer does: created in that state and logged `imported`, never through `move_story`.
 use super::import::check_item_ref;

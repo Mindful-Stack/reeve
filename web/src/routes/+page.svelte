@@ -27,7 +27,7 @@
 	let loadError = $state<string | null>(null);
 	let notice = $state<{ text: string; tone: 'info' | 'error' } | null>(null);
 	let busy = $state(false);
-	/** A Start refused for readiness reasons, waiting for the person's written reason (kb/ADR-0018 R2). */
+	/** A Start refused for readiness reasons, waiting for the person's written reason (kb/ADR-0027 R2). */
 	let override = $state<{ row: StoryWithReadiness; reasons: Reason[] } | null>(null);
 	let showMore = $state(false);
 

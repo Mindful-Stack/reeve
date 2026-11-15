@@ -42,7 +42,7 @@ pub struct StoryFilter {
     pub epic: Option<Key>,
     pub owner: Option<String>,
     pub delivery: Option<DeliveryState>,
-    /// Items of any kind without an epic that are not done (kb/ADR-0018 R4).
+    /// Items of any kind without an epic that are not done (kb/ADR-0027 R4).
     pub untriaged: bool,
     pub label: Option<String>,
     /// Goal membership, applied after the stories are read (`goal=<id>|any|none`); combines with every other filter.
@@ -76,7 +76,7 @@ pub enum DoneWindow {
     /// Done stories that entered done at or after this instant (one with no `done_at` is not kept).
     Since(DateTime<Utc>),
     /// No done stories: every story whose delivery is not done, of any state otherwise (wire `done=none`; the
-    /// decision queue's read, kb/ADR-0018 R5).
+    /// decision queue's read).
     None,
 }
 

@@ -38,13 +38,13 @@ impl Handlers {
                 current: story.version(),
             });
         }
-        let readiness = self.readiness_in(&mut tx, key).await?;
+        let actor = reeve_protocol::normalise_email(&c.actor);
+        let readiness = self.readiness_in(&mut tx, key, Some(&actor)).await?;
         let token = if c.via != Via::Interactive {
             TokenKind::Automation
         } else {
             TokenKind::Interactive
         };
-        let actor = reeve_protocol::normalise_email(&c.actor);
         let outcome = story.move_to(
             Move {
                 to,

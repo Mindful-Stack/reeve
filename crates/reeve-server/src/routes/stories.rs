@@ -32,7 +32,7 @@ pub struct StoryQuery {
     pub epic: Option<KeyRef>,
     pub owner: Option<String>,
     pub delivery: Option<DeliveryState>,
-    /// Items of any kind with no epic that are not done (kb/ADR-0018 R4).
+    /// Items of any kind with no epic that are not done (kb/ADR-0027 R4).
     #[serde(default)]
     pub untriaged: bool,
     pub label: Option<String>,

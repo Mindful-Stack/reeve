@@ -1,5 +1,5 @@
 <!-- web/src/routes/backlog/+page.svelte: the ranked todo list and the home of every epic. Readiness is the
-     server's (kb/ADR-0018 R1); a refused move raises the interactive override prompt (R2). -->
+     server's (kb/ADR-0027 R1); a refused move raises the interactive override prompt (R2). -->
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';

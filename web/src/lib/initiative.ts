@@ -1,5 +1,5 @@
 // Pure helpers for the initiative page: per-epic story counts, the epic card's status line and the
-// decisions the status strip names. Readiness and blocking come from server data only (kb/ADR-0018 R1/R3).
+// decisions the status strip names. Readiness and blocking come from server data only (kb/ADR-0027 R1/R3).
 import type { Epic, Initiative, RequiredDecision, StoryWithReadiness } from '#lib/api/types.ts';
 import { blocking } from '#lib/decisions.ts';
 

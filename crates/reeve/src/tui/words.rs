@@ -37,7 +37,9 @@ pub fn short(r: &Reason) -> String {
             Some(s) => format!("decision: superseded by {s}, re-point"),
             None => format!("decision: {status}"),
         },
-        Reason::BlockedBy { story } => format!("blocked by {story}"),
+        Reason::BlockedBy {
+            story, delivery, ..
+        } => format!("blocked by {story} ({})", state(*delivery)),
         Reason::ResolutionRequired => "resolution required".into(),
         Reason::CompletedNeedsActiveOrigin => "completed needs active work".into(),
         Reason::OverrideNeedsReason => "override needs a reason".into(),
@@ -63,13 +65,7 @@ pub fn readiness_short(r: &Readiness) -> String {
 }
 
 pub fn state(s: DeliveryState) -> &'static str {
-    match s {
-        DeliveryState::Todo => "todo",
-        DeliveryState::InProgress => "in progress",
-        DeliveryState::InReview => "in review",
-        DeliveryState::Testing => "testing",
-        DeliveryState::Done => "done",
-    }
+    crate::render::state_phrase(s)
 }
 
 pub fn kind(k: Kind) -> &'static str {
@@ -172,8 +168,10 @@ mod tests {
             (
                 Reason::BlockedBy {
                     story: key("ABC-12"),
+                    delivery: DeliveryState::InReview,
+                    owner: Some("dan@example.com".into()),
                 },
-                "blocked by ABC-12",
+                "blocked by ABC-12 (in review)",
                 true,
             ),
             (Reason::ResolutionRequired, "resolution required", false),
@@ -221,6 +219,10 @@ mod tests {
         let table =
             &web[web.find("export const SHORT").unwrap()..web.find("export const FULL").unwrap()];
         let templates = [
+            (
+                "blocked by ABC-12 (in review)",
+                "blocked by ${r.story} (${COLUMN_LABEL[r.delivery]})",
+            ),
             ("ABC-7", "${r.item}"),
             ("ABC-12", "${r.story}"),
             ("kb/ADR-0004", "${r.superseded_by}"),

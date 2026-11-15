@@ -242,7 +242,7 @@ pub struct DecisionQueueSummaryDto {
 }
 
 /// A discovery row of the readiness queue: an initiative or epic without its discovery mark that holds unfinished
-/// stories (kb/ADR-0002 R3, read off readiness, never stored: kb/ADR-0018 R1).
+/// stories (kb/ADR-0002 R3, read off readiness, never stored: kb/ADR-0027 R1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryEntryDto {
     pub key: Key,

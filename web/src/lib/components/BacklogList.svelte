@@ -1,6 +1,6 @@
 <!-- web/src/lib/components/BacklogList.svelte: one list of backlog rows in the server's order: drag handle, rank (or
      the delivery state of a row that is not todo), key, title (opens the drawer; the text filter's matches marked),
-     optional epic, status (the server's readiness, kb/ADR-0018 R1, or a done row's resolution), owner and an actions
+     optional epic, status (the server's readiness, kb/ADR-0027 R1, or a done row's resolution), owner and an actions
      menu. Ranking targets come from the rows of this list; the page does the writes and says when ranking is offered
      at all. -->
 <script lang="ts">

@@ -3,7 +3,7 @@ id: kb/ADR-0018
 title: "ADR-0018: Readiness is computed from facts, gates every entry into active work with an interactive-only override, and an item of any kind without an epic needs placement"
 description: "We decided that readiness stays computed from facts and gates every entry into active work with an interactive-only override, and that an item of any kind without an epic is untriaged and not ready, because work reported from anywhere must reach triage and the team already places every bug and chore under an epic."
 tags: [adr, reeve, readiness, gate, domain, triage]
-status: accepted
+status: superseded
 date: 2026-11-09
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: []
 scope: ["reeve:crates/reeve-planning/**", "reeve:crates/reeve/**", "reeve:web/src/**", "lorekeeper:skills/**", "lorekeeper:references/**"]
 supersedes: [kb/ADR-0003]
-superseded_by:
+superseded_by: kb/ADR-0027
 depends_on: [kb/ADR-0002, kb/ADR-0004]
 related: [kb/ADR-0014]
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-11-09.
 Accepted 2026-11-10 by Daniel Thyselius.
+Superseded 2026-11-12 by kb/ADR-0027.
 
 ## Context
 This record replaces kb/ADR-0003 and changes one clause of it. What changed: the web client gains a Report entry point reachable from every page, through which anyone files a bug, a story or a chore without knowing which epic owns it, and a triager places it. kb/ADR-0003 made only a story of kind story without an epic untriaged; a bug or chore without an epic was legal and could be ready, so a bug filed through that entry point would never appear in the triage filter and could be started unplaced. The placement tree the triage skill applies still allowed "a bug under the owning epic or none", but in practice the team places every item: of 443 stories in the team's own instance, one, a chore, had no epic.

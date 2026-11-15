@@ -33,7 +33,20 @@ describe('reason labels', () => {
 		expect(shortLabel(proposed)).toBe('decision: proposed (PR linked)');
 		expect(fullLabel(proposed)).toBe('decision "Use Postgres" is proposed; its PR is linked');
 
-		expect(shortLabel({ reason: 'blocked_by', story: 'ABC-9' })).toBe('blocked by ABC-9');
+		expect(shortLabel({ reason: 'blocked_by', story: 'ABC-12', delivery: 'in_review', owner: 'dan@example.com' })).toBe(
+			'blocked by ABC-12 (in review)'
+		);
+	});
+
+	it('says who can unblock a blocker', () => {
+		const b = (delivery: 'todo' | 'in_progress' | 'in_review', owner: string | null) =>
+			fullLabel({ reason: 'blocked_by', story: 'ABC-4', delivery, owner });
+		expect(b('todo', null)).toBe('blocked by ABC-4: todo, not yet started by anyone');
+		expect(b('todo', 'dan@example.com')).toBe('blocked by ABC-4: todo, owned by dan@example.com');
+		expect(b('in_review', 'dan@example.com')).toBe(
+			'blocked by ABC-4: in review, owned by dan@example.com; it unblocks when merged, or ask its owner'
+		);
+		expect(b('in_progress', null)).toBe('blocked by ABC-4: in progress, no owner; it unblocks when merged');
 	});
 
 	it('shortReason says ready, or renders only the first reason', () => {
@@ -41,7 +54,7 @@ describe('reason labels', () => {
 		expect(
 			shortReason({
 				ready: false,
-				reasons: [{ reason: 'no_criteria' }, { reason: 'blocked_by', story: 'ABC-9' }]
+				reasons: [{ reason: 'no_criteria' }, { reason: 'blocked_by', story: 'ABC-9', delivery: 'todo', owner: null }]
 			})
 		).toBe('no criteria');
 	});
@@ -78,7 +91,7 @@ describe('applyFilters', () => {
 		sw('ABC-5', { epic: null, kind: 'chore' }, [{ reason: 'untriaged' }]),
 		// The client must not re-derive it: no epic but no untriaged reason from the server, so not untriaged.
 		sw('ABC-6', { epic: null }),
-		// Done items leave the filter even if they carry the reason (kb/ADR-0018 R4: epic-less and not done).
+		// Done items leave the filter even if they carry the reason (kb/ADR-0027 R4: epic-less and not done).
 		sw('ABC-8', { epic: null, delivery: 'done' }, [{ reason: 'untriaged' }])
 	];
 	const keys = (f: Parameters<typeof applyFilters>[1]) => applyFilters(all, f).map((s) => s.story.key);
@@ -305,8 +318,8 @@ describe('storyStatus', () => {
 		expect(storyStatus(statusItem('todo'))).toEqual({ word: 'ready', tone: 'ready' });
 	});
 	it('names the first of several distinct reasons, in its exact short label', () => {
-		const item = sw('S1', {}, [{ reason: 'blocked_by', story: 'ABC-9' }, { reason: 'no_criteria' }, { reason: 'untriaged' }]);
-		expect(storyStatus(item)).toEqual({ word: 'blocked by ABC-9', tone: 'warn' });
+		const item = sw('S1', {}, [{ reason: 'blocked_by', story: 'ABC-9', delivery: 'todo', owner: null }, { reason: 'no_criteria' }, { reason: 'untriaged' }]);
+		expect(storyStatus(item)).toEqual({ word: 'blocked by ABC-9 (todo)', tone: 'warn' });
 		const other = sw('S2', {}, [{ reason: 'no_criteria' }, { reason: 'untriaged' }]);
 		expect(storyStatus(other)).toEqual({ word: 'no criteria', tone: 'warn' });
 	});

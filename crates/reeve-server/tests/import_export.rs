@@ -228,7 +228,7 @@ async fn import_on_admits_only_an_interactive_admin_and_creates_readable_items()
     );
 }
 
-/// An epic-less bug (untriaged by kb/ADR-0018 R4) in an active state is created in that state, logged `imported`, and
+/// An epic-less bug (untriaged by kb/ADR-0027 R4) in an active state is created in that state, logged `imported`, and
 /// never as an `override`: the importer does not go through the readiness gate.
 #[tokio::test]
 async fn an_imported_epicless_bug_keeps_its_active_state_with_no_override_entry() {

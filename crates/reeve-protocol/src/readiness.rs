@@ -1,3 +1,4 @@
+use crate::enums::DeliveryState;
 use crate::ids::Key;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -39,8 +40,12 @@ pub enum Reason {
         status: String,
         superseded_by: Option<String>,
     },
+    /// A blocking story that is unfinished for this story (kb/ADR-0027 R5), with what decides when it unblocks: its
+    /// delivery (merged, it blocks nobody) and its owner (who can build on it, or whom to ask).
     BlockedBy {
         story: Key,
+        delivery: DeliveryState,
+        owner: Option<String>,
     },
     ResolutionRequired,
     CompletedNeedsActiveOrigin,
@@ -158,7 +163,11 @@ mod tests {
                 status: "rejected".into(),
                 superseded_by: None,
             },
-            Reason::BlockedBy { story: k() },
+            Reason::BlockedBy {
+                story: k(),
+                delivery: DeliveryState::Todo,
+                owner: None,
+            },
             Reason::ResolutionRequired,
             Reason::CompletedNeedsActiveOrigin,
             Reason::OverrideNeedsReason,
@@ -212,7 +221,11 @@ mod tests {
                 status: "rejected".into(),
                 superseded_by: None,
             },
-            Reason::BlockedBy { story: k() },
+            Reason::BlockedBy {
+                story: k(),
+                delivery: DeliveryState::Todo,
+                owner: None,
+            },
         ];
         let rules = [
             Reason::ResolutionRequired,
@@ -237,11 +250,13 @@ mod tests {
     fn reason_tags_are_snake_case() {
         let b = serde_json::to_value(Reason::BlockedBy {
             story: "ABC-3".parse().unwrap(),
+            delivery: DeliveryState::InReview,
+            owner: Some("dan@example.com".into()),
         })
         .unwrap();
         assert_eq!(
             b,
-            serde_json::json!({"reason":"blocked_by","story":"ABC-3"})
+            serde_json::json!({"reason":"blocked_by","story":"ABC-3","delivery":"in_review","owner":"dan@example.com"})
         );
         let d = serde_json::to_value(Reason::DecisionNotAccepted {
             decision_id: 1,

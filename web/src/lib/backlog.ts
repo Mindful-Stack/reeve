@@ -1,6 +1,6 @@
 // web/src/lib/backlog.ts
 // The backlog's "by epic" view: epic-less stories (all untriaged, one rank run) first, then every epic under its initiative in planning
-// order, then epics with no initiative. Readiness is the server's (kb/ADR-0018 R1). Below it, the backlog URL's mapping to
+// order, then epics with no initiative. Readiness is the server's (kb/ADR-0027 R1). Below it, the backlog URL's mapping to
 // the story list's query (kb/ADR-0021 R1: the server filters, the client never filters a full list).
 import type { Epic, Initiative, PromisedFilter, StoryQuery, StoryWithReadiness } from '#lib/api/types.ts';
 import { isKind, isUntriaged } from '#lib/board.ts';
