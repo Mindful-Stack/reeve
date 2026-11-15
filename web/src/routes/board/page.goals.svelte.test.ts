@@ -80,8 +80,8 @@ function serve(c: Call): unknown {
 	throw new Error(`unexpected ${method} ${path}`);
 }
 
-const view = () =>
-	sprintView(sprint({ goals: [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })] }), {
+const view = (goals = [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })]) =>
+	sprintView(sprint({ goals }), {
 		counts: {
 			completed: 3,
 			upkeep_completed: 1,
@@ -180,7 +180,9 @@ describe('board goal select', () => {
 			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2', 'ABC-3', 'ABC-6']);
 		});
 		expect(page.url.searchParams.get('goal')).toBe('any');
-		expect(goalSelect()!.value).toBe('any');
+		// Only holds once the URL change has rendered back into the select.
+		flushSync();
+		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('any');
 		// The select filters, it never moves cards.
 		expect(q('[data-testid="column-in_progress"] [data-testid="card-ABC-2"]')).not.toBeNull();
 		expect(q('[data-testid="column-testing"] [data-testid="card-ABC-6"]')).not.toBeNull();
@@ -201,7 +203,8 @@ describe('board goal select', () => {
 			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
 		});
 		expect(page.url.searchParams.get('goal')).toBe('1');
-		expect(goalSelect()!.value).toBe('1');
+		flushSync();
+		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('1');
 	});
 
 	it('Upkeep shows only the stories that serve no goal', async () => {
@@ -228,13 +231,52 @@ describe('board goal select', () => {
 		expect(goalSelect()!.hasAttribute('title')).toBe(false);
 	});
 
-	it('keeps the chosen goal and its cards across a live refetch', async () => {
+	it('keeps the chosen goal and its cards when a live refetch re-renders the options', async () => {
 		(page.url as URL).href = 'http://localhost/board?goal=1';
 		await mounted();
+		expect(goalSelect()!.title).toBe('Ship the import (at risk)');
+		// The refetch answers differently: goal 1's confidence changes and a goal 3 appears, so the options re-render.
+		sprints = {
+			active: view([
+				goal({ id: 1, outcome: 'Ship the import', confidence: 'off_track' }),
+				goal({ id: 2, outcome: 'Faster board' }),
+				goal({ id: 3, outcome: 'Cut the queue' })
+			]),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
 		for (const f of live.fns) f();
-		await settle();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()!.title).toBe('Ship the import (off track)');
+			expect(goalSelect()!.querySelector('option[value="3"]')).not.toBeNull();
+		});
 		expect(goalSelect()!.value).toBe('1');
+		expect((goalSelect()!.querySelector('option:checked') as HTMLOptionElement).value).toBe('1');
 		expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
+		expect(page.url.searchParams.get('goal')).toBe('1');
+	});
+
+	it('a refetch whose sprint no longer has the chosen goal shows all stories and keeps ?goal= in the URL', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		await mounted();
+		expect(goalSelect()!.title).toBe('Ship the import (at risk)');
+		sprints = {
+			active: view([goal({ id: 2, outcome: 'Faster board' }), goal({ id: 3, outcome: 'Cut the queue' })]),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		for (const f of live.fns) f();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()!.querySelector('option[value="3"]')).not.toBeNull();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(goalSelect()!.value).toBe('');
+		expect(goalSelect()!.hasAttribute('title')).toBe(false);
+		expect(page.url.searchParams.get('goal')).toBe('1');
 	});
 
 	it('a refetch in which the sprint has closed takes the select away and brings every card back', async () => {
@@ -260,6 +302,7 @@ describe('board goal select', () => {
 		await vi.waitFor(() => {
 			flushSync();
 			expect(goalSelect()?.value).toBe('any');
+			expect(q('[data-testid="column-todo"]')).not.toBeNull();
 		});
 		expect(goalSelect()!.querySelector('optgroup')).toBeNull();
 		expect(shownKeys()).toEqual([]);
