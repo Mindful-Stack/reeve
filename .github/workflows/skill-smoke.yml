@@ -77,7 +77,7 @@ jobs:
           fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
         with: { cache: true }
       # mise's pinned ShellCheck (mise.toml), the one script-test uses; the lint runs before the long build.
       - name: shellcheck
