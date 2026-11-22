@@ -86,6 +86,25 @@ describe('renderMarkdown', () => {
 	});
 });
 
+describe('tables', () => {
+	const table = '| # | What | Priority |\n|---|:---|:---:|\n| 1 | See each other | High |\n| 2 | Regroup | |';
+
+	it('renders a pipe table with its header, rows and column alignment', () => {
+		const el = parse(table);
+		expect([...el.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['#', 'What', 'Priority']);
+		expect(el.querySelectorAll('tbody tr')).toHaveLength(2);
+		expect([...el.querySelectorAll('thead th')].map((th) => th.getAttribute('align'))).toEqual([null, 'left', 'center']);
+	});
+
+	it('puts each table in a wrapper that scrolls, so a wide table never widens the page', () => {
+		const el = parse(`before\n\n${table}\n\nafter`);
+		const wrap = el.querySelector('div.table-scroll');
+		expect(wrap?.children).toHaveLength(1);
+		expect(wrap?.firstElementChild?.tagName).toBe('TABLE');
+		expect(wrap?.getAttribute('tabindex')).toBe('0');
+	});
+});
+
 describe('images', () => {
 	const id = '0f8b2c3e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
 	it('loads lazily and links an attachment image to its full size', () => {

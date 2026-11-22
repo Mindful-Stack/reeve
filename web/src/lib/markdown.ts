@@ -46,5 +46,13 @@ export function renderMarkdown(md: string): string {
 			a.append(img);
 		}
 	}
+	// A table gets a wrapper that scrolls sideways (styled in app.css), focusable so the keyboard can scroll it.
+	for (const table of body.querySelectorAll('table')) {
+		const wrap = table.ownerDocument.createElement('div');
+		wrap.setAttribute('class', 'table-scroll');
+		wrap.setAttribute('tabindex', '0');
+		table.replaceWith(wrap);
+		wrap.append(table);
+	}
 	return body.innerHTML;
 }
