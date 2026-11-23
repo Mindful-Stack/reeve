@@ -26,6 +26,9 @@ pub struct Session {
     /// Final: no message clears it (kb/ADR-0015 R5).
     pub signed_out: bool,
     pub reeve_token_set: bool,
+    /// The build the server offers differs from this stamped binary's, as the startup probe saw it, and the notice is
+    /// not switched off (kb/ADR-0030 R6). Final: decided before the TUI starts; no message changes it.
+    pub cli_differs: bool,
     me_attempt: usize,
     me_gen: Gen,
 }
@@ -110,6 +113,8 @@ pub struct Start {
     /// `None`: the first `/me` could not be reached; the TUI starts `connecting`.
     pub me: Option<Me>,
     pub reeve_token_set: bool,
+    /// See `Session::cli_differs`.
+    pub cli_differs: bool,
     pub width: u16,
     pub height: u16,
     pub color: bool,
@@ -192,6 +197,7 @@ impl State {
                 me: start.me,
                 signed_out: false,
                 reeve_token_set: start.reeve_token_set,
+                cli_differs: start.cli_differs,
                 me_attempt: 0,
                 me_gen: Gen::default(),
             },

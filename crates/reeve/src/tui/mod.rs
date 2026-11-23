@@ -80,6 +80,8 @@ pub struct Setup {
     /// `None`: the first `/me` could not be reached; the TUI starts `connecting`.
     pub me: Option<Me>,
     pub reeve_token_set: bool,
+    /// Whether the header shows the CLI build note, decided from the startup probe.
+    pub cli_differs: bool,
     pub color: bool,
     pub options: Options,
 }
@@ -118,6 +120,7 @@ where
                 url: setup.url,
                 me: setup.me,
                 reeve_token_set: setup.reeve_token_set,
+                cli_differs: setup.cli_differs,
                 width: size.width,
                 height: size.height,
                 color: setup.color,
@@ -313,6 +316,7 @@ pub async fn main() -> i32 {
         token: login.token,
         me,
         reeve_token_set: login.reeve_token_set,
+        cli_differs: false,
         color,
         options,
     };
@@ -354,6 +358,7 @@ mod tests {
             token: "t".into(),
             me: None,
             reeve_token_set: false,
+            cli_differs: false,
             color: false,
             options: Options::default(),
         };

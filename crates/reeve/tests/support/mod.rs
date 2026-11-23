@@ -486,6 +486,7 @@ pub fn tui(url: &str, token: &str, me: Option<Me>, options: Options) -> Tui {
         token: token.into(),
         me,
         reeve_token_set: false,
+        cli_differs: false,
         color: false,
         options,
     };
