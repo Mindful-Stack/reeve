@@ -34,7 +34,7 @@ pub fn short(v: &str) -> &str {
 /// build is the older one; "between commands" tells an agent when to update (kb/ADR-0030 R8).
 pub fn notice(current: Option<&str>, offered: Option<&str>, ascii: bool) -> Option<String> {
     let (c, s) = (current?, offered?);
-    (is_cli_version(s) && c != s).then(|| {
+    (is_cli_version(c) && is_cli_version(s) && c != s).then(|| {
         format!(
             "{PREFIX} {}, the server offers {} {} run reeve update between commands",
             short(c),
@@ -66,7 +66,8 @@ pub fn setting() -> Option<String> {
     std::env::var("REEVE_UPDATE_NOTICE").ok()
 }
 
-/// The last offered build any `Client` in this process was sent.
+/// The last offered build any `Client` in this process was sent. Process-wide: unit tests must not assert on it (they
+/// share the process); `notify()` is covered by subprocess tests.
 static SEEN: Mutex<Option<String>> = Mutex::new(None);
 
 /// Records a server's `X-Reeve-Cli` (called by `Client` for every response that carries one).

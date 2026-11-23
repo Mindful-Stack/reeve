@@ -187,12 +187,13 @@ impl Client {
         let res = req.send().await?;
         let status = res.status().as_u16();
         let headers = res.headers().clone();
-        if let Some(v) = header(
-            &headers,
-            reqwest::header::HeaderName::from_static(reeve_protocol::CLI_VERSION_HEADER),
-        ) {
-            crate::cli_version::observe(&v);
-            *self.server_cli.lock().unwrap() = Some(v);
+        if let Some(v) = headers
+            .get(reeve_protocol::CLI_VERSION_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| reeve_protocol::is_cli_version(v))
+        {
+            crate::cli_version::observe(v);
+            *self.server_cli.lock().unwrap() = Some(v.to_string());
         }
         Ok((status, headers, res.bytes().await?.to_vec()))
     }
@@ -279,9 +280,16 @@ mod tests {
         tokio::spawn(async move {
             for a in answers {
                 let (mut s, _) = l.accept().await.unwrap();
-                let mut buf = [0u8; 4096];
-                let _ = s.read(&mut buf).await; // one small GET fits
+                let mut req = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match s.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
                 s.write_all(a.as_bytes()).await.unwrap();
+                let _ = s.shutdown().await;
             }
         });
         url
@@ -302,7 +310,13 @@ mod tests {
     async fn the_client_keeps_the_last_offered_build_it_was_sent() {
         let a = "a".repeat(40);
         let b = "b".repeat(40);
-        let url = raw(vec![answer(Some(&a)), answer(Some(&b)), answer(None)]).await;
+        let url = raw(vec![
+            answer(Some(&a)),
+            answer(Some(&b)),
+            answer(None),
+            answer(Some("not-a-version")),
+        ])
+        .await;
         let c = Client::new(url, "t".into());
         assert_eq!(c.server_cli(), None, "nothing before the first answer");
         let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
@@ -318,6 +332,12 @@ mod tests {
             c.server_cli().as_deref(),
             Some(b.as_str()),
             "an answer without the header keeps it"
+        );
+        let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
+        assert_eq!(
+            c.server_cli().as_deref(),
+            Some(b.as_str()),
+            "a garbled header is ignored"
         );
     }
     #[test]

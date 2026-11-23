@@ -80,9 +80,10 @@ pub fn set_ascii(on: bool) {
 
 /// The dash in prose: `—`, or `--` with the ASCII fallback on.
 pub fn dash() -> &'static str {
-    dash_with(ASCII.load(Ordering::Relaxed))
+    dash_with(ascii())
 }
 
+/// The dash for an explicit ASCII setting (for callers that carry their own).
 pub fn dash_with(ascii: bool) -> &'static str {
     if ascii { "--" } else { "—" }
 }
