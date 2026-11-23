@@ -96,6 +96,8 @@ pub struct Script {
     live_tx: UnboundedSender<String>,
     live_rx: Mutex<Option<UnboundedReceiver<String>>>,
     pub seen: Mutex<Seen>,
+    /// The `X-Reeve-Cli` value every answer carries, when set.
+    pub cli: Mutex<Option<String>>,
 }
 
 pub fn me(kind: TokenKind) -> Me {
@@ -119,6 +121,7 @@ impl Script {
             live_tx,
             live_rx: Mutex::new(Some(live_rx)),
             seen: Mutex::new(Seen::default()),
+            cli: Mutex::new(None),
         })
     }
     pub fn seen<R>(&self, f: impl FnOnce(&Seen) -> R) -> R {
@@ -411,6 +414,13 @@ async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
 }
 
 /// Serves the script on a free loopback port; returns the base url.
+async fn add_cli(State(s): State<Arc<Script>>, mut res: Response) -> Response {
+    if let Some(v) = s.cli.lock().unwrap().clone() {
+        res.headers_mut().insert("x-reeve-cli", v.parse().unwrap());
+    }
+    res
+}
+
 pub async fn serve(s: Arc<Script>) -> String {
     let me = s.me.clone();
     let config = InstanceConfigDto {
@@ -435,6 +445,10 @@ pub async fn serve(s: Arc<Script>) -> String {
         .route("/api/v1/stories/{key}/move", post(mv))
         .route("/api/v1/stories/{key}/urgent", post(urgent).delete(urgent))
         .route("/api/v1/events", get(events))
+        .layer(axum::middleware::map_response_with_state(
+            s.clone(),
+            add_cli,
+        ))
         .with_state(s);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());

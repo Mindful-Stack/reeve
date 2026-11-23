@@ -46,13 +46,6 @@ pub fn notice(current: Option<&str>, offered: Option<&str>, ascii: bool) -> Opti
 }
 
 /// Whether the TUI shows its note: exactly when a command would print the notice, under the same switch.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the TUI header note (a later task) is its caller; remove this then"
-    )
-)]
 pub fn tui_note(current: Option<&str>, offered: Option<&str>, setting: Option<&str>) -> bool {
     enabled(setting) && notice(current, offered, false).is_some()
 }

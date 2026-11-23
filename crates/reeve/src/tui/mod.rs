@@ -301,6 +301,14 @@ pub async fn main() -> i32 {
             return 1;
         }
     };
+    // Decided once, before the terminal is taken over (kb/ADR-0030 R6): the probe's answer carried the offered build.
+    // The runtime client (`tui/http.rs`) also writes the process-wide cell; harmless, since `cli()` never calls
+    // `notify` for `tui`.
+    let cli_differs = crate::cli_version::tui_note(
+        crate::cli_version::current().as_deref(),
+        probe.server_cli().as_deref(),
+        crate::cli_version::setting().as_deref(),
+    );
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     // Before `enter`, so a signal between the two still exits (restoring is a no-op until entered).
     term::watch_signals();
@@ -316,7 +324,7 @@ pub async fn main() -> i32 {
         token: login.token,
         me,
         reeve_token_set: login.reeve_token_set,
-        cli_differs: false,
+        cli_differs,
         color,
         options,
     };
