@@ -77,10 +77,13 @@ jobs:
       - id: version
         env:
           LOCKED: ${{ inputs.locked-version }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           version=$(scripts/cli-version.sh)
-          # Called from release.yml: the lock it holds must be this version's, or two runs could build one version.
+          # Called from release.yml: the lock it holds must be this version's, or two runs could build one version. A
+          # push run can publish, so it must hold a lock: an empty locked-version there would run unlocked.
+          [ "$EVENT" != push ] || [ -n "$LOCKED" ] || { echo "a push run needs locked-version (release.yml's lock)" >&2; exit 1; }
           [ -z "$LOCKED" ] || [ "$LOCKED" = "$version" ] || { echo "locked on CLI version '$LOCKED', computed '$version'" >&2; exit 1; }
           echo "version=$version" >>"$GITHUB_OUTPUT"
       # The lookup gates the builds on a release run (inside release.yml's lock, so a run that waited sees what the

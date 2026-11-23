@@ -1,0 +1,13 @@
+# Builds the server image with the CLI bundle of this commit, so it serves the CLI under /cli/ (deploy/README.md,
+# "CLI distribution"). Give it on every build, with REEVE_CLI_BUNDLE set to what scripts/cli-version.sh prints:
+#
+#   v=$(scripts/cli-version.sh) && REEVE_CLI_BUNDLE=$v docker compose -f docker-compose.yml -f docker-compose.cli.yml up -d --build
+#
+# (add -f docker-compose.override.yml last if you have one: with -f, compose no longer reads it by itself). Unset or
+# empty, compose refuses to start rather than build without a bundle. Do not pin the value in .env: it changes
+# whenever the CLI does.
+services:
+  server:
+    build:
+      additional_contexts:
+        cli: docker-image://ghcr.io/mindful-stack/reeve-cli:${REEVE_CLI_BUNDLE:?set REEVE_CLI_BUNDLE to what scripts/cli-version.sh prints}

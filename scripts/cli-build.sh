@@ -2,8 +2,8 @@
 # scripts/cli-build.sh — builds one release target of the reeve CLI stamped with its CLI version, runs and checks the
 # binary on this runner, and copies it to <out-dir>/<file name> (kb/ADR-0030 R2). The targets and their bundle file
 # names live here; crates/reeve-server/tests/cli_files.rs keeps them equal to reeve_protocol::CLI_BINARIES. This script
-# is a CLI input (scripts/cli-version.sh names it). The compiler is rust-toolchain.toml's channel: each CLI version is built once, so a
-# floating stable never makes two different builds of one version.
+# is a CLI input (scripts/cli-version.sh names it). The compiler is rust-toolchain.toml's channel: each CLI version is
+# built once, so a floating stable never makes two different builds of one version.
 #
 #   scripts/cli-build.sh <target> <cli-version> <out-dir>   build, check, copy; prints the copied file's path
 #   scripts/cli-build.sh --targets                          the supported targets, one per line

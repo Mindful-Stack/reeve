@@ -40,9 +40,12 @@ jobs:
   # workflow holds for the whole called workflow, so cli.yml's registry lookup, its builds, the assembly and the push
   # all run inside it, and a run that waited behind one that published the version finds it published and builds
   # nothing. cancel-in-progress: false never cancels a run holding the lock; GitHub keeps at most one pending run per
-  # group, so a third run for the same version replaces (cancels) the one waiting, and that cancelled run publishes no
-  # image: the newer commit's run does. cli.yml takes no lock of its own (a nested group of the same name would wait
-  # on this one forever; scripts/tests/workflows.sh checks both).
+  # group, so a third run for the same version replaces (cancels) the one waiting. Which run waits is decided by when
+  # its `cli-version` job reached the group, not by commit order, so the cancelled run may be the newest commit's: its
+  # commit then gets no image and no notify until someone re-runs it by hand ("Re-run all jobs": it takes the lock,
+  # finds the bundle published, and publishes the image; deploy/README.md, "Subscribe to releases"). cli.yml takes no
+  # lock of its own (a nested group of the same name would wait on this one forever; scripts/tests/workflows.sh checks
+  # both).
   cli:
     needs: cli-version
     concurrency:

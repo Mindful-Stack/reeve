@@ -64,6 +64,12 @@ one that refuses the dispatch. This repository's run logs are public, so they sh
 a repository's name; check delivery in your own repository's Actions tab. The dispatch is best effort: a release
 that fails to reach you is not retried, so keep a daily check of your own as a fallback.
 
+Not every commit on `main` gets an image. While one release run builds a new CLI version, GitHub keeps only one more
+run for that version waiting and cancels any earlier waiting one, and which run it keeps depends on when each reached
+the queue, not on commit order, so the newest commit's run can be the one cancelled. A cancelled run shows as
+"cancelled" in the Actions tab and publishes nothing. Maintainers re-run it by hand (**Re-run all jobs**): it waits
+for the lock, finds the bundle already published, and publishes that commit's image and its notification.
+
 **Running the App (maintainers and forks).** The `notify` job reads two repository secrets: `RELEASE_APP_ID` (the
 App's ID or client ID) and `RELEASE_APP_PRIVATE_KEY` (a private key generated in the App's settings, the whole PEM
 file). With neither set it does nothing, which is how a fork starts. For a fork with subscribers of its own, create a
@@ -332,6 +338,10 @@ To check that it is on (`<host>` your `public_url`'s host):
     for i in $(seq 50); do curl -s -o /dev/null -w '%{http_code}\n' https://<host>/cli/VERSION; done | sort | uniq -c
                                                                          # some 429s once the limit below is in place
 
+The last check spends this address's burst, which refills at one request every two seconds: for up to about 80
+seconds after it, an install or `reeve update` from the same address (anyone behind the same NAT included) can get a
+429. Run it from an address nobody installs from, or wait a minute and a half afterwards.
+
 The routes are public, so rate-limit them per client IP at the proxy. An install is four requests (the script,
 `VERSION`, `SHA256SUMS`, the binary) and so is `reeve update` (`VERSION`, `SHA256SUMS`, the binary, `VERSION` again);
 running it again after a failure repeats them. For nginx, 30 a minute per IP with a burst of 40 served at once,
@@ -363,10 +373,21 @@ A per-IP limit caps neither total bandwidth nor what people behind one shared ad
 An image you build yourself serves no CLI unless you give the build the bundle, and the reference stack builds its
 own image (`docker compose up -d --build`). The bundle is published as `ghcr.io/mindful-stack/reeve-cli:<CLI
 version>`, where the CLI version is what `scripts/cli-version.sh` prints for your commit (a full clone is needed).
-`docker-compose.yml` passes it to the build as the `cli` context when `REEVE_CLI_VERSION` is set (Compose 2.17 or
-later; unset, the build carries no bundle):
+`docker-compose.yml` alone builds without it, as it always has; `docker-compose.cli.yml` adds it to the build as the
+`cli` context, named by `REEVE_CLI_BUNDLE` (`build.additional_contexts`, which needs Compose 2.17 or later according
+to its documentation; checked here with Compose 5.6.1). Build this way:
 
-    REEVE_CLI_VERSION=$(scripts/cli-version.sh) docker compose up -d --build
+    v=$(scripts/cli-version.sh) && REEVE_CLI_BUNDLE=$v docker compose -f docker-compose.yml -f docker-compose.cli.yml up -d --build
+
+The `&&` stops when the CLI version cannot be computed (a shallow clone, say), and compose refuses to start when
+`REEVE_CLI_BUNDLE` is unset or empty, so neither builds an image without its bundle by accident. Use this command for
+**every** build, upgrades included: a plain `docker compose up -d --build` builds an image without a bundle, which
+turns distribution off (the log says `cli distribution: off (no bundle …)` at `info`, and responses lose
+`X-Reeve-Cli`, so no CLI is told to update). Do not pin `REEVE_CLI_BUNDLE` in `.env` either: the value changes
+whenever the CLI does, and a stale one builds the previous CLI version's bundle into the image, which the server then
+offers. Keep the variable to this one command rather than exporting it. Naming files with `-f` stops compose from
+reading `docker-compose.override.yml` by itself: if you have one (the decision check's keys, below), add
+`-f docker-compose.override.yml` after the other two.
 
 or, with plain Docker:
 
@@ -388,15 +409,17 @@ the server does not distribute the CLI. Upgrade the instance first.
 **Turning it on for an existing instance**, in order:
 
 1. Configure `public_url` (already set with `[oidc]`; a token-only instance may have none, and stays off).
-2. Add the `reeve_cli` zone and the `location ^~ /cli/` block above to the proxy. Without them `/cli/` still works,
-   through the general location, with no rate limit: working is not the same as done.
-3. On the reference stack, which builds its own image, build with the bundle (`REEVE_CLI_VERSION`, above), or run
-   the published image.
+2. Add the `reeve_cli` zone and the `location ^~ /cli/` block above to the proxy, check it (`nginx -t`) and reload it
+   (`systemctl reload nginx`, or `nginx -s reload`). Without them `/cli/` still works, through the general location,
+   with no rate limit: working is not the same as done.
+3. On the reference stack, which builds its own image, build with the bundle (the `docker-compose.cli.yml` command
+   above, on every build from now on), or run the published image.
 4. Restart, and run the checks above: the log line says `on`, `/cli/VERSION` and `X-Reeve-Cli` name the same CLI
    version.
 5. Tell everyone to run the install line once. A `reeve` built with `cargo install` (or `cargo build`) is unstamped:
-   it never shows the update notice, so it never learns that a newer build is offered. The first install is the one
-   step that cannot happen by itself; after it, `reeve update` keeps each CLI on the server's build.
+   it never shows the update notice, so it never learns that the server offers a different build. The first install
+   is the one step that cannot happen by itself; after it, `reeve update` keeps each CLI on the build the server
+   offers.
 
 ## GitHub webhook
 

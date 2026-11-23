@@ -56,6 +56,9 @@ grep -qx '      cancel-in-progress: false' <<<"$cli_job" || die "release.yml's c
 # shellcheck disable=SC2016 # the expression is GitHub's, matched literally
 grep -qxF '      locked-version: ${{ needs.cli-version.outputs.version }}' <<<"$cli_job" ||
 	die "release.yml's cli job does not hand cli.yml the version it locked"
+# shellcheck disable=SC2016 # the shell text is cli.yml's, matched literally
+grep -qF '[ "$EVENT" != push ] || [ -n "$LOCKED" ] ||' .github/workflows/cli.yml ||
+	die "cli.yml does not refuse a push run without locked-version (it would build and publish unlocked)"
 if grep -q '^    concurrency:' .github/workflows/cli.yml; then
 	die "cli.yml has a job-level concurrency group: inside release.yml's lock, one of the same name never starts"
 fi
