@@ -54,6 +54,7 @@ url = "2"
 axum-extra = { version = "0.12", features = ["cookie"] }
 time = "0.3"
 futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] } # ReaderStream: the CLI binaries are streamed from disk
 urlencoding = "2"
 rust-embed = "8"
 mime_guess = "2"

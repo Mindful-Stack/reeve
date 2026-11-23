@@ -64,6 +64,10 @@ pub struct AppState {
     /// Browsable `https://` base URLs of the configured repositories, by name (no trailing `.git` or `/`), for a
     /// record's `browse_url`. Planning knows names only; a repository without such a URL is absent.
     pub repo_urls: Arc<HashMap<String, String>>,
+    /// The CLI bundle (kb/ADR-0030), while distribution is on. Set only by `main.rs`'s `serve`, through
+    /// `cli_dist::startup` with the directory in `REEVE_CLI_DIR`; `build_state` (and so every test harness) leaves it
+    /// `None`, whatever the host has in `/srv/cli`. `None` serves no `/cli/*` and sends no `X-Reeve-Cli`.
+    pub cli_dist: Option<Arc<crate::cli_dist::CliDist>>,
     /// The MCP tools, built once here (`mcp::build_tools`); `tools/list`, `tools/call` and the startup line read
     /// this one list.
     pub(crate) mcp_tools: crate::mcp::Tools,
@@ -314,6 +318,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         logins: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assets,
         repo_urls,
+        cli_dist: None,
         mcp_tools,
         mcp_writes: Arc::default(),
         client_fetcher,

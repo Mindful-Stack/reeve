@@ -597,6 +597,11 @@ impl ServerConfig {
         self.try_public_url()
             .expect("public_url is validated when the configuration loads")
     }
+    /// The configured `public_url`, parsed; `None` when the configuration sets none, in which case `public_url()` is a
+    /// loopback default that must never be handed to a remote installer (kb/ADR-0030 R4).
+    pub fn explicit_public_url(&self) -> Option<url::Url> {
+        self.public_url.as_ref().map(|_| self.public_url())
+    }
     /// Whether cookies are `Secure` (and the session cookie carries the `__Host-` prefix): the parsed scheme, never a
     /// string prefix.
     pub fn https(&self) -> bool {
@@ -838,6 +843,18 @@ mod tests {
             .collect();
         assert_eq!(names, ["knowledge-base", "portal"]);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// Distinguishes `explicit_public_url` from `public_url()`, which falls back to loopback: a remote installer handed
+    /// the fallback would download from its own machine (kb/ADR-0030 R4).
+    #[test]
+    fn only_a_configured_public_url_is_explicit() {
+        assert_eq!(cfg("").unwrap().explicit_public_url(), None);
+        let set = cfg("public_url = \"https://reeve.example.com\"").unwrap();
+        assert_eq!(
+            set.explicit_public_url().map(|u| u.to_string()).as_deref(),
+            Some("https://reeve.example.com/")
+        );
     }
 
     #[test]
