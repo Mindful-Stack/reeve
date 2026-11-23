@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use reeve_identity::{CodeChallenge, hash_secret, resolve_client};
+use reeve_identity::{CodeChallenge, hash_secret, is_loopback_address, resolve_client};
 
 /// Binds an authorization request to the browser that started it; holds the SHA-256 of the request's id. That is
 /// no secret from anyone who has the id, which can compute it; what protects a person is that another browser has
@@ -186,10 +186,14 @@ async fn answer(s: AppState, method: Method, uri: Uri, jar: CookieJar) -> Respon
         Ok(client) => client,
         // Already logged by `resolve_client`.
         Err(refusal) => {
-            return problem(if refusal.not_enabled() {
-                "app_not_enabled"
-            } else {
+            // An app that is not enabled and asks to be answered on the person's own computer runs there: the
+            // page tells them to use the CLI, since no admin can enable it.
+            return problem(if !refusal.not_enabled() {
                 "invalid_request"
+            } else if is_loopback_address(redirect_uri) {
+                "local_app"
+            } else {
+                "app_not_enabled"
             });
         }
     };

@@ -44,7 +44,8 @@ pub enum ClientRefusal {
 impl ClientRefusal {
     /// Whether the instance has simply not enabled this app (its host or its redirect address is not listed, or
     /// it registered itself and the instance does not accept such apps), which an admin can change. Every other
-    /// refusal means the request was not valid.
+    /// refusal means the request was not valid. An app that asks for an address on the person's own computer is
+    /// told to use the CLI instead of asking an admin (`is_loopback_address`).
     pub fn not_enabled(&self) -> bool {
         matches!(
             self,
@@ -247,6 +248,25 @@ pub fn host_of(address: &str) -> Option<String> {
         .ok()?
         .host_str()
         .map(str::to_string)
+}
+
+/// Whether a redirect address points at the person's own computer: the host is `localhost`, a name under
+/// `.localhost`, or a loopback IP address. An app that asks for such an address runs locally (RFC 8252 section
+/// 7.3), so a refusal can tell the person to use the CLI instead of asking an admin. It decides nothing about
+/// whether the address is accepted.
+pub fn is_loopback_address(redirect_uri: &str) -> bool {
+    let Ok(url) = url::Url::parse(redirect_uri) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.');
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 async fn resolve(
@@ -1027,6 +1047,40 @@ mod tests {
             (ID, "claude.ai", "Claude", CALLBACK)
         );
         assert_eq!(fetches(), 2, "no cache: each resolve fetches");
+    }
+
+    /// Catches a local app told to ask an admin (a loopback form missed) and a hosted app told to use the CLI (a
+    /// name that only contains `localhost`).
+    #[test]
+    fn a_loopback_address_is_one_on_the_persons_own_computer() {
+        for local in [
+            "http://localhost/callback",
+            "http://localhost:49152/callback",
+            "http://LOCALHOST:8080/cb",
+            "http://localhost.:8080/cb",
+            "http://app.localhost:3000/cb",
+            "http://127.0.0.1:33418/callback",
+            "http://127.8.9.10/cb",
+            "http://[::1]:6274/oauth/callback",
+            "https://localhost/cb",
+        ] {
+            assert!(is_loopback_address(local), "{local}");
+        }
+        for hosted in [
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://localhost.example/cb",
+            "https://notlocalhost/cb",
+            "https://example.com/localhost",
+            "http://128.0.0.1/cb",
+            "http://10.0.0.1/cb",
+            "http://[::2]/cb",
+            "cursor://anysphere.cursor-mcp/oauth/callback",
+            "localhost:8080/cb",
+            "not an address",
+            "",
+        ] {
+            assert!(!is_loopback_address(hosted), "{hosted}");
+        }
     }
 
     /// Catches a page message that drifts: exactly the three refusals an admin can lift are "not enabled".
