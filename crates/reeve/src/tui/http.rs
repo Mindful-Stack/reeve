@@ -49,15 +49,19 @@ pub(crate) fn conv<T>(r: anyhow::Result<Outcome<T>>, wrap: fn(T) -> Reply) -> Co
 impl Http {
     pub fn new(base: String, token: String, o: &Options) -> Self {
         Self {
-            api: Arc::new(Client::with_timeout(
+            api: Arc::new(Client::with_proxy(
                 base.clone(),
                 token.clone(),
                 o.request_timeout,
+                !o.no_proxy,
             )),
-            stream: reqwest::Client::builder()
-                .connect_timeout(o.connect_timeout)
-                .build()
-                .expect("http client"),
+            stream: {
+                let mut b = reqwest::Client::builder().connect_timeout(o.connect_timeout);
+                if o.no_proxy {
+                    b = b.no_proxy();
+                }
+                b.build().expect("http client")
+            },
             open_timeout: o.connect_timeout,
             base,
             token,

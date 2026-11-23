@@ -49,6 +49,9 @@ pub struct Options {
     pub idle_timeout: std::time::Duration,
     /// Reconnect and `/me` retry delays; the last repeats.
     pub backoff: Vec<std::time::Duration>,
+    /// Ignore `HTTP_PROXY` and friends. Production leaves this off (a proxied host must reach its planner); the
+    /// in-process tests set it so a developer's proxy never receives their requests or token.
+    pub no_proxy: bool,
 }
 
 impl Default for Options {
@@ -58,6 +61,7 @@ impl Default for Options {
             connect_timeout: std::time::Duration::from_secs(10),
             idle_timeout: std::time::Duration::from_secs(45),
             backoff: live::BACKOFF.to_vec(),
+            no_proxy: false,
         }
     }
 }

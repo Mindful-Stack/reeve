@@ -1,5 +1,7 @@
 //! `reeve update` end to end: a copy of the real binary, run as one build against an in-test server that offers another,
 //! replaces itself only with a complete, verified file and never sends a credential (kb/ADR-0030 R5, R7).
+#[path = "isolation/mod.rs"]
+mod isolation;
 use axum::{
     Router,
     body::Body,
@@ -8,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use isolation::isolated;
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -87,27 +90,6 @@ fn served(name: &str) -> Vec<u8> {
         String::from_utf8_lossy(&out.stderr)
     );
     std::fs::read(&p).unwrap()
-}
-
-/// Proxy variables a developer's shell may set: every child here runs without them, so a request meant for the in-test
-/// server cannot go to a proxy instead (a test that wants one sets it itself).
-const PROXY_VARS: [&str; 8] = [
-    "HTTP_PROXY",
-    "http_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-    "NO_PROXY",
-    "no_proxy",
-];
-
-/// `c` without any proxy variable, and killed if the test drops it (a timed-out test leaves no child behind).
-fn isolated(c: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    for v in PROXY_VARS {
-        c.env_remove(v);
-    }
-    c.kill_on_drop(true)
 }
 
 #[derive(Default)]
