@@ -216,7 +216,12 @@ pub fn app(state: AppState) -> Router {
         .merge(cli_dist::router())
         .fallback(crate::assets::serve)
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
-        .with_state(state)
+        .with_state(state.clone())
+        // Last, so it wraps the routes and both fallbacks; it sets a header and never touches a body (kb/ADR-0030).
+        .layer(axum::middleware::map_response_with_state(
+            state,
+            crate::cli_dist::stamp,
+        ))
 }
 pub fn openapi_json() -> serde_json::Value {
     serde_json::to_value(document()).unwrap()

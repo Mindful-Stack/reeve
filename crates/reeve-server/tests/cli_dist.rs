@@ -218,3 +218,76 @@ async fn a_token_or_cookie_is_ignored_and_none_is_set() {
         "the API must still require a caller"
     );
 }
+
+/// Every response carries the build the server offers while distribution is on: API answers, a 401, an unknown API
+/// path, a 405, `/cli/` itself, the static fallback, an MCP route, an OAuth address, and the event stream's head.
+/// Distinguishes a header added per route (the fallbacks would lack it) and a layer that buffers bodies (the event
+/// stream never ends: the timeout turns a hang into a failure).
+#[tokio::test]
+async fn every_response_carries_the_build_while_distribution_is_on() {
+    let h = harness().await;
+    let dir = tempfile::tempdir().unwrap();
+    cli_bundle(dir.path());
+    let app = h.app_with_cli(dir.path());
+    let bearer = format!("Bearer {}", h.admin_token);
+    let authed = |p: &str| {
+        Request::get(p)
+            .header("authorization", bearer.as_str())
+            .body(Body::empty())
+            .unwrap()
+    };
+    let cases: Vec<(&str, Request<Body>, Option<u16>)> = vec![
+        ("health", get("/health"), Some(200)),
+        ("openapi", get("/api/openapi.json"), Some(200)),
+        ("me", authed("/api/v1/me"), Some(200)),
+        ("me without a caller", get("/api/v1/me"), Some(401)),
+        (
+            "an unknown API path",
+            get("/api/v1/no-such-route"),
+            Some(404),
+        ),
+        (
+            "a wrong method",
+            Request::post("/health").body(Body::empty()).unwrap(),
+            Some(405),
+        ),
+        ("a CLI file", get("/cli/VERSION"), Some(200)),
+        ("an unknown CLI name", get("/cli/nope"), Some(404)),
+        ("auth status", get("/auth/status"), None),
+        // The status depends on whether the client and MCP are built and configured; the header is what matters.
+        ("the static fallback", get("/board"), None),
+        ("the MCP endpoint", get("/mcp"), None),
+        (
+            "an OAuth address",
+            get("/.well-known/oauth-authorization-server"),
+            None,
+        ),
+    ];
+    for (what, req, status) in cases {
+        let res = call_raw(&app, req).await;
+        if let Some(s) = status {
+            assert_eq!(res.status(), s, "{what}");
+        }
+        assert_eq!(
+            res.headers()
+                .get("x-reeve-cli")
+                .map(|v| v.to_str().unwrap()),
+            Some(CLI_VERSION),
+            "{what}"
+        );
+    }
+    let res = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call_raw(&app, authed("/api/v1/events")),
+    )
+    .await
+    .expect("the event stream's head must arrive without its body");
+    assert_eq!(res.status(), 200);
+    assert!(
+        res.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    assert_eq!(res.headers()["x-reeve-cli"], CLI_VERSION);
+}
