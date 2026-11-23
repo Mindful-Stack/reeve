@@ -4,6 +4,7 @@ mod common;
 use axum::{body::Body, http::Request};
 use common::*;
 use http_body_util::BodyExt;
+use reeve_server::{assets, cli_dist};
 
 fn get(path: &str) -> Request<Body> {
     Request::get(path).body(Body::empty()).unwrap()
@@ -70,6 +71,11 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
     ] {
         let res = call_raw(&app, get(&format!("/cli/{name}"))).await;
         assert_eq!(res.status(), 200, "{name}");
+        assert_eq!(
+            res.headers()["content-type"],
+            "text/plain; charset=utf-8",
+            "{name}"
+        );
         assert_hardened(&res, name);
         let body = String::from_utf8(bytes_of(res).await).unwrap();
         assert!(
@@ -91,6 +97,12 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
     .await;
     assert_eq!(res.status(), 200);
     assert_hardened(&res, "HEAD");
+    assert_eq!(res.headers()["content-type"], "application/octet-stream");
+    // The length GET's body has, though HEAD sends none.
+    assert_eq!(
+        res.headers()["content-length"],
+        "binary reeve-linux-x86_64".len().to_string().as_str()
+    );
     assert!(bytes_of(res).await.is_empty(), "HEAD sent a body");
 }
 
@@ -116,11 +128,11 @@ async fn anything_else_under_cli_is_a_hardened_404() {
     )
     .unwrap();
     let mut state = h.state.clone();
-    state.assets = reeve_server::assets::Assets::Dir(web.path().to_path_buf());
+    state.assets = assets::Assets::Dir(web.path().to_path_buf());
     let off = reeve_server::app(state.clone());
     let url = h.state.config.explicit_public_url().unwrap();
     state.cli_dist = Some(std::sync::Arc::new(
-        reeve_server::cli_dist::CliDist::load(cli_dir.path(), Some(&url)).unwrap(),
+        cli_dist::CliDist::load(cli_dir.path(), Some(&url)).unwrap(),
     ));
     let on = reeve_server::app(state);
     let paths = [
@@ -153,6 +165,12 @@ async fn anything_else_under_cli_is_a_hardened_404() {
         assert_eq!(res.status(), 404, "off: {name}");
         assert!(!res.headers().contains_key("x-reeve-cli"), "off: {name}");
     }
+    let res = call_raw(&off, get("/health")).await;
+    assert_eq!(res.status(), 200);
+    assert!(
+        !res.headers().contains_key("x-reeve-cli"),
+        "off: /health stamped"
+    );
 }
 
 /// The other failures carry the headers too: a method other than GET or HEAD (the route's own 405), a bundle file

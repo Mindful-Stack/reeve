@@ -59,7 +59,11 @@ async fn answer(s: &AppState, name: &str) -> Response {
             };
             let mut res = (
                 [(header::CONTENT_TYPE, "application/octet-stream")],
-                Body::from_stream(tokio_util::io::ReaderStream::new(file)),
+                // 256 KiB reads instead of the default 4 KiB: far fewer chunks for a binary of tens of megabytes.
+                Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                    file,
+                    256 * 1024,
+                )),
             )
                 .into_response();
             res.headers_mut()

@@ -197,7 +197,8 @@ fn item_ops(
 pub fn app(state: AppState) -> Router {
     let (api, _) = api_router(state.config.mcp.enabled).split_for_parts();
     let openapi = document();
-    Router::new()
+    let cli_dist = state.cli_dist.clone();
+    let router = Router::new()
         .route("/health", get(health))
         .merge(api)
         .route(
@@ -216,12 +217,9 @@ pub fn app(state: AppState) -> Router {
         .merge(cli_dist::router())
         .fallback(crate::assets::serve)
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
-        .with_state(state.clone())
-        // Last, so it wraps the routes and both fallbacks; it sets a header and never touches a body (kb/ADR-0030).
-        .layer(axum::middleware::map_response_with_state(
-            state,
-            crate::cli_dist::stamp,
-        ))
+        .with_state(state);
+    // Last, so it wraps the routes and both fallbacks; it sets a header and never touches a body (kb/ADR-0030).
+    crate::cli_dist::stamp(router, cli_dist.as_deref())
 }
 pub fn openapi_json() -> serde_json::Value {
     serde_json::to_value(document()).unwrap()

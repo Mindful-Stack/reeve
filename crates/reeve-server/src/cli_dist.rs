@@ -2,9 +2,8 @@
 //! at startup, served at `/cli/{name}` (`routes/cli_dist.rs`) without sign-in, and the `X-Reeve-Cli` header on every
 //! response. File serving in the composition root, not a context (kb/ADR-0010 R1). The wire contract (the header
 //! name, the bundle's file names, the CLI-version format) is `reeve_protocol`'s.
-use crate::{config::ServerConfig, state::AppState};
+use crate::config::ServerConfig;
 use axum::{
-    extract::State,
     http::{HeaderName, HeaderValue, header},
     response::Response,
 };
@@ -272,13 +271,19 @@ pub fn harden(mut res: Response) -> Response {
     res
 }
 
-/// The response layer: `X-Reeve-Cli` on every response while distribution is on. It sets a header only and never
-/// reads or wraps the body, so streamed responses (the event stream, the binaries) pass through untouched.
-pub async fn stamp(State(s): State<AppState>, mut res: Response) -> Response {
-    if let Some(cli) = &s.cli_dist {
-        res.headers_mut().insert(CLI_HEADER, cli.header.clone());
-    }
-    res
+/// `router` with `X-Reeve-Cli` on every response while distribution is on (`cli` is `Some`), and unchanged while it is
+/// off. The header value is built once here; the layer sets a header only and never reads or wraps the body, so
+/// streamed responses (the event stream, the binaries) pass through untouched.
+pub fn stamp(router: axum::Router, cli: Option<&CliDist>) -> axum::Router {
+    let Some(cli) = cli else { return router };
+    let value = cli.header.clone();
+    router.layer(axum::middleware::map_response(move |mut res: Response| {
+        let value = value.clone();
+        async move {
+            res.headers_mut().insert(CLI_HEADER, value);
+            res
+        }
+    }))
 }
 
 #[cfg(test)]
