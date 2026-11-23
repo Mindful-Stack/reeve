@@ -1,6 +1,8 @@
 //! The real binary in a real pseudo-terminal: it starts in raw mode, `q` exits 0, and the terminal is handed back (the
 //! alternate screen left, the cursor shown, canonical mode restored) on a normal exit and after a panic.
 #![cfg(unix)]
+#[path = "isolation/mod.rs"]
+mod isolation;
 mod support;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::{
@@ -96,6 +98,12 @@ fn spawn(url: &str, extra_env: &[(&str, &str)]) -> (Run, tempfile::TempDir) {
     cmd.env_remove("REEVE_URL");
     cmd.env_remove("REEVE_TOKEN");
     cmd.env_remove("REEVE_TUI_PANIC_AFTER_DRAW");
+    cmd.env_remove("REEVE_CLI_VERSION_OVERRIDE");
+    cmd.env_remove("REEVE_UPDATE_NOTICE");
+    // A developer's proxy would otherwise receive the requests meant for the in-test server.
+    for v in isolation::PROXY_VARS {
+        cmd.env_remove(v);
+    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -175,4 +183,24 @@ async fn a_panic_still_hands_the_terminal_back_before_the_message() {
         "the terminal is restored before the panic message prints"
     );
     assert!(run.canonical(), "canonical mode is restored after a panic");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_differing_build_is_a_header_note_and_no_notice() {
+    let s = Script::new();
+    *s.cli.lock().unwrap() = Some("b".repeat(40));
+    let url = serve(s).await;
+    let a = "a".repeat(40);
+    let (mut run, _dir) = spawn(&url, &[("REEVE_CLI_VERSION_OVERRIDE", a.as_str())]);
+    // The terminal diff moves the cursor between words, so match one word of the note, not the phrase.
+    wait_for(&run, "the CLI note", |o| contains(o, b"differs"));
+    run.writer.write_all(b"q").unwrap();
+    run.writer.flush().unwrap();
+    let (st, out) = run.finish();
+    assert!(st.success(), "{st:?}");
+    assert!(
+        !contains(&out, b"note: this reeve is build"),
+        "the TUI never prints the command-line notice, not even after it exits: {:?}",
+        String::from_utf8_lossy(&out)
+    );
 }

@@ -1,6 +1,8 @@
 //! The `reeve` CLI. `main.rs` is the binary; the library target exists so the TUI's integration tests can drive
 //! `tui::Driver`. Every module except `tui` stays private to the crate.
 mod atomic_file;
+mod browser;
+mod cli_version;
 mod client;
 mod commands;
 mod config;
@@ -36,7 +38,9 @@ struct Cli {
     cmd: commands::Cmd,
 }
 
-/// Parses the arguments, runs the command and returns the exit status.
+/// Parses the arguments, runs the command and returns the exit status. After the command's own output, whatever its
+/// outcome, prints the update notice (kb/ADR-0030 R6) -- the one call of `cli_version::notify`, so at most once per
+/// process -- except for `reeve tui`, which shows a header note instead.
 pub async fn cli() -> i32 {
     // Exit 2 means "refused" only, so usage errors exit 1 (clap would use 2).
     let cli = match Cli::try_parse() {
@@ -48,7 +52,8 @@ pub async fn cli() -> i32 {
         }
     };
     glyphs::set_ascii(cli.ascii || std::env::var_os("REEVE_ASCII").is_some());
-    match commands::run(cli.cmd, cli.json).await {
+    let tui = matches!(cli.cmd, commands::Cmd::Tui);
+    let code = match commands::run(cli.cmd, cli.json).await {
         Ok(code) => code,
         Err(e) => {
             if cli.json {
@@ -60,5 +65,9 @@ pub async fn cli() -> i32 {
             eprintln!("error: {e:#}");
             1
         }
+    };
+    if !tui {
+        cli_version::notify();
     }
+    code
 }

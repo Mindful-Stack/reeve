@@ -2,6 +2,7 @@
 //! DTO into its summary (`mcp.rs`).
 pub mod activity;
 pub mod attachments;
+pub mod cli_dist;
 pub mod connections;
 pub mod context;
 pub mod enums;
@@ -20,6 +21,7 @@ pub mod sprints;
 pub mod urgency;
 pub use activity::*;
 pub use attachments::*;
+pub use cli_dist::*;
 pub use connections::*;
 pub use context::*;
 pub use enums::*;

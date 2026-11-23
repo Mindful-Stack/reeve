@@ -71,3 +71,7 @@ opt-level = 3
 
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
+
+# `reeve update` hashes the whole binary (~150 MB in a debug build); unoptimised sha2 takes tens of seconds per hash.
+[profile.dev.package.sha2]
+opt-level = 3

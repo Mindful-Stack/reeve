@@ -242,6 +242,7 @@ impl Sim {
                 url: "https://reeve.example.com".into(),
                 me,
                 reeve_token_set: false,
+                update_note: false,
                 width: 140,
                 height: 40,
                 color: false,

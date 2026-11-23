@@ -98,8 +98,13 @@ fn header(s: &State, w: usize) -> String {
     if !s.board.query().is_empty() {
         filter.push_str(&format!(" · \"{}\"", s.board.query()));
     }
+    let signed_out = crate::tui::app::signed_out();
+    let automation_long = format!(
+        "automation token {} run reeve auth login",
+        crate::glyphs::dash()
+    );
     let conn = if s.session.signed_out {
-        crate::tui::app::SIGNED_OUT
+        signed_out.as_str()
     } else if s.session.me.is_none() {
         "connecting"
     } else if s.board.stale().is_some() {
@@ -114,13 +119,24 @@ fn header(s: &State, w: usize) -> String {
     };
     let automation = matches!(&s.session.me, Some(m) if m.token_kind != reeve_protocol::TokenKind::Interactive)
         && !s.session.signed_out;
+    let cli_long = format!(
+        "CLI build differs {} run reeve update",
+        crate::glyphs::dash()
+    );
     let notes = |short: bool| {
         let mut t = vec![conn];
         if automation {
             t.push(if short {
                 "automation token"
             } else {
-                "automation token — run reeve auth login"
+                automation_long.as_str()
+            });
+        }
+        if s.session.update_note {
+            t.push(if short {
+                "run reeve update"
+            } else {
+                cli_long.as_str()
             });
         }
         if s.session.reeve_token_set {
@@ -128,7 +144,7 @@ fn header(s: &State, w: usize) -> String {
         }
         t.join(" · ")
     };
-    // The advice after the automation note gives way only when the state and the notes cannot fit whole otherwise.
+    // The advice after the automation and CLI notes gives way only when the state and the notes cannot fit whole otherwise.
     let tail = match notes(false) {
         t if t.width() <= w => t,
         _ => notes(true),
@@ -954,7 +970,11 @@ mod tests {
         sim.s.session.url = LONG_URL.into();
         sim.s.session.signed_out = true;
         let (rows, _) = sim.render(40, 10);
-        assert!(rows[0].contains(crate::tui::app::SIGNED_OUT), "{}", rows[0]);
+        assert!(
+            rows[0].contains(&crate::tui::app::signed_out()),
+            "{}",
+            rows[0]
+        );
 
         let mut sim = mine(vec!["ABC-1"]);
         sim.s.session.url = LONG_URL.into();
@@ -1325,5 +1345,39 @@ mod tests {
         sim.char(' ');
         assert_eq!(sim.s.ui.menu, None);
         assert_eq!(sim.status(), "no story selected");
+    }
+
+    #[test]
+    fn the_header_says_when_the_cli_build_differs() {
+        let mut sim = mine(vec!["ABC-1"]);
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            !rows[0].contains("run reeve update"),
+            "no note by default: {}",
+            rows[0]
+        );
+        sim.s.session.update_note = true;
+        let (rows, _) = sim.render(120, 30);
+        assert!(
+            rows[0].contains("CLI build differs — run reeve update"),
+            "{}",
+            rows[0]
+        );
+    }
+
+    #[test]
+    fn a_narrow_header_keeps_the_short_cli_note_whole() {
+        let mut sim = mine(vec!["ABC-1"]);
+        sim.s.session.url = LONG_URL.into();
+        sim.s.session.update_note = true;
+        sim.s.session.reeve_token_set = true;
+        // The fixture starts `connecting`. Short tail `connecting · run reeve update · REEVE_TOKEN ignored` = 51
+        // columns; long tail = 71. At 60 only the short tail fits; `header` empties the host, me and the filter, and
+        // `reeve · ` + 51 = 59 still fits, so `reeve` stays.
+        let (rows, _) = sim.render(60, 10);
+        assert_eq!(
+            rows[0].trim_end(),
+            "reeve · connecting · run reeve update · REEVE_TOKEN ignored"
+        );
     }
 }

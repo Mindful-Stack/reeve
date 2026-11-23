@@ -17,7 +17,10 @@ use std::{
 pub const STATUS_FOR: Duration = Duration::from_secs(5);
 /// From this many terminal columns the board shows five columns.
 pub const WIDE: u16 = 120;
-pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
+/// The status line and header text of a signed-out session (the dash follows `--ascii`).
+pub fn signed_out() -> String {
+    format!("signed out {} run reeve auth login", crate::glyphs::dash())
+}
 
 #[derive(Debug)]
 pub struct Session {
@@ -26,6 +29,9 @@ pub struct Session {
     /// Final: no message clears it (kb/ADR-0015 R5).
     pub signed_out: bool,
     pub reeve_token_set: bool,
+    /// The build the server offers differs from this stamped binary's, as the startup probe saw it, and the notice is
+    /// not switched off (kb/ADR-0030 R6). Final: decided before the TUI starts; no message changes it.
+    pub update_note: bool,
     me_attempt: usize,
     me_gen: Gen,
 }
@@ -110,6 +116,8 @@ pub struct Start {
     /// `None`: the first `/me` could not be reached; the TUI starts `connecting`.
     pub me: Option<Me>,
     pub reeve_token_set: bool,
+    /// See `Session::update_note`.
+    pub update_note: bool,
     pub width: u16,
     pub height: u16,
     pub color: bool,
@@ -192,6 +200,7 @@ impl State {
                 me: start.me,
                 signed_out: false,
                 reeve_token_set: start.reeve_token_set,
+                update_note: start.update_note,
                 me_attempt: 0,
                 me_gen: Gen::default(),
             },
@@ -348,7 +357,7 @@ impl State {
         fx.extend(self.set_epic_msg(set_epic::Msg::Reset, now));
         fx.extend(self.urgent_msg(urgent::Msg::Reset, now));
         fx.extend(self.live_msg(live::Msg::Stop, now));
-        self.set_status(SIGNED_OUT, now);
+        self.set_status(signed_out(), now);
         fx
     }
 
@@ -479,7 +488,7 @@ impl State {
                 fx.extend(self.step(m, now));
                 // The owner ran second and may have worded the 401 its own way; the sign-out's wording wins.
                 if !was_signed_out && self.session.signed_out {
-                    self.set_status(SIGNED_OUT, now);
+                    self.set_status(signed_out(), now);
                 }
                 fx
             }

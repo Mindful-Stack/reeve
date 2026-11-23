@@ -22,7 +22,7 @@ pub(crate) fn resolve_from(
     let nonempty = |k: &str| env(k).filter(|v| !v.is_empty());
     let url = nonempty("REEVE_URL")
         .or(stored.url)
-        .ok_or_else(|| anyhow::anyhow!("no server url: run reeve auth login"))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::config::NO_SERVER_URL))?;
     let token = stored.token.filter(|t| !t.is_empty()).ok_or_else(|| {
         anyhow::anyhow!(
             "no stored login: run reeve auth login (REEVE_TOKEN is not used by the TUI)"

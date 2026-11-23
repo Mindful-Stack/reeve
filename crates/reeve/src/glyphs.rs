@@ -78,6 +78,21 @@ pub fn set_ascii(on: bool) {
     ASCII.store(on, Ordering::Relaxed);
 }
 
+/// The dash in prose: `—`, or `--` with the ASCII fallback on.
+pub fn dash() -> &'static str {
+    dash_with(ascii())
+}
+
+/// The dash for an explicit ASCII setting (for callers that carry their own).
+pub fn dash_with(ascii: bool) -> &'static str {
+    if ascii { "--" } else { "—" }
+}
+
+/// Whether the ASCII fallback is on.
+pub fn ascii() -> bool {
+    ASCII.load(Ordering::Relaxed)
+}
+
 /// The key with its level in front: `◆ ABC-1`, or `[I] ABC-1` with the fallback on.
 pub fn mark(level: Level, key: impl std::fmt::Display) -> String {
     mark_with(level, key, ASCII.load(Ordering::Relaxed))

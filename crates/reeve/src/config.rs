@@ -12,20 +12,38 @@ pub fn env_nonempty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-pub fn config_path() -> anyhow::Result<PathBuf> {
-    let dir = if let Some(d) = env_nonempty("REEVE_CONFIG_DIR") {
-        PathBuf::from(d)
-    } else {
-        let base = match (env_nonempty("XDG_CONFIG_HOME"), env_nonempty("HOME")) {
-            (Some(x), _) => PathBuf::from(x),
-            (None, Some(h)) => PathBuf::from(h).join(".config"),
-            (None, None) => anyhow::bail!(
-                "cannot locate a config directory: set REEVE_CONFIG_DIR, XDG_CONFIG_HOME or HOME"
-            ),
-        };
-        base.join("reeve")
+/// The one way every command says there is no server to talk to (the prefix is what Lorekeeper's detector matches).
+pub const NO_SERVER_URL: &str =
+    "no server url: run reeve auth login --url https://reeve.example.com first, or set REEVE_URL";
+
+/// The configuration directory: `REEVE_CONFIG_DIR`; else on Windows `%APPDATA%\reeve` (so PowerShell and Git Bash share
+/// one file); else `$XDG_CONFIG_HOME/reeve`, then `$HOME/.config/reeve`.
+pub(crate) fn config_dir_from(
+    env: impl Fn(&str) -> Option<String>,
+    windows: bool,
+) -> anyhow::Result<PathBuf> {
+    if let Some(d) = env("REEVE_CONFIG_DIR") {
+        return Ok(PathBuf::from(d));
+    }
+    if windows {
+        return env("APPDATA")
+            .map(|a| PathBuf::from(a).join("reeve"))
+            .ok_or_else(|| {
+                anyhow::anyhow!("cannot locate a config directory: set REEVE_CONFIG_DIR or APPDATA")
+            });
+    }
+    let base = match (env("XDG_CONFIG_HOME"), env("HOME")) {
+        (Some(x), _) => PathBuf::from(x),
+        (None, Some(h)) => PathBuf::from(h).join(".config"),
+        (None, None) => anyhow::bail!(
+            "cannot locate a config directory: set REEVE_CONFIG_DIR, XDG_CONFIG_HOME or HOME"
+        ),
     };
-    Ok(dir.join("config.toml"))
+    Ok(base.join("reeve"))
+}
+
+pub fn config_path() -> anyhow::Result<PathBuf> {
+    Ok(config_dir_from(env_nonempty, cfg!(windows))?.join("config.toml"))
 }
 
 pub fn load() -> CliConfig {
@@ -74,11 +92,9 @@ pub struct Resolved {
 }
 pub fn resolve() -> anyhow::Result<Resolved> {
     let c = load();
-    let url = env_nonempty("REEVE_URL").or(c.url).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no server url: set REEVE_URL or run `reeve auth set-token --url ... --token ...`"
-        )
-    })?;
+    let url = env_nonempty("REEVE_URL")
+        .or(c.url)
+        .ok_or_else(|| anyhow::anyhow!(NO_SERVER_URL))?;
     let token = env_nonempty("REEVE_TOKEN").or(c.token).ok_or_else(|| {
         anyhow::anyhow!("no token: set REEVE_TOKEN or run `reeve auth set-token`")
     })?;
@@ -86,4 +102,73 @@ pub fn resolve() -> anyhow::Result<Resolved> {
         url: url.trim_end_matches('/').to_string(),
         token,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |k| m.get(k).cloned().filter(|v| !v.is_empty())
+    }
+
+    #[test]
+    fn windows_uses_appdata_and_ignores_home() {
+        let d = config_dir_from(
+            env(&[
+                ("APPDATA", r"C:\Users\d\AppData\Roaming"),
+                ("HOME", "/c/Users/d"),
+            ]),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            d,
+            PathBuf::from(r"C:\Users\d\AppData\Roaming").join("reeve")
+        );
+    }
+
+    #[test]
+    fn reeve_config_dir_wins_everywhere() {
+        for windows in [false, true] {
+            let d = config_dir_from(
+                env(&[
+                    ("REEVE_CONFIG_DIR", "/x"),
+                    ("APPDATA", "/a"),
+                    ("HOME", "/h"),
+                ]),
+                windows,
+            )
+            .unwrap();
+            assert_eq!(d, PathBuf::from("/x"), "windows={windows}");
+        }
+    }
+
+    #[test]
+    fn unix_is_unchanged() {
+        assert_eq!(
+            config_dir_from(env(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")]), false).unwrap(),
+            PathBuf::from("/x/reeve")
+        );
+        assert_eq!(
+            config_dir_from(env(&[("HOME", "/h"), ("APPDATA", "/a")]), false).unwrap(),
+            PathBuf::from("/h/.config/reeve")
+        );
+    }
+
+    #[test]
+    fn nothing_to_go_on_is_an_error_naming_what_to_set() {
+        let e = config_dir_from(env(&[]), true).unwrap_err().to_string();
+        assert!(
+            e.contains("REEVE_CONFIG_DIR") && e.contains("APPDATA"),
+            "{e}"
+        );
+        let e = config_dir_from(env(&[]), false).unwrap_err().to_string();
+        assert!(e.contains("HOME"), "{e}");
+    }
 }

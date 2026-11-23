@@ -2,6 +2,8 @@
 //! an in-test fake Jira serving the committed fixtures. Catches a run that writes during a rehearsal or while the switch
 //! is off, logs overrides, is not re-runnable, drops provenance, an orphan epic or `owner_map`, or imports a partial
 //! fetch.
+#[path = "isolation/mod.rs"]
+mod isolation;
 use axum::{
     Router,
     extract::{Path, Query, State},
@@ -9,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use isolation::isolated;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{
@@ -136,13 +139,13 @@ struct Env {
 impl Env {
     async fn reeve(&self, server: &str, args: &[&str]) -> Run {
         let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_reeve"));
+        isolated(&mut cmd);
         cmd.env("REEVE_URL", server)
             .env("REEVE_TOKEN", &self.token)
             .env("REEVE_CONFIG_DIR", &self.config_dir)
             .env("JIRA_TOKEN", JIRA_TOKEN)
             .arg("--json")
-            .args(args)
-            .kill_on_drop(true);
+            .args(args);
         let out = tokio::time::timeout(Duration::from_secs(120), cmd.output())
             .await
             .expect("the CLI must finish within two minutes")
@@ -165,7 +168,10 @@ impl Env {
     }
     /// `GET /api/v1{path}` with the admin token; the envelope's value, or the whole envelope when it is not ok.
     async fn get(&self, path: &str) -> Value {
-        let v: Value = reqwest::Client::new()
+        let v: Value = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .get(format!("{}/api/v1{path}", self.server))
             .bearer_auth(&self.token)
             .send()

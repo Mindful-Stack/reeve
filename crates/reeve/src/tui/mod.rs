@@ -49,6 +49,9 @@ pub struct Options {
     pub idle_timeout: std::time::Duration,
     /// Reconnect and `/me` retry delays; the last repeats.
     pub backoff: Vec<std::time::Duration>,
+    /// Ignore `HTTP_PROXY` and friends. Production leaves this off (a proxied host must reach its planner); the
+    /// in-process tests set it so a developer's proxy never receives their requests or token.
+    pub no_proxy: bool,
 }
 
 impl Default for Options {
@@ -58,6 +61,7 @@ impl Default for Options {
             connect_timeout: std::time::Duration::from_secs(10),
             idle_timeout: std::time::Duration::from_secs(45),
             backoff: live::BACKOFF.to_vec(),
+            no_proxy: false,
         }
     }
 }
@@ -80,6 +84,8 @@ pub struct Setup {
     /// `None`: the first `/me` could not be reached; the TUI starts `connecting`.
     pub me: Option<Me>,
     pub reeve_token_set: bool,
+    /// Whether the header shows the CLI build note, decided from the startup probe.
+    pub update_note: bool,
     pub color: bool,
     pub options: Options,
 }
@@ -118,6 +124,7 @@ where
                 url: setup.url,
                 me: setup.me,
                 reeve_token_set: setup.reeve_token_set,
+                update_note: setup.update_note,
                 width: size.width,
                 height: size.height,
                 color: setup.color,
@@ -298,6 +305,13 @@ pub async fn main() -> i32 {
             return 1;
         }
     };
+    // Decided once, before the terminal is taken over (kb/ADR-0030 R6), from the build the probe's answer offered (the
+    // probe is this process's first request, so the one store holds exactly that). Later answers change nothing shown.
+    let update_note = crate::cli_version::tui_note(
+        crate::cli_version::current().as_deref(),
+        crate::cli_version::offered().as_deref(),
+        crate::cli_version::setting().as_deref(),
+    );
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
     // Before `enter`, so a signal between the two still exits (restoring is a no-op until entered).
     term::watch_signals();
@@ -313,6 +327,7 @@ pub async fn main() -> i32 {
         token: login.token,
         me,
         reeve_token_set: login.reeve_token_set,
+        update_note,
         color,
         options,
     };
@@ -354,6 +369,7 @@ mod tests {
             token: "t".into(),
             me: None,
             reeve_token_set: false,
+            update_note: false,
             color: false,
             options: Options::default(),
         };

@@ -11,6 +11,7 @@ pub mod initiative;
 pub mod search;
 pub mod sprint;
 pub mod story;
+pub mod update;
 pub mod war_room;
 use crate::client::{Client, Outcome};
 use crate::glyphs::Level;
@@ -86,6 +87,9 @@ pub enum Cmd {
     WarRoom(war_room::WarRoom),
     /// The terminal board for your own work (uses your `reeve auth login`, never REEVE_TOKEN).
     Tui,
+    /// Replace this executable with the build the server offers (older or newer), verified by SHA-256. Run it between
+    /// commands.
+    Update(update::Update),
 }
 
 pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
@@ -97,6 +101,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
             Ok(1)
         }
         Cmd::Tui => Ok(crate::tui::main().await),
+        Cmd::Update(u) => update::run(u, json).await,
         other => {
             let r = crate::config::resolve()?;
             let c = Client::new(r.url, r.token);
@@ -114,7 +119,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Export(x) => export::run(&c, x, json).await,
                 Cmd::Import(x) => import::run(&c, x, json).await,
                 Cmd::WarRoom(x) => war_room::run(&c, x, json).await,
-                Cmd::Auth(_) | Cmd::Tui => unreachable!(),
+                Cmd::Auth(_) | Cmd::Tui | Cmd::Update(_) => unreachable!(),
             }
         }
     }

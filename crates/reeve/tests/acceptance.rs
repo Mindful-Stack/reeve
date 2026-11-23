@@ -1,6 +1,8 @@
 // crates/reeve/tests/acceptance.rs
 //! The design's five-minute flow, driven through the real binaries against a real server and a real git repository.
-use assert_cmd::Command;
+#[path = "isolation/mod.rs"]
+mod isolation;
+use isolation::reeve_cmd;
 use std::{path::Path, process::Command as Std};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -127,7 +129,7 @@ async fn flow() {
 
     let cfg_dir = tempfile::tempdir().unwrap();
     let reeve = |token: &str| {
-        let mut c = Command::cargo_bin("reeve").unwrap();
+        let mut c = reeve_cmd();
         c.env("REEVE_URL", &base)
             .env("REEVE_CONFIG_DIR", cfg_dir.path())
             .env("REEVE_TOKEN", token)
@@ -145,11 +147,7 @@ async fn flow() {
     };
 
     // --version identifies the planner (kb/ADR-0005 R1).
-    let v = Command::cargo_bin("reeve")
-        .unwrap()
-        .arg("--version")
-        .output()
-        .unwrap();
+    let v = reeve_cmd().arg("--version").output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&v.stdout).trim(),
         format!("reeve-planner {}", env!("CARGO_PKG_VERSION"))
@@ -159,7 +157,7 @@ async fn flow() {
     // (piped, so no browser opens) and ignores REEVE_TOKEN; its own config directory keeps the rest of the flow apart.
     let login_dir = tempfile::tempdir().unwrap();
     let login = |token: &str, args: &[&str]| {
-        let mut c = Command::cargo_bin("reeve").unwrap();
+        let mut c = reeve_cmd();
         c.env("REEVE_CONFIG_DIR", login_dir.path())
             .env_remove("REEVE_URL")
             .env_remove("REEVE_TOKEN")
@@ -176,8 +174,7 @@ async fn flow() {
     );
     assert_eq!(signed_in["value"]["kind"], "interactive");
     // With REEVE_TOKEN exported the stored token is shadowed, so login says so on stderr (and still stores it).
-    let shadowed = Command::cargo_bin("reeve")
-        .unwrap()
+    let shadowed = reeve_cmd()
         .env("REEVE_CONFIG_DIR", login_dir.path())
         .env_remove("REEVE_URL")
         .env("REEVE_TOKEN", &bot)
@@ -496,7 +493,7 @@ async fn flow() {
         }
     };
     let plain = |token: &str| {
-        let mut c = Command::cargo_bin("reeve").unwrap();
+        let mut c = reeve_cmd();
         c.env("REEVE_URL", &base)
             .env("REEVE_CONFIG_DIR", cfg_dir.path())
             .env("REEVE_TOKEN", token)
@@ -727,7 +724,7 @@ async fn flow() {
         "knowledge/adrs/0001-queue.md"
     );
     // Text mode must name the record file so an agent can open it from the Markdown.
-    let mut text = Command::cargo_bin("reeve").unwrap();
+    let mut text = reeve_cmd();
     text.env("REEVE_URL", &base)
         .env("REEVE_CONFIG_DIR", cfg_dir.path())
         .env("REEVE_TOKEN", &human);
@@ -740,7 +737,7 @@ async fn flow() {
         "/tests/fixtures/one.png"
     ))
     .unwrap();
-    let http = reqwest::Client::new();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
     let up: serde_json::Value = http
         .post(format!("{base}/api/v1/attachments?filename=one.png"))
         .bearer_auth(&bot)
