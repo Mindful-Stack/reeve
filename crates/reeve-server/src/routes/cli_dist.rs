@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use reeve_protocol::{CLI_PATH, TEXT_CONTENT_TYPE};
+use reeve_protocol::{CLI_PATH, CLI_TEXT_CONTENT_TYPE};
 
 /// `get` also answers HEAD; any other method gets this route's own 405, with the `/cli/` headers.
 pub fn router() -> Router<AppState> {
@@ -42,7 +42,7 @@ async fn answer(s: &AppState, name: &str) -> Response {
         Entry::Text(text) => (
             [(
                 header::CONTENT_TYPE,
-                format!("{TEXT_CONTENT_TYPE}; charset=utf-8"),
+                format!("{CLI_TEXT_CONTENT_TYPE}; charset=utf-8"),
             )],
             text.to_owned(),
         )

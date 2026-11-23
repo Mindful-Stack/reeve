@@ -7,7 +7,10 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     response::Response,
 };
-use reeve_protocol::{CLI_BINARIES, CLI_VERSION_HEADER, SUMS_FILE, VERSION_FILE, is_cli_version};
+use reeve_protocol::{
+    CLI_BINARIES, CLI_INSTALL_PS1, CLI_INSTALL_SH, CLI_SUMS_FILE, CLI_VERSION_FILE,
+    CLI_VERSION_HEADER, is_cli_version,
+};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -47,35 +50,35 @@ impl CliDist {
     pub fn load(dir: &Path, public_url: Option<&url::Url>) -> Result<Self, String> {
         let url = public_url.ok_or("no public_url configured")?;
         check_host(url)?;
-        let version_file = read_text(&dir.join(VERSION_FILE))
-            .map_err(|e| format!("no bundle in {} ({VERSION_FILE}: {e})", dir.display()))?;
+        let version_file = read_text(&dir.join(CLI_VERSION_FILE))
+            .map_err(|e| format!("no bundle in {} ({CLI_VERSION_FILE}: {e})", dir.display()))?;
         let version = version_file.strip_suffix('\n').unwrap_or(&version_file);
         if !is_cli_version(version) {
             return Err(format!(
-                "{VERSION_FILE} is not a 40-character lowercase commit id"
+                "{CLI_VERSION_FILE} is not a 40-character lowercase commit id"
             ));
         }
-        let sums =
-            read_text(&dir.join(SUMS_FILE)).map_err(|e| format!("{SUMS_FILE} unreadable ({e})"))?;
+        let sums = read_text(&dir.join(CLI_SUMS_FILE))
+            .map_err(|e| format!("{CLI_SUMS_FILE} unreadable ({e})"))?;
         // `lines()` would silently accept CRLF; a bundle CI built has LF only, and the CLI checks the lines as served.
         if sums.contains('\r') {
             return Err(format!(
-                "{SUMS_FILE} has a carriage return (CRLF line endings)"
+                "{CLI_SUMS_FILE} has a carriage return (CRLF line endings)"
             ));
         }
         let mut listed: Vec<(&str, &str)> = Vec::new();
         for line in sums.lines() {
             let (hash, name) = line
                 .split_once("  ")
-                .ok_or_else(|| format!("{SUMS_FILE}: malformed line {line:?}"))?;
+                .ok_or_else(|| format!("{CLI_SUMS_FILE}: malformed line {line:?}"))?;
             if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-                return Err(format!("{SUMS_FILE}: malformed line {line:?}"));
+                return Err(format!("{CLI_SUMS_FILE}: malformed line {line:?}"));
             }
             if !CLI_BINARIES.contains(&name) {
-                return Err(format!("{SUMS_FILE} lists an unknown file {name:?}"));
+                return Err(format!("{CLI_SUMS_FILE} lists an unknown file {name:?}"));
             }
             if listed.iter().any(|(_, n)| *n == name) {
-                return Err(format!("{SUMS_FILE} lists {name} twice"));
+                return Err(format!("{CLI_SUMS_FILE} lists {name} twice"));
             }
             listed.push((hash, name));
         }
@@ -83,7 +86,7 @@ impl CliDist {
             .into_iter()
             .find(|n| !listed.iter().any(|(_, l)| l == n))
         {
-            return Err(format!("{SUMS_FILE} does not list {missing}"));
+            return Err(format!("{CLI_SUMS_FILE} does not list {missing}"));
         }
         for (hash, name) in listed {
             let path = dir.join(name);
@@ -98,7 +101,7 @@ impl CliDist {
             }
             let actual = sha256_of(&path).map_err(|e| format!("{name} unreadable ({e})"))?;
             if actual != hash {
-                return Err(format!("{name} does not match its {SUMS_FILE} line"));
+                return Err(format!("{name} does not match its {CLI_SUMS_FILE} line"));
             }
         }
         Ok(Self {
@@ -122,10 +125,10 @@ impl CliDist {
     /// What `name` serves: `VERSION`, `SHA256SUMS`, one of `CLI_BINARIES`, or an install script; `None` otherwise.
     pub fn entry(&self, name: &str) -> Option<Entry<'_>> {
         match name {
-            VERSION_FILE => Some(Entry::Text(&self.version_file)),
-            SUMS_FILE => Some(Entry::Text(&self.sums)),
-            "install.sh" => Some(Entry::Text(&self.install_sh)),
-            "install.ps1" => Some(Entry::Text(&self.install_ps1)),
+            CLI_VERSION_FILE => Some(Entry::Text(&self.version_file)),
+            CLI_SUMS_FILE => Some(Entry::Text(&self.sums)),
+            CLI_INSTALL_SH => Some(Entry::Text(&self.install_sh)),
+            CLI_INSTALL_PS1 => Some(Entry::Text(&self.install_ps1)),
             // Joined from the constant, never from the request: only the bundle's own paths are ever opened.
             _ => CLI_BINARIES
                 .into_iter()
@@ -227,7 +230,9 @@ pub fn status_line(r: &Result<CliDist, String>) -> String {
 /// Whether the startup line is a warning: distribution is off although `dir` holds a `VERSION` and a public URL is
 /// configured, so a bundle was meant to be served and is broken. Off for want of a bundle or of a URL is `info`.
 pub fn is_fault(r: &Result<CliDist, String>, dir: &Path, public_url: Option<&url::Url>) -> bool {
-    r.is_err() && public_url.is_some() && std::fs::symlink_metadata(dir.join(VERSION_FILE)).is_ok()
+    r.is_err()
+        && public_url.is_some()
+        && std::fs::symlink_metadata(dir.join(CLI_VERSION_FILE)).is_ok()
 }
 
 /// `REEVE_CLI_DIR` when set and non-empty, else `/srv/cli` (where the published image puts the bundle).
@@ -303,8 +308,8 @@ mod tests {
                 hex::encode(Sha256::digest(&bytes))
             ));
         }
-        std::fs::write(dir.join(SUMS_FILE), sums).unwrap();
-        std::fs::write(dir.join(VERSION_FILE), format!("{VERSION}\n")).unwrap();
+        std::fs::write(dir.join(CLI_SUMS_FILE), sums).unwrap();
+        std::fs::write(dir.join(CLI_VERSION_FILE), format!("{VERSION}\n")).unwrap();
     }
 
     fn url() -> url::Url {
@@ -312,8 +317,8 @@ mod tests {
     }
 
     fn edit_sums(d: &Path, f: impl Fn(&str) -> String) {
-        let s = std::fs::read_to_string(d.join(SUMS_FILE)).unwrap();
-        std::fs::write(d.join(SUMS_FILE), f(&s)).unwrap();
+        let s = std::fs::read_to_string(d.join(CLI_SUMS_FILE)).unwrap();
+        std::fs::write(d.join(CLI_SUMS_FILE), f(&s)).unwrap();
     }
 
     /// `name` in `d` replaced by a symlink to a copy of itself elsewhere in `d`: same contents, not a regular file.
@@ -345,29 +350,29 @@ mod tests {
         let mut cases: Vec<(&str, Break, &str)> = vec![
             (
                 "no VERSION",
-                |d| std::fs::remove_file(d.join(VERSION_FILE)).unwrap(),
+                |d| std::fs::remove_file(d.join(CLI_VERSION_FILE)).unwrap(),
                 "no bundle in",
             ),
             (
                 "upper-case VERSION",
-                |d| std::fs::write(d.join(VERSION_FILE), VERSION.to_uppercase()).unwrap(),
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), VERSION.to_uppercase()).unwrap(),
                 "40-character",
             ),
             (
                 "short VERSION",
-                |d| std::fs::write(d.join(VERSION_FILE), &VERSION[..39]).unwrap(),
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), &VERSION[..39]).unwrap(),
                 "40-character",
             ),
             (
                 "two newlines",
-                |d| std::fs::write(d.join(VERSION_FILE), format!("{VERSION}\n\n")).unwrap(),
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), format!("{VERSION}\n\n")).unwrap(),
                 "40-character",
             ),
             (
                 "VERSION is a directory",
                 |d| {
-                    std::fs::remove_file(d.join(VERSION_FILE)).unwrap();
-                    std::fs::create_dir(d.join(VERSION_FILE)).unwrap()
+                    std::fs::remove_file(d.join(CLI_VERSION_FILE)).unwrap();
+                    std::fs::create_dir(d.join(CLI_VERSION_FILE)).unwrap()
                 },
                 "not a regular file",
             ),
@@ -375,13 +380,13 @@ mod tests {
                 "VERSION over the limit",
                 |d| {
                     let big = "0".repeat(TEXT_FILE_LIMIT as usize + 1);
-                    std::fs::write(d.join(VERSION_FILE), big).unwrap()
+                    std::fs::write(d.join(CLI_VERSION_FILE), big).unwrap()
                 },
                 "larger than 65536 bytes",
             ),
             (
                 "no SHA256SUMS",
-                |d| std::fs::remove_file(d.join(SUMS_FILE)).unwrap(),
+                |d| std::fs::remove_file(d.join(CLI_SUMS_FILE)).unwrap(),
                 "SHA256SUMS unreadable",
             ),
             (
@@ -472,12 +477,12 @@ mod tests {
             ),
             (
                 "a symlinked VERSION",
-                |d| symlink_in_place(d, VERSION_FILE),
+                |d| symlink_in_place(d, CLI_VERSION_FILE),
                 "VERSION: not a regular file",
             ),
             (
                 "a symlinked SHA256SUMS",
-                |d| symlink_in_place(d, SUMS_FILE),
+                |d| symlink_in_place(d, CLI_SUMS_FILE),
                 "SHA256SUMS unreadable (not a regular file)",
             ),
         ]);
@@ -572,7 +577,7 @@ mod tests {
         assert_eq!(
             c.entry("SHA256SUMS"),
             Some(Entry::Text(
-                &std::fs::read_to_string(d.path().join(SUMS_FILE)).unwrap()
+                &std::fs::read_to_string(d.path().join(CLI_SUMS_FILE)).unwrap()
             ))
         );
         for name in CLI_BINARIES {
