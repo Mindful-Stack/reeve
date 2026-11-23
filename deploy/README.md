@@ -355,6 +355,12 @@ your commit (a full clone is needed):
 
 A commit whose CLI version was never published (a fork's own CLI change) has no bundle; build without the flag.
 
+That pull works without signing in only while the `reeve-cli` package is public. The first release that publishes
+it creates the package with the organization's default visibility, which may be private: a maintainer then sets it
+to public once, in the package's settings (Danger Zone, Change visibility). If the release workflow's token may not
+create the package at all, `.github/workflows/cli.yml`'s header gives the one-off manual way to create it and grant
+this repository write access.
+
 An instance older than this feature has no `/cli/` routes: `curl … | sh` against it fails, and `reeve update` says
 the server does not distribute the CLI. Upgrade the instance first.
 

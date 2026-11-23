@@ -11,7 +11,7 @@ cd "$(dirname "$0")/../.."
 die() { echo "FAIL: $*" >&2; exit 1; }
 [ $# -eq 4 ] || die "usage: cli-windows.sh <exe-a> <version-a> <exe-b> <version-b>"
 a=$1 va=$2 b=$3 vb=$4
-for tool in python pwsh powershell.exe cygpath curl sha256sum; do command -v "$tool" >/dev/null || die "$tool not found"; done
+for tool in python pwsh powershell.exe cygpath sha256sum; do command -v "$tool" >/dev/null || die "$tool not found"; done
 export REEVE_UPDATE_NOTICE=0
 file=reeve-windows-x86_64.exe
 # Under the runner's temp directory: Git Bash's /tmp maps to a path with 8.3 short names.
@@ -39,9 +39,10 @@ restore_path() {
 	fi
 }
 cleanup() {
-	[ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+	# The stand-in holds its root open: stop it and wait, or Windows refuses to remove the directory.
+	[ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
 	restore_path || echo "cli-windows: could not restore the user Path" >&2
-	rm -rf "$work"
+	rm -rf "$work" || true
 }
 trap cleanup EXIT
 # Seed an unexpanded entry, as Windows writes them: install.ps1 must keep it unexpanded and keep REG_EXPAND_SZ.

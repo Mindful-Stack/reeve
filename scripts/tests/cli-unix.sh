@@ -20,7 +20,7 @@ export REEVE_UPDATE_NOTICE=0
 file=$(scripts/cli-build.sh --file "$target")
 work=$(mktemp -d)
 pid=
-trap '[ -z "$pid" ] || kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+trap '[ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$work" || true' EXIT
 
 # bundle <root> <binary> <version>: cli/ holding VERSION, this target's file and a SHA256SUMS naming every target.
 bundle() {

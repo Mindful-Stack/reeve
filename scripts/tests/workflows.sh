@@ -18,4 +18,24 @@ for f in .github/workflows/release.yml .github/workflows/cli.yml; do
 	others=$(grep -n '^ *shell:' "$f" | grep -v '^[0-9]*:    shell: bash$' || true)
 	[ -z "$others" ] || die "$f overrides the shell: $others"
 done
+
+# cli.yml runs on every pull request that can change the CLI: each input scripts/cli-version.sh names (a directory, or
+# a file) is matched by one of its pull_request.paths patterns (bash globbing: `*` and `**` both cross `/`, which is
+# looser than GitHub's `*` only for patterns that contain `/` after it; none here does).
+mapfile -t inputs < <(awk '/^inputs=\($/ { on = 1; next } on && /^\)$/ { exit } on { gsub(/^[ \t]+|[ \t]+$/, ""); print }' scripts/cli-version.sh)
+[ "${#inputs[@]}" -gt 0 ] || die "found no inputs=( … ) list in scripts/cli-version.sh"
+mapfile -t paths < <(awk '
+	/^  pull_request:$/ { pr = 1; next }
+	pr && /^    paths:$/ { on = 1; next }
+	on && /^      - / { sub(/^      - /, ""); gsub(/"/, ""); print; next }
+	on || (pr && /^  [^ ]/) { exit }' .github/workflows/cli.yml)
+[ "${#paths[@]}" -gt 0 ] || die "found no pull_request.paths in .github/workflows/cli.yml"
+for i in "${inputs[@]}"; do
+	hit=
+	for p in "${paths[@]}"; do
+		# shellcheck disable=SC2053 # $p is the glob
+		if [[ "$i" == $p || "$i/x" == $p ]]; then hit=1; break; fi
+	done
+	[ -n "$hit" ] || die "the CLI input $i is not in .github/workflows/cli.yml's pull_request.paths: a change to it would run no CLI build before main"
+done
 echo "workflows test ok"

@@ -1,12 +1,24 @@
 name: cli
 # The reeve CLI bundle (kb/ADR-0030): every supported target built on its own runner, run, and checked end to end
-# (scripts/tests/cli-unix.sh, cli-windows.sh), then, on a push to main only, published once per CLI version as
-# ghcr.io/mindful-stack/reeve-cli:<version>. The CLI version comes from scripts/cli-version.sh alone (R1); this file is
-# not a CLI input, so a pin bump here asks nobody to update.
+# (scripts/tests/cli-unix.sh, cli-windows.sh), assembled into the bundle image for linux/amd64 and linux/arm64, then, on
+# a push to main only, published once per CLI version as ghcr.io/mindful-stack/reeve-cli:<version>. The CLI version
+# comes from scripts/cli-version.sh alone (R1); this file is not a CLI input, so a pin bump here asks nobody to update.
 #
 # In a called workflow the github context is the caller's, so `github.event_name == 'push'` means release.yml on a
-# push to main: only that run looks the bundle up, skips the builds when it exists, and publishes. A pull request or a
-# manual run always builds and checks every target and never touches the registry, so nothing runs first on main.
+# push to main: only that run skips the builds when the bundle exists, and only it pushes. A pull request or a manual
+# run always builds, checks and assembles every target and never pushes, so the only step that first runs on main is
+# the push itself. A pull request from this repository also runs the registry lookup, report-only, logged in with its
+# GITHUB_TOKEN as a release run is (scripts/cli-bundle-lookup.sh): its answer for a version that is not published is
+# proven before merge, and an authorization failure fails the pull request instead of every release.
+#
+# If GITHUB_TOKEN cannot create the reeve-cli package (the organization's package settings may forbid it), create it
+# once by hand, then let this repository's workflows write it: with a classic token that has write:packages,
+#   echo "$TOKEN" | docker login ghcr.io -u <you> --password-stdin
+#   d=$(mktemp -d) && echo bootstrap >"$d/BOOTSTRAP" &&
+#     docker buildx build --platform linux/amd64,linux/arm64 -f deploy/cli/Dockerfile \
+#       -t ghcr.io/mindful-stack/reeve-cli:bootstrap --push "$d"
+# then, in the package's settings: Manage Actions access, add this repository with the Write role, and set the
+# visibility to public (deploy/README.md, CLI distribution). The `bootstrap` tag is no CLI version, so nothing uses it.
 on:
   # What can change a binary, an installer, the renderer or these checks.
   pull_request:
@@ -16,6 +28,7 @@ on:
       - "crates/reeve-server/src/cli_dist.rs"
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".cargo/**"
       - "rust-toolchain.toml"
       - ".config/nextest.toml"
       - "scripts/cli-*.sh"
@@ -32,6 +45,11 @@ on:
         description: The bundle image's digest, published by this run or an earlier one.
         value: ${{ jobs.publish.outputs.digest || jobs.version.outputs.digest }}
 permissions: { contents: read }
+# A newer push to the same pull request supersedes its run in progress; every other run (a release run, whose run id
+# is the caller's, or a manual one) has a group of its own.
+concurrency:
+  group: "cli-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 # Every run: block is `bash --noprofile --norc -eo pipefail {0}`, Git Bash on Windows (scripts/tests/workflows.sh).
 defaults:
   run:
@@ -41,6 +59,8 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: read }
+    env:
+      LOOKUP: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       digest: ${{ steps.lookup.outputs.digest }}
@@ -52,33 +72,32 @@ jobs:
           set -euo pipefail
           version=$(scripts/cli-version.sh)
           echo "version=$version" >>"$GITHUB_OUTPUT"
+      # The lookup gates the builds on a release run; on a pull request from this repository it only reports (the
+      # builds run anyway), so a registry or token problem shows before merge. Fork pull requests have no token for it.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        if: github.event_name == 'push'
+        if: env.LOOKUP == 'true'
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        if: github.event_name == 'push'
+        if: env.LOOKUP == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Published (a digest), not published ("not found": build it), or a registry failure, which fails the run and
-      # never reads as "missing".
+      # Published (a digest), clearly not published (build it), or anything else, which fails the run and never
+      # reads as "missing".
       - id: lookup
-        if: github.event_name == 'push'
+        if: env.LOOKUP == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          ref=ghcr.io/mindful-stack/reeve-cli:$VERSION
-          if digest=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>"$RUNNER_TEMP/err"); then
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "unexpected answer for $ref: $digest" >&2; exit 1; }
-            echo "digest=$digest" >>"$GITHUB_OUTPUT"
-            echo "bundle $VERSION is published: $digest"
-          elif grep -q ': not found$' "$RUNNER_TEMP/err" && ! grep -qiE 'denied|unauthorized|forbidden' "$RUNNER_TEMP/err"; then
-            echo "bundle $VERSION is not published: building it"
-          else
-            cat "$RUNNER_TEMP/err" >&2
-            exit 1
-          fi
+          answer=$(scripts/cli-bundle-lookup.sh "$VERSION")
+          echo "bundle $VERSION: $answer"
+          case "$answer" in
+          "published "*) [ "$EVENT" != push ] || echo "digest=${answer#published }" >>"$GITHUB_OUTPUT" ;;
+          missing) ;;
+          *) echo "unexpected lookup answer: $answer" >&2; exit 1 ;;
+          esac
 
   # One leg per target, each on its own operating system (R2). Always on a pull request or a manual run; on a release
   # run only when the bundle is missing.
@@ -87,7 +106,8 @@ jobs:
     if: github.event_name != 'push' || needs.version.outputs.digest == ''
     timeout-minutes: 45
     strategy:
-      fail-fast: true
+      # A release run stops at the first broken target (it would publish nothing); elsewhere every leg reports.
+      fail-fast: ${{ github.event_name == 'push' }}
       matrix:
         include:
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
@@ -153,21 +173,69 @@ jobs:
           else
             scripts/tests/cli-unix.sh "dist/$FILE" "$VERSION" "dist-b/$FILE" "$OTHER" "$TARGET"
           fi
+      # On every run, so assembling the bundle is proven before main.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name == 'push'
         with:
           name: cli-${{ matrix.target }}
           path: dist/${{ steps.build.outputs.file }}
           if-no-files-found: error
           retention-days: 1
 
-  # Release runs only: assembles the bundle and pushes it, one run per CLI version at a time (R1).
-  publish:
+  # Every run: the bundle from the legs' binaries, checked, and its image built for both platforms without a push. No
+  # registry access. The bundle goes to publish as an artifact.
+  assemble:
     needs: [version, build]
-    if: github.event_name == 'push' && needs.build.result == 'success'
+    if: needs.build.result == 'success'
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/bundle
+      - name: assemble the bundle
+        run: |
+          set -euo pipefail
+          dir=$RUNNER_TEMP/bundle
+          mapfile -t want < <(scripts/cli-build.sh --targets | while read -r t; do scripts/cli-build.sh --file "$t"; done | LC_ALL=C sort)
+          mapfile -t have < <(find "$dir" -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)
+          [ "${have[*]}" = "${want[*]}" ] || { echo "the bundle must hold exactly: ${want[*]}; it holds: ${have[*]:-nothing}" >&2; exit 1; }
+          (cd "$dir" && sha256sum -- "${want[@]}" >SHA256SUMS)
+          printf '%s\n' "$VERSION" >"$dir/VERSION"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Both server platforms: FROM scratch with only a COPY (no RUN), so no emulation is needed, and
+      # `--build-context cli=docker-image://ghcr.io/mindful-stack/reeve-cli:<version>` resolves on an arm64 host too.
+      - name: build the bundle image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ runner.temp }}/bundle
+          file: ${{ github.workspace }}/deploy/cli/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: ${{ runner.temp }}/bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  # Release runs only: pushes the assembled bundle.
+  publish:
+    needs: [version, assemble]
+    if: github.event_name == 'push' && needs.assemble.result == 'success'
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
+    # One publish per CLI version at a time (R1). A job-level group with cancel-in-progress: false never cancels a
+    # running publish; GitHub keeps at most one pending job per group, so a third run for the same version replaces
+    # (cancels) the one waiting, and that cancelled run's release publishes no image: the newer commit's does. The
+    # lookup is repeated inside the group, so a run that waited behind one that published the version pushes nothing.
     concurrency:
       group: reeve-cli-${{ needs.version.outputs.version }}
       cancel-in-progress: false
@@ -184,40 +252,29 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # The version job's lookup, again under this job's group: an earlier run for this CLI version may have published
-      # it since (both looked it up before either published). Then this run takes that digest and pushes nothing.
       - id: recheck
         run: |
           set -euo pipefail
-          ref=ghcr.io/mindful-stack/reeve-cli:$VERSION
-          if digest=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>"$RUNNER_TEMP/err"); then
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "unexpected answer for $ref: $digest" >&2; exit 1; }
-            echo "digest=$digest" >>"$GITHUB_OUTPUT"
-            echo "bundle $VERSION was published meanwhile: $digest"
-          elif grep -q ': not found$' "$RUNNER_TEMP/err" && ! grep -qiE 'denied|unauthorized|forbidden' "$RUNNER_TEMP/err"; then
-            echo "bundle $VERSION is still not published: publishing it"
-          else
-            cat "$RUNNER_TEMP/err" >&2
-            exit 1
-          fi
+          answer=$(scripts/cli-bundle-lookup.sh "$VERSION")
+          echo "bundle $VERSION: $answer"
+          case "$answer" in
+          "published "*) echo "digest=${answer#published }" >>"$GITHUB_OUTPUT" ;;
+          missing) ;;
+          *) echo "unexpected lookup answer: $answer" >&2; exit 1 ;;
+          esac
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         if: steps.recheck.outputs.digest == ''
         with:
-          pattern: cli-*
-          merge-multiple: true
+          name: bundle
           path: ${{ runner.temp }}/bundle
-      - name: assemble the bundle
+      # What assemble checked, again on the bytes this job pushes.
+      - name: check the bundle
         if: steps.recheck.outputs.digest == ''
         run: |
           set -euo pipefail
-          dir=$RUNNER_TEMP/bundle
-          mapfile -t want < <(scripts/cli-build.sh --targets | while read -r t; do scripts/cli-build.sh --file "$t"; done | LC_ALL=C sort)
-          mapfile -t have < <(find "$dir" -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)
-          [ "${have[*]}" = "${want[*]}" ] || { echo "the bundle must hold exactly: ${want[*]}; it holds: ${have[*]:-nothing}" >&2; exit 1; }
-          (cd "$dir" && sha256sum -- "${want[@]}" >SHA256SUMS)
-          printf '%s\n' "$VERSION" >"$dir/VERSION"
-      # For both server platforms: the image is FROM scratch with only a COPY (no RUN), so no emulation is needed, and
-      # `--build-context cli=docker-image://ghcr.io/mindful-stack/reeve-cli:<version>` resolves on an arm64 host too.
+          cd "$RUNNER_TEMP/bundle"
+          [ "$(cat VERSION)" = "$VERSION" ] || { echo "the bundle's VERSION is '$(cat VERSION)', want '$VERSION'" >&2; exit 1; }
+          sha256sum --strict -c SHA256SUMS
       - name: push the bundle
         id: push
         if: steps.recheck.outputs.digest == ''
