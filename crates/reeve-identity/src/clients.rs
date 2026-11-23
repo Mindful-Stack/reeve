@@ -44,7 +44,8 @@ pub enum ClientRefusal {
 impl ClientRefusal {
     /// Whether the instance has simply not enabled this app (its host or its redirect address is not listed, or
     /// it registered itself and the instance does not accept such apps), which an admin can change. Every other
-    /// refusal means the request was not valid.
+    /// refusal means the request was not valid. An app that asks for an address on the person's own computer is
+    /// told to use the CLI instead of asking an admin (`is_loopback_address`).
     pub fn not_enabled(&self) -> bool {
         matches!(
             self,
@@ -1048,7 +1049,6 @@ mod tests {
         assert_eq!(fetches(), 2, "no cache: each resolve fetches");
     }
 
-    /// Catches a page message that drifts: exactly the three refusals an admin can lift are "not enabled".
     /// Catches a local app told to ask an admin (a loopback form missed) and a hosted app told to use the CLI (a
     /// name that only contains `localhost`).
     #[test]
@@ -1083,6 +1083,7 @@ mod tests {
         }
     }
 
+    /// Catches a page message that drifts: exactly the three refusals an admin can lift are "not enabled".
     #[test]
     fn only_an_unlisted_host_an_unlisted_redirect_address_and_registration_off_are_not_enabled() {
         assert!(ClientRefusal::HostNotListed.not_enabled());

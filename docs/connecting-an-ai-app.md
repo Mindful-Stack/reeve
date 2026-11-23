@@ -5,7 +5,7 @@ stories, epics and decisions in a chat. The app works as you: it sees what you c
 has to turn this on for your instance first; if the steps below fail at the start, ask your admin.
 
 This is for hosted apps, the ones you use in a browser or a phone app. A tool that runs on your own computer, such
-as Claude Code, Cursor's desktop app or another coding agent, does not connect this way: see
+as Claude Code, a desktop editor or another coding agent, does not connect this way: see
 [Apps on your own computer](#apps-on-your-own-computer).
 
 ## Claude
@@ -79,12 +79,19 @@ makes is recorded as yours, together with the app it was made through: the activ
 
 ## Apps on your own computer
 
-A tool that runs on your own computer (Claude Code, Cursor's desktop app, another coding agent or editor) cannot be
-connected, and no admin can enable it. If you try, Reeve answers "This app runs on your own computer" and nothing is
-shared. Use the `reeve` command-line tool there instead: such a tool can run commands, and the CLI does everything the
-connection does and more (epics, initiatives, decisions and sprints, not only stories and comments).
+Connecting is for hosted apps. A tool that runs on your own computer (Claude Code, a desktop editor, another coding
+agent) is not connected this way, and asking your admin to enable it does not help. If you try, the tool reports
+that it could not connect, or Reeve answers "This app runs on your own computer". Either way nothing is shared.
+
+Use the `reeve` command-line tool there instead: such a tool can run commands. The CLI reads everything the
+connection reads, and changes more: epics, initiatives, decisions and sprints, not only stories and comments.
 
 1. Install `reeve`; your admin can say how for your instance.
-2. Run `reeve auth login` and follow its steps. It signs you in with a token of your own, which you can see and
-   revoke on the Tokens page.
-3. Ask the tool to use `reeve`; `reeve --help` lists the commands, and every command takes `--json`.
+2. On the Tokens page of your instance, create a token of the kind **automation**. It works as you, its changes are
+   recorded as made by you through automation, and like a connected app it cannot override the readiness check. You
+   can revoke it on the same page.
+3. Give the tool that token and your instance's address in its environment, as `REEVE_TOKEN` and `REEVE_URL`
+   (for example `https://reeve.example.com`), and ask it to use `reeve`. `reeve --help` lists the commands, and they
+   take `--json`.
+
+For your own use of `reeve` in a terminal, sign in instead: `reeve auth login --url https://reeve.example.com`.

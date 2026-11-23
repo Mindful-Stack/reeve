@@ -207,7 +207,7 @@ describe('the approval page', () => {
 	// The three problems authorize reports, and an address with neither parameter: a message, and no API call at all.
 	it.each([
 		['/connect?problem=app_not_enabled', 'This app is not enabled on localhost. Ask an admin.'],
-		['/connect?problem=local_app', 'This app runs on your own computer, and localhost connects only to hosted apps. Use the reeve command-line tool there instead.'],
+		['/connect?problem=local_app', 'This app runs on your own computer, and localhost connects only to hosted apps. Use the reeve command-line tool on your computer instead.'],
 		['/connect?problem=invalid_request', 'This connection request was not valid. Nothing was shared.'],
 		['/connect?problem=something_else', 'This connection request was not valid. Nothing was shared.'],
 		['/connect', 'This connection request was not valid. Nothing was shared.'],

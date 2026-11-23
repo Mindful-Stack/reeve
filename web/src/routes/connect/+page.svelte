@@ -75,7 +75,7 @@
 		{#if problem === 'app_not_enabled'}
 			<p role="alert">This app is not enabled on {instance}. Ask an admin.</p>
 		{:else if problem === 'local_app'}
-			<p role="alert">This app runs on your own computer, and {instance} connects only to hosted apps. Use the <code>reeve</code> command-line tool there instead.</p>
+			<p role="alert">This app runs on your own computer, and {instance} connects only to hosted apps. Use the <code>reeve</code> command-line tool on your computer instead.</p>
 		{:else if problem || view === 'invalid'}
 			<p role="alert">This connection request was not valid. Nothing was shared.</p>
 		{:else if view === 'loading'}
