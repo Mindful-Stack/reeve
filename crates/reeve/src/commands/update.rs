@@ -221,7 +221,14 @@ fn not_distributed(base: &url::Url) -> Failure {
 fn install_line(base: &url::Url, windows: bool) -> String {
     let b = shown(base);
     if windows {
-        format!("irm {b}{CLI_PATH}{CLI_INSTALL_PS1} | iex")
+        // Windows PowerShell 5.1 may not offer TLS 1.2 by default; the same prefix the installer prints.
+        format!(
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor \
+             [Net.SecurityProtocolType]::Tls12; irm {b}{CLI_PATH}{CLI_INSTALL_PS1} | iex"
+        )
+    } else if base.scheme() == "http" {
+        // Plain http is allowed only to loopback, and then never through a proxy (kb/ADR-0030.R5).
+        format!("curl -q --noproxy '*' -fsS {b}{CLI_PATH}{CLI_INSTALL_SH} | sh")
     } else {
         format!("curl -q --proto '=https' --tlsv1.2 -fsS {b}{CLI_PATH}{CLI_INSTALL_SH} | sh")
     }
@@ -755,9 +762,19 @@ mod tests {
         let win = permission_advice(Path::new(r"C:\tools\reeve.exe"), true, &base, true);
         assert!(
             win.contains(r"%LOCALAPPDATA%\Programs\reeve")
-                && win.contains("irm https://reeve.example.com/cli/install.ps1 | iex")
+                && win.contains("Tls12; irm https://reeve.example.com/cli/install.ps1 | iex")
                 && !win.contains("~/.local/bin"),
             "{win}"
+        );
+    }
+
+    #[test]
+    fn a_loopback_install_hint_bypasses_proxies() {
+        let base = url::Url::parse("http://127.0.0.1:7474").unwrap();
+        let line = install_line(&base, false);
+        assert!(
+            line.contains("--noproxy '*'") && !line.contains("=https"),
+            "{line}"
         );
     }
 
