@@ -90,7 +90,7 @@ Browser sign-in uses Google as the OpenID Connect provider. Without an `[oidc]` 
 
 ### Reverse proxy
 
-The proxy must forward `/auth/*`, `/api/*`, `/webhooks/*` (the GitHub webhook, when configured) and `/` (the web client, every other path) to the server, over HTTPS. Session cookies are `Secure` whenever `public_url` is https, so a browser never sends them over plain HTTP: terminate TLS at the proxy and keep `public_url` on https.
+The proxy must forward `/auth/*`, `/api/*`, `/cli/*` (the CLI downloads, see [CLI distribution](#cli-distribution)), `/webhooks/*` (the GitHub webhook, when configured) and `/` (the web client, every other path) to the server, over HTTPS. Session cookies are `Secure` whenever `public_url` is https, so a browser never sends them over plain HTTP: terminate TLS at the proxy and keep `public_url` on https.
 
 The web client keeps one server-sent-events stream open per tab (`/api/v1/events`). The proxy must not buffer it, and its read timeout must be above 15 s (the server sends a keep-alive every 15 s). Serve HTTP/2 to browsers: over HTTP/1.1 a browser allows only six connections per host, and every open tab holds one. For nginx:
 
@@ -299,6 +299,55 @@ In this order:
 4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id (with its host and name), and the connection is listed under "Connected apps" on the Tokens page. The person also adds a comment through the app (with a connection that may read and change) and checks that its entry in the activity feed names the app ("via <client>").
 
 To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token`, `/oauth/register` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
+
+## CLI distribution
+
+Every published image carries the `reeve` CLI built for its release (kb/ADR-0030): the binaries for every supported
+target, `SHA256SUMS` and `VERSION` (the build) in `/srv/cli`. Once `public_url` is set explicitly, the server serves
+them, and two install scripts rendered with that URL, at `/cli/` without sign-in:
+
+    curl -q --proto '=https' --tlsv1.2 -fsS https://<host>/cli/install.sh | sh     # Linux, macOS
+
+    # Windows (PowerShell): TLS 1.2 first, which Windows PowerShell 5.1 may not enable by default
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://<host>/cli/install.ps1 | iex
+
+At start-up the server logs one line: `cli distribution: on, offering build 1a2b3c4`, or `cli distribution: off
+(<reason>)` — no `public_url` configured (the loopback default would point a remote installer at its own machine), no
+bundle (an image you built yourself carries none unless built with a `cli` build context, below), or a bundle that
+does not check out. While it is on, every response carries `X-Reeve-Cli: <build>`, and the CLI tells people and agents
+to run `reeve update` when its own build differs. `REEVE_CLI_DIR` points the server at another directory (local
+testing).
+
+The routes are public, so rate-limit them per client IP at the proxy. An install is four requests (the script,
+`VERSION`, `SHA256SUMS`, the binary) and so is `reeve update` (`VERSION`, `SHA256SUMS`, the binary, `VERSION` again);
+running it again after a failure repeats them. For nginx, 30 a minute per IP with a burst of 10, which lets an install
+and an update back to back through at once, answering 429 over the limit (nginx's default is 503,
+[`limit_req_status`](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html#limit_req_status)):
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_cli:10m rate=30r/m;
+
+    # in the server block, before the general proxy location
+    location ^~ /cli/ {
+        limit_req zone=reeve_cli burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+Behind a CDN, `$binary_remote_addr` is the CDN's address unless your real-IP settings restore the client's; keep them.
+A per-IP limit caps neither total bandwidth nor what people behind one shared address can download together.
+
+An image you build yourself serves no CLI unless you give the build the bundle. It is published as
+`ghcr.io/mindful-stack/reeve-cli:<CLI version>`, where the CLI version is what `scripts/cli-version.sh` prints for
+your commit (a full clone is needed):
+
+    v=$(scripts/cli-version.sh)
+    docker build --build-context "cli=docker-image://ghcr.io/mindful-stack/reeve-cli:$v" .
+
+A commit whose CLI version was never published (a fork's own CLI change) has no bundle; build without the flag.
+
+An instance older than this feature has no `/cli/` routes: `curl … | sh` against it fails, and `reeve update` says
+the server does not distribute the CLI. Upgrade the instance first.
 
 ## GitHub webhook
 
