@@ -194,10 +194,31 @@ fn forbidden() -> serde_json::Value {
     serde_json::json!({"outcome":"error","code":"forbidden","message":"forbidden"})
 }
 
+/// Proxy variables a developer's shell may set. The helpers below run the CLI without them: with `HTTP_PROXY` set and no
+/// loopback bypass, requests (and the test token) would go to the proxy instead of the in-test server.
+const PROXY_VARS: [&str; 8] = [
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+/// The `reeve` binary, run without any proxy variable.
+fn reeve_cmd() -> Command {
+    let mut c = Command::cargo_bin("reeve").unwrap();
+    for v in PROXY_VARS {
+        c.env_remove(v);
+    }
+    c
+}
+
 fn reeve_at(url: &str, args: &[&str]) -> std::process::Output {
     let cfg = tempfile::tempdir().unwrap();
-    Command::cargo_bin("reeve")
-        .unwrap()
+    reeve_cmd()
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -228,8 +249,7 @@ fn capture(args: &[&str]) -> (String, String) {
         (line, body)
     });
     let cfg = tempfile::tempdir().unwrap();
-    Command::cargo_bin("reeve")
-        .unwrap()
+    reeve_cmd()
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -4192,7 +4212,7 @@ const NOTICE: &str = "note: this reeve is build aaaaaaa, the server offers bbbbb
 /// `reeve_at` as `build` (debug builds read `REEVE_CLI_VERSION_OVERRIDE`; `dev` is unstamped), with extra env.
 fn reeve_as(build: &str, url: &str, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
     let cfg = tempfile::tempdir().unwrap();
-    let mut c = Command::cargo_bin("reeve").unwrap();
+    let mut c = reeve_cmd();
     c.env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -4495,9 +4515,26 @@ fn auth_status_of_an_unstamped_build_against_a_server_without_a_bundle() {
 /// would otherwise panic and exit 101).
 #[test]
 fn the_notice_to_a_closed_stderr_pipe_keeps_exit_0() {
-    let (url, server) = serve_lazy_with(Some(CLI_B), empty_war_room());
+    // The answer waits until the read end is closed, so the notice is always written to a closed pipe (without the
+    // wait, a fast child could print it before the drop, and a panicking write would go unnoticed).
+    let (closed, wait) = std::sync::mpsc::channel::<()>();
+    let (url, server) = serve_lazy_with(
+        Some(CLI_B),
+        vec![(
+            "GET /api/v1/war-room",
+            200,
+            lazy(move || {
+                wait.recv().unwrap();
+                ok(serde_json::json!([]))
+            }),
+        )],
+    );
     let cfg = tempfile::tempdir().unwrap();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"))
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"));
+    for v in PROXY_VARS {
+        child.env_remove(v);
+    }
+    let mut child = child
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -4509,7 +4546,8 @@ fn the_notice_to_a_closed_stderr_pipe_keeps_exit_0() {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    drop(child.stderr.take()); // the read end closes before the child can answer its first request
+    drop(child.stderr.take());
+    closed.send(()).unwrap();
     let status = child.wait().unwrap();
     server.join().unwrap();
     assert_eq!(status.code(), Some(0), "{status:?}");
