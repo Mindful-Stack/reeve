@@ -223,7 +223,7 @@ fn install_line(base: &url::Url, windows: bool) -> String {
     if windows {
         format!("irm {b}{CLI_PATH}{CLI_INSTALL_PS1} | iex")
     } else {
-        format!("curl --proto '=https' --tlsv1.2 -fsS {b}{CLI_PATH}{CLI_INSTALL_SH} | sh")
+        format!("curl -q --proto '=https' --tlsv1.2 -fsS {b}{CLI_PATH}{CLI_INSTALL_SH} | sh")
     }
 }
 
