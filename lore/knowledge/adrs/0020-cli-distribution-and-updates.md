@@ -3,7 +3,7 @@ id: kb/ADR-0020
 title: "ADR-0020: The Reeve server distributes the CLI it was released with, and the CLI asks to be updated when they differ"
 description: "Each Reeve server with a configured public URL serves, without sign-in, the `reeve` CLI binaries built for its release, verified by SHA-256 over HTTPS, and the CLI tells a person at a terminal to run `reeve update` when its CLI version differs from the server's, because one install line and an exact match with each instance beat a channel that every instance shares and that drifts from each of them."
 tags: [adr, reeve, cli, deploy, security]
-status: accepted
+status: superseded
 date: 2026-11-13
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -13,7 +13,7 @@ blast_radius: shared
 sensitivity: [security]
 scope: ["reeve:crates/reeve/**", "reeve:crates/reeve-server/src/cli.rs", "reeve:crates/reeve-server/src/routes/**", "reeve:crates/reeve-server/src/state.rs", "reeve:Dockerfile", "reeve:deploy/cli/**", "reeve:deploy/README.md", "reeve:.github/workflows/cli.yml", "reeve:.github/workflows/release.yml", "reeve:scripts/cli-*.sh", "reeve:scripts/tests/**"]
 supersedes: []
-superseded_by:
+superseded_by: kb/ADR-0030
 depends_on: [kb/ADR-0005, kb/ADR-0006, kb/ADR-0015, kb/ADR-0016]
 related: [kb/ADR-0010, kb/ADR-0011, kb/ADR-0019]
 implements: []
@@ -25,6 +25,7 @@ rfc:
 ## Status
 Proposed 2026-11-13.
 Accepted 2026-11-13 by Daniel Thyselius.
+Superseded 2026-11-23 by kb/ADR-0030.
 
 ## Context
 People install the `reeve` CLI today by building it from a checkout, or with `cargo install` from the public repository. Both need a Rust toolchain and a full compile, and both leave each person on whatever commit they last built. Lorekeeper skills shell out to the same binary under an automation token and detect the planner by `reeve --version` (kb/ADR-0005), and the TUI is used against a live instance, so a client that drifts from its server meets API changes it was not built for.
