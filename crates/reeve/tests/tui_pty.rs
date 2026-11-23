@@ -1,6 +1,8 @@
 //! The real binary in a real pseudo-terminal: it starts in raw mode, `q` exits 0, and the terminal is handed back (the
 //! alternate screen left, the cursor shown, canonical mode restored) on a normal exit and after a panic.
 #![cfg(unix)]
+#[path = "isolation/mod.rs"]
+mod isolation;
 mod support;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::{
@@ -99,16 +101,7 @@ fn spawn(url: &str, extra_env: &[(&str, &str)]) -> (Run, tempfile::TempDir) {
     cmd.env_remove("REEVE_CLI_VERSION_OVERRIDE");
     cmd.env_remove("REEVE_UPDATE_NOTICE");
     // A developer's proxy would otherwise receive the requests meant for the in-test server.
-    for v in [
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-        "NO_PROXY",
-        "no_proxy",
-    ] {
+    for v in isolation::PROXY_VARS {
         cmd.env_remove(v);
     }
     for (k, v) in extra_env {

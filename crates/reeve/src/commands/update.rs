@@ -2,7 +2,8 @@
 //! single SHA-256 line for this platform's file, over HTTPS, with no credentials and no redirects.
 use crate::cli_version::{self, short};
 use reeve_protocol::{
-    CLI_BINARIES, CLI_PATH, ErrorCode, SUMS_FILE, TEXT_CONTENT_TYPE, VERSION_FILE, is_cli_version,
+    CLI_BINARIES, CLI_INSTALL_PS1, CLI_INSTALL_SH, CLI_PATH, CLI_SUMS_FILE, CLI_TEXT_CONTENT_TYPE,
+    CLI_VERSION_FILE, ErrorCode, is_cli_version,
 };
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -162,7 +163,7 @@ async fn get(
 /// CLI. A 404, an answer over the cap, one not served as `text/plain` (an older server answers unknown paths with its
 /// web page) or one that is not a CLI version all mean `not_distributed`. Used for the first read and the re-read alike.
 async fn offered_build(http: &reqwest::Client, base: &url::Url) -> Result<String, Failure> {
-    let got = match get(http, base, VERSION_FILE, TEXT_CAP).await {
+    let got = match get(http, base, CLI_VERSION_FILE, TEXT_CAP).await {
         Ok(g) => g,
         Err(Fetch::NotFound | Fetch::TooLarge) => return Err(not_distributed(base)),
         Err(Fetch::Failed(f)) => return Err(f),
@@ -202,7 +203,7 @@ fn is_text(content_type: &str) -> bool {
     content_type
         .split(';')
         .next()
-        .is_some_and(|t| t.trim().eq_ignore_ascii_case(TEXT_CONTENT_TYPE))
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case(CLI_TEXT_CONTENT_TYPE))
 }
 
 fn not_distributed(base: &url::Url) -> Failure {
@@ -220,9 +221,9 @@ fn not_distributed(base: &url::Url) -> Failure {
 fn install_line(base: &url::Url, windows: bool) -> String {
     let b = shown(base);
     if windows {
-        format!("irm {b}{CLI_PATH}install.ps1 | iex")
+        format!("irm {b}{CLI_PATH}{CLI_INSTALL_PS1} | iex")
     } else {
-        format!("curl --proto '=https' --tlsv1.2 -fsS {b}{CLI_PATH}install.sh | sh")
+        format!("curl --proto '=https' --tlsv1.2 -fsS {b}{CLI_PATH}{CLI_INSTALL_SH} | sh")
     }
 }
 
@@ -415,7 +416,7 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
         }
         return Ok(0);
     }
-    let sums = file(&http, &base, SUMS_FILE, TEXT_CAP).await?;
+    let sums = file(&http, &base, CLI_SUMS_FILE, TEXT_CAP).await?;
     let bin = file(&http, &base, file_name, BINARY_CAP).await?;
     // What is guaranteed: the binary matches the SHA256SUMS line it was verified against; no answer that names a valid
     // build (`X-Reeve-Cli`) names another than the one VERSION offered; and VERSION still offers that build after the
@@ -439,7 +440,7 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
     let want = expected_sum(&String::from_utf8_lossy(&sums.bytes), file_name).map_err(mismatch)?;
     if hex::encode(Sha256::digest(&bin.bytes)) != want {
         return Err(mismatch(format!(
-            "{file_name} does not match its {SUMS_FILE} line"
+            "{file_name} does not match its {CLI_SUMS_FILE} line"
         )));
     }
     if offered_build(&http, &base).await? != offered {
@@ -533,7 +534,7 @@ pub(crate) fn expected_sum(sums: &str, file: &str) -> Result<String, String> {
         .collect();
     let [line] = lines.as_slice() else {
         return Err(format!(
-            "SHA256SUMS has {} lines for {file}, not one",
+            "{CLI_SUMS_FILE} has {} lines for {file}, not one",
             lines.len()
         ));
     };
@@ -545,7 +546,9 @@ pub(crate) fn expected_sum(sums: &str, file: &str) -> Result<String, String> {
     {
         Ok(hash.to_string())
     } else {
-        Err(format!("SHA256SUMS's line for {file} holds no SHA-256"))
+        Err(format!(
+            "{CLI_SUMS_FILE}'s line for {file} holds no SHA-256"
+        ))
     }
 }
 

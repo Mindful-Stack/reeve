@@ -482,6 +482,7 @@ pub fn quick() -> Options {
         connect_timeout: Duration::from_secs(1),
         idle_timeout: Duration::from_secs(30),
         backoff: vec![Duration::from_millis(50)],
+        no_proxy: true,
     }
 }
 

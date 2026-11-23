@@ -1,8 +1,7 @@
 //! The CLI distribution contract between the server and the CLI (kb/ADR-0030): where a bundle is served, the names of
 //! its files, how its two text files are served, the response header that carries the build a server offers, and the
 //! CLI-version format. Not an `/api/v1` type; the OpenAPI document does not carry it. Shell copies of the names live in
-//! `deploy/cli/install.sh` (its platform map) and in `scripts/cli-build.sh`; PR B ties the latter to `CLI_BINARIES`
-//! with a test.
+//! `deploy/cli/install.sh` (its platform map) and in `scripts/cli-build.sh`.
 
 /// The response header carrying the CLI version of the bundle a server offers, while distribution is on. Lower case,
 /// as HTTP/2 sends it.
@@ -12,17 +11,23 @@ pub const CLI_VERSION_HEADER: &str = "x-reeve-cli";
 pub const CLI_PATH: &str = "/cli/";
 
 /// The bundle's file holding the CLI version it offers: one CLI version, optionally followed by a newline.
-pub const VERSION_FILE: &str = "VERSION";
+pub const CLI_VERSION_FILE: &str = "VERSION";
 
 /// The bundle's checksum file: one `<sha-256>  <name>` line per binary of `CLI_BINARIES`.
-pub const SUMS_FILE: &str = "SHA256SUMS";
+pub const CLI_SUMS_FILE: &str = "SHA256SUMS";
 
-/// The media type `VERSION_FILE` and `SUMS_FILE` are served with (a `charset` parameter may follow). A `VERSION` served
+/// The shell installer, served at `/cli/install.sh`.
+pub const CLI_INSTALL_SH: &str = "install.sh";
+
+/// The PowerShell installer, served at `/cli/install.ps1`.
+pub const CLI_INSTALL_PS1: &str = "install.ps1";
+
+/// The media type `CLI_VERSION_FILE` and `CLI_SUMS_FILE` are served with (a `charset` parameter may follow). A `VERSION` served
 /// as anything else is not a bundle's: an older server answers unknown paths with its web page.
-pub const TEXT_CONTENT_TYPE: &str = "text/plain";
+pub const CLI_TEXT_CONTENT_TYPE: &str = "text/plain";
 
-/// The binaries of a bundle, one per supported target, in `SHA256SUMS` order. A bundle is these plus `VERSION_FILE`
-/// and `SUMS_FILE`.
+/// The binaries of a bundle, one per supported target, in `SHA256SUMS` order. A bundle is these plus `CLI_VERSION_FILE`
+/// and `CLI_SUMS_FILE`.
 pub const CLI_BINARIES: [&str; 5] = [
     "reeve-linux-x86_64",
     "reeve-linux-aarch64",
@@ -69,7 +74,7 @@ mod tests {
                 .all(|b| b.is_ascii_lowercase() || b == b'-')
         );
         assert!(CLI_PATH.starts_with('/') && CLI_PATH.ends_with('/'));
-        let mut seen = std::collections::HashSet::from([VERSION_FILE, SUMS_FILE]);
+        let mut seen = std::collections::HashSet::from([CLI_VERSION_FILE, CLI_SUMS_FILE]);
         for f in CLI_BINARIES {
             assert!(seen.insert(f), "{f} twice");
             let (os, arch) = f

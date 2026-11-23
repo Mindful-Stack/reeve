@@ -122,11 +122,21 @@ impl Client {
     }
     /// A client whose every request has this total timeout.
     pub fn with_timeout(base: String, token: String, timeout: std::time::Duration) -> Self {
+        Self::with_proxy(base, token, timeout, true)
+    }
+    /// `with_timeout`, optionally ignoring the proxy environment (`use_proxy` false), for in-process tests.
+    pub(crate) fn with_proxy(
+        base: String,
+        token: String,
+        timeout: std::time::Duration,
+        use_proxy: bool,
+    ) -> Self {
+        let mut b = reqwest::Client::builder().timeout(timeout);
+        if !use_proxy {
+            b = b.no_proxy();
+        }
         Self {
-            http: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .expect("http client"),
+            http: b.build().expect("http client"),
             base,
             token,
         }

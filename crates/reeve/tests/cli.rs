@@ -1,5 +1,7 @@
 //! CLI tests that need no Docker: argument grammar and what the CLI puts on the wire.
-use assert_cmd::Command;
+#[path = "isolation/mod.rs"]
+mod isolation;
+use isolation::reeve_cmd;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
@@ -192,28 +194,6 @@ fn ok(value: serde_json::Value) -> serde_json::Value {
 
 fn forbidden() -> serde_json::Value {
     serde_json::json!({"outcome":"error","code":"forbidden","message":"forbidden"})
-}
-
-/// Proxy variables a developer's shell may set. The helpers below run the CLI without them: with `HTTP_PROXY` set and no
-/// loopback bypass, requests (and the test token) would go to the proxy instead of the in-test server.
-const PROXY_VARS: [&str; 8] = [
-    "HTTP_PROXY",
-    "http_proxy",
-    "HTTPS_PROXY",
-    "https_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-    "NO_PROXY",
-    "no_proxy",
-];
-
-/// The `reeve` binary, run without any proxy variable.
-fn reeve_cmd() -> Command {
-    let mut c = Command::cargo_bin("reeve").unwrap();
-    for v in PROXY_VARS {
-        c.env_remove(v);
-    }
-    c
 }
 
 fn reeve_at(url: &str, args: &[&str]) -> std::process::Output {
@@ -435,8 +415,7 @@ fn a_rate_limit_is_reported_as_rate_limited() {
 /// A string outside the loose grammar is still a usage error, before any request.
 #[test]
 fn a_malformed_key_argument_is_a_usage_error() {
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("REEVE_URL", "http://127.0.0.1:9")
         .env("REEVE_TOKEN", "reeve_test")
         .args(["story", "show", "scrum-11"])
@@ -453,8 +432,7 @@ fn a_malformed_key_argument_is_a_usage_error() {
 /// The planning skills reclassify stories through `story edit --kind`.
 #[test]
 fn story_edit_lists_kind() {
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .args(["story", "edit", "--help"])
         .output()
         .unwrap();
@@ -912,8 +890,7 @@ fn the_check_runs_git_without_the_token() {
         bin.path().display(),
         std::env::var("PATH").unwrap_or_default()
     );
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("PATH", path)
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
@@ -1218,8 +1195,7 @@ fn decision_edit_exit_statuses_and_usage() {
             "--no-due",
         ][..],
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env("REEVE_URL", "http://127.0.0.1:9")
             .env("REEVE_TOKEN", "reeve_test")
             .args(args)
@@ -1240,8 +1216,7 @@ fn decision_edit_exit_statuses_and_usage() {
 #[test]
 fn tui_without_a_stored_login_exits_1_without_entering_the_alternate_screen() {
     let dir = tempfile::tempdir().unwrap();
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .arg("tui")
         .env("REEVE_CONFIG_DIR", dir.path())
         .env("REEVE_URL", "http://127.0.0.1:9")
@@ -1260,8 +1235,7 @@ fn tui_without_a_stored_login_exits_1_without_entering_the_alternate_screen() {
 #[test]
 fn tui_refuses_json() {
     let dir = tempfile::tempdir().unwrap();
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .args(["--json", "tui"])
         .env("REEVE_CONFIG_DIR", dir.path())
         .output()
@@ -1382,7 +1356,7 @@ fn keys_carry_a_glyph_with_an_ascii_fallback() {
     let run = |args: &[&str], env: Option<(&str, &str)>| {
         let (url, server) = serve(vec![("GET /api/v1/stories/TST-1", 200, ok(story.clone()))]);
         let cfg = tempfile::tempdir().unwrap();
-        let mut c = Command::cargo_bin("reeve").unwrap();
+        let mut c = reeve_cmd();
         c.env("REEVE_URL", &url)
             .env("REEVE_TOKEN", "reeve_test")
             .env("REEVE_CONFIG_DIR", cfg.path())
@@ -1453,8 +1427,7 @@ fn briefs_and_descriptions_come_from_a_file_or_stdin_unchanged() {
         body
     });
     let cfg = tempfile::tempdir().unwrap();
-    Command::cargo_bin("reeve")
-        .unwrap()
+    reeve_cmd()
         .env("REEVE_URL", &url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -1474,8 +1447,7 @@ fn briefs_and_descriptions_come_from_a_file_or_stdin_unchanged() {
     assert_eq!(v["brief"], md);
 
     // inline and file together is a usage error
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .args([
             "epic",
             "edit",
@@ -1660,8 +1632,7 @@ fn story_owner_is_set_on_create_and_edit_and_cleared() {
     let (_, body) = capture(&["story", "edit", "TST-1", "--version", "2", "--no-owner"]);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(v.get("owner").is_some_and(|o| o.is_null()), "{body}");
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .args([
             "story",
             "edit",
@@ -1849,8 +1820,7 @@ fn initiative_edit_sends_only_the_given_fields() {
         &["--owner", "x@example.com", "--no-owner"][..],
         &["--target-month", "2027-03", "--no-target-month"][..],
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env("REEVE_URL", "http://127.0.0.1:9")
             .env("REEVE_TOKEN", "reeve_test")
             .args(edit(extra))
@@ -1979,8 +1949,7 @@ fn decision_close_needs_exactly_one_outcome() {
         ][..],
         &["decision", "close", "7", "--reason", "a"][..],
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env("REEVE_URL", "http://127.0.0.1:9")
             .env("REEVE_TOKEN", "reeve_test")
             .args(args)
@@ -2078,8 +2047,7 @@ fn decision_edit_sends_reversibility_and_refuses_both_flags() {
         ]),
         serde_json::json!({"version": 3, "reversibility": "two_way"})
     );
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("REEVE_URL", "http://127.0.0.1:9")
         .env("REEVE_TOKEN", "reeve_test")
         .args([
@@ -2263,8 +2231,7 @@ fn decision_ls_queue_reads_the_queue() {
     reeve_at(&url, &["decision", "ls", "--queue"]);
     server.join().unwrap();
 
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("REEVE_URL", "http://127.0.0.1:9")
         .env("REEVE_TOKEN", "reeve_test")
         .args(["decision", "ls", "--queue", "--mine"])
@@ -2333,8 +2300,7 @@ fn view_json(state: &str, counts: serde_json::Value) -> serde_json::Value {
 /// A bad `--verdict` is a usage error before any request (exit 1: this CLI keeps exit 2 for the server's refusals).
 #[test]
 fn a_malformed_verdict_is_a_usage_error() {
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("REEVE_URL", "http://127.0.0.1:9")
         .env("REEVE_TOKEN", "reeve_test")
         .args(["sprint", "close", "--verdict", "12=maybe"])
@@ -2917,8 +2883,7 @@ fn urgent_clear_with_reason_is_a_usage_error() {
         ("epic", "ABC-40"),
         ("story", "TST-1"),
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env("REEVE_URL", "http://127.0.0.1:9")
             .env("REEVE_TOKEN", "reeve_test")
             .args([level, "urgent", key, "--clear", "--reason", "x"])
@@ -3393,8 +3358,7 @@ const ATTACHMENT_ID: &str = "0193a6a2-7b1c-7d2e-9f00-000000000001";
 
 fn get_into(url: &str, dir: &std::path::Path) -> std::process::Output {
     let cfg = tempfile::tempdir().unwrap();
-    Command::cargo_bin("reeve")
-        .unwrap()
+    reeve_cmd()
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -3452,8 +3416,7 @@ fn attachment_get_refuses_another_content_type() {
 /// --dir is required: the CLI has no shared default location for private screenshots.
 #[test]
 fn attachment_get_requires_a_directory() {
-    let out = Command::cargo_bin("reeve")
-        .unwrap()
+    let out = reeve_cmd()
         .env("REEVE_URL", "http://127.0.0.1:9")
         .env("REEVE_TOKEN", "reeve_test")
         .args(["attachment", "get", ATTACHMENT_ID, "--json"])
@@ -4041,8 +4004,7 @@ fn story_ls_refuses_a_limit_or_offset_that_is_not_a_whole_number() {
         ),
         (&["story", "ls", "--limit", "-1"][..], "unexpected argument"),
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env("REEVE_URL", "http://127.0.0.1:9")
             .env("REEVE_TOKEN", "reeve_test")
             .args(args)
@@ -4531,7 +4493,7 @@ fn the_notice_to_a_closed_stderr_pipe_keeps_exit_0() {
     );
     let cfg = tempfile::tempdir().unwrap();
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"));
-    for v in PROXY_VARS {
+    for v in isolation::PROXY_VARS {
         child.env_remove(v);
     }
     let mut child = child
@@ -4580,8 +4542,7 @@ fn every_command_names_the_same_way_to_set_a_server_url() {
         &["tui"][..],
         &["update"][..],
     ] {
-        let out = Command::cargo_bin("reeve")
-            .unwrap()
+        let out = reeve_cmd()
             .env_remove("REEVE_URL")
             .env_remove("REEVE_TOKEN")
             .env("REEVE_CONFIG_DIR", cfg.path())
