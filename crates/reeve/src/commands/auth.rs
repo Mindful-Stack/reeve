@@ -225,7 +225,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
     let url = url
         .or_else(|| crate::config::env_nonempty("REEVE_URL"))
         .or(crate::config::load().url)
-        .ok_or_else(|| anyhow::anyhow!("no server url: pass --url https://reeve.example.com"))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::config::NO_SERVER_URL))?;
     let url = url.trim_end_matches('/').to_string();
     if crate::config::env_nonempty("REEVE_TOKEN").is_some() {
         // REEVE_TOKEN wins over the stored token (kb/ADR-0015 R7), so the login would otherwise look like it did nothing.
@@ -299,15 +299,5 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
 
 /// Best effort: the address is already on stderr, so a missing opener is not an error.
 fn open_browser(page: &str) {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    let _ = std::process::Command::new(opener)
-        .arg(page)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    let _ = crate::browser::command(page).spawn();
 }

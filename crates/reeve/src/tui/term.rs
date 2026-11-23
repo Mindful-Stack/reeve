@@ -118,22 +118,13 @@ pub fn input() -> BoxStream<'static, Input> {
         .boxed()
 }
 
-/// The browser (`xdg-open`, or `open` on macOS) and the clipboard (OSC 52).
+/// The browser (`crate::browser`) and the clipboard (OSC 52).
 pub struct TerminalIo;
 impl Io for TerminalIo {
     fn open(&self, url: &str) -> Result<(), String> {
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        let status = std::process::Command::new(opener)
-            .arg(url)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| format!("{opener}: {e}"))?;
+        let mut cmd = crate::browser::command(url);
+        let opener = cmd.get_program().to_string_lossy().into_owned();
+        let status = cmd.status().map_err(|e| format!("{opener}: {e}"))?;
         if status.success() {
             Ok(())
         } else {

@@ -4532,3 +4532,32 @@ fn a_garbled_offered_build_is_ignored() {
         stderr_text(&out)
     );
 }
+
+#[test]
+fn every_command_names_the_same_way_to_set_a_server_url() {
+    let cfg = tempfile::tempdir().unwrap();
+    // `reeve update` joins this list when it exists (a later task).
+    for args in [
+        &["war-room", "ls"][..],
+        &["auth", "login", "--no-browser"][..],
+    ] {
+        let out = Command::cargo_bin("reeve")
+            .unwrap()
+            .env_remove("REEVE_URL")
+            .env_remove("REEVE_TOKEN")
+            .env("REEVE_CONFIG_DIR", cfg.path())
+            .args(args)
+            .write_stdin("")
+            .timeout(Duration::from_secs(30))
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(
+                "no server url: run reeve auth login --url https://reeve.example.com first, or set REEVE_URL"
+            ),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
