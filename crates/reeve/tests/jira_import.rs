@@ -165,7 +165,10 @@ impl Env {
     }
     /// `GET /api/v1{path}` with the admin token; the envelope's value, or the whole envelope when it is not ok.
     async fn get(&self, path: &str) -> Value {
-        let v: Value = reqwest::Client::new()
+        let v: Value = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .get(format!("{}/api/v1{path}", self.server))
             .bearer_auth(&self.token)
             .send()

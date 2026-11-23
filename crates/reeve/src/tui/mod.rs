@@ -81,7 +81,7 @@ pub struct Setup {
     pub me: Option<Me>,
     pub reeve_token_set: bool,
     /// Whether the header shows the CLI build note, decided from the startup probe.
-    pub cli_differs: bool,
+    pub update_note: bool,
     pub color: bool,
     pub options: Options,
 }
@@ -120,7 +120,7 @@ where
                 url: setup.url,
                 me: setup.me,
                 reeve_token_set: setup.reeve_token_set,
-                cli_differs: setup.cli_differs,
+                update_note: setup.update_note,
                 width: size.width,
                 height: size.height,
                 color: setup.color,
@@ -301,12 +301,11 @@ pub async fn main() -> i32 {
             return 1;
         }
     };
-    // Decided once, before the terminal is taken over (kb/ADR-0030 R6): the probe's answer carried the offered build.
-    // The runtime client (`tui/http.rs`) also writes the process-wide cell; harmless, since `cli()` never calls
-    // `notify` for `tui`.
-    let cli_differs = crate::cli_version::tui_note(
+    // Decided once, before the terminal is taken over (kb/ADR-0030 R6), from the build the probe's answer offered (the
+    // probe is this process's first request, so the one store holds exactly that). Later answers change nothing shown.
+    let update_note = crate::cli_version::tui_note(
         crate::cli_version::current().as_deref(),
-        probe.server_cli().as_deref(),
+        crate::cli_version::offered().as_deref(),
         crate::cli_version::setting().as_deref(),
     );
     let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
@@ -324,7 +323,7 @@ pub async fn main() -> i32 {
         token: login.token,
         me,
         reeve_token_set: login.reeve_token_set,
-        cli_differs,
+        update_note,
         color,
         options,
     };
@@ -366,7 +365,7 @@ mod tests {
             token: "t".into(),
             me: None,
             reeve_token_set: false,
-            cli_differs: false,
+            update_note: false,
             color: false,
             options: Options::default(),
         };

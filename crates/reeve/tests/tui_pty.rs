@@ -98,6 +98,19 @@ fn spawn(url: &str, extra_env: &[(&str, &str)]) -> (Run, tempfile::TempDir) {
     cmd.env_remove("REEVE_TUI_PANIC_AFTER_DRAW");
     cmd.env_remove("REEVE_CLI_VERSION_OVERRIDE");
     cmd.env_remove("REEVE_UPDATE_NOTICE");
+    // A developer's proxy would otherwise receive the requests meant for the in-test server.
+    for v in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        cmd.env_remove(v);
+    }
     for (k, v) in extra_env {
         cmd.env(k, v);
     }

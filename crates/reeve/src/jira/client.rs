@@ -184,12 +184,14 @@ impl JiraClient {
             reqwest::header::ACCEPT,
             reqwest::header::HeaderValue::from_static("application/json"),
         );
+        let builder = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .default_headers(headers);
+        // The unit tests talk to an in-process loopback fake: a developer's proxy variables must not divert them.
+        #[cfg(test)]
+        let builder = builder.no_proxy();
         Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .default_headers(headers)
-                .build()
-                .expect("http client"),
+            http: builder.build().expect("http client"),
             base,
             email,
             token,

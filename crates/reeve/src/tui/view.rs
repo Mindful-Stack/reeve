@@ -132,7 +132,7 @@ fn header(s: &State, w: usize) -> String {
                 automation_long.as_str()
             });
         }
-        if s.session.cli_differs {
+        if s.session.update_note {
             t.push(if short {
                 "run reeve update"
             } else {
@@ -1356,7 +1356,7 @@ mod tests {
             "no note by default: {}",
             rows[0]
         );
-        sim.s.session.cli_differs = true;
+        sim.s.session.update_note = true;
         let (rows, _) = sim.render(120, 30);
         assert!(
             rows[0].contains("CLI build differs — run reeve update"),
@@ -1369,7 +1369,7 @@ mod tests {
     fn a_narrow_header_keeps_the_short_cli_note_whole() {
         let mut sim = mine(vec!["ABC-1"]);
         sim.s.session.url = LONG_URL.into();
-        sim.s.session.cli_differs = true;
+        sim.s.session.update_note = true;
         sim.s.session.reeve_token_set = true;
         // The fixture starts `connecting`. Short tail `connecting · run reeve update · REEVE_TOKEN ignored` = 51
         // columns; long tail = 71. At 60 only the short tail fits; `header` empties the host, me and the filter, and

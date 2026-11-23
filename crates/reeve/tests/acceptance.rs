@@ -740,7 +740,7 @@ async fn flow() {
         "/tests/fixtures/one.png"
     ))
     .unwrap();
-    let http = reqwest::Client::new();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
     let up: serde_json::Value = http
         .post(format!("{base}/api/v1/attachments?filename=one.png"))
         .bearer_auth(&bot)

@@ -6,3 +6,12 @@ retries = 0
 # A hung test fails after six minutes: later than the 300 s timeouts acceptance.rs, tui_e2e.rs and jira_import.rs
 # wrap their flows in, so their own message is the one reported.
 slow-timeout = { period = "60s", terminate-after = 6 }
+
+# `tests/update.rs`: every test copies, hashes, serves and writes the ~150 MB debug binary several times, so on a many-core
+# machine an unbounded run holds many GB in memory and fsyncs at once, and the 60 s per-run timeout turns flaky.
+[test-groups]
+cli-update = { max-threads = 4 }
+
+[[profile.default.overrides]]
+filter = 'package(reeve) & binary(update)'
+test-group = 'cli-update'

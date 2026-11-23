@@ -58,11 +58,56 @@ fn real() -> &'static [u8] {
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
-/// What the fake serves as `name`: the real binary plus a marker naming the file.
+/// What the fake serves as `name`: the real binary made distinct per name, and still runnable. Everywhere but macOS a
+/// marker naming the file is appended (Linux and Windows run a binary with trailing bytes).
+#[cfg(not(target_os = "macos"))]
 fn served(name: &str) -> Vec<u8> {
     let mut b = real().to_vec();
     b.extend_from_slice(format!("\0reeve-update-test:{name}\0").as_bytes());
     b
+}
+
+/// On macOS appended bytes invalidate the signature (Apple Silicon kills such a binary at launch), so the copy is
+/// re-signed ad hoc instead, with an identifier naming the file: distinct bytes per name, a valid signature, and the
+/// same bytes every call (an ad-hoc signature carries no timestamp), so the checksum computed here matches what is served.
+#[cfg(target_os = "macos")]
+fn served(name: &str) -> Vec<u8> {
+    let dir = tmp();
+    let p = dir.path().join(name);
+    std::fs::write(&p, real()).unwrap();
+    let out = std::process::Command::new("codesign")
+        .args(["--force", "--timestamp=none", "--sign", "-", "--identifier"])
+        .arg(format!("reeve-update-test.{name}"))
+        .arg(&p)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "codesign: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::read(&p).unwrap()
+}
+
+/// Proxy variables a developer's shell may set: every child here runs without them, so a request meant for the in-test
+/// server cannot go to a proxy instead (a test that wants one sets it itself).
+const PROXY_VARS: [&str; 8] = [
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+/// `c` without any proxy variable, and killed if the test drops it (a timed-out test leaves no child behind).
+fn isolated(c: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    for v in PROXY_VARS {
+        c.env_remove(v);
+    }
+    c.kill_on_drop(true)
 }
 
 #[derive(Default)]
@@ -80,13 +125,15 @@ struct Fake {
     huge: Option<(&'static str, usize, bool)>,
     /// `X-Reeve-Cli` on the SHA256SUMS and binary answers (PR B stamps every response).
     stamp_files: Option<String>,
+    /// An error status for `SHA256SUMS` (a server mid-deploy).
+    sums_status: Option<StatusCode>,
     seen: Mutex<Vec<(String, bool)>>,
 }
 
 fn sums() -> String {
     static SUMS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     SUMS.get_or_init(|| {
-        reeve_protocol::CLI_FILES
+        reeve_protocol::CLI_BINARIES
             .iter()
             .map(|n| format!("{}  {n}\n", hex::encode(Sha256::digest(served(n)))))
             .collect()
@@ -140,6 +187,11 @@ async fn cli(
         .iter()
         .filter(|(n, _)| n == "VERSION")
         .count();
+    if let Some(st) = f.sums_status
+        && name == "SHA256SUMS"
+    {
+        return st.into_response();
+    }
     let (body, ty) = match name.as_str() {
         "VERSION" => {
             let v = match &f.later_version {
@@ -152,7 +204,7 @@ async fn cli(
             f.sums.clone().unwrap_or_else(sums).into_bytes(),
             "text/plain; charset=utf-8",
         ),
-        n if reeve_protocol::CLI_FILES.contains(&n) => (served(n), "application/octet-stream"),
+        n if reeve_protocol::CLI_BINARIES.contains(&n) => (served(n), "application/octet-stream"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
     let mut res = ([(header::CONTENT_TYPE, ty)], body).into_response();
@@ -206,9 +258,8 @@ async fn update(exe: &Path, url: &str, build: &str, env: &[(&str, &str)], args: 
         .env_remove("REEVE_UPDATE_FAULT")
         .env_remove("REEVE_UPDATE_NOTICE")
         .env_remove("REEVE_ASCII")
-        .env_remove("NO_PROXY")
-        .env_remove("no_proxy")
         .stdin(std::process::Stdio::null());
+    isolated(&mut c);
     for (k, v) in env {
         c.env(k, v);
     }
@@ -306,17 +357,14 @@ async fn a_stamped_cli_takes_the_offered_build_without_sending_a_credential() {
             "executable, writable by its owner only"
         );
     }
-    #[cfg(not(target_os = "macos"))] // appended bytes break the ad-hoc signature on Apple Silicon
-    {
-        let v = std::process::Command::new(&exe)
-            .arg("--version")
-            .output()
-            .unwrap();
-        assert!(
-            String::from_utf8_lossy(&v.stdout).starts_with("reeve-planner"),
-            "the new binary runs"
-        );
-    }
+    let v = std::process::Command::new(&exe)
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&v.stdout).starts_with("reeve-planner"),
+        "the new binary runs"
+    );
 }
 
 #[tokio::test]
@@ -387,7 +435,7 @@ async fn a_checksum_mismatch_changes_nothing() {
 
 /// On Unix nothing is moved before the fault (the swap is one `rename(2)`), so this pins that a failed swap leaves the
 /// original and no temporary file. The rollback itself is covered by `swap_aside`'s unit tests and end to end on the
-/// Windows leg.
+/// Windows leg of `.github/workflows/cli.yml`, which arrives with PR B.
 #[tokio::test]
 async fn a_failure_after_the_original_moved_puts_it_back() {
     let f = Arc::new(fake(B));
@@ -535,6 +583,39 @@ async fn an_unreachable_server_fails_and_changes_nothing() {
     .await;
     assert_eq!(r.code, 1);
     assert_eq!(envelope(&r)["code"], "internal");
+    // The cause, not only the url: reqwest's own message says just "error sending request".
+    assert!(
+        r.stderr.to_lowercase().contains("refused"),
+        "the cause is named: {}",
+        r.stderr
+    );
+    assert_eq!(
+        r.stderr.matches("127.0.0.1:1").count(),
+        1,
+        "the url once: {}",
+        r.stderr
+    );
+    assert_eq!(std::fs::read(&exe).unwrap(), real());
+}
+
+#[tokio::test]
+async fn a_server_error_says_to_try_again_and_changes_nothing() {
+    let f = Arc::new(Fake {
+        sums_status: Some(StatusCode::BAD_GATEWAY),
+        ..fake(B)
+    });
+    let dir = tmp();
+    let exe = installed(dir.path());
+    let r = update(&exe, &serve(f).await, A, &[], &["--json"]).await;
+    assert_eq!(r.code, 1, "{}", r.stdout);
+    let v = envelope(&r);
+    assert_eq!(v["code"], "internal");
+    assert!(v.get("reason").is_none(), "no reason: {v}");
+    assert!(
+        r.stderr.contains("HTTP 502") && r.stderr.contains("run reeve update again"),
+        "{}",
+        r.stderr
+    );
     assert_eq!(std::fs::read(&exe).unwrap(), real());
 }
 
@@ -552,6 +633,14 @@ async fn an_unwritable_directory_changes_nothing_and_says_what_to_do() {
     let dir = tmp();
     let exe = installed(dir.path());
     let before = std::fs::metadata(dir.path()).unwrap().permissions().mode();
+    /// Gives the directory its mode back however the test ends, so a failure leaves nothing `TempDir` cannot delete.
+    struct Writable<'a>(&'a Path);
+    impl Drop for Writable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _restore = Writable(dir.path());
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
     assert_ne!(
         std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
@@ -559,7 +648,6 @@ async fn an_unwritable_directory_changes_nothing_and_says_what_to_do() {
         "the mode really changed"
     );
     let r = update(&exe, &serve(f).await, A, &[], &["--json"]).await;
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(r.code, 1);
     assert_eq!(envelope(&r)["reason"], "cannot_replace");
     assert!(
@@ -570,9 +658,13 @@ async fn an_unwritable_directory_changes_nothing_and_says_what_to_do() {
         "{}",
         r.stderr
     );
+    let canonical_dir = dir.path().canonicalize().unwrap();
     assert!(
-        r.stderr.contains("as the owner of that file") && r.stderr.contains("/cli/install.sh"),
-        "{}",
+        r.stderr.contains(&format!(
+            "its directory ({}) is not writable by you",
+            canonical_dir.display()
+        )) && r.stderr.contains("/cli/install.sh"),
+        "the directory, not the file, is named as the obstacle: {}",
         r.stderr
     );
     assert_eq!(std::fs::read(&exe).unwrap(), real());
@@ -600,7 +692,8 @@ async fn a_running_old_build_does_not_block_the_next_update() {
     let exe = installed(dir.path());
     let cfg = tmp();
     // `reeve auth login --no-browser` waits on stdin: a long-lived process running this exact file.
-    let mut held = tokio::process::Command::new(&exe)
+    let mut held = tokio::process::Command::new(&exe);
+    isolated(&mut held)
         .args([
             "auth",
             "login",
@@ -612,10 +705,8 @@ async fn a_running_old_build_does_not_block_the_next_update() {
         .env_remove("REEVE_TOKEN")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+        .stderr(std::process::Stdio::piped());
+    let mut held = held.spawn().unwrap();
     {
         // Running once it has printed its prompt.
         use tokio::io::AsyncReadExt;
@@ -643,7 +734,7 @@ async fn no_server_url_says_how_to_set_one() {
     let dir = tmp();
     let exe = installed(dir.path());
     let cfg = tmp();
-    let out = tokio::process::Command::new(&exe)
+    let out = isolated(&mut tokio::process::Command::new(&exe))
         .args(["update", "--json"])
         .env_remove("REEVE_URL")
         .env("REEVE_CONFIG_DIR", cfg.path())
@@ -734,6 +825,20 @@ async fn an_answer_naming_another_build_is_a_checksum_mismatch() {
     );
     assert_eq!(std::fs::read(&exe).unwrap(), real());
     no_temporary_file(dir.path());
+}
+
+#[tokio::test]
+async fn a_garbled_build_on_an_answer_is_ignored() {
+    // As `Client` ignores it: only a valid build that differs means the offered build changed.
+    let f = Arc::new(Fake {
+        stamp_files: Some("latest".into()),
+        ..fake(B)
+    });
+    let dir = tmp();
+    let exe = installed(dir.path());
+    let r = update(&exe, &serve(f).await, A, &[], &[]).await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(std::fs::read(&exe).unwrap(), served(this_target()));
 }
 
 #[tokio::test]
