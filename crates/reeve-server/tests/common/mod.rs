@@ -27,7 +27,7 @@ pub struct Harness {
 
 /// The CLI version of the fixture bundle.
 pub const CLI_VERSION: &str = "0123456789abcdef0123456789abcdef01234567";
-/// Written out here, not taken from `reeve_protocol::CLI_FILES`, so a change to the served list fails a test.
+/// Written out here, not taken from `reeve_protocol::CLI_BINARIES`, so a change to the served list fails a test.
 pub const CLI_BINARIES: [&str; 5] = [
     "reeve-linux-x86_64",
     "reeve-linux-aarch64",

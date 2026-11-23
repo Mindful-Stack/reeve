@@ -8,10 +8,14 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use reeve_protocol::{CLI_PATH, TEXT_CONTENT_TYPE};
 
 /// `get` also answers HEAD; any other method gets this route's own 405, with the `/cli/` headers.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/cli/{name}", get(serve).fallback(method_not_allowed))
+    Router::new().route(
+        &format!("{CLI_PATH}{{name}}"),
+        get(serve).fallback(method_not_allowed),
+    )
 }
 
 /// No `Caller` and no cookie jar: a token or cookie is never read, so it can neither fail nor authenticate a download,
@@ -36,7 +40,10 @@ async fn answer(s: &AppState, name: &str) -> Response {
     };
     match entry {
         Entry::Text(text) => (
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            [(
+                header::CONTENT_TYPE,
+                format!("{TEXT_CONTENT_TYPE}; charset=utf-8"),
+            )],
             text.to_owned(),
         )
             .into_response(),

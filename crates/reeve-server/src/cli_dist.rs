@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     response::Response,
 };
-use reeve_protocol::{CLI_FILES, CLI_VERSION_HEADER, is_cli_version};
+use reeve_protocol::{CLI_BINARIES, CLI_VERSION_HEADER, SUMS_FILE, VERSION_FILE, is_cli_version};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,13 +42,13 @@ impl CliDist {
     /// (`ServerConfig::explicit_public_url`): `None` turns distribution off.
     pub fn load(dir: &Path, public_url: Option<&url::Url>) -> Result<Self, String> {
         let url = public_url.ok_or("no public_url configured")?;
-        let version_file = std::fs::read_to_string(dir.join("VERSION"))
+        let version_file = std::fs::read_to_string(dir.join(VERSION_FILE))
             .map_err(|e| format!("no bundle in {} (VERSION: {e})", dir.display()))?;
         let version = version_file.strip_suffix('\n').unwrap_or(&version_file);
         if !is_cli_version(version) {
             return Err("VERSION is not a 40-character lowercase commit id".into());
         }
-        let sums = std::fs::read_to_string(dir.join("SHA256SUMS"))
+        let sums = std::fs::read_to_string(dir.join(SUMS_FILE))
             .map_err(|e| format!("SHA256SUMS unreadable ({e})"))?;
         let mut listed: Vec<&str> = Vec::new();
         for line in sums.lines() {
@@ -58,7 +58,7 @@ impl CliDist {
             if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
                 return Err(format!("SHA256SUMS: malformed line {line:?}"));
             }
-            if !CLI_FILES.contains(&name) {
+            if !CLI_BINARIES.contains(&name) {
                 return Err(format!("SHA256SUMS lists an unknown file {name:?}"));
             }
             if listed.contains(&name) {
@@ -66,10 +66,10 @@ impl CliDist {
             }
             listed.push(name);
         }
-        if let Some(missing) = CLI_FILES.into_iter().find(|n| !listed.contains(n)) {
+        if let Some(missing) = CLI_BINARIES.into_iter().find(|n| !listed.contains(n)) {
             return Err(format!("SHA256SUMS does not list {missing}"));
         }
-        for name in CLI_FILES {
+        for name in CLI_BINARIES {
             // symlink_metadata: a symlink is not a regular file, and the image's COPY makes regular files.
             let meta = std::fs::symlink_metadata(dir.join(name))
                 .map_err(|e| format!("{name} is missing ({e})"))?;
@@ -96,15 +96,15 @@ impl CliDist {
     pub fn short(&self) -> &str {
         &self.version[..7]
     }
-    /// What `name` serves: `VERSION`, `SHA256SUMS`, one of `CLI_FILES`, or an install script; `None` otherwise.
+    /// What `name` serves: `VERSION`, `SHA256SUMS`, one of `CLI_BINARIES`, or an install script; `None` otherwise.
     pub fn entry(&self, name: &str) -> Option<Entry<'_>> {
         match name {
-            "VERSION" => Some(Entry::Text(&self.version_file)),
-            "SHA256SUMS" => Some(Entry::Text(&self.sums)),
+            VERSION_FILE => Some(Entry::Text(&self.version_file)),
+            SUMS_FILE => Some(Entry::Text(&self.sums)),
             "install.sh" => Some(Entry::Text(&self.install_sh)),
             "install.ps1" => Some(Entry::Text(&self.install_ps1)),
             // Joined from the constant, never from the request: only the bundle's own paths are ever opened.
-            _ => CLI_FILES
+            _ => CLI_BINARIES
                 .into_iter()
                 .find(|n| *n == name)
                 .map(|n| Entry::File(self.dir.join(n))),
@@ -183,10 +183,10 @@ mod tests {
 
     const VERSION: &str = "0123456789abcdef0123456789abcdef01234567";
 
-    /// A valid bundle: every file of `CLI_FILES` with distinct contents, their real checksums, the version.
+    /// A valid bundle: every file of `CLI_BINARIES` with distinct contents, their real checksums, the version.
     fn bundle(dir: &Path) {
         let mut sums = String::new();
-        for name in CLI_FILES {
+        for name in CLI_BINARIES {
             let bytes = format!("binary {name}");
             std::fs::write(dir.join(name), &bytes).unwrap();
             sums.push_str(&format!(
@@ -194,8 +194,8 @@ mod tests {
                 hex::encode(Sha256::digest(&bytes))
             ));
         }
-        std::fs::write(dir.join("SHA256SUMS"), sums).unwrap();
-        std::fs::write(dir.join("VERSION"), format!("{VERSION}\n")).unwrap();
+        std::fs::write(dir.join(SUMS_FILE), sums).unwrap();
+        std::fs::write(dir.join(VERSION_FILE), format!("{VERSION}\n")).unwrap();
     }
 
     fn url() -> url::Url {
@@ -203,8 +203,8 @@ mod tests {
     }
 
     fn edit_sums(d: &Path, f: impl Fn(&str) -> String) {
-        let s = std::fs::read_to_string(d.join("SHA256SUMS")).unwrap();
-        std::fs::write(d.join("SHA256SUMS"), f(&s)).unwrap();
+        let s = std::fs::read_to_string(d.join(SUMS_FILE)).unwrap();
+        std::fs::write(d.join(SUMS_FILE), f(&s)).unwrap();
     }
 
     #[test]
@@ -228,27 +228,27 @@ mod tests {
         let cases: [(&str, Break, &str); 11] = [
             (
                 "no VERSION",
-                |d| std::fs::remove_file(d.join("VERSION")).unwrap(),
+                |d| std::fs::remove_file(d.join(VERSION_FILE)).unwrap(),
                 "no bundle in",
             ),
             (
                 "upper-case VERSION",
-                |d| std::fs::write(d.join("VERSION"), VERSION.to_uppercase()).unwrap(),
+                |d| std::fs::write(d.join(VERSION_FILE), VERSION.to_uppercase()).unwrap(),
                 "40-character",
             ),
             (
                 "short VERSION",
-                |d| std::fs::write(d.join("VERSION"), &VERSION[..39]).unwrap(),
+                |d| std::fs::write(d.join(VERSION_FILE), &VERSION[..39]).unwrap(),
                 "40-character",
             ),
             (
                 "two newlines",
-                |d| std::fs::write(d.join("VERSION"), format!("{VERSION}\n\n")).unwrap(),
+                |d| std::fs::write(d.join(VERSION_FILE), format!("{VERSION}\n\n")).unwrap(),
                 "40-character",
             ),
             (
                 "no SHA256SUMS",
-                |d| std::fs::remove_file(d.join("SHA256SUMS")).unwrap(),
+                |d| std::fs::remove_file(d.join(SUMS_FILE)).unwrap(),
                 "SHA256SUMS",
             ),
             (
@@ -283,14 +283,14 @@ mod tests {
             ),
             (
                 "a listed file missing",
-                |d| std::fs::remove_file(d.join(CLI_FILES[0])).unwrap(),
+                |d| std::fs::remove_file(d.join(CLI_BINARIES[0])).unwrap(),
                 "is missing",
             ),
             (
                 "a listed name is a directory",
                 |d| {
-                    std::fs::remove_file(d.join(CLI_FILES[0])).unwrap();
-                    std::fs::create_dir(d.join(CLI_FILES[0])).unwrap()
+                    std::fs::remove_file(d.join(CLI_BINARIES[0])).unwrap();
+                    std::fs::create_dir(d.join(CLI_BINARIES[0])).unwrap()
                 },
                 "is not a regular file",
             ),
@@ -336,10 +336,10 @@ mod tests {
         assert_eq!(
             c.entry("SHA256SUMS"),
             Some(Entry::Text(
-                &std::fs::read_to_string(d.path().join("SHA256SUMS")).unwrap()
+                &std::fs::read_to_string(d.path().join(SUMS_FILE)).unwrap()
             ))
         );
-        for name in CLI_FILES {
+        for name in CLI_BINARIES {
             assert_eq!(
                 c.entry(name),
                 Some(Entry::File(d.path().join(name))),
