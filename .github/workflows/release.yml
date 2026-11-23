@@ -18,9 +18,39 @@ defaults:
   run:
     shell: bash
 jobs:
-  # The CLI bundle of this commit's CLI version (kb/ADR-0030 R1): built and published only when that version is new.
+  # This commit's CLI version, computed first so that `cli` can lock on it.
+  cli-version:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - id: version
+        run: |
+          set -euo pipefail
+          version=$(scripts/cli-version.sh)
+          [[ "$version" =~ ^[0-9a-f]{40}$ ]] || { echo "scripts/cli-version.sh printed '$version'" >&2; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  # The CLI bundle of this commit's CLI version (kb/ADR-0030 R1): built and published only when that version is new,
+  # one run per version at a time. The lock is this job's: a job-level concurrency group on a job that calls a reusable
+  # workflow holds for the whole called workflow, so cli.yml's registry lookup, its builds, the assembly and the push
+  # all run inside it, and a run that waited behind one that published the version finds it published and builds
+  # nothing. cancel-in-progress: false never cancels a run holding the lock; GitHub keeps at most one pending run per
+  # group, so a third run for the same version replaces (cancels) the one waiting, and that cancelled run publishes no
+  # image: the newer commit's run does. cli.yml takes no lock of its own (a nested group of the same name would wait
+  # on this one forever; scripts/tests/workflows.sh checks both).
   cli:
+    needs: cli-version
+    concurrency:
+      group: reeve-cli-${{ needs.cli-version.outputs.version }}
+      cancel-in-progress: false
     uses: ./.github/workflows/cli.yml
+    with:
+      locked-version: ${{ needs.cli-version.outputs.version }}
     permissions: { contents: read, packages: write }
 
   publish:

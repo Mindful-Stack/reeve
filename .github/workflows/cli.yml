@@ -3,6 +3,8 @@ name: cli
 # (scripts/tests/cli-unix.sh, cli-windows.sh), assembled into the bundle image for linux/amd64 and linux/arm64, then, on
 # a push to main only, published once per CLI version as ghcr.io/mindful-stack/reeve-cli:<version>. The CLI version
 # comes from scripts/cli-version.sh alone (R1); this file is not a CLI input, so a pin bump here asks nobody to update.
+# A release run holds release.yml's per-version lock for the whole of this workflow (its `cli` job), so the lookup, the
+# builds, the assembly and the push of one CLI version never run twice at once; this file takes no lock of its own.
 #
 # In a called workflow the github context is the caller's, so `github.event_name == 'push'` means release.yml on a
 # push to main: only that run skips the builds when the bundle exists, and only it pushes. A pull request or a manual
@@ -37,6 +39,11 @@ on:
       - ".github/workflows/cli.yml"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      locked-version:
+        description: The CLI version the caller holds its lock on; this run refuses to build any other.
+        type: string
+        required: true
     outputs:
       version:
         description: The CLI version, a 40-hex commit id.
@@ -68,11 +75,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
       - id: version
+        env:
+          LOCKED: ${{ inputs.locked-version }}
         run: |
           set -euo pipefail
           version=$(scripts/cli-version.sh)
+          # Called from release.yml: the lock it holds must be this version's, or two runs could build one version.
+          [ -z "$LOCKED" ] || [ "$LOCKED" = "$version" ] || { echo "locked on CLI version '$LOCKED', computed '$version'" >&2; exit 1; }
           echo "version=$version" >>"$GITHUB_OUTPUT"
-      # The lookup gates the builds on a release run; on a pull request from this repository it only reports (the
+      # The lookup gates the builds on a release run (inside release.yml's lock, so a run that waited sees what the
+      # run before it published); on a pull request from this repository it only reports (the
       # builds run anyway), so a registry or token problem shows before merge. Fork pull requests have no token for it.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: env.LOOKUP == 'true'
@@ -225,20 +237,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Release runs only: pushes the assembled bundle.
+  # Release runs only: pushes the assembled bundle, under release.yml's per-version lock (no group here: one of the
+  # same name would wait on the caller's forever). The lookup is repeated just before the push, so a bundle that
+  # appeared since `version` looked (pushed by hand, outside a release run) is used, never overwritten.
   publish:
     needs: [version, assemble]
     if: github.event_name == 'push' && needs.assemble.result == 'success'
     timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
-    # One publish per CLI version at a time (R1). A job-level group with cancel-in-progress: false never cancels a
-    # running publish; GitHub keeps at most one pending job per group, so a third run for the same version replaces
-    # (cancels) the one waiting, and that cancelled run's release publishes no image: the newer commit's does. The
-    # lookup is repeated inside the group, so a run that waited behind one that published the version pushes nothing.
-    concurrency:
-      group: reeve-cli-${{ needs.version.outputs.version }}
-      cancel-in-progress: false
     outputs:
       digest: ${{ steps.push.outputs.digest || steps.recheck.outputs.digest }}
     env:
