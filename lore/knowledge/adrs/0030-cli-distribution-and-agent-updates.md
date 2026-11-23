@@ -3,7 +3,7 @@ id: kb/ADR-0030
 title: "ADR-0030: The Reeve server distributes the CLI it was released with, and the CLI tells people and agents when to update"
 description: "Each Reeve server with a configured public URL serves, without sign-in, the `reeve` CLI binaries built for its release, verified by SHA-256 over HTTPS, and the CLI says on standard error, to people and to agents that run it, to run `reeve update` when its build differs from the one the server offers, because one install line and an exact match with each instance beat a channel that every instance shares and that drifts from each of them."
 tags: [adr, reeve, cli, deploy, security, lorekeeper]
-status: proposed
+status: accepted
 date: 2026-11-23
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-23.
+Accepted 2026-11-23 by Daniel Thyselius.
 
 ## Context
 This record replaces kb/ADR-0020, whose distribution design it keeps. What changed: kb/ADR-0020.R6 showed the update notice only on a standard error that is a terminal. Agents such as Claude Code run `reeve` without a terminal, so an agent would never learn that its CLI no longer matches the server and would keep running a stale one until a person noticed. Reviews of the implementation plan also tightened the install scripts' failure behaviour (R5), published the text agents match on (R6), and removed safeguards that a second check already covers (R1, R2, R5).

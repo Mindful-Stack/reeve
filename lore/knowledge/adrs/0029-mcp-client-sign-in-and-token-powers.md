@@ -106,6 +106,11 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   visibility, accepted because an admin who must cut a connection has to find it first, and because the
   `connection_approved` and `connection_revoked` activity entries already show every signed-in person which app
   someone connected. No trigger fired; the decision holds.
+- 2026-11-23 (reeve#61): kb/ADR-0020, which this record depends on and whose CLI downloads the Context counts
+  among the routes that answer without a caller, is superseded by kb/ADR-0030. The successor keeps what this record
+  relies on: the CLI downloads are still served without sign-in, ignore any token or cookie, and allow no further
+  unauthenticated route; read kb/ADR-0020 in the Context and See also as kb/ADR-0030. No trigger fired; the
+  decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)
