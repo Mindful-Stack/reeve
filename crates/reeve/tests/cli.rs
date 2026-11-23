@@ -4474,6 +4474,7 @@ fn auth_status_of_an_unstamped_build_against_a_server_without_a_bundle() {
     // `dev` is not a CLI version: unstamped, whatever this test binary was built with.
     let out = reeve_as("dev", &url, &["auth", "status", "--json"], &[]);
     server.join().unwrap();
+    assert!(out.status.success(), "{}", stderr_text(&out));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(
         v["value"]["cli"],
@@ -4487,5 +4488,47 @@ fn auth_status_of_an_unstamped_build_against_a_server_without_a_bundle() {
         stdout_text(&out).contains("cli: dev build (server offers: none)"),
         "{}",
         stdout_text(&out)
+    );
+}
+
+/// kb/ADR-0030 R6: the notice never changes the exit status, even when standard error's reader is gone (a write to it
+/// would otherwise panic and exit 101).
+#[test]
+fn the_notice_to_a_closed_stderr_pipe_keeps_exit_0() {
+    let (url, server) = serve_lazy_with(Some(CLI_B), empty_war_room());
+    let cfg = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"))
+        .env("REEVE_URL", &url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env("REEVE_CLI_VERSION_OVERRIDE", CLI_A)
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII")
+        .args(["war-room", "ls"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take()); // the read end closes before the child can answer its first request
+    let status = child.wait().unwrap();
+    server.join().unwrap();
+    assert_eq!(status.code(), Some(0), "{status:?}");
+}
+
+#[test]
+fn a_garbled_offered_build_is_ignored() {
+    let (url, server) = serve_lazy_with(Some("latest"), vec![("GET /api/v1/me", 200, lazy(me_ok))]);
+    let out = reeve_as(CLI_A, &url, &["auth", "status", "--json"], &[]);
+    server.join().unwrap();
+    assert!(out.status.success(), "{}", stderr_text(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["value"]["cli"],
+        serde_json::json!({"current": CLI_A, "server": null})
+    );
+    assert!(
+        !stderr_text(&out).contains("run reeve update"),
+        "{}",
+        stderr_text(&out)
     );
 }

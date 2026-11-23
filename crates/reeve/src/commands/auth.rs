@@ -154,9 +154,10 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
             };
             Ok(finish(out, json, |v| {
                 let build = |x: &serde_json::Value, none: &str| {
-                    x.as_str().map_or(none.to_string(), |s| {
-                        format!("build {}", crate::cli_version::short(s))
-                    })
+                    x.as_str().map_or_else(
+                        || none.to_string(),
+                        |s| format!("build {}", crate::cli_version::short(s)),
+                    )
                 };
                 format!(
                     "{} (token from {})\n{} role={} token_kind={}\ncli: {} (server offers: {})",

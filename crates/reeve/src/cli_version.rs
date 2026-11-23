@@ -3,6 +3,7 @@
 //! is unstamped (people see `dev build`): it never shows the update notice. `reeve --version` is unrelated and unchanged
 //! (`reeve-planner <semver>`, kb/ADR-0005 R1).
 use reeve_protocol::is_cli_version;
+use std::io::Write;
 use std::sync::Mutex;
 
 /// The start of the notice. A contract agents match on (kb/ADR-0030 R6): change it only through a record.
@@ -88,7 +89,9 @@ pub fn notify() {
         offered.as_deref(),
         crate::glyphs::ascii(),
     ) {
-        eprintln!("{n}");
+        // Not `eprintln!`: it panics when standard error cannot be written (a closed pipe), and the notice must never
+        // change the exit status (kb/ADR-0030 R6).
+        let _ = writeln!(std::io::stderr(), "{n}");
     }
 }
 
