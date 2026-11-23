@@ -13,7 +13,12 @@ services:
       timeout: 3s
       retries: 30
   server:
-    build: .
+    build:
+      context: .
+      # The CLI bundle the server serves under /cli/: set REEVE_CLI_VERSION to what scripts/cli-version.sh prints for
+      # this commit (deploy/README.md, "CLI distribution"). Unset, the image carries no bundle and serves no CLI.
+      additional_contexts:
+        cli: ${REEVE_CLI_VERSION:+docker-image://ghcr.io/mindful-stack/reeve-cli:${REEVE_CLI_VERSION}}
     restart: unless-stopped
     depends_on:
       postgres:

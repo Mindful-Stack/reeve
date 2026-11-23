@@ -303,20 +303,34 @@ To turn it off again, set `enabled = false` and restart: `/mcp`, the two documen
 ## CLI distribution
 
 Every published image carries the `reeve` CLI built for its release (kb/ADR-0030): the binaries for every supported
-target, `SHA256SUMS` and `VERSION` (the build) in `/srv/cli`. Once `public_url` is set explicitly, the server serves
-them, and two install scripts rendered with that URL, at `/cli/` without sign-in:
+target, `SHA256SUMS` and `VERSION` (the CLI version) in `/srv/cli`. Once `public_url` is configured, the server
+serves them, and two install scripts rendered with that URL, at `/cli/` without sign-in:
 
     curl -q --proto '=https' --tlsv1.2 -fsS https://<host>/cli/install.sh | sh     # Linux, macOS
 
     # Windows (PowerShell): TLS 1.2 first, which Windows PowerShell 5.1 may not enable by default
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://<host>/cli/install.ps1 | iex
 
-At start-up the server logs one line: `cli distribution: on, offering build 1a2b3c4`, or `cli distribution: off
-(<reason>)` — no `public_url` configured (the loopback default would point a remote installer at its own machine), no
-bundle (an image you built yourself carries none unless built with a `cli` build context, below), or a bundle that
-does not check out. While it is on, every response carries `X-Reeve-Cli: <build>`, and the CLI tells people and agents
-to run `reeve update` when its own build differs. `REEVE_CLI_DIR` points the server at another directory (local
-testing).
+At start-up the server logs one line: `cli distribution: on, offering build 1a2b3c4` (the build is the first seven
+characters of the CLI version), or `cli distribution: off (<reason>)` for one of four reasons:
+
+- no `public_url` configured (the loopback default would point a remote installer at its own machine);
+- no bundle: an image you built yourself carries none unless built with the bundle (below; the line points here);
+- a `public_url` host that is not letters, digits, hyphens and dots, or an IP address (an underscore, say): the
+  scripts print the URL unquoted in the rerun commands people paste into a shell (logged as a warning);
+- a bundle that does not check out (logged as a warning, naming the defect).
+
+While it is on, every response carries `X-Reeve-Cli: <CLI version>` (all 40 characters), and the CLI tells people
+and agents to run `reeve update` when its own build differs. `REEVE_CLI_DIR` points the server at another directory
+(local testing).
+
+To check that it is on (`<host>` your `public_url`'s host):
+
+    docker compose logs server | grep 'cli distribution'                # on, offering build <7 characters>
+    curl -fsS https://<host>/cli/VERSION                                 # 40 hexadecimal characters
+    curl -sI https://<host>/health | grep -i '^x-reeve-cli:'             # the same 40 characters
+    for i in $(seq 50); do curl -s -o /dev/null -w '%{http_code}\n' https://<host>/cli/VERSION; done | sort | uniq -c
+                                                                         # some 429s once the limit below is in place
 
 The routes are public, so rate-limit them per client IP at the proxy. An install is four requests (the script,
 `VERSION`, `SHA256SUMS`, the binary) and so is `reeve update` (`VERSION`, `SHA256SUMS`, the binary, `VERSION` again);
@@ -346,14 +360,21 @@ office's updates slow rather than refused.
 Behind a CDN, `$binary_remote_addr` is the CDN's address unless your real-IP settings restore the client's; keep them.
 A per-IP limit caps neither total bandwidth nor what people behind one shared address can download together.
 
-An image you build yourself serves no CLI unless you give the build the bundle. It is published as
-`ghcr.io/mindful-stack/reeve-cli:<CLI version>`, where the CLI version is what `scripts/cli-version.sh` prints for
-your commit (a full clone is needed):
+An image you build yourself serves no CLI unless you give the build the bundle, and the reference stack builds its
+own image (`docker compose up -d --build`). The bundle is published as `ghcr.io/mindful-stack/reeve-cli:<CLI
+version>`, where the CLI version is what `scripts/cli-version.sh` prints for your commit (a full clone is needed).
+`docker-compose.yml` passes it to the build as the `cli` context when `REEVE_CLI_VERSION` is set (Compose 2.17 or
+later; unset, the build carries no bundle):
 
-    v=$(scripts/cli-version.sh)
-    docker build --build-context "cli=docker-image://ghcr.io/mindful-stack/reeve-cli:$v" .
+    REEVE_CLI_VERSION=$(scripts/cli-version.sh) docker compose up -d --build
 
-A commit whose CLI version was never published (a fork's own CLI change) has no bundle; build without the flag.
+or, with plain Docker:
+
+    docker build --build-context "cli=docker-image://ghcr.io/mindful-stack/reeve-cli:$(scripts/cli-version.sh)" .
+
+The alternative is to run the published image (`image: ghcr.io/mindful-stack/reeve:<sha>` in place of `build:`),
+which carries its bundle already. A commit whose CLI version was never published (a fork's own CLI change) has no
+bundle; build without it.
 
 That pull works without signing in only while the `reeve-cli` package is public. The first release that publishes
 it creates the package with the organization's default visibility, which may be private: a maintainer then sets it
@@ -363,6 +384,19 @@ this repository write access.
 
 An instance older than this feature has no `/cli/` routes: `curl … | sh` against it fails, and `reeve update` says
 the server does not distribute the CLI. Upgrade the instance first.
+
+**Turning it on for an existing instance**, in order:
+
+1. Configure `public_url` (already set with `[oidc]`; a token-only instance may have none, and stays off).
+2. Add the `reeve_cli` zone and the `location ^~ /cli/` block above to the proxy. Without them `/cli/` still works,
+   through the general location, with no rate limit: working is not the same as done.
+3. On the reference stack, which builds its own image, build with the bundle (`REEVE_CLI_VERSION`, above), or run
+   the published image.
+4. Restart, and run the checks above: the log line says `on`, `/cli/VERSION` and `X-Reeve-Cli` name the same CLI
+   version.
+5. Tell everyone to run the install line once. A `reeve` built with `cargo install` (or `cargo build`) is unstamped:
+   it never shows the update notice, so it never learns that a newer build is offered. The first install is the one
+   step that cannot happen by itself; after it, `reeve update` keeps each CLI on the server's build.
 
 ## GitHub webhook
 
