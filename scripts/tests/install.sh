@@ -28,6 +28,12 @@ if [ -z "${INSTALL_TEST_SHELL:-}" ]; then
 	exit 0
 fi
 read -r -a testsh <<<"$INSTALL_TEST_SHELL"
+busybox=""
+case "${testsh[0]} $(readlink -f "${testsh[0]}" 2>/dev/null || true)" in *busybox*) busybox=1 ;; esac
+if [ -n "$busybox" ] && [ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]; then
+	echo "skipped under busybox: its real uname is not Linux/x86_64"
+	exit 0
+fi
 template=deploy/cli/install.sh
 sh -n "$template"
 if command -v shellcheck >/dev/null 2>&1; then
@@ -193,6 +199,11 @@ nothing_left() { [ -z "$(ls -A "$work/tmp")" ] || fail "$1: the temporary direct
 
 render https://reeve.test
 
+# busybox sh runs its own uname (and other applets) ahead of PATH, so the fake uname and sysctl are shadowed: the cases
+# that fake a platform are skipped there, and the rest run as the real host, which must be Linux x86_64.
+if [ -n "$busybox" ]; then
+	echo "skipped under busybox: applets shadow the fakes (platform map, Rosetta, unsupported platforms, macOS bash)"
+else
 # Every supported platform downloads its own file and installs it from the checksum it was given.
 for case in Linux/x86_64:reeve-linux-x86_64 Linux/amd64:reeve-linux-x86_64 Linux/aarch64:reeve-linux-aarch64 \
 	Linux/arm64:reeve-linux-aarch64 Darwin/arm64:reeve-macos-aarch64 Darwin/x86_64:reeve-macos-x86_64; do
@@ -220,6 +231,8 @@ for plat in Linux/riscv64 FreeBSD/amd64 Darwin/ppc; do
 	refused "$plat" 'Supported: Linux x86_64 and arm64, macOS arm64 and x86_64'
 	[ ! -s "$work/log" ] || fail "$plat downloaded something"
 done
+
+fi
 
 # curl: -q first (no .curlrc), https only with TLS 1.2, no .netrc, never a header, cookie or user. The first line of
 # the output names the build the server offers.
@@ -336,8 +349,10 @@ install REEVE_INSTALL_DIR="$opt" SHELL=/usr/bin/fish
 grep -qF "fish_add_path \"$opt\"" "$work/out" || fail "no fish_add_path for fish"
 install REEVE_INSTALL_DIR="$opt" SHELL=/bin/bash
 grep -qF 'that line to ~/.bashrc' "$work/out" || fail "no ~/.bashrc for bash"
-os=Darwin install REEVE_INSTALL_DIR="$opt" SHELL=/bin/bash
-grep -qF 'that line to ~/.bash_profile' "$work/out" || fail "no ~/.bash_profile for bash on macOS"
+if [ -z "$busybox" ]; then
+	os=Darwin install REEVE_INSTALL_DIR="$opt" SHELL=/bin/bash
+	grep -qF 'that line to ~/.bash_profile' "$work/out" || fail "no ~/.bash_profile for bash on macOS"
+fi
 install PATH="$bin:$work/home/.local/bin"
 [ "$status" = 0 ] || fail "the on-PATH run exited $status"
 if grep -q 'export PATH=' "$work/out"; then fail "a PATH block for a directory already on PATH"; fi
