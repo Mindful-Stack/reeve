@@ -130,7 +130,7 @@ async fn anything_else_under_cli_is_a_hardened_404() {
     let mut state = h.state.clone();
     state.assets = assets::Assets::Dir(web.path().to_path_buf());
     let off = reeve_server::app(state.clone());
-    let url = h.state.config.explicit_public_url().unwrap();
+    let url = h.state.config.configured_public_url().unwrap();
     state.cli_dist = Some(std::sync::Arc::new(
         cli_dist::CliDist::load(cli_dir.path(), Some(&url)).unwrap(),
     ));
@@ -169,7 +169,7 @@ async fn anything_else_under_cli_is_a_hardened_404() {
     assert_eq!(res.status(), 200);
     assert!(
         !res.headers().contains_key("x-reeve-cli"),
-        "off: /health stamped"
+        "off: /health offers a build"
     );
 }
 

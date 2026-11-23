@@ -123,7 +123,7 @@ fn content_type(mime: &mime_guess::Mime) -> String {
 
 /// Every served file and page: the browser never sniffs a type other than the one sent (`nosniff`), and following a link
 /// out of the client sends no `Referer` (`no-referrer`), so a board or item URL never leaks to a linked site.
-fn hardened(mut res: Response) -> Response {
+pub(crate) fn hardened(mut res: Response) -> Response {
     let h = res.headers_mut();
     h.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     h.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));

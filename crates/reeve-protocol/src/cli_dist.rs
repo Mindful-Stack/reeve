@@ -1,7 +1,7 @@
 //! The CLI distribution contract between the server and the CLI (kb/ADR-0030): where a bundle is served, the names of
 //! its files, how its two text files are served, the response header that carries the build a server offers, and the
 //! CLI-version format. Not an `/api/v1` type; the OpenAPI document does not carry it. Shell copies of the names live in
-//! `deploy/cli/install.sh` (its platform map) and in `scripts/cli-build.sh`.
+//! `deploy/cli/install.sh` (its platform map), `deploy/cli/install.ps1` (its one file) and `scripts/cli-build.sh`.
 
 /// The response header carrying the CLI version of the bundle a server offers, while distribution is on. Lower case,
 /// as HTTP/2 sends it.

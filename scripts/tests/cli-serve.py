@@ -1,9 +1,9 @@
 """A loopback stand-in for the server's /cli/ routes, for scripts/tests/cli-unix.sh and cli-windows.sh.
 
 Serves <root> at http://127.0.0.1:<port>/, with the server's content types (text/plain for VERSION, SHA256SUMS and the
-install scripts, application/octet-stream otherwise), and writes the port to <port-file> once it listens. Stamps every
-response with X-Reeve-Cli: the first line of <root>/cli/VERSION when that is a build (40 lowercase hex), as the server
-stamps the build it offers, so `reeve update`'s "the build changed while updating" check sees one consistent build.
+install scripts, application/octet-stream otherwise), and writes the port to <port-file> once it listens. Offers the
+build on every response, as the server does: X-Reeve-Cli carries the first line of <root>/cli/VERSION when that is a
+CLI version (40 lowercase hex), so `reeve update`'s "the build changed while updating" check sees one consistent build.
 Appends one line per request to <log>: the method, the path, and "auth" when it carried an Authorization or Cookie
 header, else "-". When <root>/redirects exists, a line "<path> <location>" makes a request for that exact path answer
 302 to <location>. VERSION and redirects are read per request, so a test can write them after startup.

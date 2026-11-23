@@ -219,7 +219,7 @@ pub fn app(state: AppState) -> Router {
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
         .with_state(state);
     // Last, so it wraps the routes and both fallbacks; it sets a header and never touches a body (kb/ADR-0030).
-    crate::cli_dist::stamp(router, cli_dist.as_deref())
+    crate::cli_dist::offer_header(router, cli_dist.as_deref())
 }
 pub fn openapi_json() -> serde_json::Value {
     serde_json::to_value(document()).unwrap()

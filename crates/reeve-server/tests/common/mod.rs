@@ -229,7 +229,7 @@ impl Harness {
         let url = self
             .state
             .config
-            .explicit_public_url()
+            .configured_public_url()
             .expect("the harness configures public_url");
         state.cli_dist = Some(std::sync::Arc::new(
             cli_dist::CliDist::load(dir, Some(&url)).expect("the fixture bundle loads"),
