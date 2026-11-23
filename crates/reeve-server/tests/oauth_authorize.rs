@@ -117,6 +117,41 @@ async fn a_client_or_address_that_is_not_validated_is_never_redirected_to() {
             "app_not_enabled",
         ),
         (
+            "an address on the person's own computer, which the instance does not list",
+            authorize_request(&with(
+                ok.clone(),
+                "redirect_uri",
+                Some("http://localhost:49152/callback"),
+            )),
+            "local_app",
+        ),
+        (
+            "a loopback address from a client on a host the instance does not list",
+            authorize_request(&with(
+                with(
+                    ok.clone(),
+                    "client_id",
+                    Some("https://attacker.example/client.json"),
+                ),
+                "redirect_uri",
+                Some("http://127.0.0.1:49152/callback"),
+            )),
+            "local_app",
+        ),
+        (
+            "a loopback address from a client id that breaks the id rules: not valid comes first",
+            authorize_request(&with(
+                with(
+                    ok.clone(),
+                    "client_id",
+                    Some(&format!("{}?x=1", f.client_id)),
+                ),
+                "redirect_uri",
+                Some("http://localhost:49152/callback"),
+            )),
+            "invalid_request",
+        ),
+        (
             "an address the instance lists and the client does not",
             authorize_request(&with(
                 ok.clone(),
@@ -367,9 +402,11 @@ async fn a_store_full_of_requests_people_are_looking_at_answers_temporarily_unav
     let s = &f.h.state;
     let client = reeve_identity::resolve_client(
         &*s.client_fetcher,
+        None,
         &s.config.client_policy(),
         &f.client_id,
         CALLBACK,
+        s.clock.now(),
     )
     .await
     .unwrap();

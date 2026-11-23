@@ -115,13 +115,25 @@ describe('DecisionDrawer', () => {
 		}
 	});
 
-	it('says an open decision nothing waits on is not needed yet, and that it holds nothing yet', async () => {
-		const drawer = await open(entry({ needed_in: 'none', needed_in_reason: null, next_step: null }));
-		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Not needed yet dan decides · Due today');
+	it('labels an open decision nothing waits on with its lane, and says it holds nothing yet', async () => {
+		const drawer = await open(entry({ lane: 'open', needed_in: 'none', needed_in_reason: null, next_step: null }));
+		expect(words(drawer.querySelector('[data-testid="strip"]'))).toBe('Open, not blocking yet dan decides · Due today');
 		const held = drawer.querySelector('.held')!;
 		expect(words(held)).toBe('Held work Holds nothing yet');
 		expect(held.getAttribute('aria-labelledby')).toBe(held.querySelector('h3')!.id);
 		expect(held.querySelector('ul')).toBeNull();
+	});
+
+	it('puts a Now decision\'s Now line in place of the needed label, and adds the row a nested one is under', async () => {
+		const now = await open(
+			entry({ lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'held' }, blocks: [blockedStory({ key: 'ABC-31' }), blockedStory({ key: 'ABC-32' })] })
+		);
+		expect(words(now.querySelector('[data-testid="strip"] .needed'))).toBe('Now \u00b7 holds 2');
+		unmount(app!);
+		app = null;
+		document.body.innerHTML = '';
+		const nested = await open(entry({ under: 'ABC-1' }));
+		expect(words(nested.querySelector('[data-testid="strip"] .needed'))).toBe('Needed this sprint \u00b7 in discovery \u00b7 for goal: Ship tiers');
 	});
 
 	it('says a closed or accepted decision holds nothing, without "yet"', async () => {
@@ -271,7 +283,7 @@ describe('DecisionDrawer', () => {
 			['epic', '/epics/GRA-12']
 		] as const) {
 			const drawer = await open(
-				entry({ needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
+				entry({ lane: 'next_sprint', needed_in: 'next_sprint', needed_in_reason: { kind: 'discovery', key: 'GRA-12', level } })
 			);
 			const a = drawer.querySelector<HTMLAnchorElement>('.strip .needed a');
 			expect(a?.getAttribute('href')).toBe(href);
@@ -306,6 +318,7 @@ describe('DecisionDrawer', () => {
 					closed: { at: '2026-11-01T00:00:00Z', by: 'dan@example.com', reason: 'moot', kind: 'decided' }
 				}),
 				next_step: null,
+				lane: 'closed',
 				needed_in: 'none',
 				needed_in_reason: null
 			})

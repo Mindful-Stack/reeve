@@ -100,6 +100,7 @@ held.reply = (path, query, mark) => {
 			// The decisions page reads the queue.
 			return {
 				entries: [queueEntry({ group: 'open', decision: decision({ on: 'K-1', title: `${mark} decision` }) })],
+				discoveries: [],
 				summary: queueSummary({ open: 1 })
 			};
 		case '/api/v1/activity':

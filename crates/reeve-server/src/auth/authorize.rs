@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use reeve_identity::{CodeChallenge, hash_secret, resolve_client};
+use reeve_identity::{CodeChallenge, hash_secret, is_loopback_address, resolve_client};
 
 /// Binds an authorization request to the browser that started it; holds the SHA-256 of the request's id. That is
 /// no secret from anyone who has the id, which can compute it; what protects a person is that another browser has
@@ -166,21 +166,34 @@ async fn answer(s: AppState, method: Method, uri: Uri, jar: CookieJar) -> Respon
         );
         return problem("invalid_request");
     };
+    // The clock is read once for the whole request.
+    let now = s.clock.now();
+    let registered: Option<&dyn reeve_identity::RegisteredClients> = s
+        .config
+        .mcp
+        .dynamic_registration
+        .then_some(&*s.registered_clients);
     let client = match resolve_client(
         &*s.client_fetcher,
+        registered,
         &s.config.client_policy(),
         client_id,
         redirect_uri,
+        now,
     )
     .await
     {
         Ok(client) => client,
         // Already logged by `resolve_client`.
         Err(refusal) => {
-            return problem(if refusal.not_enabled() {
-                "app_not_enabled"
-            } else {
+            // An app that is not enabled and asks to be answered on the person's own computer runs there: the
+            // page tells them to use the CLI, since no admin can enable it.
+            return problem(if !refusal.not_enabled() {
                 "invalid_request"
+            } else if is_loopback_address(redirect_uri) {
+                "local_app"
+            } else {
+                "app_not_enabled"
             });
         }
     };
@@ -216,7 +229,7 @@ async fn answer(s: AppState, method: Method, uri: Uri, jar: CookieJar) -> Respon
         challenge,
         &resource,
         state.map(str::to_string),
-        s.clock.now(),
+        now,
     );
     match opened {
         Ok(id) => (

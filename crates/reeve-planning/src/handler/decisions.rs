@@ -1,8 +1,8 @@
 use super::*;
 use crate::domain::decision::*;
-use crate::domain::queue::{self, QueueEntry, QueueSummary};
+use crate::domain::queue::{self, DiscoveryRow, QueueEntry, QueueSummary};
 use crate::domain::readiness::satisfies;
-use reeve_protocol::{CheckResult, ClosureKind, Key, Reversibility, TokenKind, Via};
+use reeve_protocol::{CheckResult, ClosureKind, Key, Reason, Reversibility, TokenKind, Via};
 use std::collections::HashSet;
 
 impl Handlers {
@@ -364,13 +364,14 @@ pub enum DecisionScope {
 }
 
 impl Handlers {
-    /// Spec §1: decisions and the readiness of every todo story, read in one REPEATABLE READ READ ONLY snapshot, then
-    /// grouped and ordered by the pure queue. `now` is the caller's `Ctx.now`; its date decides what is overdue.
+    /// Spec §1: decisions, discovery rows and the readiness of every unfinished story, read in one REPEATABLE READ READ
+    /// ONLY snapshot, then grouped, nested and ordered by the pure queue. `now` is the caller's `Ctx.now`; its date
+    /// decides what is overdue.
     pub async fn decision_queue(
         &self,
         scope: &DecisionScope,
         now: DateTime<Utc>,
-    ) -> Result<(Vec<QueueEntry>, QueueSummary), HandlerError> {
+    ) -> Result<(Vec<QueueEntry>, Vec<DiscoveryRow>, QueueSummary), HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -395,7 +396,7 @@ impl Handlers {
             .await?;
         let out = async {
             let d = self.ports.decisions.get_decision_in(&mut tx, id).await?;
-            let (entries, _) = self
+            let (entries, _, _) = self
                 .decision_queue_in(&mut tx, &DecisionScope::On(d.on().clone()), now)
                 .await?;
             entries
@@ -417,7 +418,7 @@ impl Handlers {
         tx: &mut Transaction<'_, Postgres>,
         scope: &DecisionScope,
         now: DateTime<Utc>,
-    ) -> Result<(Vec<QueueEntry>, QueueSummary), HandlerError> {
+    ) -> Result<(Vec<QueueEntry>, Vec<DiscoveryRow>, QueueSummary), HandlerError> {
         let ds = match scope {
             DecisionScope::All { include_closed } => {
                 self.ports
@@ -447,10 +448,17 @@ impl Handlers {
             .await?;
         let keys: Vec<Key> = stories.iter().map(|(s, _)| s.story.key.clone()).collect();
         let mut draft = self.ports.reads.draft_goals_of_stories(tx, &keys).await?;
-        // `Key` is not `Ord`, so dedupe with a set; `unnest($1)` does not care about order.
+        // The lineage read takes the decisions' items and every unfinished story's discovery item (its first
+        // `AncestorDiscoveryIncomplete`): still one statement (spec §5). `Key` is not `Ord`, so dedupe with a set.
         let items: Vec<Key> = ds
             .iter()
             .map(|d| d.on().clone())
+            .chain(stories.iter().filter_map(|(s, _)| {
+                s.readiness.reasons.iter().find_map(|r| match r {
+                    Reason::AncestorDiscoveryIncomplete { item } => Some(item.clone()),
+                    _ => None,
+                })
+            }))
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
@@ -485,7 +493,22 @@ impl Handlers {
             lineage: &lineage,
             first_bucket: self.settings.horizon_buckets.first().map(String::as_str),
             repos: &self.settings.repos,
+            // Already loaded for the stories' flags: no statement added (spec §5).
+            urgency: &urg,
+            sprint_length_days: self.settings.sprint_length_days,
         };
-        Ok(queue::order(ds, &inp, now.date_naive()))
+        let (entries, mut rows, summary) = queue::order(ds, &inp, now.date_naive());
+        // Rows are built from every unfinished story, then returned by scope (spec §5): every row; an initiative's own
+        // row and its epics'; one item's own row. `decision_context` (scope `On(d.on())`) reads an entry whose `under`
+        // and lane match the page's because nesting runs before this filter.
+        rows.retain(|r| match scope {
+            DecisionScope::All { .. } => true,
+            DecisionScope::On(k) => &r.key == k,
+            // A row's lineage starts at itself.
+            DecisionScope::Initiative(k) => lineage
+                .get(&r.key)
+                .is_some_and(|l| l.iter().any(|x| &x.key == k)),
+        });
+        Ok((entries, rows, summary))
     }
 }

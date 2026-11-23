@@ -16,7 +16,7 @@ read -ra features <<<"${REEVE_FEATURES---features reeve-server/static-oidc}"
 args=()
 for s in "${settings[@]}"; do args+=(-c "$s"); done
 cid=""
-trap '[ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+trap '[ -z "$cid" ] || docker rm -fv "$cid" >/dev/null 2>&1 || true' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cid=$(docker run -d --rm --label reeve.test-run=1 -e POSTGRES_PASSWORD=postgres -p 127.0.0.1::5432 postgres:16 postgres "${args[@]}")

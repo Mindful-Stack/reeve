@@ -70,8 +70,11 @@ pub struct AppState {
     /// The count behind the limit on writes over MCP (`mcp::WriteLimit`): per person, in memory.
     pub(crate) mcp_writes: Arc<crate::mcp::WriteLimit>,
     /// Fetches an MCP client's metadata document (kb/ADR-0029 R3). The authorize route resolves a client with
-    /// `reeve_identity::resolve_client(&*s.client_fetcher, &s.config.client_policy(), …)`.
+    /// `reeve_identity::resolve_client(&*s.client_fetcher, registered, &s.config.client_policy(), …)`.
     pub client_fetcher: Arc<dyn reeve_identity::ClientDocumentFetcher>,
+    /// The MCP clients that registered themselves (kb/ADR-0029 R3): written by `/oauth/register`, read by
+    /// authorize, marked used by an approval.
+    pub registered_clients: Arc<dyn reeve_identity::RegisteredClients>,
     /// The clock the callers and the OAuth routes read: the system time, except in a test harness that fixed it.
     pub clock: Clock,
     /// The authorization requests of MCP sign-in, from authorize to the exchange of their code: in memory, in
@@ -303,6 +306,7 @@ pub async fn build_state(config: ServerConfig, pool: PgPool) -> anyhow::Result<A
         tokens: reeve_identity::make_token_store(pool.clone()),
         identity: config.identity(),
         access: reeve_identity::make_access_store(pool.clone()),
+        registered_clients: reeve_identity::make_registered_clients(pool.clone()),
         activity,
         config: Arc::new(config),
         pool,

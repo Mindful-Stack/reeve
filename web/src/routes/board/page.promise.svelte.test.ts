@@ -5,7 +5,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page } from '$app/state';
 import type { StoryPromise } from '#lib/api/types.ts';
-import { withReadiness } from '#lib/test/fixtures.ts';
+import { queueSummary, withReadiness } from '#lib/test/fixtures.ts';
 import type { Call } from '#lib/test/net.ts';
 import Page from './+page.svelte';
 
@@ -38,7 +38,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		if (c.method === 'GET' && c.path === '/api/v1/stories') return stories();
 		if (c.method === 'GET' && c.path === '/api/v1/epics') return [];
 		if (c.method === 'GET' && c.path === '/api/v1/sprints') return { active: null, draft: null, closed: [], today: '2026-11-12' };
-		if (c.method === 'GET' && c.path === '/api/v1/decisions/queue') return { entries: [], summary: null };
+		if (c.method === 'GET' && c.path === '/api/v1/decisions/queue') return { entries: [], discoveries: [], summary: queueSummary() };
 		throw new Error(`unexpected ${c.method} ${c.path}`);
 	});
 	return orig();

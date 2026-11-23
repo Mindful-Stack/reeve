@@ -62,7 +62,7 @@ pub enum Decision {
         /// Only decisions you are the decider of (resolved with GET /me).
         #[arg(long)]
         mine: bool,
-        /// The decision queue: grouped and ordered by urgency, with the stories each decision blocks.
+        /// The decision queue: grouped and in the server's order, with the stories each decision blocks.
         #[arg(long, conflicts_with = "mine")]
         queue: bool,
     },

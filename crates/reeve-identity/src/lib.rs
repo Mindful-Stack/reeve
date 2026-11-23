@@ -14,6 +14,8 @@ mod fake_issuer;
 mod handler;
 mod oidc;
 mod ports;
+mod registrations;
+mod registrations_repo;
 mod repo;
 pub use access::{
     AccessGrant, AccessKind, AccessPolicy, AccessRow, AccessSource, AccessView, parse_domain,
@@ -30,7 +32,8 @@ pub use client_fetch::make_client_fetcher;
 #[cfg(feature = "static-oidc")]
 pub use client_fetch::make_loopback_client_fetcher;
 pub use clients::{
-    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, host_of, resolve_client,
+    ClientDocumentFetcher, ClientPolicy, ClientRefusal, ValidatedClient, host_of,
+    is_loopback_address, resolve_client,
 };
 pub use connections::{
     Connection, ExchangeRequest, GrantError, Issuing, RefreshRequest, TokenPair, exchange_code,
@@ -54,6 +57,11 @@ pub use oidc::{GoogleOidcTestOptions, TestClock, make_google_oidc_for_tests, mak
 pub use ports::{IdentityActivity, IdentityEvent};
 pub use reeve_protocol::Scope;
 pub use reeve_protocol::Via;
+pub use registrations::{
+    MAX_REGISTERED_CLIENTS, RegisteredClient, RegisteredClients, RegistrationRefusal,
+    register_client,
+};
+pub use registrations_repo::make_registered_clients;
 pub use repo::{TokenRow, TokenStore, TokenSummary, UserRow, make_token_store};
 pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")

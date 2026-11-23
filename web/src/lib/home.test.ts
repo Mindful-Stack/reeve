@@ -47,15 +47,24 @@ describe('underWay', () => {
 });
 
 describe('myDecisions', () => {
-	it('lists this and next sprint in the queue order, counts review and later, and ignores other deciders', () => {
+	it('lists this and next sprint in queue order (a nested decision by its row lane), counts my records to review in any lane and the rest, and ignores other deciders', () => {
 		const other = queueEntry({ lane: 'this_sprint', decision: decision({ id: 9, decider: 'other@example.com' }) });
+		const review = { kind: 'review_record', pr_url: 'https://github.com/o/r/pull/1' } as const;
 		const d = myDecisions(
-			[mine(3, 'next_sprint'), mine(1, 'this_sprint'), mine(2, 'review'), mine(4, 'beyond'), mine(5, 'open'), mine(6, 'satisfied'), other],
+			[
+				mine(3, 'next_sprint'),
+				queueEntry({ lane: 'this_sprint', under: 'ABC-7', next_step: review, decision: decision({ id: 1, decider: ' ME@example.com ' }) }),
+				queueEntry({ lane: 'beyond', needed_in: 'beyond', needed_in_reason: { kind: 'held' }, decision: decision({ id: 4, decider: 'me@example.com' }) }),
+				queueEntry({ lane: 'beyond', next_step: review, decision: decision({ id: 2, decider: 'me@example.com' }) }),
+				mine(5, 'open'),
+				mine(6, 'satisfied'),
+				other
+			],
 			ME
 		);
 		expect(d.listed.map((e) => e.decision.id)).toEqual([3, 1]);
-		expect(d.review).toBe(1);
-		expect(d.later).toBe(2);
+		expect(d.review).toBe(2);
+		expect(d.later).toBe(3);
 	});
 });
 

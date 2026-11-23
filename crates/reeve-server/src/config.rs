@@ -218,14 +218,20 @@ pub struct McpConfig {
     #[serde(default)]
     pub allowed_origins: Option<Vec<String>>,
     /// The addresses a client may be sent back to once a person has answered, compared exactly with the text
-    /// here (kb/ADR-0029 R3). Empty (the default): no client can connect. Each is an https address without a
-    /// fragment.
+    /// here (kb/ADR-0029 R3). Empty (the default): no client can connect, of either kind. Each is an https address
+    /// without a fragment.
     #[serde(default)]
     pub redirect_uris: Vec<String>,
     /// The hosts a client's metadata document may be fetched from, compared exactly. Empty (the default): no
-    /// client can connect. Each is a host name in lower case: no scheme, port, path or address.
+    /// client with a metadata document can connect (a client that registered itself has no such host and needs
+    /// only its redirect address listed). Each is a host name in lower case: no scheme, port, path or address.
     #[serde(default)]
     pub client_hosts: Vec<String>,
+    /// Whether an app may register itself at `/oauth/register` (RFC 7591; kb/ADR-0029 R3) and connect with the
+    /// client id it is given. Off (the default): the route answers 404, the metadata does not name it, and a
+    /// registered client id is refused at authorize. An app can register only addresses in `redirect_uris`.
+    #[serde(default)]
+    pub dynamic_registration: bool,
     /// The instance's privacy statement, linked from the approval page. Unset (the default): no link. An https
     /// address without credentials or a fragment.
     #[serde(default)]
@@ -502,6 +508,11 @@ impl ServerConfig {
                     "[mcp] redirect_uris entry {r:?} must be an https address without a fragment, such as https://claude.ai/api/mcp/auth_callback"
                 );
             }
+        }
+        if self.mcp.dynamic_registration && self.mcp.redirect_uris.is_empty() {
+            anyhow::bail!(
+                "[mcp] dynamic_registration = true requires at least one entry in [mcp] redirect_uris: an app can register only addresses listed there"
+            );
         }
         if let Some(p) = &self.mcp.privacy_url {
             let ok = url::Url::parse(p).is_ok_and(|u| {
@@ -1315,24 +1326,59 @@ mod tests {
         assert!(e.to_string().contains("[mcp] privacy_url"), "{e}");
     }
 
+    /// Catches a setting that is on unless turned off, and one that loads although no app could use it: an app
+    /// can register only addresses in `redirect_uris`.
+    #[test]
+    fn mcp_dynamic_registration_is_off_by_default_and_needs_a_redirect_address() {
+        assert!(!cfg("").unwrap().mcp.dynamic_registration);
+        assert!(
+            !cfg(&format!("{GOOGLE}[mcp]\nenabled = true"))
+                .unwrap()
+                .mcp
+                .dynamic_registration
+        );
+        let e = cfg(&format!("{GOOGLE}[mcp]\ndynamic_registration = true")).unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("[mcp] dynamic_registration = true requires"),
+            "{e}"
+        );
+        let c = cfg(&format!(
+            "{GOOGLE}[mcp]\ndynamic_registration = true\nredirect_uris = [\"https://claude.ai/api/mcp/auth_callback\"]"
+        ))
+        .unwrap();
+        assert!(c.mcp.dynamic_registration);
+    }
+
     /// The example's two lists are real values: uncommented, they load.
     #[test]
     fn the_example_mcp_lists_load_once_uncommented() {
-        let text = include_str!("../../../reeve.example.toml")
+        let example = include_str!("../../../reeve.example.toml");
+        assert_eq!(
+            example.matches("# dynamic_registration").count(),
+            1,
+            "the example has the setting once, commented out"
+        );
+        let text = example
             .replace("# [mcp]", "[mcp]")
             .replace("# redirect_uris", "redirect_uris")
             .replace("# client_hosts", "client_hosts")
+            .replace("# dynamic_registration", "dynamic_registration")
             .replace("# privacy_url", "privacy_url");
         let c = ServerConfig::parse(&text).unwrap();
+        assert!(c.mcp.dynamic_registration);
         assert_eq!(
             c.mcp.privacy_url.as_deref(),
             Some("https://example.com/privacy")
         );
         assert_eq!(
             c.mcp.redirect_uris,
-            ["https://claude.ai/api/mcp/auth_callback"]
+            [
+                "https://claude.ai/api/mcp/auth_callback",
+                "https://chatgpt.com/connector_platform_oauth_redirect"
+            ]
         );
-        assert_eq!(c.mcp.client_hosts, ["claude.ai"]);
+        assert_eq!(c.mcp.client_hosts, ["claude.ai", "chatgpt.com"]);
     }
 
     /// Catches an issuer that keeps the trailing slash the URL parser adds, one built from the text as typed

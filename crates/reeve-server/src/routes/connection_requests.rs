@@ -93,6 +93,7 @@ async fn approve(
     let (back, code) = reeve_identity::approve_request(
         &s.pool,
         &s.authorization_requests,
+        &*s.registered_clients,
         &*log,
         &c.0,
         &id,

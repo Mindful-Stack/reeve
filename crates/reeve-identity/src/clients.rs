@@ -1,12 +1,16 @@
-//! MCP clients (kb/ADR-0029 R3). A client is the software that connects (claude.ai). Its id is the https address
-//! of a metadata document it publishes (OAuth Client ID Metadata Documents, draft 03). This file holds what such a
-//! client id and such a document must say, the port that fetches the document's bytes, and the one function that
-//! decides whether a client may connect.
+//! MCP clients (kb/ADR-0029 R3). A client is the software that connects (claude.ai, ChatGPT). Its id is the https
+//! address of a metadata document it publishes (OAuth Client ID Metadata Documents, draft 03), or an id this
+//! server gave a client that registered itself (`registrations.rs`). This file holds what a document's client id
+//! and such a document must say, the port that fetches the document's bytes, and the one function that decides
+//! whether a client of either kind may connect.
+use crate::registrations::{RegisteredClients, is_registered_id};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-/// The longest `client_name` accepted: it is shown to a person and stored with a connection.
-const MAX_CLIENT_NAME_CHARS: usize = 200;
+/// The longest `client_name` accepted, a metadata document's and a registration's alike: it is shown to a person
+/// and stored with a connection.
+pub(crate) const MAX_CLIENT_NAME_CHARS: usize = 200;
 
 /// Why a client is refused. The text is for the operator's log and never holds a secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -29,13 +33,24 @@ pub enum ClientRefusal {
     BadDocument(&'static str),
     #[error("the redirect address is not one of the client's own")]
     RedirectNotRegistered,
+    #[error("the client registered itself, and [mcp] dynamic_registration is off")]
+    RegistrationNotEnabled,
+    #[error("the client id is not a registration of this server, or it has expired")]
+    NotRegistered,
+    #[error("the stored registrations could not be read: {0}")]
+    RegistryUnavailable(String),
 }
 
 impl ClientRefusal {
-    /// Whether the instance has simply not enabled this app (its host or its redirect address is not listed),
-    /// which an admin can change. Every other refusal means the request was not valid.
+    /// Whether the instance has simply not enabled this app (its host or its redirect address is not listed, or
+    /// it registered itself and the instance does not accept such apps), which an admin can change. Every other
+    /// refusal means the request was not valid. An app that asks for an address on the person's own computer is
+    /// told to use the CLI instead of asking an admin (`is_loopback_address`).
     pub fn not_enabled(&self) -> bool {
-        matches!(self, Self::HostNotListed | Self::RedirectNotEnabled)
+        matches!(
+            self,
+            Self::HostNotListed | Self::RedirectNotEnabled | Self::RegistrationNotEnabled
+        )
     }
 }
 
@@ -120,13 +135,24 @@ impl ClientDocument {
         if object.contains_key("client_secret") || object.contains_key("client_secret_expires_at") {
             return Err(bad("it carries a client secret"));
         }
-        // Reeve's clients are public: the only method is `none`. Absent means `none` (draft 03, never RFC 7591's
+        // Reeve's clients are public: the server offers only `none` (PKCE, no client authentication), so a client
+        // must be able to connect that way. A published `token_endpoint_auth_methods_supported` is authoritative
+        // and must list `none`, as ChatGPT's does beside its preferred `private_key_jwt`. Only without that list
+        // does the singular `token_endpoint_auth_method` decide: `none`, or absent (draft 03, never RFC 7591's
         // default).
-        let method_is_none = object
-            .get("token_endpoint_auth_method")
-            .is_none_or(|method| method.as_str() == Some("none"));
-        if !method_is_none {
-            return Err(bad("its token endpoint authentication is not none"));
+        let can_be_public = match object.get("token_endpoint_auth_methods_supported") {
+            Some(list) => list.as_array().is_some_and(|list| {
+                list.iter().all(Value::is_string)
+                    && list.iter().any(|method| method.as_str() == Some("none"))
+            }),
+            None => object
+                .get("token_endpoint_auth_method")
+                .is_none_or(|method| method.as_str() == Some("none")),
+        };
+        if !can_be_public {
+            return Err(bad(
+                "none is not among its token endpoint authentication methods",
+            ));
         }
         Ok(ClientDocument {
             client_name: client_name.to_string(),
@@ -144,8 +170,10 @@ pub trait ClientDocumentFetcher: Send + Sync {
     async fn fetch(&self, client_id: &url::Url) -> Result<Vec<u8>, ClientRefusal>;
 }
 
-/// The instance's rules for clients, from `[mcp]`. Both lists are compared exactly; an empty list refuses every
-/// client.
+/// The instance's rules for clients, from `[mcp]`. Both lists are compared exactly. A client with a metadata
+/// document needs its host in `client_hosts` and its redirect address in `redirect_uris`, so either list empty
+/// refuses every such client. A client that registered itself has no host of its own to list: it needs its
+/// redirect address in `redirect_uris` only, and `client_hosts` plays no part for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClientPolicy {
     pub client_hosts: Vec<String>,
@@ -167,7 +195,8 @@ impl ValidatedClient {
         &self.client_id
     }
 
-    /// The host of the client id: what a person is shown as the app's identity.
+    /// What a person is shown as the app's identity: the host of the client id, or, for a client that registered
+    /// itself, the host of its redirect address (the one thing about it that is not self-asserted).
     pub fn client_host(&self) -> &str {
         &self.client_host
     }
@@ -184,17 +213,31 @@ impl ValidatedClient {
 }
 
 /// The client `client_id` names, allowed to be sent back to `redirect_uri`, or why not
-/// (`ClientRefusal::not_enabled` tells the two kinds of refusal apart). Each refusal is logged here, once.
+/// (`ClientRefusal::not_enabled` tells the two kinds of refusal apart). `registered` is the store of clients
+/// that registered themselves, `None` on an instance that does not accept them. Each refusal is logged here, once.
 pub async fn resolve_client(
     fetcher: &dyn ClientDocumentFetcher,
+    registered: Option<&dyn RegisteredClients>,
     policy: &ClientPolicy,
     client_id: &str,
     redirect_uri: &str,
+    now: DateTime<Utc>,
 ) -> Result<ValidatedClient, ClientRefusal> {
-    let outcome = resolve(fetcher, policy, client_id, redirect_uri).await;
-    if let Err(refusal) = &outcome {
-        // The one line per refusal: the host and the reason, never the whole request.
-        tracing::warn!(client_host = ?host_of(client_id), reason = %refusal, "mcp client refused");
+    let outcome = resolve(fetcher, registered, policy, client_id, redirect_uri, now).await;
+    match &outcome {
+        // A database failure, not a refused client.
+        Err(e @ ClientRefusal::RegistryUnavailable(_)) => {
+            tracing::error!(error = %e, "mcp client could not be resolved")
+        }
+        // The one line per refusal: the host and the reason, never the whole request. A registered id names no
+        // host and is no secret, so the line carries the id itself.
+        Err(refusal) => tracing::warn!(
+            client_host = ?host_of(client_id),
+            client_id = ?is_registered_id(client_id).then_some(client_id),
+            reason = %refusal,
+            "mcp client refused"
+        ),
+        Ok(_) => {}
     }
     outcome
 }
@@ -207,12 +250,38 @@ pub fn host_of(address: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Whether a redirect address points at the person's own computer: the host is `localhost`, a name under
+/// `.localhost`, or a loopback IP address. An app that asks for such an address runs locally (RFC 8252 section
+/// 7.3), so a refusal can tell the person to use the CLI instead of asking an admin. It decides nothing about
+/// whether the address is accepted.
+pub fn is_loopback_address(redirect_uri: &str) -> bool {
+    let Ok(url) = url::Url::parse(redirect_uri) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.');
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 async fn resolve(
     fetcher: &dyn ClientDocumentFetcher,
+    registered: Option<&dyn RegisteredClients>,
     policy: &ClientPolicy,
     client_id: &str,
     redirect_uri: &str,
+    now: DateTime<Utc>,
 ) -> Result<ValidatedClient, ClientRefusal> {
+    // The two kinds of client id share no text, and each goes one way only: an id of this server's making is
+    // never fetched, and any other id never reaches the store.
+    if is_registered_id(client_id) {
+        return resolve_registered(registered, policy, client_id, redirect_uri, now).await;
+    }
     // 1. The client id keeps the rules of a client id.
     let url = check_client_id(client_id)?;
     // 2. Its host is one the instance lists.
@@ -244,6 +313,46 @@ async fn resolve(
     })
 }
 
+/// A client that registered itself. No outbound request is made on this path.
+async fn resolve_registered(
+    registered: Option<&dyn RegisteredClients>,
+    policy: &ClientPolicy,
+    client_id: &str,
+    redirect_uri: &str,
+    now: DateTime<Utc>,
+) -> Result<ValidatedClient, ClientRefusal> {
+    // 1. The instance accepts clients that registered themselves.
+    let Some(registered) = registered else {
+        return Err(ClientRefusal::RegistrationNotEnabled);
+    };
+    // 2. The redirect address is one the instance lists now, exactly: checked at every authorize, so an address
+    // taken out of the configuration cuts the app off. Its host is what a person is shown.
+    let listed = policy
+        .redirect_uris
+        .iter()
+        .any(|listed| listed == redirect_uri);
+    let Some(client_host) = host_of(redirect_uri).filter(|_| listed) else {
+        return Err(ClientRefusal::RedirectNotEnabled);
+    };
+    // 3. The registration exists and has not expired (expired rows are deleted only when one is made).
+    let client = registered
+        .find(client_id)
+        .await
+        .map_err(|e| ClientRefusal::RegistryUnavailable(e.to_string()))?
+        .filter(|client| !client.expired(now))
+        .ok_or(ClientRefusal::NotRegistered)?;
+    // 4. The redirect address is one it registered, exactly.
+    if !client.redirect_uris.iter().any(|own| own == redirect_uri) {
+        return Err(ClientRefusal::RedirectNotRegistered);
+    }
+    Ok(ValidatedClient {
+        client_id: client.client_id,
+        client_host,
+        client_name: client.client_name,
+        redirect_uri: redirect_uri.to_string(),
+    })
+}
+
 #[cfg(test)]
 impl ValidatedClient {
     /// A client for unit tests elsewhere in this crate. Everything else gets one from `resolve_client` only.
@@ -260,6 +369,7 @@ impl ValidatedClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registrations::RegisteredClient;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -307,6 +417,88 @@ mod tests {
         assert!(
             ClientDocument::parse(ID, &body(|v| remove(v, "token_endpoint_auth_method"))).is_ok()
         );
+        // Another preferred method is fine when the client also supports none.
+        assert!(
+            ClientDocument::parse(
+                ID,
+                &body(|v| {
+                    v["token_endpoint_auth_method"] = json!("client_secret_basic");
+                    v["token_endpoint_auth_methods_supported"] =
+                        json!(["client_secret_basic", "none"]);
+                })
+            )
+            .is_ok()
+        );
+    }
+
+    /// Claude's document as published at its client id, fetched 2026-11-15, verbatim.
+    const CLAUDE_ID: &str = "https://claude.ai/oauth/mcp-oauth-client-metadata";
+    const CLAUDE_2026_11_15: &str = r#"{"client_id":"https://claude.ai/oauth/mcp-oauth-client-metadata","client_name":"Claude","client_uri":"https://claude.ai","redirect_uris":["https://claude.ai/api/mcp/auth_callback"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"token_endpoint_auth_method":"none"}"#;
+    /// ChatGPT's document as published at its client id, fetched 2026-11-15, verbatim. It prefers
+    /// `private_key_jwt` and lists `none` among the methods it supports.
+    const CHATGPT_ID: &str = "https://chatgpt.com/oauth/client.json";
+    const CHATGPT_CALLBACK: &str = "https://chatgpt.com/connector_platform_oauth_redirect";
+    const CHATGPT_2026_11_15: &str = r#"{"client_id":"https://chatgpt.com/oauth/client.json","client_uri":"https://chatgpt.com/","redirect_uris":["https://chatgpt.com/connector_platform_oauth_redirect"],"token_endpoint_auth_method":"private_key_jwt","token_endpoint_auth_methods_supported":["none","private_key_jwt"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"client_name":"ChatGPT","logo_uri":"https://persistent.oaistatic.com/sonic/misc/openai-logo.png","token_endpoint_auth_signing_alg":"RS256","jwks_uri":"https://chatgpt.com/oauth/jwks.json"}"#;
+
+    /// The two apps' real documents are read. Catches a rule that refuses ChatGPT for preferring
+    /// `private_key_jwt` while it can also connect as a public client.
+    #[test]
+    fn the_real_claude_and_chatgpt_documents_are_read() {
+        let claude = ClientDocument::parse(CLAUDE_ID, CLAUDE_2026_11_15.as_bytes()).unwrap();
+        assert_eq!(claude.client_name, "Claude");
+        assert_eq!(claude.redirect_uris, [CALLBACK]);
+        let chatgpt = ClientDocument::parse(CHATGPT_ID, CHATGPT_2026_11_15.as_bytes()).unwrap();
+        assert_eq!(chatgpt.client_name, "ChatGPT");
+        assert_eq!(chatgpt.redirect_uris, [CHATGPT_CALLBACK]);
+        // The id is checked against the address it was fetched from.
+        assert_eq!(
+            ClientDocument::parse(ID, CHATGPT_2026_11_15.as_bytes()).unwrap_err(),
+            ClientRefusal::BadDocument("its client_id is not the address it was fetched from")
+        );
+    }
+
+    /// ChatGPT resolves once the instance lists its host and redirect address, and an instance that lists only
+    /// claude.ai refuses it as not enabled before any fetch.
+    #[tokio::test]
+    async fn chatgpt_resolves_when_enabled_and_is_not_enabled_otherwise() {
+        struct Chatgpt(AtomicUsize);
+        #[async_trait]
+        impl ClientDocumentFetcher for Chatgpt {
+            async fn fetch(&self, _client_id: &url::Url) -> Result<Vec<u8>, ClientRefusal> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(CHATGPT_2026_11_15.as_bytes().to_vec())
+            }
+        }
+        let fetcher = Chatgpt(AtomicUsize::new(0));
+
+        let claude_only = policy(&["claude.ai"], &[CALLBACK]);
+        let refused = resolve_client(
+            &fetcher,
+            None,
+            &claude_only,
+            CHATGPT_ID,
+            CHATGPT_CALLBACK,
+            at(),
+        )
+        .await
+        .unwrap_err();
+        assert!(refused.not_enabled(), "{refused}");
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 0);
+
+        let enabled = policy(&["chatgpt.com"], &[CHATGPT_CALLBACK]);
+        let client = resolve_client(&fetcher, None, &enabled, CHATGPT_ID, CHATGPT_CALLBACK, at())
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                client.client_id(),
+                client.client_host(),
+                client.client_name(),
+                client.redirect_uri()
+            ),
+            (CHATGPT_ID, "chatgpt.com", "ChatGPT", CHATGPT_CALLBACK)
+        );
+        assert_eq!(fetcher.0.load(Ordering::SeqCst), 1);
     }
 
     /// One case per rule; each names the rule that failed. Catches a rule that is not checked at all and two
@@ -353,11 +545,44 @@ mod tests {
             refused(|v| v["client_secret_expires_at"] = json!(0)),
             secret
         );
-        let not_none = bad("its token endpoint authentication is not none");
+        let not_public = bad("none is not among its token endpoint authentication methods");
         assert_eq!(
             refused(|v| v["token_endpoint_auth_method"] = json!("client_secret_basic")),
-            not_none
+            not_public
         );
+        assert_eq!(
+            refused(|v| v["token_endpoint_auth_method"] = json!("private_key_jwt")),
+            not_public
+        );
+        assert_eq!(
+            refused(|v| {
+                v["token_endpoint_auth_method"] = json!("private_key_jwt");
+                v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
+            }),
+            not_public
+        );
+        // A published list is authoritative: the singular method decides only when the list is absent.
+        assert_eq!(
+            refused(|v| {
+                remove(v, "token_endpoint_auth_method");
+                v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"]);
+            }),
+            not_public
+        );
+        assert_eq!(
+            refused(|v| v["token_endpoint_auth_methods_supported"] = json!(["private_key_jwt"])),
+            not_public
+        );
+        for not_a_list in [json!("none"), json!({"none": true}), json!(["none", 7])] {
+            assert_eq!(
+                refused(|v| {
+                    v["token_endpoint_auth_method"] = json!("private_key_jwt");
+                    v["token_endpoint_auth_methods_supported"] = not_a_list.clone();
+                }),
+                not_public,
+                "{not_a_list}"
+            );
+        }
         // The name is shown to a person on the approval page.
         assert_eq!(
             refused(|v| v["client_name"] = json!("Clau\u{7}de")),
@@ -420,6 +645,335 @@ mod tests {
         }
     }
 
+    const DYN: &str = "dyn_0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-15T09:00:00Z")
+            .unwrap()
+            .to_utc()
+    }
+
+    /// A store that holds `rows` and counts its reads; `broken`, it cannot be read.
+    struct Registry {
+        rows: Vec<RegisteredClient>,
+        finds: AtomicUsize,
+        broken: bool,
+    }
+
+    #[async_trait]
+    impl RegisteredClients for Registry {
+        async fn find(&self, client_id: &str) -> Result<Option<RegisteredClient>, sqlx::Error> {
+            self.finds.fetch_add(1, Ordering::SeqCst);
+            if self.broken {
+                return Err(sqlx::Error::PoolClosed);
+            }
+            Ok(self.rows.iter().find(|r| r.client_id == client_id).cloned())
+        }
+        async fn insert_capped(
+            &self,
+            _: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+            _: &RegisteredClient,
+            _: i64,
+        ) -> Result<bool, sqlx::Error> {
+            unreachable!("resolving only reads")
+        }
+        async fn mark_used(
+            &self,
+            _: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<bool, sqlx::Error> {
+            unreachable!("resolving only reads")
+        }
+    }
+
+    /// `DYN`, registered at `at()` for `CALLBACK` and `OWN_ONLY`, last used as given.
+    fn registry(last_used_at: Option<DateTime<Utc>>) -> Registry {
+        Registry {
+            rows: vec![RegisteredClient {
+                client_id: DYN.to_string(),
+                client_name: "Example Assistant".to_string(),
+                redirect_uris: vec![CALLBACK.to_string(), OWN_ONLY.to_string()],
+                created_at: at(),
+                last_used_at,
+            }],
+            finds: AtomicUsize::new(0),
+            broken: false,
+        }
+    }
+
+    /// The two ways a client id goes, one row each. Catches a registered id that is fetched or resolved without
+    /// its row, a URL that reaches the store, an address a registered client did not register or the instance no
+    /// longer lists, an expired or dropped registration that still starts a connect, an instance that accepts a
+    /// registered id with the setting off, and an address compared as a URL: every row that is equivalent to a
+    /// listed or registered address but differs from it as text is refused.
+    #[tokio::test]
+    async fn a_registered_client_resolves_from_the_store_and_a_url_from_its_document() {
+        use ClientRefusal::*;
+        let fetcher = Counting {
+            fetches: AtomicUsize::new(0),
+        };
+        // Equivalent to `CALLBACK` as a URL, another address as text: the instance lists this one as well, the
+        // client did not register it.
+        const WITH_PORT: &str = "https://claude.ai:443/api/mcp/auth_callback";
+        let enabled = policy(
+            &["claude.ai"],
+            &[CALLBACK, "https://evil.example/cb", WITH_PORT],
+        );
+        let never = registry(None);
+        let used = registry(Some(at() + chrono::Duration::hours(1)));
+        let (day, ninety, second) = (
+            chrono::Duration::hours(24),
+            chrono::Duration::hours(1) + chrono::Duration::days(90),
+            chrono::Duration::seconds(1),
+        );
+        let unstored = format!("dyn_{}", "f".repeat(48));
+        let short = format!("dyn_{}", "0".repeat(47));
+        let upper = format!("dyn_{}", "ABCDEF".repeat(8));
+        let longer = format!("{DYN}0");
+        let under_a_host = format!("https://claude.ai/{DYN}");
+        let ok = |name: &str| {
+            Ok((
+                DYN.to_string(),
+                "claude.ai".to_string(),
+                name.to_string(),
+                CALLBACK.to_string(),
+            ))
+        };
+        type Row<'a> = (
+            &'a str,
+            &'a str,
+            Option<&'a Registry>,
+            DateTime<Utc>,
+            Result<(String, String, String, String), ClientRefusal>,
+            usize,
+            usize,
+        );
+        let rows: Vec<Row> = vec![
+            // The host shown is the redirect address's: the one thing about the client that is not its own claim.
+            (
+                DYN,
+                CALLBACK,
+                Some(&never),
+                at(),
+                ok("Example Assistant"),
+                0,
+                1,
+            ),
+            (
+                ID,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Ok((
+                    ID.to_string(),
+                    "claude.ai".to_string(),
+                    "Claude".to_string(),
+                    CALLBACK.to_string(),
+                )),
+                1,
+                0,
+            ),
+            // Registered, not listed by the instance.
+            (
+                DYN,
+                OWN_ONLY,
+                Some(&never),
+                at(),
+                Err(RedirectNotEnabled),
+                0,
+                0,
+            ),
+            // Listed by the instance, not registered.
+            (
+                DYN,
+                "https://evil.example/cb",
+                Some(&never),
+                at(),
+                Err(RedirectNotRegistered),
+                0,
+                1,
+            ),
+            (
+                &unstored,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(NotRegistered),
+                0,
+                1,
+            ),
+            // The setting is off.
+            (DYN, CALLBACK, None, at(), Err(RegistrationNotEnabled), 0, 0),
+            (
+                DYN,
+                CALLBACK,
+                Some(&never),
+                at() + day - second,
+                ok("Example Assistant"),
+                0,
+                1,
+            ),
+            (
+                DYN,
+                CALLBACK,
+                Some(&never),
+                at() + day,
+                Err(NotRegistered),
+                0,
+                1,
+            ),
+            (
+                DYN,
+                CALLBACK,
+                Some(&used),
+                at() + ninety - second,
+                ok("Example Assistant"),
+                0,
+                1,
+            ),
+            (
+                DYN,
+                CALLBACK,
+                Some(&used),
+                at() + ninety,
+                Err(NotRegistered),
+                0,
+                1,
+            ),
+            // Compared as text with the instance's list…
+            (
+                DYN,
+                "https://CLAUDE.ai/api/mcp/auth_callback",
+                Some(&never),
+                at(),
+                Err(RedirectNotEnabled),
+                0,
+                0,
+            ),
+            (
+                DYN,
+                "https://claude.ai/api/mcp/auth_callback/",
+                Some(&never),
+                at(),
+                Err(RedirectNotEnabled),
+                0,
+                0,
+            ),
+            (
+                DYN,
+                "https://claude.ai/api/mcp/auth%5Fcallback",
+                Some(&never),
+                at(),
+                Err(RedirectNotEnabled),
+                0,
+                0,
+            ),
+            // …and with the client's own.
+            (
+                DYN,
+                WITH_PORT,
+                Some(&never),
+                at(),
+                Err(RedirectNotRegistered),
+                0,
+                1,
+            ),
+            // Not this server's shape, so the URL's way.
+            (
+                &short,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(BadClientId("it is not a URL")),
+                0,
+                0,
+            ),
+            (
+                &upper,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(BadClientId("it is not a URL")),
+                0,
+                0,
+            ),
+            (
+                &longer,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(BadClientId("it is not a URL")),
+                0,
+                0,
+            ),
+            (
+                "dyn_x",
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(BadClientId("it is not a URL")),
+                0,
+                0,
+            ),
+            // A URL goes the document's way, whatever its path says (`Counting` answers `ID`'s document).
+            (
+                &under_a_host,
+                CALLBACK,
+                Some(&never),
+                at(),
+                Err(BadDocument(
+                    "its client_id is not the address it was fetched from",
+                )),
+                1,
+                0,
+            ),
+        ];
+        for (client_id, redirect_uri, store, now, expected, fetched, found) in rows {
+            let before = (
+                fetcher.fetches.load(Ordering::SeqCst),
+                store.map_or(0, |s| s.finds.load(Ordering::SeqCst)),
+            );
+            let got = resolve_client(
+                &fetcher,
+                store.map(|s| s as &dyn RegisteredClients),
+                &enabled,
+                client_id,
+                redirect_uri,
+                now,
+            )
+            .await
+            .map(|c| {
+                (
+                    c.client_id().to_string(),
+                    c.client_host().to_string(),
+                    c.client_name().to_string(),
+                    c.redirect_uri().to_string(),
+                )
+            });
+            let what = format!("{client_id} to {redirect_uri} at {now}");
+            assert_eq!(got, expected, "{what}");
+            assert_eq!(
+                (
+                    fetcher.fetches.load(Ordering::SeqCst) - before.0,
+                    store.map_or(0, |s| s.finds.load(Ordering::SeqCst)) - before.1
+                ),
+                (fetched, found),
+                "fetches and reads of the store: {what}"
+            );
+        }
+        // A store that cannot be read refuses, and is not "not enabled".
+        let broken = Registry {
+            broken: true,
+            ..registry(None)
+        };
+        let refused = resolve_client(&fetcher, Some(&broken), &enabled, DYN, CALLBACK, at()).await;
+        assert!(
+            matches!(&refused, Err(RegistryUnavailable(_)) if !refused.as_ref().unwrap_err().not_enabled()),
+            "{refused:?}"
+        );
+    }
+
     fn policy(client_hosts: &[&str], redirect_uris: &[&str]) -> ClientPolicy {
         ClientPolicy {
             client_hosts: client_hosts.iter().map(|h| h.to_string()).collect(),
@@ -440,7 +994,7 @@ mod tests {
         let fetches = || fetcher.fetches.load(Ordering::SeqCst);
         let enabled = policy(&["claude.ai"], &[CALLBACK, "https://evil.example/cb"]);
 
-        let refused = resolve_client(&fetcher, &enabled, "not a url", CALLBACK).await;
+        let refused = resolve_client(&fetcher, None, &enabled, "not a url", CALLBACK, at()).await;
         assert_eq!(refused, Err(ClientRefusal::BadClientId("it is not a URL")));
         let lists: [&[&str]; 4] = [
             &[],
@@ -449,22 +1003,38 @@ mod tests {
             &["claude.ai.evil.example"],
         ];
         for hosts in lists {
-            let refused = resolve_client(&fetcher, &policy(hosts, &[CALLBACK]), ID, CALLBACK).await;
+            let refused = resolve_client(
+                &fetcher,
+                None,
+                &policy(hosts, &[CALLBACK]),
+                ID,
+                CALLBACK,
+                at(),
+            )
+            .await;
             assert_eq!(refused, Err(ClientRefusal::HostNotListed), "{hosts:?}");
         }
         // The client lists it, the instance does not; and a longer address is another address.
         for asked in [OWN_ONLY, "https://claude.ai/api/mcp/auth_callback/x"] {
-            let refused = resolve_client(&fetcher, &enabled, ID, asked).await;
+            let refused = resolve_client(&fetcher, None, &enabled, ID, asked, at()).await;
             assert_eq!(refused, Err(ClientRefusal::RedirectNotEnabled), "{asked}");
         }
         assert_eq!(fetches(), 0, "nothing was fetched for any refusal above");
 
         // The instance lists it, the client does not: known only after the fetch.
-        let refused = resolve_client(&fetcher, &enabled, ID, "https://evil.example/cb").await;
+        let refused = resolve_client(
+            &fetcher,
+            None,
+            &enabled,
+            ID,
+            "https://evil.example/cb",
+            at(),
+        )
+        .await;
         assert_eq!(refused, Err(ClientRefusal::RedirectNotRegistered));
         assert_eq!(fetches(), 1);
 
-        let client = resolve_client(&fetcher, &enabled, ID, CALLBACK)
+        let client = resolve_client(&fetcher, None, &enabled, ID, CALLBACK, at())
             .await
             .unwrap();
         assert_eq!(
@@ -479,11 +1049,46 @@ mod tests {
         assert_eq!(fetches(), 2, "no cache: each resolve fetches");
     }
 
-    /// Catches a page message that drifts: exactly the two refusals an admin can lift are "not enabled".
+    /// Catches a local app told to ask an admin (a loopback form missed) and a hosted app told to use the CLI (a
+    /// name that only contains `localhost`).
     #[test]
-    fn only_an_unlisted_host_and_an_unlisted_redirect_address_are_not_enabled() {
+    fn a_loopback_address_is_one_on_the_persons_own_computer() {
+        for local in [
+            "http://localhost/callback",
+            "http://localhost:49152/callback",
+            "http://LOCALHOST:8080/cb",
+            "http://localhost.:8080/cb",
+            "http://app.localhost:3000/cb",
+            "http://127.0.0.1:33418/callback",
+            "http://127.8.9.10/cb",
+            "http://[::1]:6274/oauth/callback",
+            "https://localhost/cb",
+        ] {
+            assert!(is_loopback_address(local), "{local}");
+        }
+        for hosted in [
+            "https://claude.ai/api/mcp/auth_callback",
+            "https://localhost.example/cb",
+            "https://notlocalhost/cb",
+            "https://example.com/localhost",
+            "http://128.0.0.1/cb",
+            "http://10.0.0.1/cb",
+            "http://[::2]/cb",
+            "cursor://anysphere.cursor-mcp/oauth/callback",
+            "localhost:8080/cb",
+            "not an address",
+            "",
+        ] {
+            assert!(!is_loopback_address(hosted), "{hosted}");
+        }
+    }
+
+    /// Catches a page message that drifts: exactly the three refusals an admin can lift are "not enabled".
+    #[test]
+    fn only_an_unlisted_host_an_unlisted_redirect_address_and_registration_off_are_not_enabled() {
         assert!(ClientRefusal::HostNotListed.not_enabled());
         assert!(ClientRefusal::RedirectNotEnabled.not_enabled());
+        assert!(ClientRefusal::RegistrationNotEnabled.not_enabled());
         for other in [
             ClientRefusal::BadClientId("x"),
             ClientRefusal::Busy,
@@ -492,6 +1097,8 @@ mod tests {
             ClientRefusal::TooLarge,
             ClientRefusal::BadDocument("x"),
             ClientRefusal::RedirectNotRegistered,
+            ClientRefusal::NotRegistered,
+            ClientRefusal::RegistryUnavailable("x".into()),
         ] {
             assert!(!other.not_enabled(), "{other}");
         }

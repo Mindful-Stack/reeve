@@ -20,6 +20,8 @@ pub struct TokenRow {
     /// token.
     pub connection_id: Option<i64>,
     pub connection_client_id: Option<String>,
+    /// The host kept with the connection; `None` also for a connection that has none.
+    pub connection_client_host: Option<String>,
     pub connection_scope: Option<String>,
     pub connection_ends_at: Option<DateTime<Utc>>,
     pub connection_revoked_at: Option<DateTime<Utc>>,
@@ -64,12 +66,15 @@ pub trait TokenStore: Send + Sync {
         expires_at: Option<DateTime<Utc>>,
         now: DateTime<Utc>,
     ) -> Result<i64, sqlx::Error>;
-    /// A new connection (kb/ADR-0029 R5); its id. The caller holds the owner's `users` row lock.
+    /// A new connection (kb/ADR-0029 R5); its id. `client_host` is the app's host as the approval page showed
+    /// it, `None` when nobody was shown one (the developer command). The caller holds the owner's `users` row
+    /// lock.
     async fn insert_connection(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         client_id: &str,
+        client_host: Option<&str>,
         client_name: &str,
         scope: Scope,
         approved_at: DateTime<Utc>,
@@ -242,7 +247,8 @@ impl TokenStore for PgTokenStore {
         // A plain read, no lock: every `/mcp` call runs it. The connection's columns are NULL for an API token.
         sqlx::query_as(
             "SELECT t.id, t.owner, t.kind, t.audience, t.expires_at, t.revoked_at, u.disabled AS owner_disabled, \
-             t.connection_id, c.client_id AS connection_client_id, c.scope AS connection_scope, \
+             t.connection_id, c.client_id AS connection_client_id, c.client_host AS connection_client_host, \
+             c.scope AS connection_scope, \
              c.ends_at AS connection_ends_at, c.revoked_at AS connection_revoked_at \
              FROM tokens t JOIN users u ON u.email = t.owner LEFT JOIN connections c ON c.id = t.connection_id \
              WHERE t.hash = $1",
@@ -257,15 +263,16 @@ impl TokenStore for PgTokenStore {
         tx: &mut Transaction<'_, Postgres>,
         owner: &str,
         client_id: &str,
+        client_host: Option<&str>,
         client_name: &str,
         scope: Scope,
         approved_at: DateTime<Utc>,
         ends_at: DateTime<Utc>,
     ) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar(
-            "INSERT INTO connections (owner, client_id, client_name, scope, approved_at, ends_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+            "INSERT INTO connections (owner, client_id, client_host, client_name, scope, approved_at, ends_at) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
         )
-        .bind(owner).bind(client_id).bind(client_name).bind(scope_text(scope)).bind(approved_at).bind(ends_at)
+        .bind(owner).bind(client_id).bind(client_host).bind(client_name).bind(scope_text(scope)).bind(approved_at).bind(ends_at)
         .fetch_one(&mut **tx)
         .await
     }
@@ -543,7 +550,7 @@ fn user_row(
 }
 
 /// The columns of a connection, with when it last refreshed, for a query whose table alias is `c`.
-const CONNECTION: &str = "c.id, c.owner, c.client_id, c.client_name, c.scope, c.approved_at, c.ends_at, c.revoked_at, c.revoked_reason, \
+const CONNECTION: &str = "c.id, c.owner, c.client_id, c.client_host, c.client_name, c.scope, c.approved_at, c.ends_at, c.revoked_at, c.revoked_reason, \
      (SELECT max(r.used_at) FROM refresh_tokens r WHERE r.connection_id = c.id) AS refreshed_at";
 
 /// The one place a stored connection becomes a `Connection`, as `list_for` builds a `TokenSummary`; text no code
@@ -572,6 +579,7 @@ fn connection_from(r: &sqlx::postgres::PgRow) -> Result<Connection, sqlx::Error>
         id: r.try_get("id")?,
         owner: r.try_get("owner")?,
         client_id: r.try_get("client_id")?,
+        client_host: r.try_get("client_host")?,
         client_name: r.try_get("client_name")?,
         scope: scope_from(&scope).ok_or_else(|| unknown("scope", &scope))?,
         approved_at: r.try_get("approved_at")?,

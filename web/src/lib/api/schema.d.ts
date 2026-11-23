@@ -1349,8 +1349,8 @@ export interface components {
             owner: string | null;
             title: string;
             /**
-             * @description Urgent through lineage on the queue's snapshot (kb/ADR-0017 R3). Servers always send it; JSON without it
-             *     reads as false.
+             * @description Urgent on the queue's snapshot (kb/ADR-0024 R5). This story flag is shown only: the queue never places or
+             *     counts by it. Servers always send it; JSON without it reads as false.
              */
             urgent: boolean;
         };
@@ -1594,15 +1594,17 @@ export interface components {
             done: boolean;
             text: string;
         };
-        /** @description An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0018 R3). */
+        /** @description An open, unsatisfied required decision: the item it is on and the readiness reason it gives (kb/ADR-0027 R3). */
         DecisionGateDto: {
             on: components["schemas"]["Key"];
             reason: components["schemas"]["Reason"];
         };
         DecisionQueueDto: {
+            /** @description The discovery rows, in page order. Servers always send it; JSON without it (an older server) reads as none. */
+            discoveries: components["schemas"]["DiscoveryEntryDto"][];
             /**
-             * @description In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
-             *     re-sort.
+             * @description In page order: lanes in `QueueLane` declaration order (`beyond`: Now, then Later), server order within each
+             *     lane; a nested decision (`under`) directly follows its row's `at`. Clients must not re-sort.
              */
             entries: components["schemas"]["DecisionQueueEntryDto"][];
             summary: components["schemas"]["DecisionQueueSummaryDto"];
@@ -1618,13 +1620,17 @@ export interface components {
             needed_in: components["schemas"]["NeededIn"];
             needed_in_reason: null | components["schemas"]["NeededInReason"];
             next_step: null | components["schemas"]["NextStep"];
+            under: null | components["schemas"]["Key"];
             /**
              * @description Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without
              *     it reads as none.
              */
             under_way: components["schemas"]["AffectedStoryDto"][];
         };
-        /** @description Counts over open, unsatisfied decisions only (except the lane sizes); `blocked_stories` counts each story once. */
+        /**
+         * @description Counts over open, unsatisfied decisions; `blocked_stories` counts each story once. Discovery rows are not counted
+         *     here: a client counts `discoveries` by lane.
+         */
         DecisionQueueSummaryDto: {
             /** Format: int32 */
             blocked_stories: number;
@@ -1632,7 +1638,7 @@ export interface components {
             blocking: number;
             /**
              * Format: int32
-             * @description Size of the next-sprint lane; reads as 0 without it.
+             * @description Decisions in the next-sprint lane, nested ones included; reads as 0 without it.
              */
             next_sprint: number;
             /** Format: int32 */
@@ -1641,12 +1647,13 @@ export interface components {
             overdue: number;
             /**
              * Format: int32
-             * @description Size of the review lane. Servers always send it; JSON without it (an older server) reads as 0.
+             * @description Decisions whose next step is `review_record`, in any lane. Servers always send it; JSON without it (an older
+             *     server) reads as 0.
              */
             review: number;
             /**
              * Format: int32
-             * @description Size of the this-sprint lane; reads as 0 without it.
+             * @description Decisions in the this-sprint lane, nested ones included; reads as 0 without it.
              */
             this_sprint: number;
         };
@@ -1656,6 +1663,28 @@ export interface components {
         DemoStoryDto: {
             key: components["schemas"]["Key"];
             title: string;
+        };
+        /**
+         * @description A discovery row of the readiness queue: an initiative or epic without its discovery mark that holds unfinished
+         *     stories (kb/ADR-0002 R3, read off readiness, never stored: kb/ADR-0027 R1).
+         */
+        DiscoveryEntryDto: {
+            also: null | components["schemas"]["Key"];
+            /**
+             * Format: int32
+             * @description The index in `entries` the row goes before (`entries.len()` at the end).
+             */
+            at: number;
+            /** @description The todo stories whose discovery item this is. */
+            blocks: components["schemas"]["AffectedStoryDto"][];
+            key: components["schemas"]["Key"];
+            /** @description `this_sprint`, `next_sprint`, or `beyond` with a Now reason (Now, no goal yet). */
+            lane: components["schemas"]["QueueLane"];
+            level: components["schemas"]["ItemType"];
+            needed_in_reason: null | components["schemas"]["NeededInReason"];
+            title: string;
+            /** @description The started ones. */
+            under_way: components["schemas"]["AffectedStoryDto"][];
         };
         /** @description Shaped like `ItemRefDto` plus a title, so the client links it with `itemRoute`. */
         DiscoveryGateDto: {
@@ -1861,7 +1890,7 @@ export interface components {
         };
         /**
          * @description What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
-         *     kb/ADR-0018 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+         *     kb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
          */
         GoalGatesDto: {
             /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */
@@ -2066,8 +2095,9 @@ export interface components {
          */
         NeededIn: "this_sprint" | "next_sprint" | "beyond" | "none";
         /**
-         * @description Why a decision is needed this sprint or next. Clients must accept `unknown`: a later server may send a reason
-         *     this build does not know.
+         * @description Why a decision or a discovery row is needed this sprint or next, or, for a row in Now (`beyond` under the first
+         *     horizon bucket, standalone), which rule of the Now ranking placed it. Clients must accept `unknown`: a later server
+         *     may send a reason this build does not know.
          */
         NeededInReason: {
             /** Format: int64 */
@@ -2088,6 +2118,23 @@ export interface components {
             /** Format: date */
             on: string;
             overdue: boolean;
+        } | {
+            key: components["schemas"]["Key"];
+            /** @enum {string} */
+            kind: "urgent";
+            level: components["schemas"]["ItemType"];
+        } | {
+            /** @enum {string} */
+            kind: "target_month";
+            month: string;
+        } | {
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            kind: "decision_due";
+        } | {
+            /** @enum {string} */
+            kind: "held";
         } | {
             /** @enum {string} */
             kind: "unknown";
@@ -2252,7 +2299,8 @@ export interface components {
          */
         QueueGroup: "blocking" | "open" | "satisfied" | "closed";
         /**
-         * @description The queue lane the web groups by; declaration order is the page order. Lanes are disjoint.
+         * @description The queue lane the web groups by; declaration order is the page order. Lanes are disjoint. `beyond` holds both Now
+         *     (a row with a Now reason) and Later (no reason).
          * @enum {string}
          */
         QueueLane: "review" | "this_sprint" | "next_sprint" | "beyond" | "open" | "satisfied" | "closed";
@@ -2599,9 +2647,11 @@ export interface components {
             /** @enum {string} */
             outcome: "ok";
             value: {
+                /** @description The discovery rows, in page order. Servers always send it; JSON without it (an older server) reads as none. */
+                discoveries: components["schemas"]["DiscoveryEntryDto"][];
                 /**
-                 * @description In page order: lanes in `QueueLane` declaration order, then server order within each lane. Clients must not
-                 *     re-sort.
+                 * @description In page order: lanes in `QueueLane` declaration order (`beyond`: Now, then Later), server order within each
+                 *     lane; a nested decision (`under`) directly follows its row's `at`. Clients must not re-sort.
                  */
                 entries: components["schemas"]["DecisionQueueEntryDto"][];
                 summary: components["schemas"]["DecisionQueueSummaryDto"];
@@ -2642,6 +2692,7 @@ export interface components {
                 needed_in: components["schemas"]["NeededIn"];
                 needed_in_reason: null | components["schemas"]["NeededInReason"];
                 next_step: null | components["schemas"]["NextStep"];
+                under: null | components["schemas"]["Key"];
                 /**
                  * @description Started stories the decision affects (in progress, in review or testing). Servers always send it; JSON without
                  *     it reads as none.

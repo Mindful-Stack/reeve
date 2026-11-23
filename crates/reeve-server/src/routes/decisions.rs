@@ -58,9 +58,10 @@ async fn queue(
     else {
         return Ok(ok(DecisionQueueDto::default()));
     };
-    let (entries, summary) = s.handlers.decision_queue(&scope, c.ctx().now).await?;
+    let (entries, rows, summary) = s.handlers.decision_queue(&scope, c.ctx().now).await?;
     Ok(ok(DecisionQueueDto {
         entries: entries.iter().map(|e| entry_dto(&s, e)).collect(),
+        discoveries: rows.iter().map(DiscoveryEntryDto::from).collect(),
         summary: summary.into(),
     }))
 }

@@ -151,7 +151,7 @@
 	const signedIn = $derived(!signedOutPage && session.me !== null);
 
 	// How many items wait for placement, for the bar's link to /triage: the length of the server's untriaged list
-	// (kb/ADR-0021 R1, kb/ADR-0018 R4). Loaded once signed in and on every live change or reconnect (onLive, unchanged:
+	// (kb/ADR-0021 R1, kb/ADR-0027 R4). Loaded once signed in and on every live change or reconnect (onLive, unchanged:
 	// kb/ADR-0011 R10). Only the latest answer lands; a failure keeps the last count: the link is a hint, never an error.
 	let untriaged = $state<number | null>(null);
 	let untriagedSeq = 0;

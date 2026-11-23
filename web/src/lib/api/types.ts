@@ -17,6 +17,7 @@ export type QueueGroup = S['QueueGroup'];
 export type DecisionQueue = S['DecisionQueueDto'];
 export type AffectedStory = S['AffectedStoryDto'];
 export type DecisionQueueEntry = S['DecisionQueueEntryDto'];
+export type DiscoveryEntry = S['DiscoveryEntryDto'];
 export type NextStep = S['NextStep'];
 export type NeededIn = S['NeededIn'];
 export type NeededInReason = S['NeededInReason'];

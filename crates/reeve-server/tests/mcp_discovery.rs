@@ -38,6 +38,7 @@ async fn off_nothing_under_oauth_or_well_known_answers_and_none_is_the_web_page(
         AUTHORIZATION_SERVER,
         "/oauth/authorize",
         "/oauth/token",
+        "/oauth/register",
         "/oauth",
         "/oauth/",
         "/oauth/nope",
@@ -83,6 +84,22 @@ async fn the_protected_resource_document_is_exactly_this() {
     );
 }
 
+/// The authorization server document of an instance that does not accept registrations.
+fn authorization_server_document() -> Value {
+    json!({
+        "issuer": "http://127.0.0.1:7474",
+        "authorization_endpoint": "http://127.0.0.1:7474/oauth/authorize",
+        "token_endpoint": "http://127.0.0.1:7474/oauth/token",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "client_id_metadata_document_supported": true,
+        "authorization_response_iss_parameter_supported": true,
+        "scopes_supported": ["read", "write"]
+    })
+}
+
 #[tokio::test]
 async fn the_authorization_server_document_is_exactly_this() {
     let h = mcp_harness().await;
@@ -91,19 +108,24 @@ async fn the_authorization_server_document_is_exactly_this() {
     assert_eq!(headers["content-type"], "application/json");
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap(),
-        json!({
-            "issuer": "http://127.0.0.1:7474",
-            "authorization_endpoint": "http://127.0.0.1:7474/oauth/authorize",
-            "token_endpoint": "http://127.0.0.1:7474/oauth/token",
-            "response_types_supported": ["code"],
-            "grant_types_supported": ["authorization_code", "refresh_token"],
-            "code_challenge_methods_supported": ["S256"],
-            "token_endpoint_auth_methods_supported": ["none"],
-            "client_id_metadata_document_supported": true,
-            "authorization_response_iss_parameter_supported": true,
-            "scopes_supported": ["read", "write"]
-        })
+        authorization_server_document()
     );
+}
+
+/// RFC 8414 section 2: `registration_endpoint` is named exactly when the instance accepts registrations (the
+/// test above is the other half: off, the document has no such member). Catches an endpoint that is advertised
+/// and answers 404, one that is not advertised, and a document that changes in any other way.
+#[tokio::test]
+async fn the_document_names_the_registration_endpoint_exactly_when_the_setting_is_on() {
+    let h = harness_with(|cfg| {
+        format!("{cfg}\n[mcp]\nenabled = true\nredirect_uris = [\"https://client.example/callback\"]\ndynamic_registration = true\n")
+    })
+    .await;
+    let (status, _, body) = send(&h.app, request("GET", AUTHORIZATION_SERVER)).await;
+    assert_eq!(status, 200, "{body}");
+    let mut expected = authorization_server_document();
+    expected["registration_endpoint"] = json!("http://127.0.0.1:7474/oauth/register");
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap(), expected);
 }
 
 /// A read answers; anything else is 405 in plain text with `Allow`, never the API's JSON envelope (which the

@@ -192,7 +192,12 @@ async fn approving_answers_the_clients_address_with_a_code_state_and_iss_and_wri
                 &json!("dan@example.com"),
                 &json!("interactive"),
                 &json!("dan@example.com"),
-                &json!({"client_id": f.client_id, "scope": scope})
+                &json!({
+                    "client_id": f.client_id,
+                    "client_host": "127.0.0.1",
+                    "client_name": "Example App",
+                    "scope": scope,
+                })
             ),
             "{scope}"
         );

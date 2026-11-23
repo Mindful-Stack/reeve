@@ -2092,6 +2092,7 @@ fn queue_body_defaulted() -> serde_json::Value {
         e["needed_in_reason"] = serde_json::json!(null);
         e["next_step"] = serde_json::json!(null);
         e["under_way"] = serde_json::json!([]);
+        e["under"] = serde_json::json!(null);
         for st in e["blocks"].as_array_mut().unwrap() {
             st["kind"] = serde_json::json!("story");
             st["delivery"] = serde_json::json!("todo");
@@ -2100,6 +2101,7 @@ fn queue_body_defaulted() -> serde_json::Value {
             st["needed_in"] = serde_json::json!("none");
         }
     }
+    b["discoveries"] = serde_json::json!([]);
     b["summary"]["review"] = serde_json::json!(0);
     b["summary"]["this_sprint"] = serde_json::json!(0);
     b["summary"]["next_sprint"] = serde_json::json!(0);
@@ -2127,6 +2129,10 @@ fn queue_body_with_lanes() -> serde_json::Value {
         "owner":"o@x","urgent":false,"needed_in":"next_sprint"}]);
     e["decision"]["record"]["browse_url"] =
         serde_json::json!("https://github.com/acme/kb/blob/HEAD/adrs/0001.md");
+    e["under"] = serde_json::json!("TST-5");
+    b["discoveries"] = serde_json::json!([{"key":"TST-5","level":"epic","title":"Five","also":"TST-4","lane":"beyond",
+        "needed_in_reason":{"kind":"held"},"blocks":[],"under_way":[{"key":"TST-6","title":"Six","kind":"story",
+        "delivery":"in_progress","owner":null,"urgent":false,"needed_in":"beyond"}],"at":0}]);
     b["summary"]["review"] = serde_json::json!(1);
     b["summary"]["this_sprint"] = serde_json::json!(2);
     b["summary"]["next_sprint"] = serde_json::json!(3);

@@ -1,7 +1,8 @@
 use crate::{
     access::AccessPolicy,
     connections::{
-        ACCESS_TOKEN_HOURS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live, record_revocations,
+        ACCESS_TOKEN_HOURS, DEVELOPER_CLIENT_ID, DEVELOPER_CLIENT_NAME, is_live,
+        record_revocations, shown_host,
     },
     domain::*,
     ports::*,
@@ -75,6 +76,8 @@ pub async fn issue_mcp_token(
             &mut tx,
             &email,
             DEVELOPER_CLIENT_ID,
+            // Nobody was shown a host: the listing shows the name alone.
+            None,
             DEVELOPER_CLIENT_NAME,
             Scope::Write,
             now,
@@ -271,6 +274,7 @@ pub async fn authenticate_mcp(
         role: policy.role_for(&owner),
         email: owner,
         connection_id,
+        client_host: shown_host(row.connection_client_host.as_deref(), &client_id),
         client_id,
         scope,
     })
