@@ -2,7 +2,7 @@
 # Installs the reeve CLI from the Reeve server that served this script (kb/ADR-0030). The server replaces the quoted
 # placeholder below with its public_url when it starts; everything else is the same on every instance.
 #
-#   curl --proto '=https' --tlsv1.2 -fsS https://<server>/cli/install.sh | sh
+#   curl -q --proto '=https' --tlsv1.2 -fsS https://<server>/cli/install.sh | sh
 #
 # REEVE_INSTALL_DIR chooses the directory (default ~/.local/bin); REEVE_FORCE=1 replaces a `reeve` there that is not
 # the Reeve planner CLI. Everything runs from `main`, called on the last line, so a download cut short runs nothing.
