@@ -2,6 +2,7 @@
 //! replaces itself only with a complete, verified file and never sends a credential (kb/ADR-0030 R5, R7).
 use axum::{
     Router,
+    body::Body,
     extract::{Path as UrlPath, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -45,12 +46,21 @@ fn this_target() -> &'static str {
     );
 }
 
-fn real() -> Vec<u8> {
-    std::fs::read(env!("CARGO_BIN_EXE_reeve")).unwrap()
+/// The real binary, read once. (The debug binary is ~150 MB, about 59% of `BINARY_CAP`: a much bigger one would make
+/// every test here fail the cap, not the behaviour under test.)
+fn real() -> &'static [u8] {
+    static REAL: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    REAL.get_or_init(|| std::fs::read(env!("CARGO_BIN_EXE_reeve")).unwrap())
+}
+
+/// A scratch directory on disk under the cargo target, never `/tmp` (a RAM-backed tmpfs on some machines: every test
+/// here copies the binary).
+fn tmp() -> tempfile::TempDir {
+    tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
 /// What the fake serves as `name`: the real binary plus a marker naming the file.
 fn served(name: &str) -> Vec<u8> {
-    let mut b = real();
+    let mut b = real().to_vec();
     b.extend_from_slice(format!("\0reeve-update-test:{name}\0").as_bytes());
     b
 }
@@ -65,16 +75,23 @@ struct Fake {
     old_server: bool,
     /// What `VERSION` answers from its second request on (a deploy while the update runs).
     later_version: Option<String>,
-    /// A body of this many bytes of text for `VERSION` or `SHA256SUMS`, beyond any cap.
-    huge: Option<(&'static str, usize)>,
+    /// A body of this many bytes for `VERSION` or `SHA256SUMS`, beyond any cap: the real answer (a valid version, so
+    /// only the cap can refuse it) padded with spaces; the flag streams it without a `Content-Length`.
+    huge: Option<(&'static str, usize, bool)>,
+    /// `X-Reeve-Cli` on the SHA256SUMS and binary answers (PR B stamps every response).
+    stamp_files: Option<String>,
     seen: Mutex<Vec<(String, bool)>>,
 }
 
 fn sums() -> String {
-    reeve_protocol::CLI_FILES
-        .iter()
-        .map(|n| format!("{}  {n}\n", hex::encode(Sha256::digest(served(n)))))
-        .collect()
+    static SUMS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SUMS.get_or_init(|| {
+        reeve_protocol::CLI_FILES
+            .iter()
+            .map(|n| format!("{}  {n}\n", hex::encode(Sha256::digest(served(n)))))
+            .collect()
+    })
+    .clone()
 }
 
 async fn cli(
@@ -101,14 +118,20 @@ async fn cli(
         )
             .into_response();
     }
-    if let Some((n, size)) = f.huge
+    if let Some((n, size, stream)) = f.huge
         && n == name
     {
-        return (
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            vec![b'a'; size],
-        )
-            .into_response();
+        let mut body = format!("{}\n", f.version).into_bytes();
+        body.resize(size, b' ');
+        let ct = [(header::CONTENT_TYPE, "text/plain; charset=utf-8")];
+        if !stream {
+            return (ct, body).into_response();
+        }
+        let chunks = body
+            .chunks(8192)
+            .map(|c| Ok::<_, std::convert::Infallible>(axum::body::Bytes::copy_from_slice(c)))
+            .collect::<Vec<_>>();
+        return (ct, Body::from_stream(futures_util::stream::iter(chunks))).into_response();
     }
     let asked = f
         .seen
@@ -132,7 +155,14 @@ async fn cli(
         n if reeve_protocol::CLI_FILES.contains(&n) => (served(n), "application/octet-stream"),
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
-    ([(header::CONTENT_TYPE, ty)], body).into_response()
+    let mut res = ([(header::CONTENT_TYPE, ty)], body).into_response();
+    if let Some(b) = &f.stamp_files
+        && name != "VERSION"
+    {
+        res.headers_mut()
+            .insert(reeve_protocol::CLI_VERSION_HEADER, b.parse().unwrap());
+    }
+    res
 }
 
 async fn serve(f: Arc<Fake>) -> String {
@@ -159,7 +189,7 @@ struct Ran {
 /// Runs `<exe> update <args>` as `build` (`"dev"`: unstamped) with poisoned credentials wherever the CLI could read
 /// one, so a request that carried one would be seen.
 async fn update(exe: &Path, url: &str, build: &str, env: &[(&str, &str)], args: &[&str]) -> Ran {
-    let cfg = tempfile::tempdir().unwrap();
+    let cfg = tmp();
     std::fs::write(
         cfg.path().join("config.toml"),
         "url = \"http://127.0.0.1:1\"\ntoken = \"reeve_stored_poison\"\n",
@@ -176,6 +206,8 @@ async fn update(exe: &Path, url: &str, build: &str, env: &[(&str, &str)], args: 
         .env_remove("REEVE_UPDATE_FAULT")
         .env_remove("REEVE_UPDATE_NOTICE")
         .env_remove("REEVE_ASCII")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
         .stdin(std::process::Stdio::null());
     for (k, v) in env {
         c.env(k, v);
@@ -237,7 +269,7 @@ fn no_temporary_file(dir: &Path) {
 #[tokio::test]
 async fn a_stamped_cli_takes_the_offered_build_without_sending_a_credential() {
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f.clone()).await, A, &[], &[]).await;
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -291,7 +323,7 @@ async fn a_stamped_cli_takes_the_offered_build_without_sending_a_credential() {
 async fn an_older_offered_build_is_installed_too() {
     // B running, A offered: no order between builds, only equality (kb/ADR-0030 R7).
     let f = Arc::new(fake(A));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f).await, B, &[], &["--json"]).await;
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -305,7 +337,7 @@ async fn an_older_offered_build_is_installed_too() {
 #[tokio::test]
 async fn equal_builds_replace_nothing() {
     let f = Arc::new(fake(A));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f.clone()).await, A, &[], &[]).await;
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -317,7 +349,7 @@ async fn equal_builds_replace_nothing() {
 #[tokio::test]
 async fn an_unstamped_build_updates_from_nothing() {
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f).await, "dev", &[], &[]).await;
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -337,7 +369,7 @@ async fn a_checksum_mismatch_changes_nothing() {
         &hex::encode(Sha256::digest(b"something else")),
     ));
     let f = Arc::new(fk);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
     assert_eq!(r.code, 1);
@@ -353,10 +385,13 @@ async fn a_checksum_mismatch_changes_nothing() {
     no_temporary_file(dir.path());
 }
 
+/// On Unix nothing is moved before the fault (the swap is one `rename(2)`), so this pins that a failed swap leaves the
+/// original and no temporary file. The rollback itself is covered by `swap_aside`'s unit tests and end to end on the
+/// Windows leg.
 #[tokio::test]
 async fn a_failure_after_the_original_moved_puts_it_back() {
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(
         &exe,
@@ -394,7 +429,7 @@ async fn a_redirect_is_refused() {
     let mut fk = fake(B);
     fk.redirect = true;
     let f = Arc::new(fk);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
     assert_eq!(r.code, 1);
@@ -420,7 +455,7 @@ async fn a_url_with_credentials_is_refused_before_any_request() {
     let url = serve(f.clone())
         .await
         .replace("http://", "http://user:secret@");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &url, A, &[], &["--json"]).await;
     assert_eq!(r.code, 1);
@@ -456,7 +491,7 @@ async fn a_server_without_distribution_says_whom_to_ask() {
     ] {
         let f = Arc::new(fk);
         let url = serve(f.clone()).await;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tmp();
         let exe = installed(dir.path());
         let r = update(&exe, &url, A, &[], &["--json"]).await;
         assert_eq!(r.code, 1, "{label}");
@@ -476,7 +511,7 @@ async fn a_server_without_distribution_says_whom_to_ask() {
 
 #[tokio::test]
 async fn plain_http_off_loopback_is_refused_before_any_request() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, "http://reeve.example.invalid", A, &[], &["--json"]).await;
     assert_eq!(r.code, 1);
@@ -488,7 +523,7 @@ async fn plain_http_off_loopback_is_refused_before_any_request() {
 async fn an_unreachable_server_fails_and_changes_nothing() {
     // Port 1 (tcpmux): nothing listens there, and unlike a freed ephemeral port no parallel test's server can take it.
     let port = 1;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(
         &exe,
@@ -514,7 +549,7 @@ async fn an_unwritable_directory_changes_nothing_and_says_what_to_do() {
         "run as a non-root user: root can write anywhere, so this test would show nothing"
     );
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let before = std::fs::metadata(dir.path()).unwrap().permissions().mode();
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
@@ -547,7 +582,7 @@ async fn an_unwritable_directory_changes_nothing_and_says_what_to_do() {
 async fn a_stale_temporary_name_is_neither_deleted_nor_a_failure() {
     // A file already sits at the first temporary name (`<exe>.tmp`): the update takes the next name and leaves it alone.
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let mut stale = exe.as_os_str().to_owned();
     stale.push(".tmp");
@@ -561,9 +596,9 @@ async fn a_stale_temporary_name_is_neither_deleted_nor_a_failure() {
 /// nor reuse a running image's backup name). The same sequence must work on Unix too.
 #[tokio::test]
 async fn a_running_old_build_does_not_block_the_next_update() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
-    let cfg = tempfile::tempdir().unwrap();
+    let cfg = tmp();
     // `reeve auth login --no-browser` waits on stdin: a long-lived process running this exact file.
     let mut held = tokio::process::Command::new(&exe)
         .args([
@@ -605,9 +640,9 @@ async fn a_running_old_build_does_not_block_the_next_update() {
 
 #[tokio::test]
 async fn no_server_url_says_how_to_set_one() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
-    let cfg = tempfile::tempdir().unwrap();
+    let cfg = tmp();
     let out = tokio::process::Command::new(&exe)
         .args(["update", "--json"])
         .env_remove("REEVE_URL")
@@ -627,7 +662,7 @@ async fn a_build_that_changes_while_updating_is_a_checksum_mismatch() {
     let mut fk = fake(B);
     fk.later_version = Some(C.into());
     let f = Arc::new(fk);
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
     assert_eq!(r.code, 1, "{}", r.stdout);
@@ -647,33 +682,58 @@ async fn a_build_that_changes_while_updating_is_a_checksum_mismatch() {
 
 #[tokio::test]
 async fn an_over_long_text_answer_is_refused() {
-    // 64 KiB is the cap: VERSION over it is not a Reeve server's file; SHA256SUMS over it is a plain failure.
-    let f = Arc::new(Fake {
-        huge: Some(("VERSION", 70_000)),
-        ..fake(B)
-    });
-    let dir = tempfile::tempdir().unwrap();
-    let exe = installed(dir.path());
-    let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
-    assert_eq!(r.code, 1);
-    assert_eq!(envelope(&r)["reason"], "not_distributed");
-    assert_eq!(std::fs::read(&exe).unwrap(), real());
+    // 64 KiB is the cap. The body starts with a real answer, so only the cap can refuse it. With a `Content-Length`
+    // the precheck refuses it; streamed without one, the read loop does (delete either check and its case fails:
+    // VERSION would be taken, SHA256SUMS would parse as a sums file with no line, a `checksum_mismatch`).
+    for stream in [false, true] {
+        let f = Arc::new(Fake {
+            huge: Some(("VERSION", 70_000, stream)),
+            ..fake(B)
+        });
+        let dir = tmp();
+        let exe = installed(dir.path());
+        let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
+        assert_eq!(r.code, 1, "stream={stream}");
+        assert_eq!(envelope(&r)["reason"], "not_distributed", "stream={stream}");
+        assert_eq!(names(&f), ["VERSION"], "stream={stream}");
+        assert_eq!(std::fs::read(&exe).unwrap(), real());
 
+        let f = Arc::new(Fake {
+            huge: Some(("SHA256SUMS", 70_000, stream)),
+            ..fake(B)
+        });
+        let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
+        assert_eq!(r.code, 1, "stream={stream}");
+        let v = envelope(&r);
+        assert_eq!(v["code"], "internal", "stream={stream}");
+        assert!(v.get("reason").is_none(), "stream={stream}");
+        assert_eq!(
+            names(&f),
+            ["VERSION", "SHA256SUMS"],
+            "the binary is never fetched (stream={stream})"
+        );
+        assert_eq!(std::fs::read(&exe).unwrap(), real());
+    }
+}
+
+#[tokio::test]
+async fn an_answer_naming_another_build_is_a_checksum_mismatch() {
     let f = Arc::new(Fake {
-        huge: Some(("SHA256SUMS", 70_000)),
+        stamp_files: Some(C.into()),
         ..fake(B)
     });
-    let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
-    assert_eq!(r.code, 1);
-    let v = envelope(&r);
-    assert_eq!(v["code"], "internal");
-    assert!(v.get("reason").is_none());
-    assert_eq!(
-        names(&f),
-        ["VERSION", "SHA256SUMS"],
-        "the binary is never fetched"
+    let dir = tmp();
+    let exe = installed(dir.path());
+    let r = update(&exe, &serve(f).await, A, &[], &["--json"]).await;
+    assert_eq!(r.code, 1, "{}", r.stdout);
+    assert_eq!(envelope(&r)["reason"], "checksum_mismatch");
+    assert!(
+        r.stderr.contains("changed while updating") && r.stderr.contains("Try again"),
+        "{}",
+        r.stderr
     );
     assert_eq!(std::fs::read(&exe).unwrap(), real());
+    no_temporary_file(dir.path());
 }
 
 #[tokio::test]
@@ -688,7 +748,7 @@ async fn a_proxy_in_the_environment_is_never_used_for_loopback_http() {
         }
     });
     let f = Arc::new(fake(B));
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let exe = installed(dir.path());
     let env = [
         ("HTTP_PROXY", purl.as_str()),
@@ -708,10 +768,12 @@ async fn a_proxy_in_the_environment_is_never_used_for_loopback_http() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_symlinked_executable_has_its_target_replaced_and_the_link_kept() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tmp();
     let real_dir = dir.path().join("store");
     std::fs::create_dir(&real_dir).unwrap();
     let target = installed(&real_dir);
+    // On Linux `/proc/self/exe` already resolves the link, so this passes even without `canonicalize()`; that call is
+    // pinned only where `current_exe` returns the link itself (macOS).
     let link = dir.path().join("reeve");
     std::os::unix::fs::symlink(&target, &link).unwrap();
     let r = update(&link, &serve(Arc::new(fake(B))).await, A, &[], &[]).await;

@@ -43,6 +43,8 @@ const BINARY_CAP: usize = 256 * 1024 * 1024;
 struct Got {
     bytes: Vec<u8>,
     content_type: String,
+    /// The build the answer says it belongs to (`X-Reeve-Cli`), when it carries one.
+    build: Option<String>,
 }
 
 /// Fetches `/cli/<name>`, reading at most `cap` bytes (a longer `Content-Length` is refused before reading, and
@@ -94,6 +96,7 @@ async fn get(
         ));
     }
     let content_type = header("content-type").unwrap_or_default();
+    let build = header(reeve_protocol::CLI_VERSION_HEADER).map(|b| b.trim().to_string());
     let too_big = || {
         if name == "VERSION" {
             not_distributed(base)
@@ -126,6 +129,7 @@ async fn get(
     Ok(Got {
         bytes,
         content_type,
+        build,
     })
 }
 
@@ -172,12 +176,32 @@ fn install(exe: &Path, bin: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// An error from a rename that Windows refused because something holds the file (access denied or sharing violation):
+/// the only place `cannot_replace` says "another program is using it".
+#[derive(Debug)]
+struct Held(std::io::Error);
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for Held {}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn held(e: std::io::Error) -> std::io::Error {
+    if matches!(e.raw_os_error(), Some(5 | 32)) {
+        std::io::Error::new(e.kind(), Held(e))
+    } else {
+        e
+    }
+}
+
 /// What to tell someone whose executable could not be replaced. An executable a package manager installed read-only
 /// (the nix store) lands here too, as permission denied.
 fn cannot_replace(exe: &Path, base: &url::Url, e: &std::io::Error) -> Failure {
-    let next = if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32)) {
-        // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION: what Windows answers while antivirus or another window holds
-        // the file.
+    let next = if e.get_ref().is_some_and(|i| i.is::<Held>()) {
+        // A swap rename refused with ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION: antivirus or another window holds
+        // the file. The same codes from creating the temporary file mean permissions, and take the next arm.
         "another program is using it: close other reeve windows (or wait for antivirus to finish scanning it), then run reeve update again".to_string()
     } else if matches!(
         e.kind(),
@@ -234,6 +258,8 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
         .redirect(reqwest::redirect::Policy::none())
         // Not one timeout for the whole request: a slow link may take minutes for the binary, but must keep moving.
         .connect_timeout(std::time::Duration::from_secs(10))
+        // And an overall ceiling per request, so a server that trickles bytes forever cannot hold the command.
+        .timeout(std::time::Duration::from_secs(30 * 60))
         .read_timeout(std::time::Duration::from_secs(60));
     if base.scheme() == "http" {
         // Plain http is allowed to loopback only; HTTP_PROXY must not carry it anywhere else (kb/ADR-0030 R5).
@@ -271,9 +297,9 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
     }
     let sums = get(&http, &base, "SHA256SUMS", TEXT_CAP).await?;
     let bin = get(&http, &base, file, BINARY_CAP).await?;
-    // A deploy between these requests can serve the sums and the binary from different bundles (the checksum below
-    // catches that), or sums and binary that agree with each other but are not the build VERSION named (the second
-    // VERSION read after the checksum catches that).
+    // What is guaranteed: the binary matches the SHA256SUMS line it was verified against; no answer that names its
+    // build (`X-Reeve-Cli`) names another than the one VERSION offered; and VERSION still offers that build after the
+    // download. A deploy that lands and is undone between requests, on a server that stamps no header, is not seen.
     let mismatch = |why: String| {
         fail_because(
             ErrorCode::Internal,
@@ -283,6 +309,13 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
             ),
         )
     };
+    for got in [&sums, &bin] {
+        if got.build.as_deref().is_some_and(|b| b != offered) {
+            return Err(mismatch(
+                "the server's build changed while updating".to_string(),
+            ));
+        }
+    }
     let want = expected_sum(&String::from_utf8_lossy(&sums.bytes), file).map_err(mismatch)?;
     if hex::encode(Sha256::digest(&bin.bytes)) != want {
         return Err(mismatch(format!(
@@ -413,8 +446,9 @@ pub(crate) fn remove_old_backups(exe: &Path) {
     }
 }
 
-/// `rename`, tried up to 5 times, `delay` apart, while Windows answers access denied (5) or sharing violation (32):
-/// antivirus and indexers hold a freshly written file for a moment.
+/// `rename`, tried up to 10 times, sleeping `delay`, `2 * delay`, ... between tries (about 4.5 s at 100 ms), while Windows
+/// answers access denied (5) or sharing violation (32): antivirus and indexers hold a freshly written file for a
+/// moment. A rename still refused afterwards is returned as `Held`.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn rename_retrying(
     rename: &impl Fn(&Path, &Path) -> std::io::Result<()>,
@@ -425,11 +459,11 @@ fn rename_retrying(
     let mut tries = 1;
     loop {
         match rename(from, to) {
-            Err(e) if tries < 5 && matches!(e.raw_os_error(), Some(5 | 32)) => {
+            Err(e) if tries < 10 && matches!(e.raw_os_error(), Some(5 | 32)) => {
+                std::thread::sleep(delay * tries);
                 tries += 1;
-                std::thread::sleep(delay);
             }
-            r => return r,
+            r => return r.map_err(held),
         }
     }
 }
@@ -453,7 +487,7 @@ pub(crate) fn swap_aside(
                 "1000 backups beside the executable; delete the reeve.exe.old.* files",
             )
         })?;
-    rename(exe, &old)?;
+    rename(exe, &old).map_err(held)?;
     if let Err(e) = fault("after_move").and_then(|()| rename_retrying(&rename, new, exe, delay)) {
         return match rename(&old, exe) {
             Ok(()) => Err(e),
@@ -499,7 +533,7 @@ pub(crate) fn swap(exe: &Path, new: &Path) -> std::io::Result<()> {
             new,
             fault,
             |a, b| std::fs::rename(a, b),
-            std::time::Duration::from_millis(200),
+            std::time::Duration::from_millis(100),
         )
         .map(|_| ())
     }
@@ -720,8 +754,8 @@ mod tests {
         let (exe, new) = two_files(d.path());
         let (n, r) = flaky(5, 99);
         let e = swap_aside(&exe, &new, |_| Ok(()), r, z).unwrap_err();
-        assert_eq!(e.raw_os_error(), Some(5));
-        assert_eq!(n.get(), 5, "five tries, no more");
+        assert!(e.get_ref().is_some_and(|i| i.is::<Held>()), "{e}");
+        assert_eq!(n.get(), 10, "ten tries, no more");
         assert_eq!(std::fs::read_to_string(&exe).unwrap(), "old binary");
 
         // Any other error is not retried.
