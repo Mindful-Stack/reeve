@@ -41,7 +41,29 @@ esac
 target=$1 version=$2 out=$3
 file=$(file_of "$target")
 [[ "$version" =~ ^[0-9a-f]{40}$ ]] || fail "the CLI version must be 40 lowercase hex characters, got '$version'"
+# absolute <path>: <path> against the caller's directory (a Windows drive path counts as absolute), before the cd below.
+absolute() {
+	case "$1" in
+	/* | [A-Za-z]:[/\\]*) echo "$1" ;;
+	*) echo "$PWD/$1" ;;
+	esac
+}
+out=$(absolute "$out")
+# The target directory is named here, so a build.target-dir in a cargo config cannot move the binary elsewhere.
+[ -z "${CARGO_TARGET_DIR:-}" ] || CARGO_TARGET_DIR=$(absolute "$CARGO_TARGET_DIR")
 cd "$(dirname "$0")/.."
+# Relative to the repository root, where cargo runs (a POSIX absolute path would need converting for cargo on Windows).
+export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}
+unset CARGO_BUILD_TARGET_DIR
+
+# The release binary is what the inputs in scripts/cli-version.sh make, not what the runner's environment adds: no
+# flags or profile overrides from it. The script sets only the variables below.
+unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
+for v in $(compgen -e); do
+	case "$v" in
+	CARGO_PROFILE_RELEASE_* | CARGO_TARGET_*_RUSTFLAGS) unset "$v" ;;
+	esac
+done
 
 command -v rustup >/dev/null || fail "rustup not found"
 rustup target add "$target"
@@ -51,10 +73,18 @@ case "$target" in
 	command -v musl-gcc >/dev/null || fail "musl-gcc not found (apt-get install musl-tools)"
 	export "CC_${target//-/_}=musl-gcc"
 	;;
+*-windows-msvc)
+	# The C runtime linked statically: a clean Windows has no VCRUNTIME140.dll unless something installed it.
+	export "CARGO_TARGET_$(printf '%s' "${target//-/_}" | tr '[:lower:]' '[:upper:]')_RUSTFLAGS=-C target-feature=+crt-static"
+	;;
+# The oldest macOS each binary runs on, pinned (today's rustc defaults) so a toolchain update cannot raise it unseen;
+# checked below.
+aarch64-apple-darwin) export MACOSX_DEPLOYMENT_TARGET=11.0 ;;
+x86_64-apple-darwin) export MACOSX_DEPLOYMENT_TARGET=10.12 ;;
 esac
 REEVE_CLI_VERSION=$version cargo build -p reeve --release --locked --target "$target"
 
-built=${CARGO_TARGET_DIR:-target}/$target/release/reeve
+built=$CARGO_TARGET_DIR/$target/release/reeve
 case "$target" in *-windows-*) built=$built.exe ;; esac
 [ -f "$built" ] || fail "no binary at $built"
 
@@ -71,8 +101,21 @@ case "$target" in
 	# LC_ALL=C: readelf's messages are translated, and "program interpreter" is the C locale's wording.
 	if LC_ALL=C readelf -l "$built" | grep -q 'program interpreter'; then fail "$built is not static"; fi
 	;;
-aarch64-apple-darwin) [ "$(lipo -archs "$built")" = arm64 ] || fail "$built is not arm64 only" ;;
-x86_64-apple-darwin) [ "$(lipo -archs "$built")" = x86_64 ] || fail "$built is not x86_64 only" ;;
+*-windows-msvc)
+	# An import of the runtime DLL names it in the import table; a static runtime does not.
+	if grep -qaiF vcruntime140.dll "$built"; then fail "$built links VCRUNTIME140.dll dynamically"; fi
+	;;
+*-apple-darwin)
+	case "$target" in aarch64-*) arch=arm64 ;; *) arch=x86_64 ;; esac
+	[ "$(lipo -archs "$built")" = "$arch" ] || fail "$built is not $arch only"
+	# The minimum macOS: LC_BUILD_VERSION's minos, or LC_VERSION_MIN_MACOSX's version on older deployment targets.
+	minos=$(otool -l "$built" | awk '
+		$1 == "cmd" { cmd = $2 }
+		cmd == "LC_BUILD_VERSION" && $1 == "minos" { print $2; exit }
+		cmd == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2; exit }')
+	[ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] ||
+		fail "$built needs macOS ${minos:-unknown}, want $MACOSX_DEPLOYMENT_TARGET"
+	;;
 esac
 mkdir -p "$out"
 cp "$built" "$out/$file"

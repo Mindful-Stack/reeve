@@ -48,9 +48,9 @@ FROM debian:bookworm-slim
 # household inside this container; age for an operator's encrypted off-host backups and their restore rehearsal, run
 # as one-off containers of this image. The server itself runs none of them.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client age && rm -rf /var/lib/apt/lists/*
+COPY --from=cli / /srv/cli/
 COPY --from=build /out/reeve-server /usr/local/bin/
 COPY --from=build /out/reeve /usr/local/bin/
-COPY --from=cli / /srv/cli/
 COPY deploy/decision-check.sh /usr/local/bin/reeve-decision-check
 RUN chmod 0755 /usr/local/bin/reeve-decision-check
 EXPOSE 7474

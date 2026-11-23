@@ -99,9 +99,17 @@ impl CliDist {
             if meta.len() == 0 {
                 return Err(format!("{name} is empty"));
             }
-            let actual = sha256_of(&path).map_err(|e| format!("{name} unreadable ({e})"))?;
+            let (actual, stamped) = hash_and_find(&path, version.as_bytes())
+                .map_err(|e| format!("{name} unreadable ({e})"))?;
             if actual != hash {
                 return Err(format!("{name} does not match its {CLI_SUMS_FILE} line"));
+            }
+            // A stamped build carries its CLI version in its bytes (`option_env!`): one that does not would offer a
+            // build it is not, and `reeve update` would replace it forever (kb/ADR-0030 R1).
+            if !stamped {
+                return Err(format!(
+                    "{name} does not carry the build {CLI_VERSION_FILE} names"
+                ));
             }
         }
         Ok(Self {
@@ -178,11 +186,32 @@ fn read_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// The file's SHA-256 in lowercase hex, read in chunks (a binary is tens of megabytes).
-fn sha256_of(path: &Path) -> std::io::Result<String> {
+/// The file's SHA-256 in lowercase hex, and whether `needle` (non-empty) occurs in it; one pass, read in chunks (a
+/// binary is tens of megabytes). The last `needle.len() - 1` bytes of each chunk are kept, so a match across a chunk
+/// boundary is found.
+fn hash_and_find(path: &Path, needle: &[u8]) -> std::io::Result<(String, bool)> {
+    let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut std::fs::File::open(path)?, &mut hasher)?;
-    Ok(hex::encode(hasher.finalize()))
+    let keep = needle.len().saturating_sub(1);
+    let mut window: Vec<u8> = Vec::with_capacity(keep + 64 * 1024);
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut found = false;
+    loop {
+        let n = match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        hasher.update(&chunk[..n]);
+        if !found {
+            window.extend_from_slice(&chunk[..n]);
+            found = window.windows(needle.len()).any(|w| w == needle);
+            let drop = window.len().saturating_sub(keep);
+            window.drain(..drop);
+        }
+    }
+    Ok((hex::encode(hasher.finalize()), found))
 }
 
 /// The configured public URL as the scripts carry it: without a trailing `/`.
@@ -297,11 +326,12 @@ mod tests {
 
     const VERSION: &str = "0123456789abcdef0123456789abcdef01234567";
 
-    /// A valid bundle: every file of `CLI_BINARIES` with distinct contents, their real checksums, the version.
+    /// A valid bundle: every file of `CLI_BINARIES` with distinct contents carrying the version (as a stamped build
+    /// does), their real checksums, the version.
     fn bundle(dir: &Path) {
         let mut sums = String::new();
         for name in CLI_BINARIES {
-            let bytes = format!("binary {name}");
+            let bytes = format!("binary {name} {VERSION}");
             std::fs::write(dir.join(name), &bytes).unwrap();
             sums.push_str(&format!(
                 "{}  {name}\n",
@@ -327,6 +357,38 @@ mod tests {
         let real = d.join(format!("{name}.real"));
         std::fs::rename(d.join(name), &real).unwrap();
         std::os::unix::fs::symlink(&real, d.join(name)).unwrap();
+    }
+
+    /// The stamp is found wherever it sits, across a read boundary too, and the hash is the file's. Distinguishes a
+    /// search per chunk only (the straddling case) and one that keeps too little of the previous chunk.
+    #[test]
+    fn the_stamp_is_found_across_chunks() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("bin");
+        let chunk = 64 * 1024;
+        for at in [
+            0,
+            1,
+            chunk - 39,
+            chunk - 20,
+            chunk - 1,
+            chunk,
+            3 * chunk + 7,
+        ] {
+            let mut bytes = vec![b'x'; 4 * chunk];
+            bytes[at..at + VERSION.len()].copy_from_slice(VERSION.as_bytes());
+            std::fs::write(&p, &bytes).unwrap();
+            let (hash, found) = hash_and_find(&p, VERSION.as_bytes()).unwrap();
+            assert!(found, "at {at}");
+            assert_eq!(hash, hex::encode(Sha256::digest(&bytes)), "at {at}");
+        }
+        std::fs::write(&p, vec![b'x'; 2 * chunk]).unwrap();
+        assert!(!hash_and_find(&p, VERSION.as_bytes()).unwrap().1);
+        // All but the last byte of the stamp at the very end: not a match.
+        let mut bytes = vec![b'x'; chunk];
+        bytes.extend_from_slice(&VERSION.as_bytes()[..39]);
+        std::fs::write(&p, &bytes).unwrap();
+        assert!(!hash_and_find(&p, VERSION.as_bytes()).unwrap().1);
     }
 
     #[test]
@@ -450,6 +512,23 @@ mod tests {
                 "a binary changed after its checksum",
                 |d| std::fs::write(d.join(CLI_BINARIES[2]), "binary tampered").unwrap(),
                 "reeve-macos-aarch64 does not match its SHA256SUMS line",
+            ),
+            (
+                "an unstamped binary, listed with its real checksum",
+                |d| {
+                    let unstamped = format!("binary {}", CLI_BINARIES[3]);
+                    std::fs::write(d.join(CLI_BINARIES[3]), &unstamped).unwrap();
+                    let sum = hex::encode(Sha256::digest(&unstamped));
+                    edit_sums(d, |s| {
+                        s.lines()
+                            .map(|l| match l.split_once("  ") {
+                                Some((_, n)) if n == CLI_BINARIES[3] => format!("{sum}  {n}\n"),
+                                _ => format!("{l}\n"),
+                            })
+                            .collect()
+                    })
+                },
+                "reeve-macos-x86_64 does not carry the build VERSION names",
             ),
             (
                 "an empty binary, listed with its real checksum",

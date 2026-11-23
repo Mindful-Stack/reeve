@@ -38,7 +38,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
             "application/octet-stream",
             "{name}"
         );
-        let want = format!("binary {name}");
+        let want = cli_binary(name);
         assert_eq!(
             res.headers()["content-length"],
             want.len().to_string().as_str(),
@@ -101,7 +101,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
     // The length GET's body has, though HEAD sends none.
     assert_eq!(
         res.headers()["content-length"],
-        "binary reeve-linux-x86_64".len().to_string().as_str()
+        cli_binary("reeve-linux-x86_64").len().to_string().as_str()
     );
     assert!(bytes_of(res).await.is_empty(), "HEAD sent a body");
 }

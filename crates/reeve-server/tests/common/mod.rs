@@ -36,12 +36,17 @@ pub const CLI_BINARIES: [&str; 5] = [
     "reeve-windows-x86_64.exe",
 ];
 
-/// A valid CLI bundle in `dir`, binaries with distinct contents (`binary <name>`); returns the SHA256SUMS text.
+/// A fixture binary's contents: distinct per name, and carrying the CLI version as a stamped build does.
+pub fn cli_binary(name: &str) -> String {
+    format!("binary {name} {CLI_VERSION}")
+}
+
+/// A valid CLI bundle in `dir`, binaries with distinct contents (`cli_binary`); returns the SHA256SUMS text.
 pub fn cli_bundle(dir: &std::path::Path) -> String {
     use sha2::{Digest, Sha256};
     let mut sums = String::new();
     for name in CLI_BINARIES {
-        let bytes = format!("binary {name}");
+        let bytes = cli_binary(name);
         std::fs::write(dir.join(name), &bytes).unwrap();
         sums.push_str(&format!(
             "{}  {name}\n",

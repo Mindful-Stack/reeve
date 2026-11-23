@@ -48,14 +48,24 @@ for p in crates/reeve-server/src/lib.rs crates/reeve-planning/src/lib.rs web/src
 	commit "not an input: $p" "$p" >/dev/null
 	expect "$base" "a change to $p"
 done
-for p in crates/reeve/src/lib.rs crates/reeve-protocol/src/lib.rs Cargo.toml Cargo.lock scripts/cli-version.sh \
-	scripts/cli-build.sh deploy/cli/Dockerfile; do
+for p in crates/reeve/src/lib.rs crates/reeve-protocol/src/lib.rs Cargo.toml Cargo.lock .cargo/config.toml \
+	scripts/cli-version.sh scripts/cli-build.sh deploy/cli/Dockerfile; do
 	head=$(commit "input: $p" "$p")
 	expect "$head" "a change to $p"
 done
 git clone -q --depth 1 "file://$repo" "$tmp/shallow"
 if out=$(cd "$tmp/shallow" && bash scripts/cli-version.sh 2>/dev/null); then
 	echo "FAIL: a shallow clone printed '$out'" >&2
+	fails=$((fails + 1))
+fi
+# Outside any repository: a failure that says so, not git's own message or an empty version.
+mkdir -p "$tmp/nogit/scripts"
+cp "$script" "$tmp/nogit/scripts/cli-version.sh"
+if out=$(cd "$tmp/nogit" && GIT_CEILING_DIRECTORIES=$tmp bash scripts/cli-version.sh 2>"$tmp/nogit.err"); then
+	echo "FAIL: outside a repository it printed '$out'" >&2
+	fails=$((fails + 1))
+elif ! grep -q "not in a git repository" "$tmp/nogit.err"; then
+	echo "FAIL: outside a repository it said: $(cat "$tmp/nogit.err")" >&2
 	fails=$((fails + 1))
 fi
 [ "$fails" -eq 0 ] || exit 1

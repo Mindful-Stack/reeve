@@ -320,8 +320,8 @@ testing).
 
 The routes are public, so rate-limit them per client IP at the proxy. An install is four requests (the script,
 `VERSION`, `SHA256SUMS`, the binary) and so is `reeve update` (`VERSION`, `SHA256SUMS`, the binary, `VERSION` again);
-running it again after a failure repeats them. For nginx, 30 a minute per IP with a burst of 10, which lets an install
-and an update back to back through at once, answering 429 over the limit (nginx's default is 503,
+running it again after a failure repeats them. For nginx, 30 a minute per IP with a burst of 40 served at once,
+answering 429 over the limit (nginx's default is 503,
 [`limit_req_status`](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html#limit_req_status)):
 
     # in the http block
@@ -329,10 +329,19 @@ and an update back to back through at once, answering 429 over the limit (nginx'
 
     # in the server block, before the general proxy location
     location ^~ /cli/ {
-        limit_req zone=reeve_cli burst=10 nodelay;
+        limit_req zone=reeve_cli burst=40 nodelay;
         limit_req_status 429;
         proxy_pass http://127.0.0.1:7474;
     }
+
+Size the burst at about four times the people and agents that install or update at once from one address (an office
+behind one NAT, a CI runner pool): 40 lets ten through together. The burst admits one larger spike per address; it
+does not raise what an address can download over time, which the rate (one request every two seconds) still caps. Set
+it too low and the cost is real: a `reeve update` that gets a 429 fails, and an agent that was told to update stops
+trying for the rest of its session (kb/ADR-0030 R8), running the old build until someone updates it. `nodelay` serves
+the burst at once rather than spacing it out, so no client waits on the proxy; nginx 1.15.7 and later can instead
+serve the first few at once and delay the rest (`burst=40 delay=10`), which is kinder to bandwidth but makes a large
+office's updates slow rather than refused.
 
 Behind a CDN, `$binary_remote_addr` is the CDN's address unless your real-IP settings restore the client's; keep them.
 A per-IP limit caps neither total bandwidth nor what people behind one shared address can download together.
