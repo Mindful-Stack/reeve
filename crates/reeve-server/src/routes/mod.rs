@@ -5,6 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 pub mod access;
 pub mod activity;
 pub mod attachments;
+pub mod cli_dist;
 pub mod comments;
 pub mod config;
 pub mod connection_requests;
@@ -211,6 +212,8 @@ pub fn app(state: AppState) -> Router {
         // The public OAuth routes (kb/ADR-0029 R11): always mounted, each with the `[mcp]` switch inside. Outside
         // `api_router()`, so not in the OpenAPI document.
         .merge(crate::auth::oauth::router())
+        // The CLI downloads, without sign-in (kb/ADR-0030 R3). Outside `api_router()`, so not in the OpenAPI document.
+        .merge(cli_dist::router())
         .fallback(crate::assets::serve)
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
         .with_state(state)

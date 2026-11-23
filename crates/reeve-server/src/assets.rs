@@ -146,6 +146,10 @@ pub async fn serve(State(s): State<AppState>, method: Method, uri: Uri) -> Respo
     {
         return AppError::NotFound.into_response();
     }
+    // The CLI downloads are never pages; these paths do not match `/cli/{name}` (kb/ADR-0030 R3).
+    if trimmed == "cli" || path.starts_with("cli/") {
+        return crate::cli_dist::harden(AppError::NotFound.into_response());
+    }
     let read = method == Method::GET || method == Method::HEAD;
     // Traversal is refused before the filesystem is touched (hyper does not normalise `..`); rust-embed checks this
     // itself, the directory override must do it here.

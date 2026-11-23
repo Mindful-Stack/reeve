@@ -25,6 +25,34 @@ pub struct Harness {
     pub started: chrono::DateTime<chrono::Utc>,
 }
 
+/// The CLI version of the fixture bundle.
+pub const CLI_VERSION: &str = "0123456789abcdef0123456789abcdef01234567";
+/// Written out here, not taken from `reeve_protocol::CLI_FILES`, so a change to the served list fails a test.
+pub const CLI_BINARIES: [&str; 5] = [
+    "reeve-linux-x86_64",
+    "reeve-linux-aarch64",
+    "reeve-macos-aarch64",
+    "reeve-macos-x86_64",
+    "reeve-windows-x86_64.exe",
+];
+
+/// A valid CLI bundle in `dir`, binaries with distinct contents (`binary <name>`); returns the SHA256SUMS text.
+pub fn cli_bundle(dir: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let mut sums = String::new();
+    for name in CLI_BINARIES {
+        let bytes = format!("binary {name}");
+        std::fs::write(dir.join(name), &bytes).unwrap();
+        sums.push_str(&format!(
+            "{}  {name}\n",
+            hex::encode(Sha256::digest(&bytes))
+        ));
+    }
+    std::fs::write(dir.join("SHA256SUMS"), &sums).unwrap();
+    std::fs::write(dir.join("VERSION"), format!("{CLI_VERSION}\n")).unwrap();
+    sums
+}
+
 /// The standard harness: loopback public URL and the static provider signing in as `dan@example.com`.
 pub async fn harness() -> Harness {
     harness_with(|cfg| cfg).await
@@ -186,6 +214,21 @@ impl Harness {
     pub fn app_with_assets(&self, dir: &std::path::Path) -> axum::Router {
         let mut state = self.state.clone();
         state.assets = assets::Assets::Dir(dir.to_path_buf());
+        app(state)
+    }
+
+    /// The router rebuilt from this harness's state with the CLI bundle read from `dir` (kb/ADR-0030), rendered with
+    /// the harness's explicit `public_url`. Panics when the bundle does not load.
+    pub fn app_with_cli(&self, dir: &std::path::Path) -> axum::Router {
+        let mut state = self.state.clone();
+        let url = self
+            .state
+            .config
+            .explicit_public_url()
+            .expect("the harness configures public_url");
+        state.cli_dist = Some(std::sync::Arc::new(
+            cli_dist::CliDist::load(dir, Some(&url)).expect("the fixture bundle loads"),
+        ));
         app(state)
     }
 }
