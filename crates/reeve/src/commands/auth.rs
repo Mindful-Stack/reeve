@@ -129,6 +129,7 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 Outcome::Ok(me) => Outcome::Ok(serde_json::json!({
                     "url": url, "token_from_env": via_env,
                     "email": me.email, "role": me.role, "token_kind": me.token_kind,
+                    "cli": {"current": crate::cli_version::current(), "server": c.server_cli()},
                 })),
                 Outcome::Refused {
                     reasons,
@@ -152,13 +153,20 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 },
             };
             Ok(finish(out, json, |v| {
+                let build = |x: &serde_json::Value, none: &str| {
+                    x.as_str().map_or(none.to_string(), |s| {
+                        format!("build {}", crate::cli_version::short(s))
+                    })
+                };
                 format!(
-                    "{} (token from {})\n{} role={} token_kind={}",
+                    "{} (token from {})\n{} role={} token_kind={}\ncli: {} (server offers: {})",
                     v["url"].as_str().unwrap_or_default(),
                     if via_env { "REEVE_TOKEN" } else { "config" },
                     v["email"].as_str().unwrap_or_default(),
                     v["role"].as_str().unwrap_or_default(),
-                    v["token_kind"].as_str().unwrap_or_default()
+                    v["token_kind"].as_str().unwrap_or_default(),
+                    build(&v["cli"]["current"], "dev build"),
+                    build(&v["cli"]["server"], "none"),
                 )
             }))
         }

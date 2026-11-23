@@ -84,6 +84,14 @@ fn late(f: impl FnOnce() -> serde_json::Value + Send + 'static) -> Lazy {
 fn serve_lazy(
     answers: Vec<(&'static str, u16, Lazy)>,
 ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    serve_lazy_with(None, answers)
+}
+
+/// `serve_lazy`, every answer carrying `X-Reeve-Cli: <cli>` when set.
+fn serve_lazy_with(
+    cli: Option<&'static str>,
+    answers: Vec<(&'static str, u16, Lazy)>,
+) -> (String, std::thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let handle = std::thread::spawn(move || {
@@ -107,9 +115,12 @@ fn serve_lazy(
                 )
             };
             let mut w = stream;
+            let cli_line = cli
+                .map(|v| format!("x-reeve-cli: {v}\r\n"))
+                .unwrap_or_default();
             write!(
                 w,
-                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n{cli_line}content-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             )
             .unwrap();
@@ -190,6 +201,8 @@ fn reeve_at(url: &str, args: &[&str]) -> std::process::Output {
         .env("REEVE_URL", url)
         .env("REEVE_TOKEN", "reeve_test")
         .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+        .env_remove("REEVE_UPDATE_NOTICE")
         .env_remove("REEVE_ASCII")
         .args(args)
         .timeout(Duration::from_secs(60))
@@ -4170,4 +4183,309 @@ fn auth_connections_revoke_deletes_that_connection() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains(message), "{args:?}: {stderr}");
     }
+}
+
+const CLI_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const CLI_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const NOTICE: &str = "note: this reeve is build aaaaaaa, the server offers bbbbbbb — run reeve update between commands";
+
+/// `reeve_at` as `build` (debug builds read `REEVE_CLI_VERSION_OVERRIDE`; `dev` is unstamped), with extra env.
+fn reeve_as(build: &str, url: &str, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    let mut c = Command::cargo_bin("reeve").unwrap();
+    c.env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env("REEVE_CLI_VERSION_OVERRIDE", build)
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.args(args)
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap()
+}
+
+/// Runs `args` as build A against a server offering build B that answers `answers`.
+fn run_offered_b(
+    args: &[&str],
+    env: &[(&str, &str)],
+    answers: Vec<(&'static str, u16, Lazy)>,
+) -> std::process::Output {
+    let (url, server) = serve_lazy_with(Some(CLI_B), answers);
+    let out = reeve_as(CLI_A, &url, args, env);
+    server.join().unwrap();
+    out
+}
+
+fn stdout_text(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+fn empty_war_room() -> Vec<(&'static str, u16, Lazy)> {
+    vec![(
+        "GET /api/v1/war-room",
+        200,
+        lazy(|| ok(serde_json::json!([]))),
+    )]
+}
+
+#[test]
+fn the_notice_follows_a_successful_command_on_a_pipe() {
+    let a = run_offered_b(&["war-room", "ls"], &[], empty_war_room());
+    assert_eq!(a.status.code(), Some(0), "{}", stderr_text(&a));
+    assert_eq!(
+        stderr_text(&a).matches(NOTICE).count(),
+        1,
+        "{}",
+        stderr_text(&a)
+    );
+    assert!(
+        !stdout_text(&a).contains("note:"),
+        "never on stdout: {}",
+        stdout_text(&a)
+    );
+}
+
+#[test]
+fn equal_builds_get_no_notice() {
+    let (url, server) = serve_lazy_with(Some(CLI_B), empty_war_room());
+    let b = reeve_as(CLI_B, &url, &["war-room", "ls"], &[]);
+    server.join().unwrap();
+    assert!(b.status.success());
+    assert!(
+        !stderr_text(&b).contains("run reeve update"),
+        "{}",
+        stderr_text(&b)
+    );
+}
+
+#[test]
+fn json_still_gets_the_notice_on_stderr_and_one_envelope_on_stdout() {
+    let a = run_offered_b(&["war-room", "ls", "--json"], &[], empty_war_room());
+    assert_eq!(
+        stderr_text(&a).matches(NOTICE).count(),
+        1,
+        "{}",
+        stderr_text(&a)
+    );
+    let v: serde_json::Value =
+        serde_json::from_slice(&a.stdout).expect("stdout is exactly one JSON envelope");
+    assert_eq!(
+        v,
+        serde_json::json!({"outcome":"ok","value":[]}),
+        "the envelope is the server's, untouched"
+    );
+}
+
+#[test]
+fn a_refusal_keeps_exit_2_and_gets_the_notice() {
+    let a = run_offered_b(
+        &["war-room", "ls"],
+        &[],
+        vec![("GET /api/v1/war-room", 403, lazy(forbidden))],
+    );
+    assert_eq!(a.status.code(), Some(2), "a refusal's status is unchanged");
+    assert!(!stdout_text(&a).contains("note:"));
+    let e = stderr_text(&a);
+    assert!(e.contains(NOTICE), "{e}");
+    assert!(
+        e.find("forbidden").unwrap() < e.find(NOTICE).unwrap(),
+        "after the command's own output: {e}"
+    );
+}
+
+#[test]
+fn an_error_keeps_exit_1_and_gets_the_notice() {
+    let a = run_offered_b(
+        &["war-room", "ls"],
+        &[],
+        vec![(
+            "GET /api/v1/war-room",
+            404,
+            lazy(|| serde_json::json!({"outcome":"error","code":"not_found","message":"no route"})),
+        )],
+    );
+    assert_eq!(a.status.code(), Some(1), "an error's status is unchanged");
+    assert!(!stdout_text(&a).contains("note:"));
+    assert!(stderr_text(&a).contains(NOTICE), "{}", stderr_text(&a));
+}
+
+#[test]
+fn a_propagated_error_gets_the_notice_after_its_error_line() {
+    // JSON but no envelope: `Outcome::from_envelope` fails, and `?` carries it to `cli()`'s Err path.
+    let a = run_offered_b(
+        &["war-room", "ls"],
+        &[],
+        vec![(
+            "GET /api/v1/war-room",
+            200,
+            lazy(|| serde_json::json!({"weird": 1})),
+        )],
+    );
+    assert_eq!(a.status.code(), Some(1));
+    let e = stderr_text(&a);
+    let error = e
+        .find("error: unexpected response")
+        .expect("the error line");
+    assert!(error < e.find(NOTICE).expect("the notice"), "{e}");
+}
+
+#[test]
+fn reeve_update_notice_0_silences_it() {
+    let a = run_offered_b(
+        &["war-room", "ls"],
+        &[("REEVE_UPDATE_NOTICE", "0")],
+        empty_war_room(),
+    );
+    assert!(a.status.success());
+    assert!(
+        !stderr_text(&a).contains("run reeve update"),
+        "{}",
+        stderr_text(&a)
+    );
+}
+
+#[test]
+fn an_unstamped_build_never_gets_the_notice() {
+    let (url, server) = serve_lazy_with(Some(CLI_B), empty_war_room());
+    let out = reeve_as("dev", &url, &["war-room", "ls"], &[]);
+    server.join().unwrap();
+    assert!(out.status.success());
+    assert!(
+        !stderr_text(&out).contains("run reeve update"),
+        "{}",
+        stderr_text(&out)
+    );
+}
+
+#[test]
+fn the_notice_is_printed_once_however_many_requests_a_command_makes() {
+    let story = serde_json::json!({
+        "key": "TST-1", "title": "T", "kind": "story", "epic": null, "description": "", "criteria": [],
+        "owner": null, "labels": [], "rank": 0, "blocked_by": [], "delivery": "todo",
+        "resolution": null, "external_ref": null, "version": 4, "prs": []
+    });
+    let first = story.clone();
+    let out = run_offered_b(
+        &[
+            "story",
+            "edit",
+            "TST-1",
+            "--version",
+            "4",
+            "--add-label",
+            "x",
+        ],
+        &[],
+        vec![
+            ("GET /api/v1/stories/TST-1", 200, lazy(move || ok(first))),
+            ("PATCH /api/v1/stories/TST-1", 200, lazy(move || ok(story))),
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr_text(&out));
+    assert_eq!(
+        stderr_text(&out).matches(NOTICE).count(),
+        1,
+        "{}",
+        stderr_text(&out)
+    );
+}
+
+#[test]
+fn ascii_mode_prints_the_notice_without_the_dash() {
+    let a = run_offered_b(
+        &["war-room", "ls"],
+        &[("REEVE_ASCII", "1")],
+        empty_war_room(),
+    );
+    assert!(
+        stderr_text(&a).contains("bbbbbbb -- run reeve update between commands"),
+        "{}",
+        stderr_text(&a)
+    );
+}
+
+#[test]
+fn version_stays_unchanged_and_offline() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let v = reeve_as(CLI_A, &url, &["--version"], &[]);
+    let out = stdout_text(&v);
+    assert!(
+        v.status.success() && out.starts_with("reeve-planner "),
+        "{out}"
+    );
+    assert!(!out.contains("build"), "--version is unchanged: {out}");
+    l.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(l.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "--version opens no connection (REEVE_URL pointed here)"
+    );
+}
+
+fn me_ok() -> serde_json::Value {
+    ok(serde_json::json!({"email":"dan@example.com","role":"member","token_kind":"automation"}))
+}
+
+/// kb/ADR-0030 R6: `cli.current` and `cli.server` are a contract agents match on; this test fails if either is renamed,
+/// moved or dropped.
+#[test]
+fn auth_status_reports_this_build_and_the_offered_one() {
+    let (url, server) = serve_lazy_with(Some(CLI_B), vec![("GET /api/v1/me", 200, lazy(me_ok))]);
+    let out = reeve_as(
+        CLI_A,
+        &url,
+        &["auth", "status", "--json"],
+        &[("REEVE_UPDATE_NOTICE", "0")],
+    );
+    server.join().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["value"]["cli"],
+        serde_json::json!({"current": CLI_A, "server": CLI_B})
+    );
+    assert_eq!(
+        v["value"]["email"], "dan@example.com",
+        "the existing fields stay"
+    );
+
+    let (url, server) = serve_lazy_with(Some(CLI_B), vec![("GET /api/v1/me", 200, lazy(me_ok))]);
+    let out = reeve_as(
+        CLI_A,
+        &url,
+        &["auth", "status"],
+        &[("REEVE_UPDATE_NOTICE", "0")],
+    );
+    server.join().unwrap();
+    let text = stdout_text(&out);
+    assert!(
+        text.contains("cli: build aaaaaaa (server offers: build bbbbbbb)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn auth_status_of_an_unstamped_build_against_a_server_without_a_bundle() {
+    let (url, server) = serve_lazy(vec![("GET /api/v1/me", 200, lazy(me_ok))]);
+    // `dev` is not a CLI version: unstamped, whatever this test binary was built with.
+    let out = reeve_as("dev", &url, &["auth", "status", "--json"], &[]);
+    server.join().unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        v["value"]["cli"],
+        serde_json::json!({"current": null, "server": null})
+    );
+
+    let (url, server) = serve_lazy(vec![("GET /api/v1/me", 200, lazy(me_ok))]);
+    let out = reeve_as("dev", &url, &["auth", "status"], &[]);
+    server.join().unwrap();
+    assert!(
+        stdout_text(&out).contains("cli: dev build (server offers: none)"),
+        "{}",
+        stdout_text(&out)
+    );
 }
