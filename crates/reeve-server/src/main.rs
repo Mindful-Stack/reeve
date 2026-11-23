@@ -215,8 +215,9 @@ async fn main() -> anyhow::Result<()> {
             // here: build_state and the test harnesses never read the environment for it.
             state.cli_dist = cli_dist::startup(
                 &state.config,
-                &cli_dist::cli_dir(std::env::var_os("REEVE_CLI_DIR")),
-            );
+                cli_dist::cli_dir(std::env::var_os("REEVE_CLI_DIR")),
+            )
+            .await;
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             tracing::info!(%bind, "reeve-server listening");
             axum::serve(listener, app(state)).await?;
