@@ -15,6 +15,24 @@ die() {
 	exit 1
 }
 
+# physical <path>: the path with every symlink resolved, the file's own included (a reeve on PATH may be a link to the
+# installed one). POSIX has no `readlink -f`; plain `readlink` is not POSIX either but is on every supported system
+# (Linux, macOS, busybox), and without it the file's own links are left as they are. Directories resolve with `pwd -P`.
+physical() {
+	p=$1
+	n=0
+	while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+		l=$(readlink -- "$p" 2>/dev/null) || break
+		case "$l" in
+		/*) p=$l ;;
+		*) p=${p%/*}/$l ;;
+		esac
+		n=$((n + 1))
+	done
+	d=$(CDPATH='' cd -- "${p%/*}" 2>/dev/null && pwd -P) || return 1
+	printf '%s/%s\n' "$d" "${p##*/}"
+}
+
 # fetch <name>: <server>/cli/<name> into $tmp/<name>. No credentials: -q, first, skips ~/.curlrc, and curl reads
 # ~/.netrc only with -n/--netrc, never given. No redirect: without -L curl does not follow one but saves its body, so
 # anything but a 200 fails. A loopback download never goes through a proxy (--noproxy '*'): a configured http_proxy
@@ -172,12 +190,12 @@ main() {
 		;;
 	esac
 	# Another reeve earlier on PATH (a cargo-installed one in ~/.cargo/bin, the runner's old CLI) would run instead of
-	# this one, silently. Compared by physical path, so a PATH entry through a symlink to $dir is not a stranger.
+	# this one, silently. Compared by physical path, so a PATH entry through a symlink to $dir, or a reeve that is a
+	# symlink to $target, is not a stranger.
 	found=$(command -v reeve 2>/dev/null) || found=""
 	case "$found" in
 	/*)
-		found_dir=$(CDPATH='' cd -- "${found%/*}" 2>/dev/null && pwd -P) || found_dir=""
-		if [ "$found_dir/${found##*/}" != "$(cd -- "$dir" && pwd -P)/reeve" ]; then
+		if [ "$(physical "$found" || true)" != "$(physical "$target")" ]; then
 			other=$("$found" --version </dev/null 2>/dev/null | head -n 1) || other=""
 			echo
 			printf 'warning: another reeve comes first on your PATH: %s (it prints: %s)\n' "$found" "${other:-nothing}"

@@ -15,7 +15,7 @@ async fn bytes_of(res: axum::response::Response) -> Vec<u8> {
 }
 
 /// The headers every `/cli/` answer carries, and the cookie it never sets.
-fn assert_hardened(res: &axum::response::Response, what: &str) {
+fn assert_cli_headers(res: &axum::response::Response, what: &str) {
     assert_eq!(res.headers()["cache-control"], "no-cache", "{what}");
     assert_eq!(res.headers()["x-content-type-options"], "nosniff", "{what}");
     assert_eq!(res.headers()["referrer-policy"], "no-referrer", "{what}");
@@ -44,7 +44,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
             want.len().to_string().as_str(),
             "{name}"
         );
-        assert_hardened(&res, name);
+        assert_cli_headers(&res, name);
         assert_eq!(bytes_of(res).await, want.into_bytes(), "{name}");
     }
     for (name, want) in [
@@ -58,7 +58,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
             "text/plain; charset=utf-8",
             "{name}"
         );
-        assert_hardened(&res, name);
+        assert_cli_headers(&res, name);
         assert_eq!(
             String::from_utf8(bytes_of(res).await).unwrap(),
             want,
@@ -76,7 +76,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
             "text/plain; charset=utf-8",
             "{name}"
         );
-        assert_hardened(&res, name);
+        assert_cli_headers(&res, name);
         let body = String::from_utf8(bytes_of(res).await).unwrap();
         assert!(
             body.contains(line),
@@ -96,7 +96,7 @@ async fn the_bundle_and_scripts_are_served_to_anyone() {
     )
     .await;
     assert_eq!(res.status(), 200);
-    assert_hardened(&res, "HEAD");
+    assert_cli_headers(&res, "HEAD");
     assert_eq!(res.headers()["content-type"], "application/octet-stream");
     // The length GET's body has, though HEAD sends none.
     assert_eq!(
@@ -153,7 +153,7 @@ async fn anything_else_under_cli_is_a_hardened_404() {
         for p in paths {
             let res = call_raw(app, get(p)).await;
             assert_eq!(res.status(), 404, "{what}: {p}");
-            assert_hardened(&res, &format!("{what}: {p}"));
+            assert_cli_headers(&res, &format!("{what}: {p}"));
             assert!(
                 !bytes_of(res).await.starts_with(b"<!doctype"),
                 "{what}: {p} fell back to the client page"
@@ -196,7 +196,7 @@ async fn failures_under_cli_carry_the_headers_too() {
     ] {
         let res = call_raw(&app, req).await;
         assert_eq!(res.status(), status, "{what}");
-        assert_hardened(&res, what);
+        assert_cli_headers(&res, what);
     }
 }
 

@@ -26,11 +26,11 @@ async fn serve(State(s): State<AppState>, name: Result<Path<String>, PathRejecti
         Ok(Path(name)) => answer(&s, &name).await,
         Err(_) => AppError::NotFound.into_response(),
     };
-    crate::cli_dist::harden(res)
+    crate::cli_dist::cli_headers(res)
 }
 
 async fn method_not_allowed() -> Response {
-    crate::cli_dist::harden(AppError::MethodNotAllowed.into_response())
+    crate::cli_dist::cli_headers(AppError::MethodNotAllowed.into_response())
 }
 
 /// The name is only ever compared with the fixed list in `CliDist::entry`, never joined into a path.

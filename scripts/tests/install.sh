@@ -137,7 +137,7 @@ EOF
 echo "$FAKE_TRANSLATED"
 EOF
 	chmod 755 "$dir/curl" "$dir/uname" "$dir/sysctl"
-	for t in sh awk cat chmod cp head mkdir mktemp mv rm sha256sum shasum; do
+	for t in sh awk cat chmod cp head mkdir mktemp mv readlink rm sha256sum shasum; do
 		for skip in "$@"; do [ "$t" != "$skip" ] || continue 2; done
 		if command -v "$t" >/dev/null 2>&1; then ln -s "$(command -v "$t")" "$dir/$t"; fi
 	done
@@ -411,6 +411,20 @@ ln -s "$work/home/.local/bin" "$work/alias"
 install PATH="$bin:$work/alias"
 if grep -q 'warning:' "$work/out"; then fail "a PATH entry linking to the install directory was taken for another reeve"; fi
 rm -f "$work/alias"
+# A reeve earlier on PATH that is a symlink to the installed file (/usr/local/bin/reeve -> ~/.local/bin/reeve), through a
+# relative link and a second hop, is not another reeve either.
+mkdir -p "$work/linked" "$work/hop"
+ln -s "$installed" "$work/hop/reeve"
+ln -s ../hop/reeve "$work/linked/reeve"
+install PATH="$work/linked:$bin:$work/home/.local/bin"
+installed_from "a reeve on PATH linking to the installed one" "$lx"
+if grep -q 'warning:' "$work/out"; then fail "a symlink to the installed reeve was taken for another reeve"; fi
+# ...while a symlink to some other reeve still is.
+ln -sf "$work/foreign/reeve" "$work/hop/reeve"
+install PATH="$work/linked:$bin:$work/home/.local/bin"
+grep -qF "warning: another reeve comes first on your PATH: $work/linked/reeve (it prints: reeve 0.3.0)" "$work/out" ||
+	fail "no warning for a symlink to another reeve earlier on PATH"
+rm -rf "$work/linked" "$work/hop"
 
 # The directory is kept as written, not resolved through symlinks: ~/.local a symlink, ~/.local/bin on PATH.
 fresh

@@ -44,8 +44,9 @@ pub enum Off {
     NoPublicUrl,
     /// No `VERSION` in the directory: an image built without the bundle.
     NoBundle(String),
-    /// A bundle that does not check out, or a configured `public_url` the scripts cannot carry: a bundle was meant to
-    /// be served and is not, so the startup line is a warning.
+    /// A bundle that does not check out (a `VERSION` that exists but cannot be looked at included), or a configured
+    /// `public_url` the scripts cannot carry: a bundle was meant to be served and is not, so the startup line is a
+    /// warning.
     Broken(String),
 }
 
@@ -80,11 +81,22 @@ impl CliDist {
     pub fn load(dir: &Path, public_url: Option<&url::Url>) -> Result<Self, Off> {
         let url = public_url.ok_or(Off::NoPublicUrl)?;
         let version_path = dir.join(CLI_VERSION_FILE);
-        if let Err(e) = std::fs::symlink_metadata(&version_path) {
-            return Err(Off::NoBundle(format!(
-                "no bundle in {} ({CLI_VERSION_FILE}: {e})",
-                dir.display()
-            )));
+        // Only a missing VERSION means no bundle was given; any other error looking at it (EACCES on a mounted
+        // directory, ENOTDIR, an I/O error) is a bundle meant to be served that cannot be.
+        match std::fs::symlink_metadata(&version_path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Off::NoBundle(format!(
+                    "no bundle in {} ({CLI_VERSION_FILE}: {e})",
+                    dir.display()
+                )));
+            }
+            Err(e) => {
+                return Err(Off::Broken(format!(
+                    "{CLI_VERSION_FILE} in {} cannot be read ({e})",
+                    dir.display()
+                )));
+            }
         }
         check_host(url).map_err(Off::Broken)?;
         let version_file = read_text(&version_path)
@@ -323,7 +335,7 @@ pub async fn startup(config: &ServerConfig, dir: PathBuf) -> Option<Arc<CliDist>
 
 /// The headers every `/cli/` answer carries, success or failure (kb/ADR-0030 R3): those of every served file
 /// (`assets::hardened`: `nosniff`, `no-referrer`) and `Cache-Control: no-cache`.
-pub fn harden(res: Response) -> Response {
+pub fn cli_headers(res: Response) -> Response {
     let mut res = crate::assets::hardened(res);
     res.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -682,6 +694,23 @@ mod tests {
                 .unwrap()
                 .is_fault()
         );
+    }
+
+    /// Only a `VERSION` that does not exist means "no bundle" (`info`); any other failure to look at it (here a
+    /// bundle directory that is a regular file, `ENOTDIR`; on a host also `EACCES` or an I/O error) is a broken
+    /// bundle, a warning that names the error.
+    #[test]
+    fn only_a_missing_version_means_no_bundle() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("cli");
+        std::fs::write(&file, "not a directory").unwrap();
+        let off = CliDist::load(&file, Some(&url())).err().unwrap();
+        assert!(off.is_fault(), "{off}");
+        assert!(off.to_string().contains(CLI_VERSION_FILE), "{off}");
+        let missing = CliDist::load(&d.path().join("absent"), Some(&url()))
+            .err()
+            .unwrap();
+        assert!(!missing.is_fault(), "{missing}");
     }
 
     /// The bundle's names and the two scripts, nothing else; a binary resolves to its own constant name in the bundle

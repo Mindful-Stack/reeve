@@ -149,7 +149,7 @@ pub async fn serve(State(s): State<AppState>, method: Method, uri: Uri) -> Respo
     // The CLI downloads are never pages; these paths do not match `/cli/{name}` (kb/ADR-0030 R3).
     let cli = reeve_protocol::CLI_PATH.trim_start_matches('/');
     if trimmed == cli.trim_end_matches('/') || path.starts_with(cli) {
-        return crate::cli_dist::harden(AppError::NotFound.into_response());
+        return crate::cli_dist::cli_headers(AppError::NotFound.into_response());
     }
     let read = method == Method::GET || method == Method::HEAD;
     // Traversal is refused before the filesystem is touched (hyper does not normalise `..`); rust-embed checks this
