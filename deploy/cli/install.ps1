@@ -1,7 +1,9 @@
 # Installs the reeve CLI on Windows from the Reeve server that served this script (kb/ADR-0030). The server replaces
 # the quoted placeholder below with its public_url when it starts.
 #
-#   irm https://<server>/cli/install.ps1 | iex
+#   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://<server>/cli/install.ps1 | iex
+#
+# (The prefix turns TLS 1.2 on for Windows PowerShell 5.1, which may not offer it; PowerShell 7 does not need it.)
 #
 # $env:REEVE_INSTALL_DIR chooses the directory (default %LOCALAPPDATA%\Programs\reeve); $env:REEVE_FORCE = '1'
 # replaces a reeve.exe there that is not the Reeve planner CLI. Everything runs in one script block, so `irm | iex`
@@ -14,7 +16,7 @@
     # -Credential, -UseDefaultCredentials or -WebSession (kb/ADR-0030 R5: no credentials).
     $PSDefaultParameterValues = @{}
     $ReeveUrl = '@REEVE_URL@'
-    $Rerun = "irm $ReeveUrl/cli/install.ps1 | iex"
+    $Rerun = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm $ReeveUrl/cli/install.ps1 | iex"
 
     # https only; plain http only to a loopback address, for local testing. Checked before anything is downloaded.
     if ($ReeveUrl -notmatch '^https://' -and $ReeveUrl -notmatch '^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$') {
@@ -30,13 +32,28 @@
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('reeve-' + [Guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
     $staged = $null
+    # The first line `reeve --version` prints, or '' when it does not run. Native stderr is made harmless first: in
+    # Windows PowerShell 5.1 a native command's stderr becomes a terminating error under $ErrorActionPreference = 'Stop'.
+    function Get-ReeveVersion([string] $Exe) {
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $text = & $Exe --version 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { return '' }
+            return @($text -split "`r?`n")[0]
+        } catch {
+            return ''
+        } finally {
+            $ErrorActionPreference = $old
+        }
+    }
     try {
         # <server>/cli/<name> into $tmp. No credentials are sent; a redirect is either an error or a non-200 answer,
         # and both fail.
         function Get-CliFile([string] $Name) {
             $dest = Join-Path $tmp $Name
             try {
-                $r = Invoke-WebRequest -UseBasicParsing -Uri "$ReeveUrl/cli/$Name" -OutFile $dest -PassThru -MaximumRedirection 0
+                $r = Microsoft.PowerShell.Utility\Invoke-WebRequest -UseBasicParsing -Uri "$ReeveUrl/cli/$Name" -OutFile $dest -PassThru -MaximumRedirection 0
             } catch {
                 throw "reeve install: downloading $Name failed: $($_.Exception.Message)"
             }
@@ -64,9 +81,11 @@
         }
 
         $dir = if ($env:REEVE_INSTALL_DIR) { $env:REEVE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\reeve' }
+        # A relative directory means relative to the current location, not to the process's working directory.
+        $dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($dir)
         $target = Join-Path $dir 'reeve.exe'
         if (Test-Path -LiteralPath $target) {
-            $first = try { & $target --version 2>$null | Select-Object -First 1 } catch { '' }
+            $first = Get-ReeveVersion $target
             if ("$first" -notlike 'reeve-planner*' -and $env:REEVE_FORCE -ne '1') {
                 throw "reeve install: $target is not the Reeve planner CLI (it printed: $first). To replace it, rerun with:`n  `$env:REEVE_FORCE = '1'; $Rerun"
             }
@@ -80,7 +99,7 @@
         } catch {
             throw "reeve install: cannot write to ${dir}: $($_.Exception.Message). $elsewhere"
         }
-        $ran = try { & $staged --version 2>$null | Select-Object -First 1 } catch { '' }
+        $ran = Get-ReeveVersion $staged
         if ("$ran" -notlike 'reeve-planner*') {
             throw 'reeve install: the downloaded reeve.exe does not run on this machine; nothing was replaced'
         }
@@ -89,7 +108,7 @@
             # failure the existing reeve.exe is left (or put back) in place.
             $backup = Join-Path $dir ('.reeve.old.' + [Guid]::NewGuid() + '.exe')
             try {
-                [IO.File]::Replace($staged, $target, $backup)
+                [IO.File]::Replace($staged, $target, $backup, $true)
             } catch {
                 if (-not (Test-Path -LiteralPath $target) -and (Test-Path -LiteralPath $backup)) {
                     [IO.File]::Move($backup, $target)
@@ -108,11 +127,24 @@
 
         # This session first, so `reeve` here is the one just installed; the user's Path for new windows.
         $env:Path = (@($dir) + @($env:Path -split ';' | Where-Object { $_ -and $_ -ne $dir })) -join ';'
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-        if (-not (@($userPath -split ';') -contains $dir)) {
-            $new = if ($userPath) { "$userPath;$dir" } else { $dir }
-            [Environment]::SetEnvironmentVariable('Path', $new, 'User')
-            Write-Host "added $dir to your user Path (open terminals need reopening)"
+        # The user's Path lives in the registry as REG_EXPAND_SZ with %VAR% entries; GetEnvironmentVariable would expand
+        # them and SetEnvironmentVariable would write the expanded text back, freezing every entry. Read the raw
+        # string, compare against expanded entries, append to the raw string and write it back as REG_EXPAND_SZ.
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if (-not $envKey) { $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment') }
+        try {
+            $raw = [string] $envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $have = @($raw -split ';' | Where-Object { $_ } | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') })
+            if ($have -notcontains $dir.TrimEnd('\')) {
+                $new = if ($raw) { $raw.TrimEnd(';') + ';' + $dir } else { $dir }
+                $envKey.SetValue('Path', $new, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                # Setting and clearing a dummy user variable broadcasts WM_SETTINGCHANGE, so new windows see the Path.
+                [Environment]::SetEnvironmentVariable('REEVE_PATH_BROADCAST', '1', 'User')
+                [Environment]::SetEnvironmentVariable('REEVE_PATH_BROADCAST', $null, 'User')
+                Write-Host "added $dir to your user Path (open terminals need reopening)"
+            }
+        } finally {
+            $envKey.Close()
         }
         Write-Host "installed reeve build $($build.Substring(0, 7)) at $target"
         Write-Host ''

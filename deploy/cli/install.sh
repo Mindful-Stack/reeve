@@ -34,14 +34,19 @@ main() {
 	case "$REEVE_URL" in
 	https://*)
 		proto='=https'
-		rerun="curl --proto '=https' --tlsv1.2 -fsS $REEVE_URL/cli/install.sh"
+		rerun="curl -q --proto '=https' --tlsv1.2 -fsS $REEVE_URL/cli/install.sh"
 		;;
-	http://127.0.0.1 | http://127.0.0.1:* | http://localhost | http://localhost:* | 'http://[::1]' | 'http://[::1]:'*)
+	http://127.0.0.1 | http://localhost | 'http://[::1]') proto='=http' ;;
+	http://127.0.0.1:* | http://localhost:* | 'http://[::1]:'*)
+		# Only digits after the last colon: no userinfo, path or second host (http://127.0.0.1:80@evil.test).
+		case "${REEVE_URL##*:}" in
+		*[!0-9]* | '') die "refusing $REEVE_URL: downloads go over https only (plain http only to a loopback address)" ;;
+		esac
 		proto='=http'
-		rerun="curl -fsS $REEVE_URL/cli/install.sh"
 		;;
 	*) die "refusing $REEVE_URL: downloads go over https only (plain http only to a loopback address)" ;;
 	esac
+	[ -n "${rerun:-}" ] || rerun="curl -q -fsS $REEVE_URL/cli/install.sh"
 
 	os=$(uname -s)
 	arch=$(uname -m)
@@ -49,7 +54,14 @@ main() {
 	Linux/x86_64 | Linux/amd64) file=reeve-linux-x86_64 ;;
 	Linux/aarch64 | Linux/arm64) file=reeve-linux-aarch64 ;;
 	Darwin/arm64 | Darwin/aarch64) file=reeve-macos-aarch64 ;;
-	Darwin/x86_64) file=reeve-macos-x86_64 ;;
+	Darwin/x86_64)
+		# An x86_64 shell under Rosetta on an Apple silicon Mac: the native build runs faster.
+		if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
+			file=reeve-macos-aarch64
+		else
+			file=reeve-macos-x86_64
+		fi
+		;;
 	*) die "no build for $os $arch. Supported: Linux x86_64 and arm64, macOS arm64 and x86_64; on Windows, use install.ps1" ;;
 	esac
 
@@ -83,13 +95,18 @@ main() {
 	want=$(awk -v f="$file" '$2 == f { print $1 }' "$tmp/SHA256SUMS")
 	fetch "$file"
 	# shellcheck disable=SC2086 # $hasher is a command and its flags
-	got=$($hasher "$tmp/$file" | awk '{ print $1 }')
+	got=$($hasher <"$tmp/$file" | awk '{ print $1 }')
 	[ "$got" = "$want" ] || die "checksum mismatch for $file: nothing was installed"
 
 	dir=${REEVE_INSTALL_DIR:-$HOME/.local/bin}
+	elsewhere="To install somewhere else, rerun with:
+  $rerun | REEVE_INSTALL_DIR=<directory> sh"
+	mkdir -p -- "$dir" 2>/dev/null || die "cannot create $dir. $elsewhere"
+	dir=$(cd "$dir" && pwd -P) || die "cannot use $dir. $elsewhere"
 	target=$dir/reeve
+	[ ! -d "$target" ] || die "$target is a directory; remove it or choose another directory. $elsewhere"
 	if [ -e "$target" ]; then
-		first=$("$target" --version 2>/dev/null | head -n 1) || first=""
+		first=$("$target" --version </dev/null 2>/dev/null | head -n 1) || first=""
 		case "$first" in
 		reeve-planner*) ;;
 		*)
@@ -99,36 +116,39 @@ main() {
 			;;
 		esac
 	fi
-	elsewhere="To install somewhere else, rerun with:
-  $rerun | REEVE_INSTALL_DIR=<directory> sh"
-	mkdir -p "$dir" 2>/dev/null || die "cannot create $dir. $elsewhere"
-	# Staged in the target directory, made executable after the copy (cp applies the umask), run once, then renamed
-	# over the target: an existing reeve keeps working until the rename, and on any failure.
-	staged=$dir/.reeve.new.$$
+	# Staged in the target directory (a private file from mktemp), made executable after the copy (cp applies the umask),
+	# run once, then renamed over the target: an existing reeve keeps working until the rename, and on any failure.
+	staged=$(mktemp "$dir/.reeve.new.XXXXXX" 2>/dev/null) || die "cannot write to $dir. $elsewhere"
 	cp "$tmp/$file" "$staged" 2>/dev/null || die "cannot write to $dir. $elsewhere"
 	chmod 755 "$staged"
-	"$staged" --version >/dev/null 2>&1 || die "the downloaded reeve does not run on this machine; nothing was replaced"
+	ran=$("$staged" --version </dev/null 2>/dev/null | head -n 1) || ran=""
+	case "$ran" in
+	reeve-planner*) ;;
+	*) die "the downloaded reeve does not run on this machine; nothing was replaced" ;;
+	esac
 	mv -f "$staged" "$target" || die "cannot replace $target; nothing was replaced"
 	staged=""
 
-	echo "installed reeve build $short at $target"
+	printf 'installed reeve build %s at %s\n' "$short" "$target"
 	case ":${PATH:-}:" in
 	*":$dir:"*) ;;
 	*)
 		echo
-		echo "$dir is not on your PATH. For this shell, run:"
-		echo "  export PATH=\"$dir:\$PATH\""
+		printf '%s is not on your PATH. For this shell, run:\n' "$dir"
+		# shellcheck disable=SC2016 # the literal $PATH is the text to print
+		printf '  export PATH="%s:%s"\n' "$dir" '$PATH'
 		case "${SHELL:-}" in
-		*/fish) echo "To keep it in fish, run: fish_add_path $dir" ;;
+		*/fish) printf 'To keep it in fish, run: fish_add_path "%s"\n' "$dir" ;;
 		*/zsh) echo "To keep it, add that line to ~/.zshrc" ;;
+		*/bash) echo "To keep it, add that line to ~/.bashrc" ;;
 		*) echo "To keep it, add that line to ~/.profile (or your shell's startup file)" ;;
 		esac
-		echo "Or run it by its full path: $target"
+		printf 'Or run it by its full path: %s\n' "$target"
 		;;
 	esac
 	echo
-	echo "next: reeve auth login --url $REEVE_URL"
-	echo "  (or: $target auth login --url $REEVE_URL)"
+	printf 'next: reeve auth login --url %s\n' "$REEVE_URL"
+	printf '  (or: %s auth login --url %s)\n' "$target" "$REEVE_URL"
 	echo "then: reeve tui"
 }
 
