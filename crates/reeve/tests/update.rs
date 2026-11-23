@@ -63,6 +63,10 @@ struct Fake {
     distributes: bool,
     /// Answer every name like a server older than this feature: its web page.
     old_server: bool,
+    /// What `VERSION` answers from its second request on (a deploy while the update runs).
+    later_version: Option<String>,
+    /// A body of this many bytes of text for `VERSION` or `SHA256SUMS`, beyond any cap.
+    huge: Option<(&'static str, usize)>,
     seen: Mutex<Vec<(String, bool)>>,
 }
 
@@ -97,11 +101,30 @@ async fn cli(
         )
             .into_response();
     }
+    if let Some((n, size)) = f.huge
+        && n == name
+    {
+        return (
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            vec![b'a'; size],
+        )
+            .into_response();
+    }
+    let asked = f
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(n, _)| n == "VERSION")
+        .count();
     let (body, ty) = match name.as_str() {
-        "VERSION" => (
-            format!("{}\n", f.version).into_bytes(),
-            "text/plain; charset=utf-8",
-        ),
+        "VERSION" => {
+            let v = match &f.later_version {
+                Some(l) if asked > 1 => l,
+                _ => &f.version,
+            };
+            (format!("{v}\n").into_bytes(), "text/plain; charset=utf-8")
+        }
         "SHA256SUMS" => (
             f.sums.clone().unwrap_or_else(sums).into_bytes(),
             "text/plain; charset=utf-8",
@@ -224,7 +247,7 @@ async fn a_stamped_cli_takes_the_offered_build_without_sending_a_credential() {
     );
     assert_eq!(
         names(&f),
-        ["VERSION", "SHA256SUMS", this_target()],
+        ["VERSION", "SHA256SUMS", this_target(), "VERSION"],
         "this target's file and nothing else"
     );
     assert_eq!(
@@ -463,12 +486,8 @@ async fn plain_http_off_loopback_is_refused_before_any_request() {
 
 #[tokio::test]
 async fn an_unreachable_server_fails_and_changes_nothing() {
-    // A port nothing listens on: bind one, read its address, close it.
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // Port 1 (tcpmux): nothing listens there, and unlike a freed ephemeral port no parallel test's server can take it.
+    let port = 1;
     let dir = tempfile::tempdir().unwrap();
     let exe = installed(dir.path());
     let r = update(
@@ -601,4 +620,113 @@ async fn no_server_url_says_how_to_set_one() {
     assert_eq!(v["code"], "validation");
     assert!(String::from_utf8_lossy(&out.stderr)
         .contains("no server url: run reeve auth login --url https://reeve.example.com first, or set REEVE_URL"));
+}
+
+#[tokio::test]
+async fn a_build_that_changes_while_updating_is_a_checksum_mismatch() {
+    let mut fk = fake(B);
+    fk.later_version = Some(C.into());
+    let f = Arc::new(fk);
+    let dir = tempfile::tempdir().unwrap();
+    let exe = installed(dir.path());
+    let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
+    assert_eq!(r.code, 1, "{}", r.stdout);
+    assert_eq!(envelope(&r)["reason"], "checksum_mismatch");
+    assert!(
+        r.stderr.contains("changed while updating") && r.stderr.contains("Try again"),
+        "{}",
+        r.stderr
+    );
+    assert_eq!(
+        names(&f),
+        ["VERSION", "SHA256SUMS", this_target(), "VERSION"]
+    );
+    assert_eq!(std::fs::read(&exe).unwrap(), real());
+    no_temporary_file(dir.path());
+}
+
+#[tokio::test]
+async fn an_over_long_text_answer_is_refused() {
+    // 64 KiB is the cap: VERSION over it is not a Reeve server's file; SHA256SUMS over it is a plain failure.
+    let f = Arc::new(Fake {
+        huge: Some(("VERSION", 70_000)),
+        ..fake(B)
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let exe = installed(dir.path());
+    let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
+    assert_eq!(r.code, 1);
+    assert_eq!(envelope(&r)["reason"], "not_distributed");
+    assert_eq!(std::fs::read(&exe).unwrap(), real());
+
+    let f = Arc::new(Fake {
+        huge: Some(("SHA256SUMS", 70_000)),
+        ..fake(B)
+    });
+    let r = update(&exe, &serve(f.clone()).await, A, &[], &["--json"]).await;
+    assert_eq!(r.code, 1);
+    let v = envelope(&r);
+    assert_eq!(v["code"], "internal");
+    assert!(v.get("reason").is_none());
+    assert_eq!(
+        names(&f),
+        ["VERSION", "SHA256SUMS"],
+        "the binary is never fetched"
+    );
+    assert_eq!(std::fs::read(&exe).unwrap(), real());
+}
+
+#[tokio::test]
+async fn a_proxy_in_the_environment_is_never_used_for_loopback_http() {
+    let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let purl = format!("http://{}", proxy.local_addr().unwrap());
+    let hit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = hit.clone();
+    tokio::spawn(async move {
+        if proxy.accept().await.is_ok() {
+            h.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    let f = Arc::new(fake(B));
+    let dir = tempfile::tempdir().unwrap();
+    let exe = installed(dir.path());
+    let env = [
+        ("HTTP_PROXY", purl.as_str()),
+        ("http_proxy", purl.as_str()),
+        ("ALL_PROXY", purl.as_str()),
+        ("all_proxy", purl.as_str()),
+    ];
+    let r = update(&exe, &serve(f).await, A, &env, &[]).await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(std::fs::read(&exe).unwrap(), served(this_target()));
+    assert!(
+        !hit.load(std::sync::atomic::Ordering::SeqCst),
+        "the proxy was contacted"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlinked_executable_has_its_target_replaced_and_the_link_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_dir = dir.path().join("store");
+    std::fs::create_dir(&real_dir).unwrap();
+    let target = installed(&real_dir);
+    let link = dir.path().join("reeve");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let r = update(&link, &serve(Arc::new(fake(B))).await, A, &[], &[]).await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link is still a link"
+    );
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        served(this_target()),
+        "its target was replaced"
+    );
+    no_temporary_file(&real_dir);
 }
