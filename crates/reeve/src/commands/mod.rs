@@ -11,6 +11,7 @@ pub mod initiative;
 pub mod search;
 pub mod sprint;
 pub mod story;
+pub mod update;
 pub mod war_room;
 use crate::client::{Client, Outcome};
 use crate::glyphs::Level;

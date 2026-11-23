@@ -3245,6 +3245,7 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
+ "hex",
  "nix 0.28.0",
  "portable-pty",
  "ratatui",
@@ -3257,12 +3258,14 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml",
  "unicode-width",
+ "url",
  "uuid",
 ]
 
