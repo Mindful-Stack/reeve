@@ -1,9 +1,263 @@
 //! `reeve update` (kb/ADR-0030 R5, R7): replaces this executable with the build the server offers, verified against the
 //! single SHA-256 line for this platform's file, over HTTPS, with no credentials and no redirects.
-// The rules below are wired into the command in the next change.
-#![allow(dead_code)]
-use reeve_protocol::CLI_FILES;
+use crate::cli_version::{self, short};
+use reeve_protocol::{CLI_FILES, ErrorCode, is_cli_version};
+use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+#[derive(clap::Args)]
+pub struct Update {}
+
+/// A known way `reeve update` fails: an envelope code, a stable `reason` when an agent acts on it, and the message.
+/// The `reason` values (`not_distributed`, `checksum_mismatch`, `cannot_replace`) are a contract agents match on
+/// (kb/ADR-0030 R6): change them only through a record.
+struct Failure {
+    code: ErrorCode,
+    reason: Option<&'static str>,
+    message: String,
+}
+
+fn fail(code: ErrorCode, message: impl Into<String>) -> Failure {
+    Failure {
+        code,
+        reason: None,
+        message: message.into(),
+    }
+}
+
+fn fail_because(code: ErrorCode, reason: &'static str, message: impl Into<String>) -> Failure {
+    Failure {
+        code,
+        reason: Some(reason),
+        message: message.into(),
+    }
+}
+
+/// One downloaded file and its content type.
+struct Got {
+    bytes: Vec<u8>,
+    content_type: String,
+}
+
+async fn get(http: &reqwest::Client, base: &url::Url, name: &str) -> Result<Got, Failure> {
+    let url = format!("{}/cli/{name}", base.as_str().trim_end_matches('/'));
+    let res = http
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| fail(ErrorCode::Internal, format!("GET {url}: {e}")))?;
+    let status = res.status();
+    let header = |n: &str| {
+        res.headers()
+            .get(n)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
+    if status.is_redirection() {
+        let to = header("location").unwrap_or_else(|| "?".into());
+        return Err(fail(
+            ErrorCode::Validation,
+            format!(
+                "the server redirected /cli/{name} to {to}; reeve update follows no redirects (is the server url {} right?)",
+                base.as_str().trim_end_matches('/')
+            ),
+        ));
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(fail(
+            ErrorCode::RateLimited,
+            "the server's proxy is rate-limiting /cli/; wait a minute and run reeve update again",
+        ));
+    }
+    if status == reqwest::StatusCode::NOT_FOUND && name == "VERSION" {
+        return Err(not_distributed(base));
+    }
+    if !status.is_success() {
+        return Err(fail(
+            ErrorCode::Internal,
+            format!("GET /cli/{name}: HTTP {status}"),
+        ));
+    }
+    let content_type = header("content-type").unwrap_or_default();
+    let bytes = res
+        .bytes()
+        .await
+        .map_err(|e| fail(ErrorCode::Internal, format!("GET {url}: {e}")))?
+        .to_vec();
+    Ok(Got {
+        bytes,
+        content_type,
+    })
+}
+
+fn not_distributed(base: &url::Url) -> Failure {
+    fail_because(
+        ErrorCode::NotFound,
+        "not_distributed",
+        format!(
+            "this server ({}) does not distribute the CLI; ask whoever runs it to enable it (deploy/README.md, \"CLI distribution\")",
+            base.as_str().trim_end_matches('/')
+        ),
+    )
+}
+
+/// The install line for this platform, against `base`.
+fn install_line(base: &url::Url) -> String {
+    let b = base.as_str().trim_end_matches('/');
+    if cfg!(windows) {
+        format!("irm {b}/cli/install.ps1 | iex")
+    } else {
+        format!("curl --proto '=https' --tlsv1.2 -fsS {b}/cli/install.sh | sh")
+    }
+}
+
+/// Writes `bin` beside `exe` and swaps it in. The temporary file comes from `atomic_file::create_temporary` (exclusive,
+/// mode 0600 on Unix, a fresh name when one exists); from then on it is this run's, and only it is removed on a failure.
+/// `0755` is set through the open handle before it is closed, so the file is never writable by others.
+fn install(exe: &Path, bin: &[u8]) -> std::io::Result<()> {
+    let (tmp, mut f) = crate::atomic_file::create_temporary(exe)?;
+    let written = (|| -> std::io::Result<()> {
+        f.write_all(bin)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o755))?;
+        }
+        f.sync_all()
+    })();
+    drop(f);
+    let result = written.and_then(|()| swap(exe, &tmp));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// What to tell someone whose executable could not be replaced. An executable a package manager installed read-only
+/// (the nix store) lands here too, as permission denied.
+fn cannot_replace(exe: &Path, base: &url::Url, e: &std::io::Error) -> Failure {
+    let next = if cfg!(windows) && e.raw_os_error() == Some(32) {
+        // ERROR_SHARING_VIOLATION
+        "another program is using it: close other reeve windows (or wait for antivirus to finish scanning it), then run reeve update again".to_string()
+    } else if matches!(
+        e.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+    ) {
+        format!(
+            "permission denied: run reeve update as the owner of that file (with REEVE_URL={}), update it the way it was installed, or reinstall to ~/.local/bin with `{}`",
+            base.as_str().trim_end_matches('/'),
+            install_line(base)
+        )
+    } else {
+        e.to_string()
+    };
+    fail_because(
+        ErrorCode::Internal,
+        "cannot_replace",
+        format!("cannot replace {}: {next}", exe.display()),
+    )
+}
+
+pub async fn run(_u: Update, json: bool) -> anyhow::Result<i32> {
+    match attempt(json).await {
+        Ok(code) => Ok(code),
+        Err(f) => {
+            if json {
+                let mut v =
+                    serde_json::json!({"outcome":"error","code":f.code,"message":f.message});
+                if let Some(r) = f.reason {
+                    v["reason"] = r.into();
+                }
+                println!("{v}");
+            }
+            eprintln!("error: {}", f.message);
+            Ok(1)
+        }
+    }
+}
+
+async fn attempt(json: bool) -> Result<i32, Failure> {
+    // The url only: no token is read, from REEVE_TOKEN or the stored login (kb/ADR-0030 R5).
+    let base = crate::config::env_nonempty("REEVE_URL")
+        .or(crate::config::load().url)
+        .ok_or_else(|| fail(ErrorCode::Validation, crate::config::NO_SERVER_URL))?;
+    let base = check_url(base.trim_end_matches('/')).map_err(|m| fail(ErrorCode::Validation, m))?;
+    let file = platform_file().ok_or_else(|| {
+        fail(
+            ErrorCode::Internal,
+            "the server ships no CLI for this platform",
+        )
+    })?;
+    // A client of its own: no default headers, no cookie store, no redirects. It is not a `crate::client::Client`, so
+    // it never records the offered build: `reeve update` never ends with the update notice.
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| fail(ErrorCode::Internal, e.to_string()))?;
+    let current = cli_version::current();
+    let exe = std::env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| {
+            fail_because(
+                ErrorCode::Internal,
+                "cannot_replace",
+                format!("cannot locate the running executable: {e}"),
+            )
+        })?;
+    let v = get(&http, &base, "VERSION").await?;
+    let offered = String::from_utf8_lossy(&v.bytes).trim().to_string();
+    // An older server answers every unknown path with its web page: not text/plain, not a CLI version.
+    if !v.content_type.starts_with("text/plain") || !is_cli_version(&offered) {
+        return Err(not_distributed(&base));
+    }
+    if current.as_deref() == Some(offered.as_str()) {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":false}})
+            );
+        } else {
+            println!("reeve is up to date (build {})", short(&offered));
+        }
+        return Ok(0);
+    }
+    let sums = get(&http, &base, "SHA256SUMS").await?;
+    let bin = get(&http, &base, file).await?;
+    // A deploy between these requests serves sums and binary from different bundles: the check below catches it.
+    let mismatch = |why: String| {
+        fail_because(
+            ErrorCode::Internal,
+            "checksum_mismatch",
+            format!(
+                "{why}; nothing was replaced. Try again; if it repeats, tell whoever runs the server"
+            ),
+        )
+    };
+    let want = expected_sum(&String::from_utf8_lossy(&sums.bytes), file).map_err(mismatch)?;
+    if hex::encode(Sha256::digest(&bin.bytes)) != want {
+        return Err(mismatch(format!(
+            "{file} does not match its SHA256SUMS line"
+        )));
+    }
+    install(&exe, &bin.bytes).map_err(|e| cannot_replace(&exe, &base, &e))?;
+    let from = current
+        .as_deref()
+        .map_or("dev build".to_string(), |c| format!("build {}", short(c)));
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":true}})
+        );
+    } else {
+        println!(
+            "replaced reeve {from} with the server's {}",
+            short(&offered)
+        );
+    }
+    Ok(0)
+}
 
 /// This platform's file under `/cli/`, from the protocol's fixed list; `None` where the server ships none.
 pub(crate) fn platform_file() -> Option<&'static str> {
