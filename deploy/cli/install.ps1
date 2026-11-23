@@ -38,7 +38,7 @@
         $old = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $text = & $Exe --version 2>&1 | Out-String
+            $text = & $Exe --version 2>$null | Out-String
             if ($LASTEXITCODE -ne 0) { return '' }
             return @($text -split "`r?`n")[0]
         } catch {
@@ -130,21 +130,30 @@
         # The user's Path lives in the registry as REG_EXPAND_SZ with %VAR% entries; GetEnvironmentVariable would expand
         # them and SetEnvironmentVariable would write the expanded text back, freezing every entry. Read the raw
         # string, compare against expanded entries, append to the raw string and write it back as REG_EXPAND_SZ.
-        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-        if (-not $envKey) { $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment') }
+        # A failure here must not undo or hide a finished install: warn with the manual step instead.
+        $envKey = $null
         try {
+            $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+            if (-not $envKey) { $envKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment') }
             $raw = [string] $envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            # Keep REG_SZ if that is what the value was; otherwise (or when absent) REG_EXPAND_SZ.
+            $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+            if ($null -ne $envKey.GetValue('Path', $null) -and $envKey.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) {
+                $kind = [Microsoft.Win32.RegistryValueKind]::String
+            }
             $have = @($raw -split ';' | Where-Object { $_ } | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') })
             if ($have -notcontains $dir.TrimEnd('\')) {
                 $new = if ($raw) { $raw.TrimEnd(';') + ';' + $dir } else { $dir }
-                $envKey.SetValue('Path', $new, [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                $envKey.SetValue('Path', $new, $kind)
                 # Setting and clearing a dummy user variable broadcasts WM_SETTINGCHANGE, so new windows see the Path.
                 [Environment]::SetEnvironmentVariable('REEVE_PATH_BROADCAST', '1', 'User')
-                [Environment]::SetEnvironmentVariable('REEVE_PATH_BROADCAST', $null, 'User')
+                [Environment]::SetEnvironmentVariable('REEVE_PATH_BROADCAST', [NullString]::Value, 'User')
                 Write-Host "added $dir to your user Path (open terminals need reopening)"
             }
+        } catch {
+            Write-Warning "could not add $dir to your user Path: $($_.Exception.Message). Add it in Settings > System > About > Advanced system settings > Environment Variables, or run reeve by its full path: $target"
         } finally {
-            $envKey.Close()
+            if ($envKey) { $envKey.Close() }
         }
         Write-Host "installed reeve build $($build.Substring(0, 7)) at $target"
         Write-Host ''

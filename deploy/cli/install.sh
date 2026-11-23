@@ -38,8 +38,13 @@ main() {
 		;;
 	http://127.0.0.1 | http://localhost | 'http://[::1]') proto='=http' ;;
 	http://127.0.0.1:* | http://localhost:* | 'http://[::1]:'*)
-		# Only digits after the last colon: no userinfo, path or second host (http://127.0.0.1:80@evil.test).
-		case "${REEVE_URL##*:}" in
+		# Strip the known host and colon; what is left must be a port, digits only (no userinfo, path or second host).
+		case "$REEVE_URL" in
+		http://127.0.0.1:*) port=${REEVE_URL#http://127.0.0.1:} ;;
+		http://localhost:*) port=${REEVE_URL#http://localhost:} ;;
+		*) port=${REEVE_URL#'http://[::1]:'} ;;
+		esac
+		case "$port" in
 		*[!0-9]* | '') die "refusing $REEVE_URL: downloads go over https only (plain http only to a loopback address)" ;;
 		esac
 		proto='=http'
@@ -102,7 +107,7 @@ main() {
 	elsewhere="To install somewhere else, rerun with:
   $rerun | REEVE_INSTALL_DIR=<directory> sh"
 	mkdir -p -- "$dir" 2>/dev/null || die "cannot create $dir. $elsewhere"
-	dir=$(cd "$dir" && pwd -P) || die "cannot use $dir. $elsewhere"
+	dir=$(CDPATH='' cd -- "$dir" && pwd) || die "cannot use $dir. $elsewhere"
 	target=$dir/reeve
 	[ ! -d "$target" ] || die "$target is a directory; remove it or choose another directory. $elsewhere"
 	if [ -e "$target" ]; then
@@ -140,7 +145,14 @@ main() {
 		case "${SHELL:-}" in
 		*/fish) printf 'To keep it in fish, run: fish_add_path "%s"\n' "$dir" ;;
 		*/zsh) echo "To keep it, add that line to ~/.zshrc" ;;
-		*/bash) echo "To keep it, add that line to ~/.bashrc" ;;
+		*/bash)
+			# Terminal.app starts login shells, which read ~/.bash_profile and not ~/.bashrc.
+			if [ "$os" = Darwin ]; then
+				echo "To keep it, add that line to ~/.bash_profile"
+			else
+				echo "To keep it, add that line to ~/.bashrc"
+			fi
+			;;
 		*) echo "To keep it, add that line to ~/.profile (or your shell's startup file)" ;;
 		esac
 		printf 'Or run it by its full path: %s\n' "$target"

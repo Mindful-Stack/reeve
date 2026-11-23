@@ -336,9 +336,32 @@ install REEVE_INSTALL_DIR="$opt" SHELL=/usr/bin/fish
 grep -qF "fish_add_path \"$opt\"" "$work/out" || fail "no fish_add_path for fish"
 install REEVE_INSTALL_DIR="$opt" SHELL=/bin/bash
 grep -qF 'that line to ~/.bashrc' "$work/out" || fail "no ~/.bashrc for bash"
+os=Darwin install REEVE_INSTALL_DIR="$opt" SHELL=/bin/bash
+grep -qF 'that line to ~/.bash_profile' "$work/out" || fail "no ~/.bash_profile for bash on macOS"
 install PATH="$bin:$work/home/.local/bin"
 [ "$status" = 0 ] || fail "the on-PATH run exited $status"
 if grep -q 'export PATH=' "$work/out"; then fail "a PATH block for a directory already on PATH"; fi
+
+# The directory is kept as written, not resolved through symlinks: ~/.local a symlink, ~/.local/bin on PATH.
+fresh
+mkdir -p "$work/real-local/bin"
+ln -s "$work/real-local" "$work/home/.local"
+run PATH="$bin:$work/home/.local/bin"
+rm -f "$work/home/.local"
+[ "$status" = 0 ] || fail "the symlinked ~/.local run exited $status"
+if grep -q 'not on your PATH' "$work/out"; then fail "a directory on PATH through a symlink was reported as off PATH"; fi
+rm -rf "$work/real-local"
+
+# An exported CDPATH must not leak into the directory change: a relative REEVE_INSTALL_DIR still lands where asked.
+fresh
+mkdir -p "$work/home/cwd/rel" "$work/home/cdp/rel"
+status=0
+(cd "$work/home/cwd" && env -i HOME="$work/home" PATH="$bin" TMPDIR="$work/tmp" FAKE_ROOT="$root" FAKE_LOG="$work/log" \
+	FAKE_OS=Linux FAKE_ARCH=x86_64 FAKE_TRANSLATED= CDPATH="$work/home/cdp" REEVE_INSTALL_DIR=rel \
+	"${testsh[@]}" "$work/install.sh") >"$work/out" 2>&1 || status=$?
+if [ "$status" != 0 ] || [ ! -x "$work/home/cwd/rel/reeve" ] || [ -e "$work/home/cdp/rel/reeve" ]; then
+	fail "a relative REEVE_INSTALL_DIR with CDPATH set went to the wrong place"
+fi
 
 # The mode is 755 whatever the umask (cp applies the umask; the chmod comes after it).
 mask=077 install
@@ -387,7 +410,7 @@ for url in http://localhost:7474 'http://[::1]:7474' http://localhost http://127
 	install
 	installed_from "plain http to $url" reeve-linux-x86_64
 done
-for url in http://127.0.0.1:80@evil.test http://127.0.0.1@evil.test http://localhost:80/x http://127.0.0.1:; do
+for url in http://127.0.0.1:80@evil.test http://127.0.0.1:80@evil.test:443 http://127.0.0.1@evil.test http://localhost:80/x http://127.0.0.1:; do
 	render "$url"
 	install
 	refused "plain http to $url" 'https only'
