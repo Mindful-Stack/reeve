@@ -2,9 +2,10 @@
 # scripts/tests/cli-windows.sh <exe-a> <version-a> <exe-b> <version-b> — the Windows leg of cli.yml (kb/ADR-0030 R2,
 # R5, R7), with two stamped builds the leg just made. install.ps1 under Windows PowerShell and PowerShell 7: an install
 # that runs in the same session, an install over an existing reeve.exe ([IO.File]::Replace), one over a reeve.exe that
-# is running, poisoned PowerShell defaults that must not reach a download, a checksum mismatch, a redirect, and an
-# existing reeve.exe held open so the replace step fails; the user Path keeps its unexpanded %VAR% entries and its
-# REG_EXPAND_SZ kind; then `reeve update` from A to B, and the %APPDATA% configuration path. It writes the runner's user
+# is running, poisoned PowerShell defaults that must not reach a download, a configured proxy (environment, and on 5.1
+# the default web proxy) that must not carry a loopback download, a warning for another reeve.exe earlier on the Path,
+# a checksum mismatch, a redirect, and an existing reeve.exe held open so the replace step fails; the user Path keeps
+# its unexpanded %VAR% entries and its REG_EXPAND_SZ kind; then `reeve update` from A to B, and the %APPDATA% configuration path. It writes the runner's user
 # Path (install.ps1 does) and puts it back on exit: run it only on a discarded CI runner. Git Bash.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -13,7 +14,7 @@ die() { echo "FAIL: $*" >&2; exit 1; }
 a=$1 va=$2 b=$3 vb=$4
 for tool in python pwsh powershell.exe cygpath sha256sum; do command -v "$tool" >/dev/null || die "$tool not found"; done
 export REEVE_UPDATE_NOTICE=0
-file=reeve-windows-x86_64.exe
+file=$(scripts/cli-build.sh --file x86_64-pc-windows-msvc)
 # Under the runner's temp directory: Git Bash's /tmp maps to a path with 8.3 short names.
 work=$(mktemp -d "$(cygpath -u "${RUNNER_TEMP:?run on a GitHub runner}")/cli-windows.XXXXXX")
 pid=
@@ -38,10 +39,13 @@ restore_path() {
 		REEVE_ORIG_PATH=$raw ps "\$k = $ENVKEY; \$k.SetValue('Path', \$env:REEVE_ORIG_PATH, [Microsoft.Win32.RegistryValueKind]::$kind)"
 	fi
 }
+# The seeded entry's directory holds another reeve.exe (build A), ahead of every install directory in the user Path.
+probe_dir=$(cygpath -u "${USERPROFILE:?}")/reeve-path-probe
 cleanup() {
 	# The stand-in holds its root open: stop it and wait, or Windows refuses to remove the directory.
 	[ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
 	restore_path || echo "cli-windows: could not restore the user Path" >&2
+	rm -rf "$probe_dir" || true
 	rm -rf "$work" || true
 }
 trap cleanup EXIT
@@ -74,27 +78,37 @@ serve() {
 	sed "s|@REEVE_URL@|$url|" deploy/cli/install.ps1 >"$1/cli/install.ps1"
 }
 # install_with <shell> <dir> [VAR=value...]: irm | iex in one session (POISON runs between the fetch and iex, so only
-# install.ps1's own requests meet it), then the session's reeve. A failure prints install.ps1's own message.
+# install.ps1's own requests meet it), then the session's reeve. A failure prints install.ps1's own message. Every run
+# has a proxy that answers nothing configured, with no exemptions: in the environment (PowerShell 7 reads it) and, on
+# Windows PowerShell 5.1, as the default web proxy, set after the test's own fetch, which bypasses it.
+PROXY=http://127.0.0.1:9
 POISON="\$null"
 install_with() {
 	local shell=$1 dir=$2
 	shift 2
-	env -u REEVE_FORCE "$@" REEVE_INSTALL_DIR="$(win "$dir")" "$shell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \
-		"\$ErrorActionPreference = 'Stop'; \$s = irm '$url/cli/install.ps1'; $POISON; try { iex \$s; (Get-Command reeve).Source; reeve --version } catch { [Console]::Error.WriteLine(\$_.Exception.Message); exit 1 }"
+	env -u REEVE_FORCE -u NO_PROXY -u no_proxy HTTP_PROXY=$PROXY http_proxy=$PROXY ALL_PROXY=$PROXY all_proxy=$PROXY "$@" \
+		REEVE_INSTALL_DIR="$(win "$dir")" "$shell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \
+		"\$ErrorActionPreference = 'Stop'; if (\$PSVersionTable.PSVersion.Major -ge 6) { \$s = irm -NoProxy '$url/cli/install.ps1' } else { \$s = irm '$url/cli/install.ps1'; [Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy('$PROXY') }; $POISON; try { iex \$s; (Get-Command reeve).Source; reeve --version } catch { [Console]::Error.WriteLine(\$_.Exception.Message); exit 1 }"
 }
 no_leftovers() { [ -z "$(find "$1" -maxdepth 1 -name '.reeve.new.*.exe' 2>/dev/null)" ] || die "a failed install left a staged file in $1"; }
 
 bundle "$work/a" "$a" "$va" "$(hash_of "$a")"
 bundle "$work/b" "$b" "$vb" "$(hash_of "$b")"
 bundle "$work/bad" "$a" "$va" "$(printf '%064d' 1)"
+mkdir -p "$probe_dir"
+cp "$a" "$probe_dir/reeve.exe"
 for shell in powershell.exe pwsh; do
-	# Installs, and runs in the same session.
+	# Installs through a configured proxy's exemption-free environment, runs in the same session, and warns that the
+	# probe's reeve.exe comes first on the Path of a new window.
 	serve "$work/a"
 	dir=$work/install-$shell
 	out=$(install_with "$shell" "$dir" 2>&1) || die "$shell: the install failed: $out"
 	[ "$(hash_of "$dir/reeve.exe")" = "$(hash_of "$a")" ] || die "$shell: the installed bytes are not the served build"
 	grep -qiF "$(win "$dir")\\reeve.exe" <<<"$out" || die "$shell: the session's reeve is not the installed one: $out"
 	grep -q '^reeve-planner ' <<<"$out" || die "$shell: the installed reeve did not run in the same session: $out"
+	grep -qF "another reeve.exe comes first on your Path: $(win "$probe_dir")\\reeve.exe" <<<"$out" ||
+		die "$shell: no warning for the reeve.exe earlier on the Path: $out"
+	grep -qF "GET /cli/$file " "$work/log" || die "$shell: the binary was not fetched from the stand-in: $(cat "$work/log")"
 
 	# Over an existing reeve.exe: the [IO.File]::Replace path puts B in place and leaves no backup or staged file.
 	serve "$work/b"

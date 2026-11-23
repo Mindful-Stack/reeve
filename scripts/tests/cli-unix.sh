@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scripts/tests/cli-unix.sh <binary-a> <version-a> <binary-b> <version-b> <target> — one end-to-end smoke on a Linux or
 # macOS leg of cli.yml (kb/ADR-0030 R2, R5, R7), with two stamped builds the leg just made: install.sh from a loopback
-# stand-in (scripts/tests/cli-serve.py) with the runner's real curl and checksum tools, under umask 077, then
+# stand-in (scripts/tests/cli-serve.py) with the runner's real curl and checksum tools, under umask 077 and with a proxy
+# that does not answer configured and no exemption (a loopback download must bypass it), then
 # `reeve update` from build A to build B with a poisoned REEVE_TOKEN, a poisoned stored login and a proxy that does not
 # answer. Checks the installed bytes, mode 755, that the binary runs, that the update asked for this target's own file,
 # sent no credentials and used no proxy.
@@ -56,7 +57,9 @@ if [ "$target" = x86_64-apple-darwin ] && [ "$(uname -m)" = arm64 ]; then
 	chmod 755 "$dir/reeve"
 	echo "cli-unix: x86_64 macOS build on an arm64 runner: install.sh picks the arm64 build here, so A is copied in place"
 else
-	(umask 077 && curl -q -fsS "$url/cli/install.sh" | env -u REEVE_FORCE REEVE_INSTALL_DIR="$dir" HOME="$work" sh) >"$work/out" 2>&1 ||
+	(umask 077 && curl -q -fsS "$url/cli/install.sh" | env -u REEVE_FORCE -u NO_PROXY -u no_proxy \
+		HTTP_PROXY=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 \
+		REEVE_INSTALL_DIR="$dir" HOME="$work" sh) >"$work/out" 2>&1 ||
 		die "install.sh failed: $(cat "$work/out")"
 	[ "$(hash_of "$dir/reeve")" = "$(hash_of "$a")" ] || die "install.sh installed other bytes than the served build"
 	[ -n "$(find "$dir/reeve" -perm 755)" ] || die "under umask 077 the installed reeve is not mode 755"

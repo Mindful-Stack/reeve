@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # scripts/tests/install.sh — deploy/cli/install.sh (kb/ADR-0030 R5) under POSIX sh, against a fake curl and uname and
 # the real checksum tools: the platform map, the build check, the single checksum line, the foreign-binary refusal,
-# PATH guidance, an existing installation surviving every failure, and that a download sends no credentials, follows
-# no redirect and goes over https (plain http only to loopback). The installer runs with PATH limited to the fakes and
+# PATH guidance (another reeve earlier on PATH included), an existing installation surviving every failure, a refusal
+# before any download, and that a download sends no credentials, follows no redirect and goes over https (plain http
+# only to loopback, never through a proxy). The installer runs with PATH limited to the fakes and
 # the tools it needs, so a missing sha256sum is a real absence.
 #
 # The fake curl behaves like curl where a mistake would matter: it reads $HOME/.curlrc unless -q comes first and
-# $HOME/.netrc only with -n/--netrc*, and follows a redirect with -L/--location*. Every run has a poisoned .curlrc and
+# $HOME/.netrc only with -n/--netrc*, follows a redirect with -L/--location*, and sends a request through
+# http_proxy/https_proxy/ALL_PROXY unless --noproxy '*' is given (logged as "proxied"). Every run has a poisoned .curlrc and
 # .netrc, so an installer that drops -q or adds -n logs "poisoned", and one that adds -L installs the redirect's target.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -60,11 +62,16 @@ fail() {
 	fails=$((fails + 1))
 }
 
-# The served files: five fake binaries (each prints its own name, so a mix-up shows), a real SHA256SUMS, VERSION.
+# The served files: a fake binary per target scripts/cli-build.sh names (each prints its own name, so a mix-up shows), a
+# real SHA256SUMS, VERSION. The names come from cli-build.sh, which crates/reeve-server/tests/cli_files.rs ties to
+# reeve_protocol::CLI_BINARIES, so install.sh's platform map is pinned to the contract here.
 root=$work/root
 mkdir -p "$root"
 build=$(printf 'abcdef0%033d' 0)
-names=(reeve-linux-x86_64 reeve-linux-aarch64 reeve-macos-aarch64 reeve-macos-x86_64 reeve-windows-x86_64.exe)
+mapfile -t names < <(scripts/cli-build.sh --targets | while read -r t; do scripts/cli-build.sh --file "$t"; done)
+[ "${#names[@]}" -gt 0 ] || { echo "FAIL: scripts/cli-build.sh names no targets" >&2; exit 1; }
+file_of() { scripts/cli-build.sh --file "$1"; }
+lx=$(file_of x86_64-unknown-linux-musl) # the file of the platform most cases run as
 fixture() { printf '#!/bin/sh\necho "reeve-planner 0.7.0 (%s)"\n' "$1" >"$root/$1"; }
 sums() {
 	if command -v sha256sum >/dev/null 2>&1; then
@@ -87,11 +94,12 @@ make_bin() {
 #!/bin/sh
 printf 'curl %s\n' "$*" >>"$FAKE_LOG"
 [ "$1" = -q ] || { [ ! -f "$HOME/.curlrc" ] || printf 'curlrc read: %s\n' "$(cat "$HOME/.curlrc")" >>"$FAKE_LOG"; }
-out="" fmt="" url="" follow=""
+out="" fmt="" url="" follow="" noproxy=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-o) out=$2; shift ;;
 	-w) fmt=$2; shift ;;
+	--noproxy) noproxy=$2; shift ;;
 	--proto) shift ;;
 	-L | --location | --location-trusted) follow=1 ;;
 	-n | --netrc | --netrc-optional | --netrc-file*) [ ! -f "$HOME/.netrc" ] || printf 'netrc read: %s\n' "$(cat "$HOME/.netrc")" >>"$FAKE_LOG" ;;
@@ -100,7 +108,17 @@ while [ $# -gt 0 ]; do
 	shift
 done
 name=${url##*/cli/}
-if [ "${FAKE_REDIRECT:-}" = "$name" ] && [ -z "$follow" ]; then
+case "$url" in
+http://*) proxy=${http_proxy:-${ALL_PROXY:-${all_proxy:-}}} ;;
+*) proxy=${https_proxy:-${HTTPS_PROXY:-${ALL_PROXY:-${all_proxy:-}}}} ;;
+esac
+if [ -n "$proxy" ] && [ "$noproxy" != '*' ]; then
+	# What a proxy (or anyone on its plain-http leg) answers is its own choice.
+	printf 'proxied via %s: %s\n' "$proxy" "$url" >>"$FAKE_LOG"
+	code=200; printf 'from the proxy' >"$out"
+elif [ -n "${FAKE_STATUS:-}" ] && [ "${FAKE_STATUS%%:*}" = "$name" ]; then
+	code=${FAKE_STATUS#*:}; printf 'error page' >"$out"
+elif [ "${FAKE_REDIRECT:-}" = "$name" ] && [ -z "$follow" ]; then
 	code=302; printf 'moved' >"$out"
 elif [ -f "$FAKE_ROOT/$name" ]; then
 	code=200; cat "$FAKE_ROOT/$name" >"$out"
@@ -205,9 +223,10 @@ if [ -n "$busybox" ]; then
 	echo "skipped under busybox: applets shadow the fakes (platform map, Rosetta, unsupported platforms, macOS bash)"
 else
 # Every supported platform downloads its own file and installs it from the checksum it was given.
-for case in Linux/x86_64:reeve-linux-x86_64 Linux/amd64:reeve-linux-x86_64 Linux/aarch64:reeve-linux-aarch64 \
-	Linux/arm64:reeve-linux-aarch64 Darwin/arm64:reeve-macos-aarch64 Darwin/x86_64:reeve-macos-x86_64; do
-	plat=${case%%:*} want=${case#*:}
+for case in Linux/x86_64:x86_64-unknown-linux-musl Linux/amd64:x86_64-unknown-linux-musl \
+	Linux/aarch64:aarch64-unknown-linux-musl Linux/arm64:aarch64-unknown-linux-musl \
+	Darwin/arm64:aarch64-apple-darwin Darwin/x86_64:x86_64-apple-darwin; do
+	plat=${case%%:*} want=$(file_of "${case#*:}")
 	os=${plat%/*} arch=${plat#*/} install
 	installed_from "$plat" "$want"
 	grep -q "curl .*https://reeve.test/cli/$want\$" "$work/log" || fail "$plat did not download $want"
@@ -217,13 +236,13 @@ done
 # Rosetta: an x86_64 macOS shell on an Apple silicon Mac installs the native build; elsewhere sysctl is not consulted
 # or says 0 or is unknown.
 os=Darwin arch=x86_64 translated=1 install
-installed_from "macOS x86_64 under Rosetta" reeve-macos-aarch64
+installed_from "macOS x86_64 under Rosetta" "$(file_of aarch64-apple-darwin)"
 os=Darwin arch=x86_64 translated=0 install
-installed_from "macOS x86_64, not translated" reeve-macos-x86_64
+installed_from "macOS x86_64, not translated" "$(file_of x86_64-apple-darwin)"
 os=Darwin arch=x86_64 translated="" install
-installed_from "macOS x86_64, sysctl key unknown" reeve-macos-x86_64
+installed_from "macOS x86_64, sysctl key unknown" "$(file_of x86_64-apple-darwin)"
 os=Linux arch=x86_64 translated=1 install
-installed_from "Linux with a stray sysctl answer" reeve-linux-x86_64
+installed_from "Linux with a stray sysctl answer" "$(file_of x86_64-unknown-linux-musl)"
 
 # Unsupported platforms fail before downloading, and say what is supported.
 for plat in Linux/riscv64 FreeBSD/amd64 Darwin/ppc; do
@@ -237,7 +256,7 @@ fi
 # curl: -q first (no .curlrc), https only with TLS 1.2, no .netrc, never a header, cookie or user. The first line of
 # the output names the build the server offers.
 install
-installed_from "the default run" reeve-linux-x86_64
+installed_from "the default run" "$lx"
 while read -r line; do
 	case "$line" in
 	"curl -q --proto =https --tlsv1.2 "*) ;;
@@ -251,7 +270,7 @@ grep -q 'next: reeve auth login --url https://reeve.test' "$work/out" || fail "n
 # shasum when there is no sha256sum.
 if command -v shasum >/dev/null 2>&1; then
 	bin=$work/bin-shasum install
-	installed_from "the shasum fallback" reeve-linux-x86_64
+	installed_from "the shasum fallback" "$lx"
 elif [ -n "${CI:-}" ]; then
 	fail "shasum is required in CI"
 else
@@ -270,39 +289,48 @@ printf '%s\n' "$build" | tr a-f A-F >"$root/VERSION"
 install
 refused "an uppercase VERSION" 'is not a build'
 printf '%s\n' "$build" >"$root/VERSION"
-printf 'tampered' >>"$root/reeve-linux-x86_64"
+printf 'tampered' >>"$root/$lx"
 install
 refused "a tampered binary" 'checksum mismatch'
 nothing_left "mismatch"
 fresh "reeve-planner 0.6.0"
 run
 kept "a checksum mismatch over an existing reeve" "reeve-planner 0.6.0"
-fixture reeve-linux-x86_64
-grep -v ' reeve-linux-x86_64$' "$work/SHA256SUMS.good" >"$root/SHA256SUMS"
+fixture "$lx"
+grep -v " $lx\$" "$work/SHA256SUMS.good" >"$root/SHA256SUMS"
 install
-refused "a missing checksum line" 'has 0 lines for reeve-linux-x86_64'
+refused "a missing checksum line" "has 0 lines for $lx"
 {
 	cat "$work/SHA256SUMS.good"
-	grep ' reeve-linux-x86_64$' "$work/SHA256SUMS.good"
+	grep " $lx\$" "$work/SHA256SUMS.good"
 } >"$root/SHA256SUMS"
 install
-refused "a duplicated checksum line" 'has 2 lines for reeve-linux-x86_64'
+refused "a duplicated checksum line" "has 2 lines for $lx"
 cp "$work/SHA256SUMS.good" "$root/SHA256SUMS"
 
 # A redirect is refused (the fake follows one when asked to, so -L would install the target and fail here), and a
 # failed download installs nothing.
-install FAKE_REDIRECT=reeve-linux-x86_64
+install FAKE_REDIRECT="$lx"
 refused "a redirect" 'HTTP 302'
 fresh "reeve-planner 0.6.0"
-run FAKE_REDIRECT=reeve-linux-x86_64
+run FAKE_REDIRECT="$lx"
 kept "a redirect over an existing reeve" "reeve-planner 0.6.0"
-mv "$root/reeve-linux-x86_64" "$work/held"
+mv "$root/$lx" "$work/held"
 install
 refused "a 404" 'HTTP 404'
 fresh "reeve-planner 0.6.0"
 run
 kept "a 404 over an existing reeve" "reeve-planner 0.6.0"
-mv "$work/held" "$root/reeve-linux-x86_64"
+mv "$work/held" "$root/$lx"
+
+# A rate limit and a server error say to wait and rerun (as reeve update does), and install nothing.
+install FAKE_STATUS=VERSION:429
+refused "a 429" "rate-limiting /cli/; wait a minute and rerun"
+install FAKE_STATUS="$lx:503"
+refused "a 503" 'HTTP 503; it may be restarting: wait a minute and rerun'
+fresh "reeve-planner 0.6.0"
+run FAKE_STATUS="$lx:502"
+kept "a 502 over an existing reeve" "reeve-planner 0.6.0"
 
 # A foreign reeve is kept unless REEVE_FORCE=1, and the refusal prints the line to run; a planner CLI is replaced.
 fresh "reeve 2.1 (runner)"
@@ -311,9 +339,10 @@ if [ "$status" = 0 ] || ! grep -qF "curl -q --proto '=https' --tlsv1.2 -fsS http
 	fail "a foreign reeve was not refused with a runnable REEVE_FORCE=1 command"
 fi
 grep -q 'runner' "$installed" || fail "a foreign reeve was overwritten without REEVE_FORCE"
+[ ! -s "$work/log" ] || fail "a foreign reeve was refused only after downloading: $(cat "$work/log")"
 fresh "reeve 2.1 (runner)"
 run REEVE_FORCE=1
-installed_from "REEVE_FORCE=1 over a foreign reeve" reeve-linux-x86_64
+installed_from "REEVE_FORCE=1 over a foreign reeve" "$lx"
 for val in true 0 yes ""; do
 	fresh "reeve 2.1 (runner)"
 	run REEVE_FORCE="$val"
@@ -323,6 +352,7 @@ fresh
 mkdir -p "$work/home/.local/bin/reeve"
 run
 if [ "$status" = 0 ] || ! grep -q 'is a directory' "$work/out"; then fail "a directory at the target was not refused"; fi
+[ ! -s "$work/log" ] || fail "a directory at the target was refused only after downloading"
 fresh
 mkdir -p "$work/home/.local/bin" "$work/home/elsewhere"
 ln -s "$work/home/elsewhere" "$work/home/.local/bin/reeve"
@@ -330,7 +360,7 @@ run
 if [ "$status" = 0 ] || ! grep -q 'is a directory' "$work/out"; then fail "a symlink to a directory at the target was not refused"; fi
 fresh "reeve-planner 0.6.0"
 run
-installed_from "an older planner CLI" reeve-linux-x86_64
+installed_from "an older planner CLI" "$lx"
 
 # REEVE_INSTALL_DIR, and the PATH block before the next steps when the directory is not on PATH: an export line for
 # this shell, where to keep it for the user's shell, and the full path that works without it.
@@ -356,6 +386,31 @@ fi
 install PATH="$bin:$work/home/.local/bin"
 [ "$status" = 0 ] || fail "the on-PATH run exited $status"
 if grep -q 'export PATH=' "$work/out"; then fail "a PATH block for a directory already on PATH"; fi
+if grep -q 'warning:' "$work/out"; then fail "a warning for a reeve that is the one installed"; fi
+# A PATH entry with a trailing slash is the same directory.
+install PATH="$bin:$work/home/.local/bin/"
+[ "$status" = 0 ] || fail "the trailing-slash run exited $status"
+if grep -q 'not on your PATH\|warning:' "$work/out"; then fail "a PATH entry with a trailing slash was not recognised"; fi
+
+# Another reeve earlier on PATH (~/.cargo/bin ahead of ~/.local/bin): installed, then a warning naming it, what it
+# prints and the fix, before the next steps.
+mkdir -p "$work/foreign"
+printf '#!/bin/sh\necho "reeve 0.3.0"\n' >"$work/foreign/reeve"
+chmod 755 "$work/foreign/reeve"
+install PATH="$work/foreign:$bin:$work/home/.local/bin"
+installed_from "a reeve shadowed on PATH" "$lx"
+grep -qF "warning: another reeve comes first on your PATH: $work/foreign/reeve (it prints: reeve 0.3.0)" "$work/out" ||
+	fail "no warning for another reeve earlier on PATH"
+grep -qF "put $work/home/.local/bin ahead of $work/foreign in PATH; until then run $installed" "$work/out" ||
+	fail "the shadow warning does not say how to fix it"
+warn_at=$(grep -n '^warning:' "$work/out" | cut -d: -f1 || true)
+next_at=$(grep -n '^next:' "$work/out" | cut -d: -f1)
+[ "${warn_at:-99}" -lt "${next_at:-0}" ] || fail "the shadow warning does not come before the next steps"
+# The same directory under another name (a symlink on PATH) is not another reeve.
+ln -s "$work/home/.local/bin" "$work/alias"
+install PATH="$bin:$work/alias"
+if grep -q 'warning:' "$work/out"; then fail "a PATH entry linking to the install directory was taken for another reeve"; fi
+rm -f "$work/alias"
 
 # The directory is kept as written, not resolved through symlinks: ~/.local a symlink, ~/.local/bin on PATH.
 fresh
@@ -381,19 +436,19 @@ fi
 # The mode is 755 whatever the umask (cp applies the umask; the chmod comes after it).
 mask=077 install
 mask=""
-installed_from "a masked install" reeve-linux-x86_64
+installed_from "a masked install" "$lx"
 [ -n "$(find "$installed" -perm 755)" ] || fail "under umask 077 the installed reeve is not mode 755"
 
 # An existing installation keeps working on any failure: a download that does not run, an unusable directory.
-cp "$root/reeve-linux-x86_64" "$work/held"
-printf 'not a program\n' >"$root/reeve-linux-x86_64"
+cp "$root/$lx" "$work/held"
+printf 'not a program\n' >"$root/$lx"
 sums >"$root/SHA256SUMS"
 fresh "reeve-planner 0.6.0"
 run
 if [ "$status" = 0 ] || ! grep -q 'does not run on this machine' "$work/out"; then fail "a binary that does not run was installed"; fi
 [ "$("$installed" --version)" = "reeve-planner 0.6.0" ] || fail "a failed install broke the existing reeve"
 [ -z "$(find "$work/home/.local/bin" -name '.reeve.new.*')" ] || fail "a staged file was left behind"
-cp "$work/held" "$root/reeve-linux-x86_64"
+cp "$work/held" "$root/$lx"
 cp "$work/SHA256SUMS.good" "$root/SHA256SUMS"
 fresh
 : >"$work/home/file"
@@ -401,6 +456,16 @@ run REEVE_INSTALL_DIR="$work/home/file/bin"
 if [ "$status" = 0 ] || ! grep -qF "https://reeve.test/cli/install.sh | REEVE_INSTALL_DIR=<directory> sh" "$work/out"; then
 	fail "an unusable install directory was not refused with a runnable REEVE_INSTALL_DIR command"
 fi
+[ ! -s "$work/log" ] || fail "an unusable install directory was refused only after downloading"
+
+# HOME unset (some containers and CI runners): a clear refusal naming REEVE_INSTALL_DIR, before any download; with
+# REEVE_INSTALL_DIR the install needs no HOME.
+install HOME=
+refused "HOME unset" 'HOME is not set'
+grep -qF '| REEVE_INSTALL_DIR=<directory> sh' "$work/out" || fail "HOME unset: no REEVE_INSTALL_DIR rerun line"
+[ ! -s "$work/log" ] || fail "HOME unset: refused only after downloading"
+install HOME= REEVE_INSTALL_DIR="$work/home/nohome"
+if [ "$status" != 0 ] || [ ! -x "$work/home/nohome/reeve" ]; then fail "HOME unset with REEVE_INSTALL_DIR: not installed ($status)"; fi
 
 # A download cut short runs nothing: everything is in main, called on the last line.
 size=$(wc -c <"$work/install.sh")
@@ -417,13 +482,27 @@ refused "plain http off loopback" 'https only'
 [ ! -s "$work/log" ] || fail "plain http off loopback downloaded something"
 render http://127.0.0.1:7474
 install
-installed_from "plain http to loopback" reeve-linux-x86_64
-grep -q -- '^curl -q --proto =http -sS' "$work/log" || fail "a loopback download did not pin --proto =http"
+installed_from "plain http to loopback" "$lx"
+while read -r line; do
+	case "$line" in
+	"curl -q --noproxy * --proto =http -sS "*) ;;
+	*) fail "a loopback download did not start with -q --noproxy '*' --proto =http: $line" ;;
+	esac
+done <"$work/log"
 if grep -q -- '--tlsv1.2' "$work/log"; then fail "a plain http download asked for TLS"; fi
+# A configured proxy (NO_PROXY unset) never carries a loopback download: it could replace binary and checksum alike.
+install http_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9
+installed_from "plain http to loopback with a proxy configured" "$lx"
+if grep -q '^proxied' "$work/log"; then fail "a loopback download went through the proxy: $(cat "$work/log")"; fi
+# The rerun line printed for a loopback server bypasses the proxy too.
+fresh "reeve 2.1 (runner)"
+run
+grep -qF "curl -q --noproxy '*' -fsS http://127.0.0.1:7474/cli/install.sh | REEVE_FORCE=1 sh" "$work/out" ||
+	fail "the loopback rerun line does not bypass the proxy"
 for url in http://localhost:7474 'http://[::1]:7474' http://localhost http://127.0.0.1; do
 	render "$url"
 	install
-	installed_from "plain http to $url" reeve-linux-x86_64
+	installed_from "plain http to $url" "$lx"
 done
 for url in http://127.0.0.1:80@evil.test http://127.0.0.1:80@evil.test:443 http://127.0.0.1@evil.test http://localhost:80/x http://127.0.0.1:; do
 	render "$url"

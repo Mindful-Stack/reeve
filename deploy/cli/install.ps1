@@ -49,13 +49,37 @@
     }
     try {
         # <server>/cli/<name> into $tmp. No credentials are sent; a redirect is either an error or a non-200 answer,
-        # and both fail.
+        # and both fail. A loopback download never goes through a proxy: a configured one would carry plain http off
+        # the machine, where the binary and its checksum could both be replaced (kb/ADR-0030 R5). PowerShell 6 and
+        # later have -NoProxy; Windows PowerShell 5.1 has not, and takes the proxy from [Net.WebRequest]::DefaultWebProxy
+        # when the request is made, so that is emptied for the one call and put back after it.
         function Get-CliFile([string] $Name) {
             $dest = Join-Path $tmp $Name
+            $request = @{ UseBasicParsing = $true; Uri = "$ReeveUrl/cli/$Name"; OutFile = $dest; PassThru = $true; MaximumRedirection = 0 }
+            $loopback = $ReeveUrl.StartsWith('http://', [StringComparison]::OrdinalIgnoreCase)
+            $swapped = $false
+            $savedProxy = $null
             try {
-                $r = Microsoft.PowerShell.Utility\Invoke-WebRequest -UseBasicParsing -Uri "$ReeveUrl/cli/$Name" -OutFile $dest -PassThru -MaximumRedirection 0
+                if ($loopback -and $PSVersionTable.PSVersion.Major -ge 6) {
+                    $request.NoProxy = $true
+                } elseif ($loopback) {
+                    $savedProxy = [Net.WebRequest]::DefaultWebProxy
+                    $swapped = $true
+                    [Net.WebRequest]::DefaultWebProxy = $null
+                }
+                $r = Microsoft.PowerShell.Utility\Invoke-WebRequest @request
             } catch {
+                $code = 0
+                try { $code = [int] $_.Exception.Response.StatusCode } catch { $code = 0 }
+                if ($code -eq 429) {
+                    throw "reeve install: downloading ${Name}: the server's proxy is rate-limiting /cli/; wait a minute and rerun"
+                }
+                if ($code -ge 500 -and $code -le 599) {
+                    throw "reeve install: downloading ${Name}: the server answered HTTP $code; it may be restarting: wait a minute and rerun"
+                }
                 throw "reeve install: downloading $Name failed: $($_.Exception.Message)"
+            } finally {
+                if ($swapped) { [Net.WebRequest]::DefaultWebProxy = $savedProxy }
             }
             if ($r.StatusCode -ne 200) {
                 throw "reeve install: downloading ${Name}: the server answered HTTP $($r.StatusCode)"
@@ -63,7 +87,32 @@
             $dest
         }
 
-        # The build the server offers: a 40-character commit id, shown by its first seven.
+        # The target first, so a run that would refuse it downloads nothing.
+        $elsewhere = "To install somewhere else, rerun with:`n  `$env:REEVE_INSTALL_DIR = '<directory>'; $Rerun"
+        if (-not $env:REEVE_INSTALL_DIR -and -not $env:LOCALAPPDATA) {
+            throw "reeve install: LOCALAPPDATA is not set, so there is no default directory. $elsewhere"
+        }
+        $dir = if ($env:REEVE_INSTALL_DIR) { $env:REEVE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\reeve' }
+        # A relative directory means relative to the current location, not to the process's working directory.
+        $dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($dir)
+        $target = Join-Path $dir 'reeve.exe'
+        if (Test-Path -LiteralPath $target) {
+            $first = Get-ReeveVersion $target
+            if ("$first" -notlike 'reeve-planner*' -and $env:REEVE_FORCE -ne '1') {
+                throw "reeve install: $target is not the Reeve planner CLI (it printed: $first). To replace it, rerun with:`n  `$env:REEVE_FORCE = '1'; $Rerun"
+            }
+        }
+        try {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            # Staged beside the target (same volume), so the replacement below is a rename, never a copy. Created empty
+            # now, which proves the directory writable before anything is downloaded.
+            $staged = Join-Path $dir ('.reeve.new.' + [Guid]::NewGuid() + '.exe')
+            New-Item -ItemType File -Path $staged | Out-Null
+        } catch {
+            throw "reeve install: cannot write to ${dir}: $($_.Exception.Message). $elsewhere"
+        }
+
+        # The build the server offers: a 40-character CLI version, shown by its first seven.
         $build = (Get-Content -LiteralPath (Get-CliFile 'VERSION') -TotalCount 1)
         if ("$build" -cnotmatch '^[0-9a-f]{40}$') {
             throw "reeve install: the server's VERSION is not a build ($build): is this a Reeve server with CLI distribution on?"
@@ -77,25 +126,12 @@
         $bin = Get-CliFile $file
         $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $bin).Hash.ToLowerInvariant()
         if ($got -ne $want) {
-            throw "reeve install: checksum mismatch for ${file}: nothing was installed"
+            # Mid-deploy the sums and the binary can come from two releases: a rerun gets one release's pair.
+            throw "reeve install: checksum mismatch for ${file}: nothing was installed. Rerun; if it repeats, tell whoever runs the server"
         }
 
-        $dir = if ($env:REEVE_INSTALL_DIR) { $env:REEVE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\reeve' }
-        # A relative directory means relative to the current location, not to the process's working directory.
-        $dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($dir)
-        $target = Join-Path $dir 'reeve.exe'
-        if (Test-Path -LiteralPath $target) {
-            $first = Get-ReeveVersion $target
-            if ("$first" -notlike 'reeve-planner*' -and $env:REEVE_FORCE -ne '1') {
-                throw "reeve install: $target is not the Reeve planner CLI (it printed: $first). To replace it, rerun with:`n  `$env:REEVE_FORCE = '1'; $Rerun"
-            }
-        }
-        $elsewhere = "To install somewhere else, rerun with:`n  `$env:REEVE_INSTALL_DIR = '<directory>'; $Rerun"
         try {
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            # Staged beside the target (same volume), so the replacement below is a rename, never a copy.
-            $staged = Join-Path $dir ('.reeve.new.' + [Guid]::NewGuid() + '.exe')
-            Copy-Item -LiteralPath $bin -Destination $staged
+            Copy-Item -Force -LiteralPath $bin -Destination $staged
         } catch {
             throw "reeve install: cannot write to ${dir}: $($_.Exception.Message). $elsewhere"
         }
@@ -156,6 +192,22 @@
             if ($envKey) { $envKey.Close() }
         }
         Write-Host "installed reeve build $($build.Substring(0, 7)) at $target"
+        # Another reeve.exe ahead of $dir in a new window's Path (the machine Path first, then the user's) would run
+        # instead of this one, silently. Best effort: a Path entry that cannot be read is skipped.
+        try {
+            $order = @(((@([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';') -split ';') |
+                Where-Object { $_ } | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') })
+            foreach ($entry in $order) {
+                if ($entry -eq $dir.TrimEnd('\')) { break }
+                $other = $null
+                try { $other = Join-Path $entry 'reeve.exe' } catch { continue }
+                if (Test-Path -LiteralPath $other -PathType Leaf) {
+                    Write-Warning "another reeve.exe comes first on your Path: $other (it prints: $(Get-ReeveVersion $other)). Remove it, or move $dir ahead of $entry in your Path; until then run $target"
+                    break
+                }
+            }
+        } catch {
+        }
         Write-Host ''
         Write-Host "next: reeve auth login --url $ReeveUrl"
         Write-Host "  (or: & '$target' auth login --url $ReeveUrl)"
