@@ -115,8 +115,6 @@ pub struct Client {
     http: reqwest::Client,
     base: String,
     token: String,
-    /// The last `X-Reeve-Cli` a response carried (kb/ADR-0030): the build the server offers.
-    server_cli: std::sync::Mutex<Option<String>>,
 }
 impl Client {
     pub fn new(base: String, token: String) -> Self {
@@ -131,12 +129,7 @@ impl Client {
                 .expect("http client"),
             base,
             token,
-            server_cli: std::sync::Mutex::new(None),
         }
-    }
-    /// The build the server offers, from the last response that carried one; `None` before any did.
-    pub fn server_cli(&self) -> Option<String> {
-        self.server_cli.lock().unwrap().clone()
     }
     pub async fn call<T: DeserializeOwned>(
         &self,
@@ -187,14 +180,8 @@ impl Client {
         let res = req.send().await?;
         let status = res.status().as_u16();
         let headers = res.headers().clone();
-        if let Some(v) = headers
-            .get(reeve_protocol::CLI_VERSION_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .filter(|v| reeve_protocol::is_cli_version(v))
-        {
-            crate::cli_version::observe(v);
-            *self.server_cli.lock().unwrap() = Some(v.to_string());
-        }
+        // The build the server offers (kb/ADR-0030), from any answer that names one: `cli_version` holds the one store.
+        crate::cli_version::observe(&headers);
         Ok((status, headers, res.bytes().await?.to_vec()))
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<Outcome<T>> {
@@ -272,74 +259,6 @@ fn header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Serves `answers` (raw HTTP responses) on loopback, one per connection, and returns the base url.
-    async fn raw(answers: Vec<String>) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", l.local_addr().unwrap());
-        tokio::spawn(async move {
-            for a in answers {
-                let (mut s, _) = l.accept().await.unwrap();
-                let mut req = Vec::new();
-                let mut buf = [0u8; 1024];
-                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match s.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => req.extend_from_slice(&buf[..n]),
-                    }
-                }
-                s.write_all(a.as_bytes()).await.unwrap();
-                let _ = s.shutdown().await;
-            }
-        });
-        url
-    }
-
-    fn answer(cli: Option<&str>) -> String {
-        let body = r#"{"outcome":"ok","value":[]}"#;
-        let h = cli
-            .map(|v| format!("x-reeve-cli: {v}\r\n"))
-            .unwrap_or_default();
-        format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{h}content-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        )
-    }
-
-    #[tokio::test]
-    async fn the_client_keeps_the_last_offered_build_it_was_sent() {
-        let a = "a".repeat(40);
-        let b = "b".repeat(40);
-        let url = raw(vec![
-            answer(Some(&a)),
-            answer(Some(&b)),
-            answer(None),
-            answer(Some("not-a-version")),
-        ])
-        .await;
-        let c = Client::new(url, "t".into());
-        assert_eq!(c.server_cli(), None, "nothing before the first answer");
-        let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
-        assert_eq!(c.server_cli().as_deref(), Some(a.as_str()));
-        let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
-        assert_eq!(
-            c.server_cli().as_deref(),
-            Some(b.as_str()),
-            "the last one wins"
-        );
-        let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
-        assert_eq!(
-            c.server_cli().as_deref(),
-            Some(b.as_str()),
-            "an answer without the header keeps it"
-        );
-        let _ = c.get::<Vec<serde_json::Value>>("/x").await.unwrap();
-        assert_eq!(
-            c.server_cli().as_deref(),
-            Some(b.as_str()),
-            "a garbled header is ignored"
-        );
-    }
     #[test]
     fn envelope_maps_to_outcome_and_exit_code() {
         let ok: Outcome<u8> =

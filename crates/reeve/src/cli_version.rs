@@ -60,13 +60,47 @@ pub fn setting() -> Option<String> {
     std::env::var("REEVE_UPDATE_NOTICE").ok()
 }
 
-/// The last offered build any `Client` in this process was sent. Process-wide: unit tests must not assert on it (they
-/// share the process); `notify()` is covered by subprocess tests.
-static SEEN: Mutex<Option<String>> = Mutex::new(None);
+/// The build a server offers, as its `X-Reeve-Cli` header names it: `None` when the header is absent or is not a CLI
+/// version (a garbled value is ignored, never trusted). The one reading of that header, for `Client` and `reeve update`.
+pub fn offered_in(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    headers
+        .get(reeve_protocol::CLI_VERSION_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| is_cli_version(v))
+        .map(str::to_owned)
+}
 
-/// Records a server's `X-Reeve-Cli` (called by `Client` for every response that carries one).
-pub fn observe(offered: &str) {
-    *SEEN.lock().unwrap() = Some(offered.to_string());
+/// The last build a server offered: the answer that last named one wins, and an answer that names none keeps it.
+pub struct Offered(Mutex<Option<String>>);
+
+impl Offered {
+    pub const fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+    /// Records the build `headers` name, if they name one.
+    pub fn observe(&self, headers: &reqwest::header::HeaderMap) {
+        if let Some(v) = offered_in(headers) {
+            *self.0.lock().unwrap() = Some(v);
+        }
+    }
+    pub fn get(&self) -> Option<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// The one store of the build the server offers in this process: every `Client` answer writes it (`observe`); the
+/// notice, `reeve auth status` and the TUI's startup decision read it (`offered`). Process-wide: unit tests must not
+/// assert on it (they share the process) and use their own `Offered`; the notice is covered by subprocess tests.
+static OFFERED: Offered = Offered::new();
+
+/// Records the build an answer's headers name (called by `Client` for every response).
+pub fn observe(headers: &reqwest::header::HeaderMap) {
+    OFFERED.observe(headers);
+}
+
+/// The last build any `Client` in this process was offered; `None` before an answer named one.
+pub fn offered() -> Option<String> {
+    OFFERED.get()
 }
 
 /// Prints the notice on standard error when it applies (kb/ADR-0030 R6), with or without a terminal or `--json`.
@@ -76,10 +110,9 @@ pub fn notify() {
     if !enabled(setting().as_deref()) {
         return;
     }
-    let offered = SEEN.lock().unwrap().clone();
     if let Some(n) = notice(
         current().as_deref(),
-        offered.as_deref(),
+        offered().as_deref(),
         crate::glyphs::ascii(),
     ) {
         // Not `eprintln!`: it panics when standard error cannot be written (a closed pipe), and the notice must never
@@ -154,6 +187,46 @@ mod tests {
         assert!(enabled(None));
         assert!(enabled(Some("1")) && enabled(Some("")) && enabled(Some("no")));
         assert!(!enabled(Some("0")));
+    }
+
+    fn answer(cli: Option<&str>) -> reqwest::header::HeaderMap {
+        let mut h = reqwest::header::HeaderMap::new();
+        if let Some(v) = cli {
+            h.insert(reeve_protocol::CLI_VERSION_HEADER, v.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn only_a_cli_version_in_the_header_is_an_offered_build() {
+        assert_eq!(offered_in(&answer(Some(A))).as_deref(), Some(A));
+        assert_eq!(offered_in(&answer(None)), None);
+        for garbled in [
+            "latest",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "9f8e7d6",
+        ] {
+            assert_eq!(offered_in(&answer(Some(garbled))), None, "{garbled}");
+        }
+    }
+
+    #[test]
+    fn the_last_offered_build_wins_and_an_answer_without_one_keeps_it() {
+        // A store of its own: the process-wide one is shared by every test in this process.
+        let o = Offered::new();
+        assert_eq!(o.get(), None, "nothing before the first answer");
+        o.observe(&answer(Some(A)));
+        assert_eq!(o.get().as_deref(), Some(A));
+        o.observe(&answer(Some(B)));
+        assert_eq!(o.get().as_deref(), Some(B), "the last one wins");
+        o.observe(&answer(None));
+        assert_eq!(
+            o.get().as_deref(),
+            Some(B),
+            "an answer without the header keeps it"
+        );
+        o.observe(&answer(Some("not-a-version")));
+        assert_eq!(o.get().as_deref(), Some(B), "a garbled header is ignored");
     }
 
     #[test]

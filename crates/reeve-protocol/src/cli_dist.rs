@@ -1,14 +1,29 @@
-//! The CLI distribution contract between the server and the CLI (kb/ADR-0030): the response header that carries the
-//! build a server offers, the binaries of a bundle, and the CLI-version format. Not an `/api/v1` type; the OpenAPI
-//! document does not carry it. Shell copies of the names live in `deploy/cli/install.sh` (its platform map) and in
-//! `scripts/cli-build.sh`; PR B ties the latter to `CLI_FILES` with a test.
+//! The CLI distribution contract between the server and the CLI (kb/ADR-0030): where a bundle is served, the names of
+//! its files, how its two text files are served, the response header that carries the build a server offers, and the
+//! CLI-version format. Not an `/api/v1` type; the OpenAPI document does not carry it. Shell copies of the names live in
+//! `deploy/cli/install.sh` (its platform map) and in `scripts/cli-build.sh`; PR B ties the latter to `CLI_BINARIES`
+//! with a test.
 
 /// The response header carrying the CLI version of the bundle a server offers, while distribution is on. Lower case,
 /// as HTTP/2 sends it.
 pub const CLI_VERSION_HEADER: &str = "x-reeve-cli";
 
-/// The binaries of a bundle, one per supported target, in `SHA256SUMS` order.
-pub const CLI_FILES: [&str; 5] = [
+/// The path every file of a bundle is served under: `<server url>/cli/<name>`.
+pub const CLI_PATH: &str = "/cli/";
+
+/// The bundle's file holding the CLI version it offers: one CLI version, optionally followed by a newline.
+pub const VERSION_FILE: &str = "VERSION";
+
+/// The bundle's checksum file: one `<sha-256>  <name>` line per binary of `CLI_BINARIES`.
+pub const SUMS_FILE: &str = "SHA256SUMS";
+
+/// The media type `VERSION_FILE` and `SUMS_FILE` are served with (a `charset` parameter may follow). A `VERSION` served
+/// as anything else is not a bundle's: an older server answers unknown paths with its web page.
+pub const TEXT_CONTENT_TYPE: &str = "text/plain";
+
+/// The binaries of a bundle, one per supported target, in `SHA256SUMS` order. A bundle is these plus `VERSION_FILE`
+/// and `SUMS_FILE`.
+pub const CLI_BINARIES: [&str; 5] = [
     "reeve-linux-x86_64",
     "reeve-linux-aarch64",
     "reeve-macos-aarch64",
@@ -44,7 +59,8 @@ mod tests {
     }
 
     /// The header name is a valid lower-case token (the server and the CLI build a `HeaderName` from it with
-    /// `from_static`, which panics on upper case), and the names are distinct, one per platform, `.exe` only on Windows.
+    /// `from_static`, which panics on upper case), and the names are distinct (from each other and from the two text
+    /// files), one binary per platform, `.exe` only on Windows.
     #[test]
     fn the_names_are_well_formed() {
         assert!(
@@ -52,8 +68,9 @@ mod tests {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b == b'-')
         );
-        let mut seen = std::collections::HashSet::new();
-        for f in CLI_FILES {
+        assert!(CLI_PATH.starts_with('/') && CLI_PATH.ends_with('/'));
+        let mut seen = std::collections::HashSet::from([VERSION_FILE, SUMS_FILE]);
+        for f in CLI_BINARIES {
             assert!(seen.insert(f), "{f} twice");
             let (os, arch) = f
                 .strip_prefix("reeve-")

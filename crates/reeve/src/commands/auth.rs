@@ -129,7 +129,7 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 Outcome::Ok(me) => Outcome::Ok(serde_json::json!({
                     "url": url, "token_from_env": via_env,
                     "email": me.email, "role": me.role, "token_kind": me.token_kind,
-                    "cli": {"current": crate::cli_version::current(), "server": c.server_cli()},
+                    "cli": {"current": crate::cli_version::current(), "server": crate::cli_version::offered()},
                 })),
                 Outcome::Refused {
                     reasons,
