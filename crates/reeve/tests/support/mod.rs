@@ -413,7 +413,7 @@ async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
     }
 }
 
-/// Serves the script on a free loopback port; returns the base url.
+/// Adds `X-Reeve-Cli` to every answer when the script offers a build.
 async fn add_cli(State(s): State<Arc<Script>>, mut res: Response) -> Response {
     if let Some(v) = s.cli.lock().unwrap().clone() {
         res.headers_mut().insert("x-reeve-cli", v.parse().unwrap());
@@ -421,6 +421,7 @@ async fn add_cli(State(s): State<Arc<Script>>, mut res: Response) -> Response {
     res
 }
 
+/// Serves the script on a free loopback port; returns the base url.
 pub async fn serve(s: Arc<Script>) -> String {
     let me = s.me.clone();
     let config = InstanceConfigDto {

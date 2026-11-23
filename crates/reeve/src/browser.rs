@@ -14,15 +14,23 @@ pub(crate) fn argv(os: &str, url: &str) -> Vec<String> {
         .collect()
 }
 
-/// The opener for this platform, with its standard streams closed.
-pub(crate) fn command(url: &str) -> std::process::Command {
+/// The opener for this platform, with its standard streams closed. Only `http` and `https` URLs are opened: anything
+/// else (a `file:` URL, a bare path, a program name) would make the opener run or show something that is not a page.
+///
+/// On Windows `rundll32` never reports failure: it exits 0 whether or not anything opened, so a success status there
+/// proves nothing.
+pub(crate) fn command(url: &str) -> Result<std::process::Command, String> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("refusing to open a url that is not http or https".into());
+    }
     let a = argv(std::env::consts::OS, url);
     let mut c = std::process::Command::new(&a[0]);
     c.args(&a[1..])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    c
+    Ok(c)
 }
 
 #[cfg(test)]
@@ -38,5 +46,21 @@ mod tests {
             argv("windows", u),
             ["rundll32", "url.dll,FileProtocolHandler", u]
         );
+    }
+
+    #[test]
+    fn only_http_and_https_urls_are_opened() {
+        assert!(command("https://reeve.example.com/x?a=1&b=2").is_ok());
+        assert!(command("HTTP://127.0.0.1:3000/").is_ok());
+        for bad in [
+            "file:///etc/passwd",
+            "calc.exe",
+            "javascript:alert(1)",
+            "",
+            "ftp://x",
+            "-h",
+        ] {
+            assert!(command(bad).is_err(), "{bad}");
+        }
     }
 }

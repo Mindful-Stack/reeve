@@ -98,8 +98,13 @@ fn header(s: &State, w: usize) -> String {
     if !s.board.query().is_empty() {
         filter.push_str(&format!(" · \"{}\"", s.board.query()));
     }
+    let signed_out = crate::tui::app::signed_out();
+    let automation_long = format!(
+        "automation token {} run reeve auth login",
+        crate::glyphs::dash()
+    );
     let conn = if s.session.signed_out {
-        crate::tui::app::SIGNED_OUT
+        signed_out.as_str()
     } else if s.session.me.is_none() {
         "connecting"
     } else if s.board.stale().is_some() {
@@ -124,7 +129,7 @@ fn header(s: &State, w: usize) -> String {
             t.push(if short {
                 "automation token"
             } else {
-                "automation token — run reeve auth login"
+                automation_long.as_str()
             });
         }
         if s.session.cli_differs {
@@ -965,7 +970,11 @@ mod tests {
         sim.s.session.url = LONG_URL.into();
         sim.s.session.signed_out = true;
         let (rows, _) = sim.render(40, 10);
-        assert!(rows[0].contains(crate::tui::app::SIGNED_OUT), "{}", rows[0]);
+        assert!(
+            rows[0].contains(&crate::tui::app::signed_out()),
+            "{}",
+            rows[0]
+        );
 
         let mut sim = mine(vec!["ABC-1"]);
         sim.s.session.url = LONG_URL.into();

@@ -4536,10 +4536,11 @@ fn a_garbled_offered_build_is_ignored() {
 #[test]
 fn every_command_names_the_same_way_to_set_a_server_url() {
     let cfg = tempfile::tempdir().unwrap();
-    // `reeve update` joins this list when it exists (a later task).
     for args in [
         &["war-room", "ls"][..],
         &["auth", "login", "--no-browser"][..],
+        &["tui"][..],
+        &["update"][..],
     ] {
         let out = Command::cargo_bin("reeve")
             .unwrap()

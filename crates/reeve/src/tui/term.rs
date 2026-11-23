@@ -122,7 +122,7 @@ pub fn input() -> BoxStream<'static, Input> {
 pub struct TerminalIo;
 impl Io for TerminalIo {
     fn open(&self, url: &str) -> Result<(), String> {
-        let mut cmd = crate::browser::command(url);
+        let mut cmd = crate::browser::command(url)?;
         let opener = cmd.get_program().to_string_lossy().into_owned();
         let status = cmd.status().map_err(|e| format!("{opener}: {e}"))?;
         if status.success() {

@@ -299,5 +299,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
 
 /// Best effort: the address is already on stderr, so a missing opener is not an error.
 fn open_browser(page: &str) {
-    let _ = crate::browser::command(page).spawn();
+    if let Ok(mut c) = crate::browser::command(page) {
+        let _ = c.spawn();
+    }
 }

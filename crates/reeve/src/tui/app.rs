@@ -17,7 +17,10 @@ use std::{
 pub const STATUS_FOR: Duration = Duration::from_secs(5);
 /// From this many terminal columns the board shows five columns.
 pub const WIDE: u16 = 120;
-pub const SIGNED_OUT: &str = "signed out — run reeve auth login";
+/// The status line and header text of a signed-out session (the dash follows `--ascii`).
+pub fn signed_out() -> String {
+    format!("signed out {} run reeve auth login", crate::glyphs::dash())
+}
 
 #[derive(Debug)]
 pub struct Session {
@@ -354,7 +357,7 @@ impl State {
         fx.extend(self.set_epic_msg(set_epic::Msg::Reset, now));
         fx.extend(self.urgent_msg(urgent::Msg::Reset, now));
         fx.extend(self.live_msg(live::Msg::Stop, now));
-        self.set_status(SIGNED_OUT, now);
+        self.set_status(signed_out(), now);
         fx
     }
 
@@ -485,7 +488,7 @@ impl State {
                 fx.extend(self.step(m, now));
                 // The owner ran second and may have worded the 401 its own way; the sign-out's wording wins.
                 if !was_signed_out && self.session.signed_out {
-                    self.set_status(SIGNED_OUT, now);
+                    self.set_status(signed_out(), now);
                 }
                 fx
             }

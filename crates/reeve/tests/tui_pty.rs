@@ -180,7 +180,7 @@ async fn a_panic_still_hands_the_terminal_back_before_the_message() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_differing_build_is_a_header_note_and_nothing_on_stderr() {
+async fn a_differing_build_is_a_header_note_and_no_notice() {
     let s = Script::new();
     *s.cli.lock().unwrap() = Some("b".repeat(40));
     let url = serve(s).await;
