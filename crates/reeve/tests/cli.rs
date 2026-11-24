@@ -5750,3 +5750,112 @@ fn template_commands_refuse_bad_arguments_before_any_request() {
     refused(&["template", "edit", "7", "--name", "S"], "--version");
     refused(&["template", "show", "scenario"], "invalid");
 }
+
+/// What a create tells the server about templates. With no brief flag, no `--template` and no `--no-template`
+/// the CLI asks for the level's default (`default_template: true`); `--template` names one; `--no-template` and a
+/// brief flag each send neither field. `--no-template` exists on the command line only: nothing called
+/// `no_template` is ever on the wire.
+#[test]
+fn a_create_asks_for_the_default_template_unless_told_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("brief.md");
+    std::fs::write(&file, "").unwrap();
+    for base in [
+        &[
+            "initiative",
+            "create",
+            "--idempotency-key",
+            "k",
+            "--title",
+            "T",
+            "--horizon",
+            "Now",
+        ][..],
+        &["epic", "create", "--idempotency-key", "k", "--title", "T"][..],
+    ] {
+        let body = |extra: &[&str]| -> serde_json::Value {
+            let (_, body) = capture(&[base, extra].concat());
+            let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert!(body.get("no_template").is_none(), "{extra:?}: {body}");
+            body
+        };
+        // Nothing said: ask for the level's default.
+        let plain = body(&[]);
+        assert!(plain["brief"].is_null(), "{plain}");
+        assert_eq!(plain["default_template"], true, "{plain}");
+        assert!(plain.get("template").is_none(), "{plain}");
+
+        let named = body(&["--template", "Tech debt"]);
+        assert_eq!(named["template"], "Tech debt");
+        assert!(
+            named["brief"].is_null() && named.get("default_template").is_none(),
+            "{named}"
+        );
+
+        // --no-template sends nothing at all about templates: the server then applies none.
+        let none = body(&["--no-template"]);
+        assert!(none["brief"].is_null(), "{none}");
+        assert!(
+            none.get("template").is_none() && none.get("default_template").is_none(),
+            "{none}"
+        );
+
+        // A brief flag is a brief given, whatever it holds: an empty --brief and an empty file ask for no default.
+        for (given, brief) in [
+            (vec!["--brief", "Mine"], "Mine"),
+            (vec!["--brief", ""], ""),
+            (vec!["--brief-file", file.to_str().unwrap()], ""),
+            (vec!["--brief", "Mine", "--no-template"], "Mine"),
+        ] {
+            let mine = body(&given);
+            assert_eq!(mine["brief"], brief, "{given:?}: {mine}");
+            assert!(
+                mine.get("template").is_none() && mine.get("default_template").is_none(),
+                "{given:?}: {mine}"
+            );
+        }
+    }
+}
+
+/// A template cannot be combined with a brief or with --no-template: a usage error, before any request.
+#[test]
+fn a_create_refuses_a_template_beside_a_brief() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("brief.md");
+    std::fs::write(&file, "x").unwrap();
+    for extra in [
+        vec!["--template", "S", "--brief", "Mine"],
+        vec!["--template", "S", "--brief-file", file.to_str().unwrap()],
+        vec!["--template", "S", "--no-template"],
+    ] {
+        for base in [
+            &[
+                "initiative",
+                "create",
+                "--idempotency-key",
+                "k",
+                "--title",
+                "T",
+                "--horizon",
+                "Now",
+            ][..],
+            &["epic", "create", "--idempotency-key", "k", "--title", "T"][..],
+        ] {
+            let cfg = tempfile::tempdir().unwrap();
+            let out = reeve_cmd()
+                .env("REEVE_URL", "http://127.0.0.1:9")
+                .env("REEVE_TOKEN", "reeve_test")
+                .env("REEVE_CONFIG_DIR", cfg.path())
+                .args([base, &extra[..]].concat())
+                .timeout(Duration::from_secs(30))
+                .output()
+                .unwrap();
+            let err = String::from_utf8_lossy(&out.stderr).to_string();
+            assert_eq!(out.status.code(), Some(1), "{base:?} {extra:?}: {err}");
+            assert!(
+                err.contains("cannot be used with"),
+                "{base:?} {extra:?}: {err}"
+            );
+        }
+    }
+}

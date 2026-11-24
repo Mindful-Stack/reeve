@@ -6,7 +6,9 @@ use reeve_protocol::*;
 
 #[derive(Subcommand)]
 pub enum Initiative {
-    /// Create an initiative. A repeated --idempotency-key returns the same initiative.
+    /// Create an initiative. A repeated --idempotency-key returns the same initiative. The brief is --brief or
+    /// --brief-file; without one it starts from a brief template (--template, or the level's default), or from
+    /// nothing with --no-template.
     Create {
         /// Caller-chosen key that makes a retried create safe.
         #[arg(long)]
@@ -23,6 +25,15 @@ pub enum Initiative {
         /// Read the brief from this file, unchanged (no shell quoting in between); `-` reads stdin.
         #[arg(long, conflicts_with = "brief", value_name = "PATH")]
         brief_file: Option<std::path::PathBuf>,
+        /// Start the brief from the initiative brief template with this name (`reeve template ls --level
+        /// initiative`), compared without regard to case. Without it, without a brief and without --no-template,
+        /// the brief starts from the default initiative template when an admin has marked one.
+        #[arg(long, conflicts_with_all = ["brief", "brief_file", "no_template"], value_name = "NAME")]
+        template: Option<String>,
+        /// Do not start from the default template (the brief is empty unless one is given). Use it in scripts that
+        /// must start empty.
+        #[arg(long)]
+        no_template: bool,
         /// Target month, e.g. 2027-03.
         #[arg(long)]
         target_month: Option<String>,
@@ -120,26 +131,35 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
             target_month,
             owner,
             external_ref,
-        } => finish(
-            c.post::<InitiativeDto>(
-                "/initiatives",
-                serde_json::to_value(CreateInitiative {
-                    idempotency_key,
-                    title,
-                    brief: super::text_arg(brief, brief_file)?,
-                    horizon,
-                    target_month,
-                    owner,
-                    external_ref,
-                    template: None,
-                    default_template: false,
-                    attachments: vec![],
-                })?,
+            template,
+            no_template,
+        } => {
+            let brief = super::text_arg(brief, brief_file)?;
+            // Ask for the level's default only when the person named nothing: no brief flag (whatever the brief
+            // holds), no --template and no --no-template. --no-template sends nothing: a create that asks for no
+            // template gets none.
+            let default_template = brief.is_none() && template.is_none() && !no_template;
+            finish(
+                c.post::<InitiativeDto>(
+                    "/initiatives",
+                    serde_json::to_value(CreateInitiative {
+                        idempotency_key,
+                        title,
+                        brief,
+                        horizon,
+                        target_month,
+                        owner,
+                        external_ref,
+                        template,
+                        default_template,
+                        attachments: vec![],
+                    })?,
+                )
+                .await?,
+                json,
+                crate::render::initiative,
             )
-            .await?,
-            json,
-            crate::render::initiative,
-        ),
+        }
         Initiative::Urgent { key, reason, clear } => {
             super::urgent::<InitiativeDto>(
                 c,
