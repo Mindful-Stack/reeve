@@ -121,7 +121,7 @@ describe('a goal row', () => {
 		document.body.innerHTML = '';
 		show({ firstBucket: null, gates: goalGates({ goal_id: 7 }) });
 		tag = row().querySelector('.tag')!;
-		expect(tag.firstChild!.textContent).toBe('no initiative');
+		expect(tag.querySelector('.tag-text')!.textContent).toBe('no initiative');
 		expect(tag.classList.contains('warn')).toBe(false);
 	});
 
@@ -162,5 +162,27 @@ describe('a goal row', () => {
 		expect(row().querySelector('progress')).toBeNull();
 		expect(text(row().querySelector('.detail'))).toContain('0 completed · 0 in flight (0 in review) · 0 todo');
 		expect(text(row())).not.toContain('Waiting since');
+	});
+
+	it('keeps the warning mark apart from the text that is truncated, and reads the label once', () => {
+		show({ gates: goalGates({ goal_id: 7, initiatives: [goalInitiative('GRA-12', { horizon: 'Later', in_first_bucket: false }), goalInitiative('GRA-13')] }) });
+		const tag = row().querySelector('.tag')!;
+		const label = tag.querySelector('.tag-text')!;
+		const mark = tag.querySelector('.mark')!;
+		expect(label).not.toBe(mark);
+		expect(label.contains(mark)).toBe(false);
+		expect(mark.textContent).toBe('!');
+		expect(label.textContent).toBe('GRA-12 Later +1');
+		expect(label.getAttribute('aria-hidden')).toBe('true');
+		expect(mark.getAttribute('aria-hidden')).toBe('true');
+		// Visible and hidden words are separated, so none are glued together.
+		expect(text(tag)).toBe('GRA-12 Later +1 ! Initiative GRA-12, Later, and 1 more, not all in Now');
+	});
+
+	it('names its disclosure button by the outcome alone', () => {
+		show();
+		const b = row().querySelector('button.disclose')!.cloneNode(true) as HTMLElement;
+		b.querySelectorAll('[aria-hidden="true"]').forEach((e) => e.remove());
+		expect(b.textContent!.trim()).toBe('Customers book');
 	});
 });

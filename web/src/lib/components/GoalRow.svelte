@@ -4,7 +4,9 @@
      initials. Open it adds the initiatives its links reach, the check, the notes, the confidence, the counts (under
      the page's kb/ADR-0014 R2 rule line), the gates, and the page's own controls. It makes no write: the page owns
      which goals are open, so a live refetch keeps them. A warning is carried in words (a visible "!" and hidden text),
-     never by colour or hover alone; in a narrow column the link count and the bar drop out of the line. -->
+     never by colour or hover alone;
+     the article is a size container (`container-type: inline-size`), so anything the `controls` snippet positions as
+     fixed or absolute is positioned against the row; in a narrow column the link count and the bar drop out of the line. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Goal, GoalGates as Gates, GoalProgress } from '#lib/api/types.ts';
@@ -68,14 +70,19 @@
 			<span class="dot {confidenceTone(goal.confidence)}" role="img" aria-label={confidenceText} title={confidenceText}></span>
 		{/if}
 		<span class="tag" class:warn={tag.warn} title={tag.label}
-			>{tag.text}{#if tag.warn}{' '}<span aria-hidden="true">!</span>{/if}<span class="visually-hidden">{tag.label}</span></span
-		>
+			>
+			<span class="tag-text" aria-hidden="true">{tag.text}</span>
+			{#if tag.warn}{' '}<span class="mark" aria-hidden="true">!</span>{/if}{' '}
+			<span class="visually-hidden">{tag.label}</span>
+		</span>
 		{#if waits > 0}<span class="waits">waits on {waits}</span>{/if}
 		<span class="muted small links">{plural(goal.links.length, 'link', 'links')}</span>
 		{#if progress}
 			<progress max={Math.max(total, 1)} value={progress.completed} aria-hidden="true"></progress>
 			<span class="small numbers"
-				>{progress.completed}/{total}<span class="visually-hidden">{' '}{progress.completed} of {total} completed</span></span
+				><span aria-hidden="true">{progress.completed}/{total}</span>{' '}<span class="visually-hidden"
+					>{progress.completed} of {total} completed</span
+				></span
 			>
 		{/if}
 		<span class="badge" title={goal.owner}
@@ -162,15 +169,25 @@
 		white-space: nowrap;
 	}
 	.tag {
+		display: inline-flex;
 		flex: 0 1 auto;
-		max-width: 16ch;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		gap: 4px;
+		min-width: 0;
 		padding: 1px 6px;
 		border: 1px solid var(--line);
 		border-radius: 999px;
 		color: var(--muted);
 		font-family: var(--mono);
+	}
+	.tag-text {
+		min-width: 0;
+		max-width: 16ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.mark {
+		flex: none;
+		font-weight: 700;
 	}
 	.tag.warn {
 		border-color: var(--warn);
@@ -241,7 +258,7 @@
 		white-space: normal;
 		overflow-wrap: anywhere;
 	}
-	@container (max-width: 460px) {
+	@container (max-width: 600px) {
 		.links,
 		progress {
 			display: none;
