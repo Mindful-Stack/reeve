@@ -15,6 +15,25 @@ async fn get(h: &Harness, path: &str) -> serde_json::Value {
     b["value"].clone()
 }
 
+/// How many entries with `action` the activity log has on `key`.
+async fn entries(h: &Harness, key: &str, action: &str) -> usize {
+    get(h, &format!("/api/v1/activity?entity_key={key}"))
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["action"] == action)
+        .count()
+}
+
+/// How many rows `table` has, read from the database itself.
+async fn rows(h: &Harness, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn a_plan_is_created_in_one_request_and_reapplying_it_creates_nothing() {
     let h = harness().await;
@@ -322,4 +341,271 @@ async fn a_plan_delivery_state_needs_an_external_ref_and_is_never_done() {
     )
     .await;
     assert_eq!(st, 400);
+}
+
+/// kb/ADR-0031 R1, R4, R7 through a plan. A plan links items of any level: two it creates, one it creates to one
+/// that exists, and two that exist, one of them named by its external reference. Every link is logged on both of
+/// its items, a link that was there before the plan answers `created` false, a `relates_to` is answered as stored,
+/// and a second apply creates nothing.
+#[tokio::test]
+async fn a_plan_links_items_of_any_level_and_reapplying_it_creates_nothing() {
+    let h = harness().await;
+    let (_, old) = post(
+        &h,
+        "/api/v1/epics",
+        json!({"idempotency_key":"old","title":"Old epic"}),
+    )
+    .await;
+    let old = old["value"]["key"].as_str().unwrap().to_string();
+    let (_, held) = post(
+        &h,
+        "/api/v1/stories",
+        json!({"idempotency_key":"h","title":"Held","kind":"chore","criteria":[],"labels":[],"external_ref":"JPD-9"}),
+    )
+    .await;
+    let held = held["value"]["key"].as_str().unwrap().to_string();
+    // A link that exists before the plan names it.
+    let (st, b) = post(
+        &h,
+        &format!("/api/v1/items/{old}/links"),
+        json!({"type": "relates_to", "to": held}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let old_version = get(&h, &format!("/api/v1/epics/{old}")).await["version"].clone();
+
+    let plan = json!({
+        "id": "sequence",
+        "initiatives": [{"name": "ini", "title": "Ini", "horizon": "Now"}],
+        "epics": [{"name": "e", "title": "E", "initiative": "ini"}],
+        "stories": [
+            {"name": "first", "title": "First", "epic": "e"},
+            {"name": "second", "title": "Second", "epic": "e"}
+        ],
+        "links": [
+            {"from": "second", "type": "follows", "to": "first"},
+            {"from": "e", "type": "duplicates", "to": old},
+            {"from": "second", "type": "relates_to", "to": "ini"},
+            {"from": "JPD-9", "type": "relates_to", "to": old}
+        ]
+    });
+    let (st, b) = post(&h, "/api/v1/plans", plan.clone()).await;
+    assert_eq!(st, 200, "{b}");
+    let v = b["value"].clone();
+    let key = |name: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == name)
+            .unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    // The control for the two `relates_to` rows below: the plan names the higher key first in both.
+    assert!(
+        key("ini").as_bytes() < key("second").as_bytes() && old.as_bytes() < held.as_bytes(),
+        "the control: {} < {} and {old} < {held}",
+        key("ini"),
+        key("second")
+    );
+    let want = |created: [bool; 4]| {
+        json!([
+            {"from": key("second"), "from_level": "story", "type": "follows",
+             "to": key("first"), "to_level": "story", "created": created[0]},
+            {"from": key("e"), "from_level": "epic", "type": "duplicates",
+             "to": old, "to_level": "epic", "created": created[1]},
+            {"from": key("ini"), "from_level": "initiative", "type": "relates_to",
+             "to": key("second"), "to_level": "story", "created": created[2]},
+            {"from": old, "from_level": "epic", "type": "relates_to",
+             "to": held, "to_level": "story", "created": created[3]}
+        ])
+    };
+    assert_eq!(v["links"], want([true, true, true, false]), "{v}");
+
+    // Each end reads its link, with the other item's level and title.
+    let on_first = get(&h, &format!("/api/v1/items/{}/links", key("first"))).await;
+    assert_eq!(
+        on_first["links"],
+        json!([{"type": "follows", "direction": "in", "label": "is followed by",
+                "item": {"key": key("second"), "level": "story", "title": "Second"}}])
+    );
+    let on_ini = get(&h, &format!("/api/v1/items/{}/links", key("ini"))).await;
+    assert_eq!(
+        on_ini["links"],
+        json!([{"type": "relates_to", "direction": "out", "label": "relates to",
+                "item": {"key": key("second"), "level": "story", "title": "Second"}}])
+    );
+    // One entry on every item a link names; the link that was there writes none.
+    let logged = [
+        (key("second"), 2),
+        (key("first"), 1),
+        (key("e"), 1),
+        (key("ini"), 1),
+        (old.clone(), 2),
+        (held.clone(), 1),
+    ];
+    for (item, n) in &logged {
+        assert_eq!(entries(&h, item, "item_link_added").await, *n, "{item}");
+    }
+    assert_eq!(rows(&h, "item_links").await, 4);
+    // kb/ADR-0031 R3: a link is no field of its item.
+    assert_eq!(
+        get(&h, &format!("/api/v1/epics/{old}")).await["version"],
+        old_version,
+        "a plan's link leaves the version of an item it names alone"
+    );
+
+    // The same plan again: the same links, none created, nothing logged.
+    let (st, again) = post(&h, "/api/v1/plans", plan).await;
+    assert_eq!(st, 200, "{again}");
+    assert_eq!(again["value"]["links"], want([false; 4]), "{again}");
+    for (item, n) in &logged {
+        assert_eq!(
+            entries(&h, item, "item_link_added").await,
+            *n,
+            "{item} after the second apply"
+        );
+    }
+    assert_eq!(rows(&h, "item_links").await, 4);
+}
+
+/// The all-or-nothing check covers item links: an end that names nothing, a link from an item to itself (by one
+/// name, and by two spellings of one existing item) and a key that no item has are each reported, and nothing of
+/// the plan is written.
+#[tokio::test]
+async fn a_plan_with_a_bad_link_writes_nothing_and_names_every_problem() {
+    let h = harness().await;
+    let (_, held) = post(
+        &h,
+        "/api/v1/stories",
+        json!({"idempotency_key":"h","title":"Held","kind":"chore","criteria":[],"labels":[],"external_ref":"JPD-9"}),
+    )
+    .await;
+    let held = held["value"]["key"].as_str().unwrap().to_string();
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "bad-links",
+            "stories": [{"name": "a", "title": "A"}, {"name": "b", "title": "B"}],
+            "links": [
+                {"from": "a", "type": "follows", "to": "nowhere"},
+                {"from": "a", "type": "duplicates", "to": "a"},
+                {"from": held, "type": "duplicates", "to": "JPD-9"},
+                {"from": "TST-999", "type": "relates_to", "to": "b"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    let m = b["message"].as_str().unwrap();
+    for want in [
+        "item link \"a\" follows \"nowhere\": to \"nowhere\" is neither a name in the plan nor an existing item".to_string(),
+        "item link \"a\" duplicates \"a\": an item cannot have an item link to itself".to_string(),
+        format!("item link \"{held}\" duplicates \"JPD-9\": an item cannot have an item link to itself"),
+        "item link \"TST-999\" relates_to \"b\": from \"TST-999\" is neither a name in the plan nor an existing item".to_string(),
+    ] {
+        assert!(m.contains(&want), "missing {want:?} in {m}");
+    }
+    assert_eq!(
+        m.matches("an item cannot have an item link to itself")
+            .count(),
+        2,
+        "the two self links and no other: {m}"
+    );
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        1,
+        "only the story made before the plan"
+    );
+    assert_eq!(rows(&h, "item_links").await, 0);
+
+    // A name outside the three, and a misspelt field, are refused as the body is read; nothing is written either.
+    for bad in [
+        json!({"id": "t", "stories": [{"name": "a", "title": "A"}, {"name": "b", "title": "B"}],
+               "links": [{"from": "a", "type": "blocks", "to": "b"}]}),
+        json!({"id": "t", "stories": [{"name": "a", "title": "A"}, {"name": "b", "title": "B"}],
+               "links": [{"from": "a", "kind": "follows", "to": "b"}]}),
+    ] {
+        let (st, b) = post(&h, "/api/v1/plans", bad).await;
+        assert_eq!(st, 400, "{b}");
+        assert_eq!(b["code"], "validation");
+    }
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        1
+    );
+}
+
+/// A plan name and the key (or the external reference) of the item an earlier apply of this plan made for that
+/// name are one item. A plan applied again with a link between two such spellings is refused by the check, before
+/// anything is written: the story the edited plan adds does not exist afterwards. The same two spellings are also
+/// one end when they are written: a link named both ways is one link.
+#[tokio::test]
+async fn a_reapplied_plan_that_links_an_item_to_itself_under_two_spellings_writes_nothing() {
+    let h = harness().await;
+    let plan = |more: bool, links: serde_json::Value| {
+        let mut stories = vec![json!({"name": "s", "title": "S", "external_ref": "JPD-9"})];
+        if more {
+            stories.push(json!({"name": "t", "title": "T"}));
+        }
+        json!({"id": "alias", "stories": stories, "links": links})
+    };
+    let (st, b) = post(&h, "/api/v1/plans", plan(false, json!([]))).await;
+    assert_eq!(st, 200, "{b}");
+    let s = b["value"]["items"][0]["key"].as_str().unwrap().to_string();
+
+    for (to, name) in [(s.as_str(), "follows"), ("JPD-9", "duplicates")] {
+        let (st, b) = post(
+            &h,
+            "/api/v1/plans",
+            plan(true, json!([{"from": "s", "type": name, "to": to}])),
+        )
+        .await;
+        assert_eq!(st, 400, "{to}: {b}");
+        assert_eq!(b["code"], "validation");
+        let want =
+            format!("item link \"s\" {name} \"{to}\": an item cannot have an item link to itself");
+        assert!(
+            b["message"].as_str().unwrap().contains(&want),
+            "missing {want:?} in {b}"
+        );
+        assert_eq!(
+            get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+            1,
+            "{to}: the story the edited plan adds was not created"
+        );
+        assert_eq!(rows(&h, "item_links").await, 0, "{to}");
+    }
+
+    // The control: the edited plan is applied when its link joins two items, and the two spellings of `s` are one
+    // end there too: the second entry is the first one's link.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        plan(
+            true,
+            json!([
+                {"from": "t", "type": "follows", "to": s},
+                {"from": "t", "type": "follows", "to": "s"}
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let links = b["value"]["links"].as_array().unwrap();
+    assert_eq!(
+        (&links[0]["to"], &links[1]["to"]),
+        (&json!(s), &json!(s)),
+        "{b}"
+    );
+    assert_eq!(
+        (&links[0]["created"], &links[1]["created"]),
+        (&json!(true), &json!(false)),
+        "{b}"
+    );
+    assert_eq!(rows(&h, "item_links").await, 1);
 }

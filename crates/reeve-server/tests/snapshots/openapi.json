@@ -276,6 +276,13 @@
             },
             "type": "array"
           },
+          "links": {
+            "description": "Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`\ndoes that.",
+            "items": {
+              "$ref": "#/components/schemas/PlanLink"
+            },
+            "type": "array"
+          },
           "stories": {
             "items": {
               "$ref": "#/components/schemas/PlanStory"
@@ -3126,7 +3133,7 @@
         "type": "object"
       },
       "PlanApplied": {
-        "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge with `created` false when it was already there.",
+        "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge and item link with `created` false when it was already there.",
         "properties": {
           "blocks": {
             "items": {
@@ -3145,12 +3152,20 @@
               "$ref": "#/components/schemas/PlannedItem"
             },
             "type": "array"
+          },
+          "links": {
+            "description": "One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older\nserver) reads as none.",
+            "items": {
+              "$ref": "#/components/schemas/PlannedLink"
+            },
+            "type": "array"
           }
         },
         "required": [
           "items",
           "decisions",
-          "blocks"
+          "blocks",
+          "links"
         ],
         "type": "object"
       },
@@ -3293,6 +3308,27 @@
         ],
         "type": "object"
       },
+      "PlanLink": {
+        "additionalProperties": false,
+        "description": "`from` follows, duplicates or relates to `to`: always the forward form. Each end is a plan item's name (an\ninitiative, an epic or a story) or an existing item's key or external reference. `type` is written as on the\nwire (`relates_to`).",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ItemLinkType"
+          }
+        },
+        "required": [
+          "from",
+          "type",
+          "to"
+        ],
+        "type": "object"
+      },
       "PlanStory": {
         "additionalProperties": false,
         "properties": {
@@ -3420,6 +3456,38 @@
           "name",
           "item",
           "key",
+          "created"
+        ],
+        "type": "object"
+      },
+      "PlannedLink": {
+        "description": "An item link the plan asked for, as stored: a `relates_to` has the lower key in `from`, whichever end the plan\nnamed first. `created` is false when the link was already there.",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "from": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "from_level": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "to_level": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ItemLinkType"
+          }
+        },
+        "required": [
+          "from",
+          "from_level",
+          "type",
+          "to",
+          "to_level",
           "created"
         ],
         "type": "object"
@@ -6403,7 +6471,7 @@
                 "type": "string"
               },
               "value": {
-                "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge with `created` false when it was already there.",
+                "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge and item link with `created` false when it was already there.",
                 "properties": {
                   "blocks": {
                     "items": {
@@ -6422,12 +6490,20 @@
                       "$ref": "#/components/schemas/PlannedItem"
                     },
                     "type": "array"
+                  },
+                  "links": {
+                    "description": "One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older\nserver) reads as none.",
+                    "items": {
+                      "$ref": "#/components/schemas/PlannedLink"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
                   "items",
                   "decisions",
-                  "blocks"
+                  "blocks",
+                  "links"
                 ],
                 "type": "object"
               }

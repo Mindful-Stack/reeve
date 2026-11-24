@@ -1,5 +1,6 @@
-//! `POST /plans` (`reeve apply`): a plan of new items, required decisions and blockers, sent as one request.
-use crate::{enums::*, ids::Key};
+//! `POST /plans` (`reeve apply`): a plan of new items, required decisions, blockers and item links, sent as one
+//! request.
+use crate::{enums::*, ids::Key, links::ItemLinkType};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -22,6 +23,10 @@ pub struct ApplyPlan {
     pub decisions: Vec<PlanDecision>,
     #[serde(default)]
     pub blocks: Vec<PlanBlock>,
+    /// Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`
+    /// does that.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<PlanLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -103,13 +108,30 @@ pub struct PlanBlock {
     pub blocked_by: String,
 }
 
+/// `from` follows, duplicates or relates to `to`: always the forward form. Each end is a plan item's name (an
+/// initiative, an epic or a story) or an existing item's key or external reference. `type` is written as on the
+/// wire (`relates_to`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlanLink {
+    pub from: String,
+    #[serde(rename = "type")]
+    pub link_type: ItemLinkType,
+    pub to: String,
+}
+
 /// What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-/// this plan had made it, and every blocker edge with `created` false when it was already there.
+/// this plan had made it, and every blocker edge and item link with `created` false when it was already there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PlanApplied {
     pub items: Vec<PlannedItem>,
     pub decisions: Vec<PlannedDecision>,
     pub blocks: Vec<PlannedBlock>,
+    /// One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+    /// server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub links: Vec<PlannedLink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -132,4 +154,61 @@ pub struct PlannedBlock {
     pub story: Key,
     pub blocked_by: Key,
     pub created: bool,
+}
+
+/// An item link the plan asked for, as stored: a `relates_to` has the lower key in `from`, whichever end the plan
+/// named first. `created` is false when the link was already there.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PlannedLink {
+    pub from: Key,
+    pub from_level: ItemType,
+    #[serde(rename = "type")]
+    pub link_type: ItemLinkType,
+    pub to: Key,
+    pub to_level: ItemType,
+    pub created: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The CLI sends a plan by serialising this type. A plan that lists no item link must go out exactly as it did
+    /// before the field existed, so a server one release older does not refuse it for an unknown field.
+    #[test]
+    fn a_plan_without_links_goes_out_as_before_and_a_link_travels_as_from_type_to() {
+        let plain: ApplyPlan =
+            serde_json::from_value(json!({"id": "p", "stories": [{"name": "s", "title": "S"}]}))
+                .unwrap();
+        let sent = serde_json::to_value(&plain).unwrap();
+        assert!(
+            sent.get("blocks").is_some(),
+            "the control: an empty list that was always sent"
+        );
+        assert!(sent.get("links").is_none(), "{sent}");
+
+        let linked: ApplyPlan = serde_json::from_value(json!({
+            "id": "p",
+            "links": [{"from": "a", "type": "relates_to", "to": "ABC-7"}]
+        }))
+        .unwrap();
+        assert_eq!(linked.links[0].link_type, ItemLinkType::RelatesTo);
+        assert_eq!(
+            serde_json::to_value(&linked).unwrap()["links"],
+            json!([{"from": "a", "type": "relates_to", "to": "ABC-7"}])
+        );
+        for bad in [
+            json!({"id": "p", "links": [{"from": "a", "type": "blocks", "to": "b"}]}),
+            json!({"id": "p", "links": [{"from": "a", "type": "relates-to", "to": "b"}]}),
+            json!({"id": "p", "links": [{"from": "a", "kind": "follows", "to": "b"}]}),
+            json!({"id": "p", "links": [{"from": "a", "type": "follows", "to": "b", "direction": "in"}]}),
+            json!({"id": "p", "links": [{"from": "a", "type": "follows"}]}),
+        ] {
+            assert!(
+                serde_json::from_value::<ApplyPlan>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
+    }
 }

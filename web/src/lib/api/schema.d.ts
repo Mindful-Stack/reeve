@@ -1477,6 +1477,11 @@ export interface components {
             /** @description Names this plan: the same id and names are the same items on a second apply. */
             id: string;
             initiatives?: components["schemas"]["PlanInitiative"][];
+            /**
+             * @description Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`
+             *     does that.
+             */
+            links?: components["schemas"]["PlanLink"][];
             stories?: components["schemas"]["PlanStory"][];
         };
         ApproveConnection: {
@@ -2339,12 +2344,17 @@ export interface components {
         };
         /**
          * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-         *     this plan had made it, and every blocker edge with `created` false when it was already there.
+         *     this plan had made it, and every blocker edge and item link with `created` false when it was already there.
          */
         PlanApplied: {
             blocks: components["schemas"]["PlannedBlock"][];
             decisions: components["schemas"]["PlannedDecision"][];
             items: components["schemas"]["PlannedItem"][];
+            /**
+             * @description One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+             *     server) reads as none.
+             */
+            links: components["schemas"]["PlannedLink"][];
         };
         /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key. */
         PlanBlock: {
@@ -2378,6 +2388,16 @@ export interface components {
             target_month?: string | null;
             title: string;
         };
+        /**
+         * @description `from` follows, duplicates or relates to `to`: always the forward form. Each end is a plan item's name (an
+         *     initiative, an epic or a story) or an existing item's key or external reference. `type` is written as on the
+         *     wire (`relates_to`).
+         */
+        PlanLink: {
+            from: string;
+            to: string;
+            type: components["schemas"]["ItemLinkType"];
+        };
         PlanStory: {
             criteria?: string[];
             delivery?: null | components["schemas"]["DeliveryState"];
@@ -2406,6 +2426,18 @@ export interface components {
             item: components["schemas"]["ItemType"];
             key: components["schemas"]["Key"];
             name: string;
+        };
+        /**
+         * @description An item link the plan asked for, as stored: a `relates_to` has the lower key in `from`, whichever end the plan
+         *     named first. `created` is false when the link was already there.
+         */
+        PlannedLink: {
+            created: boolean;
+            from: components["schemas"]["Key"];
+            from_level: components["schemas"]["ItemType"];
+            to: components["schemas"]["Key"];
+            to_level: components["schemas"]["ItemType"];
+            type: components["schemas"]["ItemLinkType"];
         };
         /**
          * @description A pull request's state as GitHub last reported it; a cache, never a driver of delivery.
@@ -3331,12 +3363,17 @@ export interface components {
             outcome: "ok";
             /**
              * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-             *     this plan had made it, and every blocker edge with `created` false when it was already there.
+             *     this plan had made it, and every blocker edge and item link with `created` false when it was already there.
              */
             value: {
                 blocks: components["schemas"]["PlannedBlock"][];
                 decisions: components["schemas"]["PlannedDecision"][];
                 items: components["schemas"]["PlannedItem"][];
+                /**
+                 * @description One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+                 *     server) reads as none.
+                 */
+                links: components["schemas"]["PlannedLink"][];
             };
         } | {
             /** @enum {string} */

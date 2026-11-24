@@ -5,11 +5,22 @@
 //! here bypasses a rule a single create keeps: activity entries, external references and blocker targets are checked
 //! by the handlers the plan calls. A story carrying a migrated ticket's active state is grandfathered as the
 //! importer does: created in that state and logged `imported`, never through `move_story`.
+//!
+//! Each create commits on its own: a plan has no transaction around its items. Its item links (kb/ADR-0031) are
+//! written last, once every item it names exists, each in a transaction of its own, through the transaction-taking
+//! form of the item link handler, which records the entry on both items; the ports' writers are never named here
+//! (the isolation lint refuses them). One transaction per link, never one for all: an activity entry takes the
+//! activity log's lock until its transaction ends, so nothing may be inserted after it in the same transaction.
+//! The links are idempotent by their content, so a second apply answers each as existing, and finishes a plan
+//! whose earlier apply stopped at a link, once whatever made that link fail is corrected.
 use super::import::check_item_ref;
+use super::item_links::ResolvedItemLink;
 use super::*;
+use crate::domain::item_link::{ItemLink, ItemLinkError};
 use crate::domain::items::*;
 use reeve_protocol::{
-    ApplyPlan, DeliveryState, Kind, PlanApplied, PlannedBlock, PlannedDecision, PlannedItem,
+    ApplyPlan, DeliveryState, Kind, PlanApplied, PlanLink, PlannedBlock, PlannedDecision,
+    PlannedItem, PlannedLink,
 };
 use std::collections::HashMap;
 
@@ -31,6 +42,31 @@ fn type_name(t: ItemType) -> &'static str {
         ItemType::Initiative => "initiative",
         ItemType::Epic => "epic",
         ItemType::Story => "story",
+    }
+}
+
+/// Where a problem with an item link is, as the plan wrote it. "item link", never bare "link" (kb/ADR-0031 R6):
+/// the same answer may name a plan's blockers and a decision's record link.
+fn link_at(l: &PlanLink) -> String {
+    format!("item link {:?} {} {:?}", l.from, l.link_type.wire(), l.to)
+}
+
+/// Which item a reference of a plan names, as one comparable value. `Key`: the item exists, either an existing
+/// item (named by its key or its external reference) or a plan item an earlier apply of this plan created. `Name`:
+/// a plan item that does not exist yet; plan names are unique, so the name is its identity until it has a key.
+/// A `Key` and a `Name` are never one item: an item without a key cannot be one that has one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Identity {
+    Key(Key),
+    Name(String),
+}
+
+/// The level and key a plan reference came to, once the plan's items exist: `keys` holds the key of every item the
+/// plan names, and an existing item was resolved by the validation.
+fn end_of(refs: &HashMap<String, Target>, keys: &HashMap<String, Key>, r: &str) -> (ItemType, Key) {
+    match &refs[r] {
+        Target::Planned(t) => (*t, keys[r].clone()),
+        Target::Existing(t, k) => (*t, k.clone()),
     }
 }
 
@@ -150,11 +186,53 @@ impl Handlers {
                 created,
             });
         }
+        let links = self.apply_plan_links(c, &p, &refs, &keys).await?;
         Ok(PlanApplied {
             items,
             decisions,
             blocks,
+            links,
         })
+    }
+
+    /// The plan's item links, written after its items exist, each in a transaction of its own (begin, the `_in`
+    /// form, commit), as the plan's blockers commit one by one: a link's row and its two entries commit together or
+    /// not at all. Never one transaction for all of them: the entry takes the activity log's lock until its
+    /// transaction ends, and a transaction that went on to insert the next link while holding it could deadlock
+    /// with a caller adding that same link. A link that fails leaves the earlier ones in; applying the same plan id
+    /// again finishes, once whatever made the link fail is corrected. The ends are the plan's own (the level from
+    /// the validation, the key from the item just created or the existing one), so nothing is looked up here. A
+    /// link that is already there answers `created` false and writes nothing.
+    async fn apply_plan_links(
+        &self,
+        c: &Ctx,
+        p: &ApplyPlan,
+        refs: &HashMap<String, Target>,
+        keys: &HashMap<String, Key>,
+    ) -> Result<Vec<PlannedLink>, HandlerError> {
+        let mut links = Vec::with_capacity(p.links.len());
+        for l in &p.links {
+            // The ends as the plan named them; `ResolvedItemLink` keeps each level with its key when a
+            // `relates_to` is stored with the lower key first.
+            let link = ResolvedItemLink::new(
+                end_of(refs, keys, &l.from),
+                l.link_type,
+                end_of(refs, keys, &l.to),
+            )?;
+            let mut tx = self.pool.begin().await?;
+            let created = self.add_item_link_in(&mut tx, c, &link).await?;
+            tx.commit().await?;
+            let [(from_level, from), (to_level, to)] = link.ends();
+            links.push(PlannedLink {
+                from: from.clone(),
+                from_level,
+                link_type: l.link_type,
+                to: to.clone(),
+                to_level,
+                created,
+            });
+        }
+        Ok(links)
     }
 
     /// Every problem in the plan, all at once (an agent fixes the file in one pass), before anything is written. Returns
@@ -305,6 +383,13 @@ impl Handlers {
             ));
         }
 
+        // Item links (kb/ADR-0031): each end is an item of any level, resolved as a decision's `on` is.
+        for l in &p.links {
+            let at = link_at(l);
+            pending.push((l.from.clone(), None, format!("{at}: from {:?}", l.from)));
+            pending.push((l.to.clone(), None, format!("{at}: to {:?}", l.to)));
+        }
+
         for (r, wanted, at) in pending {
             match refs.get(&r) {
                 Some(Target::Planned(t)) | Some(Target::Existing(t, _)) => {
@@ -328,6 +413,30 @@ impl Handlers {
                         None => format!("{at} is neither a name in the plan nor an existing item"),
                     }),
                 },
+            }
+        }
+        // Checked once the references are resolved, on what each end is and not on how it is spelled: an item
+        // named by its key at one end and by its external reference, or by the name an earlier apply of this plan
+        // made it under, at the other is one item.
+        let ids = self.plan_identities(p, &refs).await?;
+        for l in &p.links {
+            let (Some(from), Some(to)) = (ids.get(&l.from), ids.get(&l.to)) else {
+                continue;
+            };
+            let refused = match (from, to) {
+                // Both items exist: the rule is the domain's, on the keys the link will be written with.
+                (Identity::Key(a), Identity::Key(b)) => {
+                    ItemLink::new(a.clone(), l.link_type, b.clone()).err()
+                }
+                // Neither exists yet: one name is one item.
+                (Identity::Name(a), Identity::Name(b)) => {
+                    (a == b).then_some(ItemLinkError::SelfLink)
+                }
+                // One exists and the other does not: two items.
+                _ => None,
+            };
+            if let Some(e) = refused {
+                errors.push(format!("{}: {e}", link_at(l)));
             }
         }
         self.check_external_refs(p, &mut errors).await?;
@@ -389,6 +498,42 @@ impl Handlers {
             }
         }
         Ok(())
+    }
+
+    /// The identity of every reference the plan's item links name, resolved once. A key or an external reference is
+    /// the key it resolved to; a plan name is the key an earlier apply of this plan gave it (the lookup
+    /// `check_external_refs` makes, through the item's idempotency key), or the name itself when there is none. A
+    /// reference that names nothing has no entry: the check has reported it already.
+    async fn plan_identities(
+        &self,
+        p: &ApplyPlan,
+        refs: &HashMap<String, Target>,
+    ) -> Result<HashMap<String, Identity>, HandlerError> {
+        let id = p.id.trim();
+        let named = p.links.iter().flat_map(|l| [&l.from, &l.to]);
+        let mut ids: HashMap<String, Identity> = HashMap::new();
+        for r in named {
+            if ids.contains_key(r) {
+                continue;
+            }
+            let identity = match refs.get(r) {
+                None => continue,
+                Some(Target::Existing(_, k)) => Identity::Key(k.clone()),
+                Some(Target::Planned(t)) => {
+                    match self
+                        .ports
+                        .keys
+                        .find_by_idempotency(*t, &plan_key(id, r))
+                        .await?
+                    {
+                        Some(k) => Identity::Key(k),
+                        None => Identity::Name(r.clone()),
+                    }
+                }
+            };
+            ids.insert(r.clone(), identity);
+        }
+        Ok(ids)
     }
 
     /// The existing item a reference names, of the wanted type (any type for a decision's target), or None.
