@@ -5,8 +5,8 @@
 //! state under that lock. Activity is each transaction's final work: entries are collected and recorded in order
 //! immediately before commit.
 use super::*;
-use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::items::Initiative;
+use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::readiness::decision_fact;
 use crate::domain::sprint::{self, Goal, GoalGates, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
