@@ -10466,14 +10466,14 @@ async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row
     assert_eq!(left("item_link_removed").await, (0, 2), "the control");
 }
 
-/// kb/ADR-0031 R3: item links are read by no gate and change no item. Readiness (from the list, and one story at a
+/// kb/ADR-0031 R3: item links and web links are read by no gate and change no item. Readiness (from the list, and one story at a
 /// time), delivery, resolution, rank, progress, the active sprint's goal with its link and its numbers, and every
 /// item's version are the same before any link exists, with every name in place between and on stories, an epic and
 /// an initiative, and after they are removed. A story that `follows` an unstarted story still starts, and a blocked
 /// story is refused for its blocker alone. And at the query level: computing readiness and moving a story send no
-/// statement that names `item_links`.
+/// statement that names `item_links` or `web_links`.
 #[tokio::test]
-async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
+async fn item_links_and_web_links_change_no_readiness_delivery_progress_rank_or_version() {
     use reeve_protocol::ItemLinkType::{Duplicates, Follows, RelatesTo};
     // `pg_counted`: this database has `pg_stat_statements`, which the query-level check at the end reads.
     let (_c, pool) = common::pg_counted().await;
@@ -10648,6 +10648,21 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         4,
         "the control: the links are in place"
     );
+    // A web link on stories in every state of readiness, on the epic and on the initiative.
+    let linked: Vec<&Key> = keys.iter().chain([&e, &i]).collect();
+    for (n, k) in linked.iter().enumerate() {
+        assert!(
+            h.add_web_link(&c, k, "Page", &format!("https://example.com/{n}"))
+                .await
+                .unwrap(),
+            "{k}"
+        );
+    }
+    assert_eq!(
+        h.link_listing(&keys[0]).await.unwrap().web_links.len(),
+        1,
+        "the control: the web links are in place"
+    );
     assert_eq!(snapshot().await, before, "with every link in place");
 
     for (from, t, to) in links {
@@ -10655,6 +10670,10 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
             h.remove_item_link(&c, from, t, to).await.unwrap(),
             "{from} {t:?} {to}"
         );
+    }
+    for k in &linked {
+        let id = h.link_listing(k).await.unwrap().web_links[0].id;
+        assert!(h.remove_web_link(&c, k, id).await.unwrap(), "{k}");
     }
     assert_eq!(snapshot().await, before, "after removing them");
 
@@ -10666,6 +10685,15 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
     h.add_item_link(&c, &keys[2], Follows, &keys[0])
         .await
         .unwrap();
+    // Web links are in place through the moves too: on the story that starts and on the one that is refused.
+    for (n, k) in [&keys[0], &keys[2]].into_iter().enumerate() {
+        assert!(
+            h.add_web_link(&c, k, "Page", &format!("https://example.com/moved/{n}"))
+                .await
+                .unwrap(),
+            "{k}"
+        );
+    }
     let blocked_reasons = before.3[2].reasons.clone();
     assert!(
         !blocked_reasons.is_empty(),
@@ -10703,6 +10731,10 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         naming("item_links").await > 0,
         "the control: a read of item_links is seen"
     );
+    assert!(
+        naming("web_links").await > 0,
+        "the control: a read of web_links is seen"
+    );
     common::statements(&pool, || async {
         // Readiness: one story at a time, and from the list.
         for k in &keys {
@@ -10739,6 +10771,11 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         naming("item_links").await,
         0,
         "computing readiness and moving a story send no statement that names item_links"
+    );
+    assert_eq!(
+        naming("web_links").await,
+        0,
+        "computing readiness and moving a story send no statement that names web_links"
     );
 }
 

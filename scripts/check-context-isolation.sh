@@ -12,7 +12,7 @@
 # The behaviour itself is pinned by tests: tests/handlers.rs
 # recording_a_pull_request_links_updates_and_never_moves_the_story, tests/handlers.rs
 # promises_change_no_readiness_delivery_progress_or_rank, tests/handlers.rs
-# item_links_change_no_readiness_delivery_progress_rank_or_version, tests/rules.rs (move_story's rules) and
+# item_links_and_web_links_change_no_readiness_delivery_progress_rank_or_version, tests/rules.rs (move_story's rules) and
 # tests/sprints.rs moves_never_depend_on_goals.
 # The domain DTO rule judges comments too, deliberately: planning's domain docs must not name a wire DTO either.
 set -euo pipefail
@@ -45,6 +45,7 @@ if [ -d "$planning/handler" ]; then
   moves="$planning/handler/moves.rs"
   sprints="$planning/handler/sprints.rs"
   item_links="$planning/handler/item_links.rs"
+  web_links="$planning/handler/web_links.rs"
   p="$planning/handler/prs.rs"
   # The rules below name these two files; renaming either away must not switch its rules off silently.
   if [ -f "$planning/handler/mod.rs" ]; then
@@ -77,12 +78,19 @@ if [ -d "$planning/handler" ]; then
       x=$(flat "$f" | g -oE "${lb}(add|remove)_item_link\b")
       if [ -n "$x" ]; then bad+="$f: add_item_link or remove_item_link outside handler/item_links.rs"$'\n'; fi
     fi
+    # kb/ADR-0031 R5, R7: only handler/web_links.rs writes a web link (port call, UFCS or method value), so every
+    # write records its entry on the item in the same transaction. Another handler (plan apply) calls that file's
+    # add_web_link_in or remove_web_link_in with its own transaction.
+    if [ "$f" != "$web_links" ]; then
+      x=$(flat "$f" | g -oE "${lb}(add|remove)_web_link\b")
+      if [ -n "$x" ]; then bad+="$f: add_web_link or remove_web_link outside handler/web_links.rs"$'\n'; fi
+    fi
   done <<< "$files"
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7, kb/ADR-0031 R3: moving a story never reads sprints, goals, urgency
-  # or the decision queue's windows, and never reads or writes promises or item links.
+  # or the decision queue's windows, and never reads or writes promises, item links or web links.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b")
-    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises or item links"$'\n'; fi
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b|${lb}ports\.web_links|web_links_of|${lb}web_link_dtos_in\b|${lb}(add|remove)_web_link(_in)?\b")
+    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises, item links or web links"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of
   # `ports` in prs.rs must be exactly `ports.pull_requests.<method>` or `ports.stories.get_story`, so an alias
