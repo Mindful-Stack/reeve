@@ -30,7 +30,7 @@
 	import { activeFilterCount, backlogState, backlogText, backlogView, stateParam, withoutFilters, withoutText, withPromised, type BacklogState, type BacklogView } from '#lib/backlog.ts';
 	import { isKind, KINDS } from '#lib/board.ts';
 	import { session } from '#lib/me.svelte.ts';
-	import { isPromisedFilter, PROMISED_NONE, PROMISED_OPTIONS } from '#lib/promise.ts';
+	import { ALL_STORIES, isPromisedFilter, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import Toggle from '#lib/ui/Toggle.svelte';
 
 	let {
@@ -152,7 +152,7 @@
 				return goto(withPromised(page.url, isPromisedFilter(v) ? v : null), { replace: true, reset: false });
 			}}
 		>
-			<option value="">{PROMISED_NONE}</option>
+			<option value="">{ALL_STORIES}</option>
 			{#each PROMISED_OPTIONS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
 		</select>
 	</label>

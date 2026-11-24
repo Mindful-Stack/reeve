@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The board's sprint pieces: the goals strip filters the cards by the goals the server says they serve, and
+// The board's sprint pieces: the Goal select filters the cards by the goals the server says they serve, and
 // a start that serves no goal shows the nudge bar after the move lands, keyed on the move's reply, never the card before
 // it. The move never depends on goals (kb/ADR-0014 R4): "Upkeep" writes nothing.
 import { flushSync, mount, unmount } from 'svelte';
@@ -8,7 +8,6 @@ import { page } from '$app/state';
 import type { Sprints, Story, StoryWithReadiness } from '#lib/api/types.ts';
 import { goal, sprint, sprintView, withReadiness } from '#lib/test/fixtures.ts';
 import { failure, json, type Call } from '#lib/test/net.ts';
-import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
 vi.mock('$app/state', async () => {
@@ -81,17 +80,8 @@ function serve(c: Call): unknown {
 	throw new Error(`unexpected ${method} ${path}`);
 }
 
-const view = () =>
-	sprintView(sprint({ goals: [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })] }), {
-		counts: {
-			completed: 3,
-			upkeep_completed: 1,
-			goals: [
-				{ goal_id: 1, completed: 2, in_flight: 1, todo: 4, in_review: 0, blocked_decisions: 0 },
-				{ goal_id: 2, completed: 0, in_flight: 0, todo: 1, in_review: 0, blocked_decisions: 0 }
-			]
-		}
-	});
+const view = (goals = [goal({ id: 1, outcome: 'Ship the import', confidence: 'at_risk' }), goal({ id: 2, outcome: 'Faster board' })]) =>
+	sprintView(sprint({ goals }));
 
 beforeEach(() => {
 	stories = [
@@ -120,7 +110,12 @@ afterEach(() => {
 
 const q = <T extends Element = HTMLElement>(sel: string) => document.body.querySelector<T>(sel);
 const shownKeys = () => [...document.body.querySelectorAll<HTMLElement>('[data-testid^="card-"]')].map((c) => c.dataset.testid!.slice(5));
-const chip = (id: number | 'upkeep') => q<HTMLButtonElement>(`[data-testid="goal-chip-${id}"]`)!;
+const goalSelect = () => q<HTMLSelectElement>('[data-testid="goal-filter"]');
+/** Picks an option as a person does. Svelte delegates `change`, so the event must bubble. */
+function choose(select: HTMLSelectElement, value: string) {
+	select.value = value;
+	select.dispatchEvent(new Event('change', { bubbles: true }));
+}
 const nudge = (key: string) => q(`li[data-key="${key}"] [data-testid="nudge"]`);
 /** Lets every request in flight answer and render, so a write that should not happen would have been sent. */
 async function settle() {
@@ -136,7 +131,7 @@ async function mounted() {
 	await vi.waitFor(() => {
 		flushSync();
 		expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
-		expect(q('[data-testid="goals-strip"]')).not.toBeNull();
+		expect(goalSelect()).not.toBeNull();
 	});
 }
 
@@ -146,40 +141,41 @@ function drop(key: string, col: string) {
 	q(`[data-testid="column-${col}"]`)!.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
 }
 
-describe('board goals strip', () => {
-	it('shows one chip per goal with its counts, the membership rule and a labelled confidence dot, then Upkeep', async () => {
+describe('board goal select', () => {
+	it('offers all stories, any sprint goal and upkeep, then the goals in a group with full outcome and confidence', async () => {
 		await mounted();
-		const strip = q('[data-testid="goals-strip"]')!;
-		expect(strip.getAttribute('title')).toBe(RULE);
-		const chips = [...strip.querySelectorAll('button')];
-		expect(chips.map((b) => b.dataset.testid)).toEqual(['goal-chip-1', 'goal-chip-2', 'goal-chip-upkeep']);
-		expect(chip(1).textContent).toContain('Ship the import');
-		expect(chip(1).textContent).toContain('2 / 1 / 4');
-		expect(chip(1).querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('confidence: at risk');
-		expect(chip(2).querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('confidence: not recorded');
-		expect(chip('upkeep').textContent?.trim()).toBe('Upkeep');
-		// kb/ADR-0014 R2: the rule is a visible line where counts show, not only a tooltip.
-		expect(strip.querySelector('.rule')?.textContent).toBe(RULE);
-		expect(chips.every((b) => b.getAttribute('aria-pressed') === 'false')).toBe(true);
+		const select = goalSelect()!;
+		expect([...select.querySelectorAll('option')].map((o) => [o.value, o.textContent])).toEqual([
+			['', 'all stories'],
+			['any', 'Any sprint goal'],
+			['none', 'Upkeep (no sprint goal)'],
+			['1', 'Ship the import (at risk)'],
+			['2', 'Faster board']
+		]);
+		const group = select.querySelector('optgroup')!;
+		expect(group.label).toBe('Sprint goals');
+		expect([...group.querySelectorAll('option')].map((o) => o.value)).toEqual(['1', '2']);
+		// The group is last: no ungrouped option trails it.
+		expect(select.lastElementChild).toBe(group);
+		expect(select.value).toBe('');
+		expect(select.closest('label')?.textContent).toContain('Goal');
+		// The strip is Home's now.
+		expect(q('[data-testid="goals-strip"]')).toBeNull();
 	});
 
-	it('a goal chip shows only its stories, each in its own column; clicking it again clears the filter', async () => {
+	it('any sprint goal shows the stories serving some goal, each in its own column; all stories clears it', async () => {
 		await mounted();
-		chip(1).click();
+		choose(goalSelect()!, 'any');
 		await vi.waitFor(() => {
 			flushSync();
-			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
+			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2', 'ABC-3', 'ABC-6']);
 		});
-		expect(page.url.searchParams.get('goal')).toBe('1');
-		expect(chip(1).getAttribute('aria-pressed')).toBe('true');
-		// The started goal story stays in its delivery column: the strip filters, it never moves cards; started stories that
-		// serve no goal or another goal are hidden like todo ones.
+		expect(page.url.searchParams.get('goal')).toBe('any');
+		// The select filters, it never moves cards.
 		expect(q('[data-testid="column-in_progress"] [data-testid="card-ABC-2"]')).not.toBeNull();
-		expect(q('[data-testid="card-ABC-5"]')).toBeNull();
-		expect(q('[data-testid="card-ABC-6"]')).toBeNull();
-		expect(q('[data-testid="column-todo"] [data-testid="card-ABC-1"]')).not.toBeNull();
+		expect(q('[data-testid="column-testing"] [data-testid="card-ABC-6"]')).not.toBeNull();
 
-		chip(1).click();
+		choose(goalSelect()!, '');
 		await vi.waitFor(() => {
 			flushSync();
 			expect(shownKeys().sort()).toEqual(ALL);
@@ -187,14 +183,114 @@ describe('board goals strip', () => {
 		expect(page.url.searchParams.has('goal')).toBe(false);
 	});
 
+	it('a goal shows only its stories', async () => {
+		await mounted();
+		choose(goalSelect()!, '1');
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
+		});
+		expect(page.url.searchParams.get('goal')).toBe('1');
+	});
+
 	it('Upkeep shows only the stories that serve no goal', async () => {
 		await mounted();
-		chip('upkeep').click();
+		choose(goalSelect()!, 'none');
 		await vi.waitFor(() => {
 			flushSync();
 			expect(shownKeys().sort()).toEqual(['ABC-4', 'ABC-5']);
 		});
 		expect(page.url.searchParams.get('goal')).toBe('none');
+	});
+
+	it('opens on ?goal=<id> with that goal selected and its full text as the tooltip', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		await mounted();
+		expect(goalSelect()!.value).toBe('1');
+		expect(goalSelect()!.title).toBe('Ship the import (at risk)');
+		expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
+	});
+
+	it('has no tooltip unless a goal is selected', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=any';
+		await mounted();
+		expect(goalSelect()!.hasAttribute('title')).toBe(false);
+	});
+
+	it('keeps the chosen goal and its cards when a live refetch re-renders the options', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		await mounted();
+		expect(goalSelect()!.title).toBe('Ship the import (at risk)');
+		// The refetch answers differently: goal 1's confidence changes and a goal 3 appears, so the options re-render.
+		sprints = {
+			active: view([
+				goal({ id: 1, outcome: 'Ship the import', confidence: 'off_track' }),
+				goal({ id: 2, outcome: 'Faster board' }),
+				goal({ id: 3, outcome: 'Cut the queue' })
+			]),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		for (const f of live.fns) f();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()!.title).toBe('Ship the import (off track)');
+			expect(goalSelect()!.querySelector('option[value="3"]')).not.toBeNull();
+		});
+		expect(goalSelect()!.value).toBe('1');
+		expect(shownKeys().sort()).toEqual(['ABC-1', 'ABC-2']);
+		expect(page.url.searchParams.get('goal')).toBe('1');
+	});
+
+	it('a refetch whose sprint no longer has the chosen goal shows all stories and keeps ?goal= in the URL', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		await mounted();
+		expect(goalSelect()!.title).toBe('Ship the import (at risk)');
+		sprints = {
+			active: view([goal({ id: 2, outcome: 'Faster board' }), goal({ id: 3, outcome: 'Cut the queue' })]),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		for (const f of live.fns) f();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()!.querySelector('option[value="3"]')).not.toBeNull();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(goalSelect()!.value).toBe('');
+		expect(goalSelect()!.hasAttribute('title')).toBe(false);
+		expect(page.url.searchParams.get('goal')).toBe('1');
+	});
+
+	it('a refetch in which the sprint has closed takes the select away and brings every card back', async () => {
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		await mounted();
+		sprints = { active: null, closed: [], draft: null, today: '2026-11-12' };
+		for (const f of live.fns) f();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()).toBeNull();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		// The parameter stays: it applies again when a sprint is next active.
+		expect(page.url.searchParams.get('goal')).toBe('1');
+	});
+
+	it('any sprint goal on an active sprint with no goals shows the select, no group and no cards', async () => {
+		sprints = { active: sprintView(sprint({ goals: [] })), closed: [], draft: null, today: '2026-11-12' };
+		// With no goals in the sprint the server reports none on any story.
+		stories = stories.map((s) => ({ ...s, story: { ...s.story, goals: [] } }));
+		(page.url as URL).href = 'http://localhost/board?goal=any';
+		app = mount(Page, { target: document.body });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(goalSelect()?.value).toBe('any');
+			expect(q('[data-testid="column-todo"]')).not.toBeNull();
+		});
+		expect(goalSelect()!.querySelector('optgroup')).toBeNull();
+		expect(shownKeys()).toEqual([]);
 	});
 
 	it('ignores ?goal= without an active sprint, so a stale filter hides nothing', async () => {
@@ -207,32 +303,77 @@ describe('board goals strip', () => {
 		});
 	});
 
-	it('ignores ?goal= naming no goal of the active sprint', async () => {
+	it('ignores ?goal= naming no goal of the active sprint, and shows all stories selected', async () => {
 		(page.url as URL).href = 'http://localhost/board?goal=99';
 		await mounted();
 		expect(shownKeys().sort()).toEqual(ALL);
-		expect(chip(1).getAttribute('aria-pressed')).toBe('false');
+		expect(goalSelect()!.value).toBe('');
 	});
 
-	it('a failed GET /sprints leaves the board without its strip, not without its cards', async () => {
+	it('a failed GET /sprints leaves the board without its Goal select, not without its cards', async () => {
 		sprints = null;
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
 			flushSync();
 			expect(shownKeys().sort()).toEqual(ALL);
 		});
-		expect(q('[data-testid="goals-strip"]')).toBeNull();
+		expect(goalSelect()).toBeNull();
 		expect(document.body.textContent).not.toContain('Could not load the board');
 	});
 
-	it('is absent with no active sprint, and the board still loads', async () => {
-		sprints = { active: null, closed: [], draft: null, today: '2026-11-12' };
+	it('is absent with no active sprint or only a draft, and the board still loads', async () => {
+		sprints = { active: null, closed: [], draft: sprint({ id: 2, state: 'draft', goals: [goal({ id: 9 })] }), today: '2026-11-12' };
 		app = mount(Page, { target: document.body });
 		await vi.waitFor(() => {
 			flushSync();
 			expect(q('[data-testid="card-ABC-1"]')).not.toBeNull();
 		});
-		expect(q('[data-testid="goals-strip"]')).toBeNull();
+		expect(goalSelect()).toBeNull();
+	});
+});
+
+describe('board with a draft sprint in the active slot', () => {
+	it('shows no Goal select and does not apply ?goal=', async () => {
+		sprints = {
+			active: sprintView(sprint({ id: 2, state: 'draft', goals: [goal({ id: 1, outcome: 'Ship the import' })] })),
+			closed: [],
+			draft: null,
+			today: '2026-11-12'
+		};
+		(page.url as URL).href = 'http://localhost/board?goal=1';
+		app = mount(Page, { target: document.body });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(goalSelect()).toBeNull();
+		expect(q('[data-testid="clear-filters"]')).toBeNull();
+	});
+});
+
+describe('board clear filters with a goal set', () => {
+	it('counts an applied goal, and one click removes goal and mine but keeps notready', async () => {
+		// Two cards are mine; only ABC-1 of them serves goal 1, so goal=1&mine=1 is a strict, non-empty subset.
+		stories = stories.map((s) =>
+			s.story.key === 'ABC-1' || s.story.key === 'ABC-3' ? { ...s, story: { ...s.story, owner: 'me@example.com' } } : s
+		);
+		(page.url as URL).href = 'http://localhost/board?goal=1&mine=1&notready=1';
+		app = mount(Page, { target: document.body });
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys()).toEqual(['ABC-1']);
+		});
+		const clear = () => q('[data-testid="clear-filters"]');
+		expect(clear()!.textContent?.trim()).toBe('Clear filters (2)');
+
+		clear()!.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(shownKeys().sort()).toEqual(ALL);
+		});
+		expect(page.url.search).toBe('?notready=1');
+		expect(goalSelect()!.value).toBe('');
+		expect(clear()).toBeNull();
 	});
 });
 

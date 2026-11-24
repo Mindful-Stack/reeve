@@ -6,51 +6,57 @@
 	import { page } from '$app/state';
 	import { api, ApiError, Conflict, Refused, unwrap } from '#lib/api/client.ts';
 	import { errorMessage } from '#lib/format.ts';
+	import { focusIsFree } from '#lib/focus.ts';
 	import { storyHref } from '#lib/drawer.ts';
 	import type { DecisionQueue, Epic, Reason, Sprints, StoryWithReadiness } from '#lib/api/types.ts';
 	import {
 		accepts,
 		afterPart,
 		applyFilters,
+		boardFilterCount,
+		boardOwners,
 		COLUMN_LABEL,
 		columnHeading,
-		COLUMNS,
 		columnise,
+		COLUMNS,
 		dropBefore,
 		fullLabel,
 		isKind,
 		KINDS,
 		neighbourBefore,
 		orderAfterDrop,
+		ownerFilter,
+		ownerSelectValue,
 		resolutionsFor,
 		splitUpNext,
+		withoutBoardFilters,
 		type Column,
 		type Resolution
 	} from '#lib/board.ts';
 	import { session } from '#lib/me.svelte.ts';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { moveStep, postMove } from '#lib/moves.ts';
-	import { isPromisedFilter, PROMISED_NONE, PROMISED_OPTIONS } from '#lib/promise.ts';
+	import { ALL_STORIES, isPromisedFilter, PROMISED_OPTIONS } from '#lib/promise.ts';
 	import { rankStory } from '#lib/rank.ts';
-	import { goalFilter, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
+	import { goalFilter, goalOptionLabel, nudgeStillDue, shouldNudge } from '#lib/sprint.ts';
 	import DecisionBanner from '#lib/components/DecisionBanner.svelte';
-	import GoalsStrip from '#lib/components/GoalsStrip.svelte';
 	import NudgeBar from '#lib/components/NudgeBar.svelte';
 	import OverridePrompt from '#lib/components/OverridePrompt.svelte';
 	import StoryCard from '#lib/components/StoryCard.svelte';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
-	import Toggle from '#lib/ui/Toggle.svelte';
 
 	type Move = { item: StoryWithReadiness; to: Column; resolution?: Resolution };
 
 	// The whole board as the server last reported it. Nothing here changes until a reload: no optimistic moves.
 	let columns = $state<Record<Column, StoryWithReadiness[]> | null>(null);
 	let epics = $state<Epic[]>([]);
-	/** The sprints as the server last reported them; only the active one shows here (the strip, the nudge). */
+	/** The sprints as the server last reported them; only the active one shows here (the Goal select, the nudge). */
 	let sprints = $state<Sprints | null>(null);
-	const active = $derived(sprints?.active ?? null);
+	/** The active sprint's view: the one condition for the Goal select, the goal filter and the nudge. Only a sprint whose
+	 *  state is `active` counts (the server fills the slot for no other). */
+	const active = $derived(sprints?.active?.sprint.state === 'active' ? sprints.active : null);
 	/** The readiness queue's counts and discovery rows as last loaded. A failed refetch keeps the last good ones (`queueStale`); a failed first
 	 *  load has none (`queueFailed`). The decisions are an extra: the cards never wait for them or depend on them. */
 	let readiness = $state<Pick<DecisionQueue, 'summary' | 'discoveries'> | null>(null);
@@ -61,6 +67,8 @@
 	let loadError = $state<string | null>(null);
 	let notice = $state<string | null>(null);
 	let busy = $state(false);
+	/** The Owner select, where focus goes when Clear filters removes itself. */
+	let ownerSelect = $state<HTMLSelectElement | null>(null);
 	let dragging = $state<{ item: StoryWithReadiness; from: Column } | null>(null);
 	/** A drop into done waiting for its resolution. */
 	let resolving = $state<Move | null>(null);
@@ -75,15 +83,31 @@
 		const kind = query.get('kind');
 		const promised = query.get('promised');
 		return {
-			// Only a goal of the active sprint: without one the strip is gone, and a stale `?goal=` must not hide every card.
+			// Only a goal of the active sprint: without one the select is gone, and a stale `?goal=` must not hide every card.
 			goal: goalFilter(query.get('goal'), active ? active.sprint.goals.map((g) => g.id) : null),
-			mine: query.get('mine') === '1' ? session.me?.email : undefined,
+			owner: ownerFilter(query, session.me?.email),
 			epic: query.get('epic') || undefined,
 			kind: isKind(kind) ? kind : undefined,
 			untriaged: query.get('untriaged') === '1',
 			promised: isPromisedFilter(promised) ? promised : null
 		};
 	});
+	/** The goal the Goal select is on, when it is one goal: its option text is the select's tooltip, since the closed
+	 *  control may clip it. */
+	const selectedGoal = $derived(
+		typeof filters.goal === 'number' ? (active?.sprint.goals.find((g) => g.id === filters.goal) ?? null) : null
+	);
+	/** The Owner select's people: who owns a loaded card (every column, before filtering), and the owner the URL names. */
+	const owners = $derived.by(() => {
+		const cols = columns;
+		return boardOwners(cols ? COLUMNS.flatMap((c) => cols[c]) : [], session.me?.email, filters.owner);
+	});
+	/** The Owner select's value, and its option when it is a person: the select is a fixed width, so a full email may be
+	 *  clipped exactly where the domain tells two people apart; the option's label is its tooltip. */
+	const ownerValue = $derived(ownerSelectValue(filters.owner, session.me?.email, owners));
+	const ownerTitle = $derived(owners.find((o) => o.email === ownerValue)?.label);
+	/** How many filters are applied: the number on Clear filters, which shows only when it is not zero. */
+	const filterCount = $derived(boardFilterCount(filters));
 	const visible = $derived.by(() => {
 		if (!columns) return null;
 		const cols = columns;
@@ -104,6 +128,25 @@
 		if (value) url.searchParams.set(name, value);
 		else url.searchParams.delete(name);
 		return goto(url, { replace: true, reset: false });
+	}
+
+	/** The Owner select's choice, as one navigation: `me` is `?mine=1` (the backlog's and the decisions page's word),
+	 *  a person or `none` is `?owner=`, and each removes the other. */
+	function setOwner(value: string): Promise<void> {
+		const url = new URL(page.url.href);
+		url.searchParams.delete('mine');
+		url.searchParams.delete('owner');
+		if (value === 'me') url.searchParams.set('mine', '1');
+		else if (value) url.searchParams.set('owner', value);
+		return goto(url, { replace: true, reset: false });
+	}
+
+	/** Clear filters: one navigation, then focus to the Owner select, since the button has just removed itself,
+	 *  unless the user already moved focus to another control meanwhile. */
+	async function clearFilters() {
+		await goto(withoutBoardFilters(new URL(page.url.href)), { replace: true, reset: false });
+		await tick();
+		if (focusIsFree(null)) ownerSelect?.focus();
 	}
 
 	/** "Show not ready" under "Nothing ready": opens the disclosure, then focuses its summary (the button goes away). */
@@ -145,7 +188,7 @@
 			const [stories, list, sprintList] = await Promise.all([
 				unwrap(api.GET('/api/v1/stories', { params: { query: { done: 'recent' } } })),
 				unwrap(api.GET('/api/v1/epics')),
-				// The sprints are an extra: a failure leaves the board without its strip and nudge, never without its cards.
+				// The sprints are an extra: a failure leaves the board without its Goal select and nudge, never without its cards.
 				unwrap(api.GET('/api/v1/sprints')).catch(() => null)
 			]);
 			if (seq !== latest) return;
@@ -343,15 +386,51 @@
 <svelte:head><title>Board · Reeve</title></svelte:head>
 
 <PageHeader title="Board">
-	<Toggle
-		label="Whose"
-		options={[
-			{ value: 'all', label: 'All' },
-			{ value: 'mine', label: 'Mine' }
-		]}
-		value={query.get('mine') === '1' ? 'mine' : 'all'}
-		onchange={(v) => setFilter('mine', v === 'mine' ? '1' : null)}
-	/>
+	<label class="field inline">
+		Owner
+		<select
+			class="owner"
+			data-testid="owner-filter"
+			bind:this={ownerSelect}
+			value={ownerValue}
+			title={ownerTitle}
+			onchange={(e) => setOwner(e.currentTarget.value)}
+		>
+			<option value="">{ALL_STORIES}</option>
+			{#if session.me}<option value="me">Me</option>{/if}
+			<option value="none">Unowned</option>
+			{#if owners.length > 0}
+				<optgroup label="On this board">
+					{#each owners as o (o.email)}
+						<option value={o.email}>{o.label}</option>
+					{/each}
+				</optgroup>
+			{/if}
+		</select>
+	</label>
+	{#if active}
+		<label class="field inline">
+			Goal
+			<select
+				class="goal"
+				data-testid="goal-filter"
+				value={filters.goal == null ? '' : String(filters.goal)}
+				title={selectedGoal ? goalOptionLabel(selectedGoal) : undefined}
+				onchange={(e) => setFilter('goal', e.currentTarget.value || null)}
+			>
+				<option value="">{ALL_STORIES}</option>
+				<option value="any">Any sprint goal</option>
+				<option value="none">Upkeep (no sprint goal)</option>
+				{#if active.sprint.goals.length > 0}
+					<optgroup label="Sprint goals">
+						{#each active.sprint.goals as g (g.id)}
+							<option value={String(g.id)}>{goalOptionLabel(g)}</option>
+						{/each}
+					</optgroup>
+				{/if}
+			</select>
+		</label>
+	{/if}
 	<label class="field inline">
 		Epic
 		<Picker
@@ -374,7 +453,7 @@
 	<label class="field inline">
 		Promise
 		<select value={filters.promised ?? ''} onchange={(e) => setFilter('promised', e.currentTarget.value || null)}>
-			<option value="">{PROMISED_NONE}</option>
+			<option value="">{ALL_STORIES}</option>
 			{#each PROMISED_OPTIONS as o (o.value)}
 				<option value={o.value}>{o.label}</option>
 			{/each}
@@ -388,11 +467,12 @@
 		/>
 		Untriaged
 	</label>
+	{#if filterCount > 0}
+		<button type="button" data-testid="clear-filters" onclick={clearFilters}>Clear filters ({filterCount})</button>
+	{/if}
 </PageHeader>
 
 {#if notice}<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>{/if}
-
-<GoalsStrip view={active} selected={filters.goal} onselect={(g) => setFilter('goal', g === null ? null : String(g))} />
 
 {#if readiness}
 	<DecisionBanner queue={readiness} />
@@ -545,6 +625,20 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		/* A field shrinks instead of pushing the page wider than a narrow window. */
+		min-width: 0;
+		max-width: 100%;
+	}
+	.inline select {
+		min-width: 0;
+	}
+	/* The closed control clips a long outcome; the open list shows it whole. */
+	select.goal {
+		max-width: 16rem;
+	}
+	/* Fixed: the options change as cards come and go, and a select sized to its widest option would shift the header. */
+	select.owner {
+		width: 11rem;
 	}
 	.check {
 		display: inline-flex;

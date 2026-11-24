@@ -202,9 +202,8 @@
 					<h2 id="home-sprint">The sprint</h2>
 					<a href="/sprint">Sprint →</a>
 				</div>
-				<!-- The strip's chips are its filter toggles; with nothing selected a chip passes its goal, and Home opens the
-				     board filtered to it. -->
-				<GoalsStrip view={active} selected={null} onselect={(g) => goto(`/board?goal=${g}`)} />
+				<!-- Each pill opens the board filtered to its goal (`?goal=<id>`), Upkeep to the stories serving none. -->
+				<GoalsStrip view={active} onselect={(g) => goto(`/board?goal=${g}`)} />
 			</section>
 		{/if}
 	{:else if !loadError}

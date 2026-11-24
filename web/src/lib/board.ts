@@ -1,5 +1,6 @@
 // Pure helpers for the delivery board: columns, reason labels, filters and rank placement.
 import type { PromisedFilter, Readiness, Reason, SimilarStory, Story, StoryWithReadiness } from '#lib/api/types.ts';
+import { sameEmail, short } from '#lib/format.ts';
 import { promisedMatches } from '#lib/promise.ts';
 
 export type Column = Story['delivery'];
@@ -174,14 +175,15 @@ function byKey(a: string, b: string): number {
 	return a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
 }
 
-/** `goal`: a goal's id keeps the stories that serve it, `'none'` the ones that serve no goal (upkeep); null or absent
- *  filters nothing. */
+/** `owner`: an email keeps that person's stories, `'none'` the unowned ones. `goal`: a goal's id keeps the stories that
+ *  serve it, `'any'` the ones that serve some goal of the active sprint, `'none'` the ones that serve no goal (upkeep).
+ *  Absent or null filters nothing. */
 export type Filters = {
-	mine?: string;
+	owner?: string | 'none';
 	epic?: string;
 	kind?: Kind;
 	untriaged?: boolean;
-	goal?: number | 'none' | null;
+	goal?: number | 'any' | 'none' | null;
 	/** The server's promise state and period, read through `promisedMatches`; only unfinished stories match. */
 	promised?: PromisedFilter | null;
 };
@@ -192,20 +194,101 @@ export function isUntriaged(s: StoryWithReadiness): boolean {
 	return s.story.delivery !== 'done' && s.readiness.reasons.some((r) => r.reason === 'untriaged');
 }
 
-/** `mine` is the caller's email; `untriaged` keeps the stories the server calls untriaged (`isUntriaged`); `goal` reads
- *  the goals the server says each story serves (`story.goals`, kb/ADR-0014 R3), never re-derived from links. */
+/** `untriaged` keeps the stories the server calls untriaged (`isUntriaged`); `goal` reads the goals the server says
+ *  each story serves (`story.goals`, the active sprint's only, kb/ADR-0014 R6), never re-derived from links. */
 export function applyFilters(stories: StoryWithReadiness[], f: Filters): StoryWithReadiness[] {
 	return stories.filter((row) => {
 		const s = row.story;
-		if (f.mine && s.owner !== f.mine) return false;
+		if (f.owner === 'none' && s.owner != null) return false;
+		if (f.owner != null && f.owner !== 'none' && !(s.owner != null && sameEmail(s.owner, f.owner))) return false;
 		if (f.epic && s.epic !== f.epic) return false;
 		if (f.kind && s.kind !== f.kind) return false;
 		if (f.untriaged && !isUntriaged(row)) return false;
 		if (f.goal === 'none' && s.goals.length > 0) return false;
+		if (f.goal === 'any' && s.goals.length === 0) return false;
 		if (typeof f.goal === 'number' && !s.goals.some((g) => g.id === f.goal)) return false;
 		if (f.promised != null && !(s.promise != null && promisedMatches(f.promised, s.promise))) return false;
 		return true;
 	});
+}
+
+/** The board's owner filter from its URL: `owner=none` (trimmed, in any case) is the unowned stories, `owner=me` (the
+ *  same) the signed-in person's, as `mine=1` is (no filter while signed out), any other `owner` that person's, else
+ *  `mine=1`. `owner` wins when both are set. `none` and `me` are the board's own URL values, reserved because a real
+ *  address contains `@`: the server's `owner` parameter takes an email, and the board sends neither. */
+export function ownerFilter(query: Pick<URLSearchParams, 'get'>, me: string | null | undefined): string | 'none' | undefined {
+	const owner = query.get('owner')?.trim();
+	if (owner) {
+		const word = owner.toLowerCase();
+		if (word === 'none') return 'none';
+		if (word === 'me') return me || undefined;
+		return owner;
+	}
+	return query.get('mine') === '1' && me ? me : undefined;
+}
+
+export type OwnerOption = { email: string; label: string };
+
+/** The Owner select's people: who owns a card among `stories` (every loaded card, before any filter), without the
+ *  signed-in person (the select's "Me"), plus `selected` when it names someone with no card, so an applied filter
+ *  always has its option. Listing users is admin-only, which is why the board is the source. The label is the email's
+ *  local part, or the whole email when two of the people the select stands for (the signed-in person included) share
+ *  one. Sorted by label, by code unit, so the order is the same in every locale. */
+export function boardOwners(
+	stories: StoryWithReadiness[],
+	me: string | null | undefined,
+	selected: string | 'none' | undefined
+): OwnerOption[] {
+	const id = (email: string) => email.trim().toLowerCase();
+	const emails = new Map<string, string>();
+	const add = (email: string | null | undefined) => {
+		if (!email || (me && sameEmail(email, me)) || emails.has(id(email))) return;
+		emails.set(id(email), email);
+	};
+	for (const row of stories) add(row.story.owner);
+	if (selected !== 'none') add(selected);
+
+	const locals = new Map<string, number>();
+	for (const email of [...emails.values(), ...(me ? [me] : [])]) {
+		const local = short(email).toLowerCase();
+		locals.set(local, (locals.get(local) ?? 0) + 1);
+	}
+	return [...emails.values()]
+		.map((email) => ({ email, label: (locals.get(short(email).toLowerCase()) ?? 0) > 1 ? email : short(email) }))
+		.sort((a, b) => {
+			const [x, y] = [a.label.toLowerCase(), b.label.toLowerCase()];
+			return x < y ? -1 : x > y ? 1 : 0;
+		});
+}
+
+/** The Owner select's value for a filter: `''` (no filter), `'me'`, `'none'`, or the email exactly as its option
+ *  holds it. A select shows the option whose value is identical to its own, so the URL's spelling of an email (another
+ *  case, padded) would show none. `options` is expected to come from `boardOwners(…, owner)`, which always includes the
+ *  selected owner; if it does not, the URL's spelling is returned and the select shows no option. */
+export function ownerSelectValue(
+	owner: string | 'none' | undefined,
+	me: string | null | undefined,
+	options: readonly OwnerOption[]
+): string {
+	if (owner == null) return '';
+	if (owner === 'none') return 'none';
+	if (me && sameEmail(owner, me)) return 'me';
+	return options.find((o) => sameEmail(o.email, owner))?.email ?? owner;
+}
+
+/** The URL parameters `Clear filters` removes. `notready` is a disclosure's state, not a filter, and stays. */
+export const BOARD_FILTER_PARAMS = ['mine', 'owner', 'goal', 'epic', 'kind', 'promised', 'untriaged'] as const;
+
+/** Clear filters (n): the filters the board applies, each counted once (a `?goal=` it cannot apply is not one). */
+export function boardFilterCount(f: Filters): number {
+	return [f.owner != null, f.goal != null, !!f.epic, !!f.kind, f.promised != null, !!f.untriaged].filter(Boolean).length;
+}
+
+/** Clear filters: a copy of the URL without the board's filter parameters. */
+export function withoutBoardFilters(url: URL): URL {
+	const next = new URL(url.href);
+	for (const name of BOARD_FILTER_PARAMS) next.searchParams.delete(name);
+	return next;
 }
 
 /** `column` is the complete todo column in rank order (hidden cards included). Returns the keys in the order the server
