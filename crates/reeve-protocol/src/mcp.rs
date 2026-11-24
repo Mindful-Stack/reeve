@@ -544,6 +544,85 @@ impl From<EpicDto> for EpicReceipt {
     }
 }
 
+// `create_initiative` (`reeve initiative create`). The doc comment is the schema's root description.
+/// A new initiative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInitiativeInput {
+    /// A key you make up for this one create, 1 to 100 characters, for example `bookings-initiative-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Send the same key again only to retry the same create: a repeat writes nothing and answers the initiative the key already made.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// A short title, at most 200 characters.
+    pub title: String,
+    /// The planning horizon: one of this instance's horizon buckets.
+    pub horizon: String,
+    /// The brief, in Markdown: why this initiative exists.
+    pub brief: Option<String>,
+    /// The target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused.
+    pub target_month: Option<String>,
+    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address.
+    pub owner: Option<String>,
+}
+
+// `edit_initiative` (`reeve initiative edit`). The doc comment is the schema's root description.
+/// A change to one initiative: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditInitiativeInput {
+    /// The initiative's key.
+    pub key: String,
+    /// The initiative's `version` as you last read it (get_initiative or list_initiatives). If the initiative changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new brief, in Markdown, replacing the whole text: to change a part, send the brief exactly as get_initiative gave it with only that part changed. Never send a text that ends with `[cut: N more characters]`.
+    pub brief: Option<String>,
+    /// A new horizon: one of this instance's horizon buckets.
+    pub horizon: Option<String>,
+    /// A new target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused. Not together with `clear_target_month`.
+    pub target_month: Option<String>,
+    /// True removes the target month. Not together with `target_month`.
+    #[serde(default)]
+    pub clear_target_month: bool,
+    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner. Not together with `clear_owner`.
+    pub owner: Option<String>,
+    /// True removes the owner. Not together with `owner`.
+    #[serde(default)]
+    pub clear_owner: bool,
+}
+
+/// What a tool that changes an initiative answers: the key and the new version, and the title, which the planner
+/// limits to 200 characters. Nothing else an initiative holds is in it, because nothing else has a length bound:
+/// not the brief, not the owner, not the target month (a row from before the month was checked may hold any text),
+/// and not the horizon (a configured bucket has no maximum length, and an initiative keeps a horizon that is no
+/// longer configured). A receipt is sent after its write is committed, so it must never be too large to send.
+/// Reading the initiative whole is `get_initiative`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InitiativeReceipt {
+    pub key: Key,
+    pub title: String,
+    pub version: i64,
+    /// `create_initiative` only: whether this call created the initiative. False: its idempotency key had
+    /// already made this initiative, and nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<bool>,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl From<InitiativeDto> for InitiativeReceipt {
+    fn from(initiative: InitiativeDto) -> Self {
+        Self {
+            key: initiative.key,
+            title: initiative.title,
+            version: initiative.version,
+            created: None,
+            note: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,6 +925,66 @@ mod tests {
             let mut edit = json!({"key": "TST-2", "version": 3});
             edit[withheld] = json!(true);
             let e = serde_json::from_value::<EditEpicInput>(edit)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "edit: {e}");
+        }
+    }
+
+    /// An initiative's receipt carries nothing whose size the planner does not limit: no brief, and no horizon,
+    /// target month or owner either (a stored horizon and a stored target month have no length bound).
+    #[test]
+    fn an_initiative_receipt_is_these_fields() {
+        let initiative: InitiativeDto = serde_json::from_value(json!({
+            "key": "TST-1", "title": "Bookings", "brief": "A long brief.", "horizon": "Now",
+            "target_month": "2027-01", "owner": "dan@example.com", "discovery_complete": null,
+            "progress": 0.5, "external_ref": "JPD-30", "version": 2
+        }))
+        .unwrap();
+        let mut receipt = InitiativeReceipt::from(initiative);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-1", "title": "Bookings", "version": 2})
+        );
+        receipt.created = Some(true);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-1", "title": "Bookings", "version": 2, "created": true})
+        );
+    }
+
+    #[test]
+    fn the_initiative_inputs_refuse_what_the_tools_withhold() {
+        let base = json!({"idempotency_key": "k1", "title": "Bookings", "horizon": "Now"});
+        let ok: CreateInitiativeInput = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!((ok.brief, ok.target_month, ok.owner), (None, None, None));
+        // The horizon is required, as `reeve initiative create --horizon` is.
+        let e = serde_json::from_value::<CreateInitiativeInput>(
+            json!({"idempotency_key": "k1", "title": "Bookings"}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("horizon"), "{e}");
+        let edit: EditInitiativeInput =
+            serde_json::from_value(json!({"key": "TST-1", "version": 2})).unwrap();
+        assert_eq!((edit.clear_owner, edit.clear_target_month), (false, false));
+        for withheld in [
+            "external_ref",
+            "attachments",
+            "discovery_complete",
+            "complete",
+            "progress",
+            "urgent",
+        ] {
+            let mut create = base.clone();
+            create[withheld] = json!(true);
+            let e = serde_json::from_value::<CreateInitiativeInput>(create)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "create: {e}");
+            let mut edit = json!({"key": "TST-1", "version": 2});
+            edit[withheld] = json!(true);
+            let e = serde_json::from_value::<EditInitiativeInput>(edit)
                 .unwrap_err()
                 .to_string();
             assert!(e.contains(withheld), "edit: {e}");

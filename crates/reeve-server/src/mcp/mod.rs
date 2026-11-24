@@ -33,7 +33,7 @@ const TTL_MS: u64 = 300_000;
 pub(crate) type Tools = std::sync::Arc<Vec<tools::Tool>>;
 
 pub(crate) fn build_tools(config: &crate::ServerConfig) -> Tools {
-    std::sync::Arc::new(tools::registry(&config.key_prefix))
+    std::sync::Arc::new(tools::registry(&config.key_prefix, &config.horizon_buckets))
 }
 
 fn capabilities() -> Value {

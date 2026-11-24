@@ -4,8 +4,10 @@
 mod add_comment;
 mod bound;
 mod create_epic;
+mod create_initiative;
 mod create_story;
 mod edit_epic;
+mod edit_initiative;
 mod edit_story;
 mod get_epic;
 mod get_initiative;
@@ -103,8 +105,9 @@ impl Tool {
     }
 }
 
-/// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions.
-pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
+/// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions; `horizons` are
+/// its horizon buckets, which the initiative tools list for the `horizon` argument.
+pub(crate) fn registry(key_prefix: &str, horizons: &[String]) -> Vec<Tool> {
     vec![
         search_items::tool(key_prefix),
         list_stories::tool(),
@@ -121,6 +124,8 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         move_story::tool(key_prefix),
         create_epic::tool(key_prefix),
         edit_epic::tool(key_prefix),
+        create_initiative::tool(horizons),
+        edit_initiative::tool(key_prefix, horizons),
     ]
 }
 
@@ -353,6 +358,11 @@ mod tests {
         Box::pin(async { Ok(json!({})) })
     }
 
+    /// The registry as an instance with two horizon buckets builds it.
+    fn tools() -> Vec<Tool> {
+        registry("TST", &["Now".to_string(), "Later".to_string()])
+    }
+
     /// A tool that takes nothing and does nothing, read-only or not: for the scope rule alone.
     fn a_tool(name: &'static str, read_only: bool) -> Tool {
         Tool {
@@ -410,15 +420,17 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 6] = [
+        const WRITE: [&str; 8] = [
             "create_story",
             "edit_story",
             "add_comment",
             "move_story",
             "create_epic",
             "edit_epic",
+            "create_initiative",
+            "edit_initiative",
         ];
-        let tools = registry("TST");
+        let tools = tools();
         let named = |read_only: bool| -> Vec<&str> {
             tools
                 .iter()
@@ -434,7 +446,7 @@ mod tests {
     /// reference or to attach, and every tool's input refuses what it does not list.
     #[test]
     fn no_tool_takes_an_override_reason_or_another_withheld_field() {
-        for tool in registry("TST") {
+        for tool in tools() {
             let properties = tool
                 .input_schema
                 .get("properties")
@@ -462,7 +474,7 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_title_and_a_description_and_describes_every_input() {
-        for tool in registry("TST") {
+        for tool in tools() {
             assert!(!tool.title.is_empty(), "{}", tool.name);
             assert!(!tool.description.is_empty(), "{}", tool.name);
             let properties = tool
@@ -733,7 +745,7 @@ mod tests {
             "edit_epic",
             "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that its stories now wait on other discovery and decisions.",
         )];
-        let tools = registry("TST");
+        let tools = tools();
         for (name, sentence) in SAID {
             let tool = tools.iter().find(|t| t.name == name).unwrap();
             assert!(

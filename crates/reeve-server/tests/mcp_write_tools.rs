@@ -451,7 +451,9 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
             "add_comment",
             "move_story",
             "create_epic",
-            "edit_epic"
+            "edit_epic",
+            "create_initiative",
+            "edit_initiative"
         ],
         "every tool that changes anything"
     );
@@ -468,7 +470,11 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
         shown
     );
 
-    let count = [rows(h, "stories").await, rows(h, "epics").await];
+    let count = [
+        rows(h, "stories").await,
+        rows(h, "epics").await,
+        rows(h, "initiatives").await,
+    ];
     let challenge = "Bearer error=\"insufficient_scope\", scope=\"write\", resource_metadata=\"http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp\", error_description=\"This tool changes the planner and needs a connection that may read and change\"";
     for name in &writes {
         // Arguments `create_story` and `create_epic` would accept: without the check a story or an epic would be
@@ -489,7 +495,11 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
         }
     }
     assert_eq!(
-        [rows(h, "stories").await, rows(h, "epics").await],
+        [
+            rows(h, "stories").await,
+            rows(h, "epics").await,
+            rows(h, "initiatives").await,
+        ],
         count,
         "nothing was written"
     );
@@ -654,6 +664,12 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         json!({"idempotency_key": "q-e1", "title": "Checkout"}),
     )
     .await);
+    let an_initiative = key(&post(
+        h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key": "q-i1", "title": "Bookings", "horizon": "Now"}),
+    )
+    .await);
     // Arguments each tool would accept and act on, for call `n`.
     let valid = |name: &str, n: usize| match name {
         "create_story" => {
@@ -668,15 +684,23 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
             json!({"idempotency_key": format!("q-{n}"), "title": format!("Epic {n}")})
         }
         "edit_epic" => json!({"key": an_epic, "version": 1, "title": format!("Edit {n}")}),
+        "create_initiative" => {
+            json!({"idempotency_key": format!("q-{n}"), "title": format!("Initiative {n}"), "horizon": "Now"})
+        }
+        "edit_initiative" => {
+            json!({"key": an_initiative, "version": 1, "title": format!("Edit {n}")})
+        }
         other => panic!("{other}"),
     };
-    const WRITE: [&str; 6] = [
+    const WRITE: [&str; 8] = [
         "create_story",
         "edit_story",
         "add_comment",
         "move_story",
         "create_epic",
         "edit_epic",
+        "create_initiative",
+        "edit_initiative",
     ];
     let over = "Too many changes:";
 
@@ -697,6 +721,7 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         rows(h, "stories").await,
         rows(h, "comments").await,
         rows(h, "epics").await,
+        rows(h, "initiatives").await,
     ];
     for name in WRITE {
         let said = refusal(h, &writer, name, valid(name, 99)).await;
@@ -707,6 +732,7 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
             rows(h, "stories").await,
             rows(h, "comments").await,
             rows(h, "epics").await,
+            rows(h, "initiatives").await,
         ],
         count,
         "nothing was written at exhaustion"

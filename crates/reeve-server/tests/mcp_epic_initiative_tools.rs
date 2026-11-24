@@ -7,6 +7,7 @@ use common::oauth::{Flow, connect, flow};
 use common::*;
 use serde_json::{Value, json};
 
+const BOB: &str = "bob@example.com";
 const DAN: &str = "dan@example.com";
 
 /// A real access token of `scope` for the person whose API token `session` is. `f.h.admin_token` is dan's
@@ -17,6 +18,10 @@ async fn token(f: &Flow, session: &str, scope: &str) -> String {
 
 async fn epic(h: &Harness, key: &str) -> Value {
     api(h, &h.admin_token, &format!("/api/v1/epics/{key}")).await
+}
+
+async fn initiative(h: &Harness, key: &str) -> Value {
+    api(h, &h.admin_token, &format!("/api/v1/initiatives/{key}")).await
 }
 
 /// An initiative made through the API as the admin; its key.
@@ -419,4 +424,405 @@ async fn edit_epic_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
         json!({"key": made, "version": v, "title": "Accepted"}),
     )
     .await;
+}
+
+const INITIATIVE_FIELDS: [&str; 8] = [
+    "title",
+    "brief",
+    "horizon",
+    "target_month",
+    "owner",
+    "discovery_complete",
+    "external_ref",
+    "version",
+];
+
+#[tokio::test]
+async fn create_initiative_writes_what_the_route_writes_and_answers_a_receipt() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let arguments = |idem: &str| {
+        json!({"idempotency_key": idem, "title": " Bookings ", "horizon": "Next",
+        "brief": "Why it exists.", "target_month": "2027-03", "owner": "Bob@Example.com"})
+    };
+    let receipt = answer(h, &dan, "create_initiative", arguments("k1")).await;
+    let made = key(&receipt);
+    let stored = initiative(h, &made).await;
+    assert_eq!(
+        receipt,
+        json!({"key": made, "title": "Bookings", "version": stored["version"], "created": true})
+    );
+    // The same create through the route stores the same initiative: one action behind both. The handler trims
+    // the title and normalises the owner; nothing marks discovery.
+    let by_route = post(h, "/api/v1/initiatives", arguments("ci-api")).await;
+    assert_eq!(
+        fields(&stored, &INITIATIVE_FIELDS),
+        fields(&by_route, &INITIATIVE_FIELDS)
+    );
+    assert_eq!(
+        fields(&stored, &INITIATIVE_FIELDS),
+        json!([
+            "Bookings",
+            "Why it exists.",
+            "Next",
+            "2027-03",
+            BOB,
+            null,
+            null,
+            1
+        ])
+    );
+    assert_eq!(
+        trail(h, &made).await,
+        vec![created_by_dan_through_the_flow()]
+    );
+    // A repeat writes nothing and says which initiative the key made.
+    let count = rows(h, "initiatives").await;
+    let repeat = answer(
+        h,
+        &dan,
+        "create_initiative",
+        json!({"idempotency_key": "k1", "title": "Something else", "horizon": "Now"}),
+    )
+    .await;
+    assert_eq!(
+        repeat,
+        json!({"key": made, "title": "Bookings", "version": stored["version"],
+               "created": false, "note": repeat_note(&made, "Bookings")})
+    );
+    assert_eq!(rows(h, "initiatives").await, count);
+    let stored_key: String =
+        sqlx::query_scalar("SELECT idempotency_key FROM initiatives WHERE key = $1")
+            .bind(&made)
+            .fetch_one(&h.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_key, "mcp:dan@example.com:k1");
+}
+
+#[tokio::test]
+async fn create_initiative_tells_the_model_what_the_planner_refused() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let count = rows(h, "initiatives").await;
+    let said = |arguments: Value| refusal(h, &dan, "create_initiative", arguments);
+    let base = |idem: &str| json!({"idempotency_key": idem, "title": "Refused", "horizon": "Now"});
+    let with = |idem: &str, name: &str, value: Value| {
+        let mut call = base(idem);
+        call[name] = value;
+        call
+    };
+    assert_eq!(
+        said(with("r1", "horizon", json!("Someday"))).await,
+        "horizon \"Someday\" is not one of the configured buckets"
+    );
+    assert_eq!(
+        said(with("r2", "owner", json!("eve@elsewhere.org"))).await,
+        "eve@elsewhere.org is not an allowed user"
+    );
+    assert!(
+        said(with("r3", "title", json!("  ")))
+            .await
+            .contains("title")
+    );
+    // A month as a chat model is likely to write it: refused in the action's words, which say what to send.
+    assert_eq!(
+        said(with("r6", "target_month", json!("March 2027"))).await,
+        "target month must be YYYY-MM, for example 2027-03, not \"March 2027\""
+    );
+    let missing = said(json!({"idempotency_key": "r4", "title": "Refused"})).await;
+    assert!(
+        missing.starts_with("Invalid arguments:") && missing.contains("horizon"),
+        "{missing}"
+    );
+    for withheld in ["external_ref", "attachments", "discovery_complete"] {
+        let said = said(with("r5", withheld, json!("x"))).await;
+        assert!(
+            said.starts_with("Invalid arguments:") && said.contains(withheld),
+            "{said}"
+        );
+    }
+    assert_eq!(rows(h, "initiatives").await, count, "nothing was written");
+}
+
+#[tokio::test]
+async fn edit_initiative_changes_only_what_it_names_and_keeps_the_discovery_mark() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let made = an_initiative(h, "ei-i1", "Bookings").await;
+    // Mark its discovery, so a mark the edit drops or rewrites would show.
+    post(
+        h,
+        &format!("/api/v1/initiatives/{made}/discovery"),
+        json!({"version": 1, "complete": true}),
+    )
+    .await;
+    let before = initiative(h, &made).await;
+    assert!(
+        before["discovery_complete"].is_object(),
+        "the control: {before}"
+    );
+    let v = before["version"].as_i64().unwrap();
+    let edit = |version: i64, change: Value| {
+        let mut arguments = change;
+        arguments["key"] = json!(made);
+        arguments["version"] = json!(version);
+        answer(h, &dan, "edit_initiative", arguments)
+    };
+
+    let receipt = edit(v, json!({"title": " Bookings 2027 "})).await;
+    assert_eq!(
+        receipt,
+        json!({"key": made, "title": "Bookings 2027", "version": v + 1})
+    );
+    assert_eq!(
+        fields(&initiative(h, &made).await, &INITIATIVE_FIELDS[1..6]),
+        fields(&before, &INITIATIVE_FIELDS[1..6]),
+        "nothing but the title moved"
+    );
+    // The first six fields as the API shows them now.
+    let shown = || async { fields(&initiative(h, &made).await, &INITIATIVE_FIELDS[..6]) };
+    let mark = before["discovery_complete"].clone();
+    edit(
+        v + 1,
+        json!({"brief": "New brief.", "horizon": "Later", "target_month": "2027-06", "owner": BOB}),
+    )
+    .await;
+    assert_eq!(
+        shown().await,
+        json!(["Bookings 2027", "New brief.", "Later", "2027-06", BOB, mark])
+    );
+    // Left out is not cleared, now that the owner and the target month hold something: a title-only edit keeps
+    // both. (The title-only edit above could not show this: both were null before it.)
+    edit(v + 2, json!({"title": "Bookings 2028"})).await;
+    assert_eq!(
+        shown().await,
+        json!(["Bookings 2028", "New brief.", "Later", "2027-06", BOB, mark]),
+        "a title-only edit keeps the owner and the target month"
+    );
+    // Each is cleared on its own, and the other survives.
+    edit(v + 3, json!({"clear_target_month": true})).await;
+    assert_eq!(
+        shown().await,
+        json!(["Bookings 2028", "New brief.", "Later", null, BOB, mark]),
+        "clearing the target month keeps the owner"
+    );
+    edit(v + 4, json!({"target_month": "2027-09"})).await;
+    edit(v + 5, json!({"clear_owner": true})).await;
+    assert_eq!(
+        shown().await,
+        json!([
+            "Bookings 2028",
+            "New brief.",
+            "Later",
+            "2027-09",
+            null,
+            mark
+        ]),
+        "clearing the owner keeps the target month"
+    );
+    let after = initiative(h, &made).await;
+    assert_eq!(after["version"], json!(v + 6));
+    assert_eq!(
+        trail(h, &made).await.pop().unwrap(),
+        (
+            "edited".to_string(),
+            DAN.to_string(),
+            "interactive".to_string(),
+            json!("127.0.0.1")
+        )
+    );
+
+    // The same edit through the route leaves the same initiative.
+    let change = json!({"title": " Renamed ", "brief": "Same.", "horizon": "Next", "target_month": "2027-09", "owner": "Bob@Example.com"});
+    let (by_tool, by_route) = (
+        an_initiative(h, "ei-i2", "One").await,
+        an_initiative(h, "ei-i3", "Two").await,
+    );
+    let mut arguments = change.clone();
+    arguments["key"] = json!(by_tool);
+    arguments["version"] = json!(1);
+    answer(h, &dan, "edit_initiative", arguments).await;
+    let mut body = change;
+    body["version"] = json!(1);
+    let (status, patched) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "PATCH",
+        &format!("/api/v1/initiatives/{by_route}"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, 200, "{patched}");
+    assert_eq!(
+        fields(&initiative(h, &by_tool).await, &INITIATIVE_FIELDS),
+        fields(&patched["value"], &INITIATIVE_FIELDS)
+    );
+    assert_eq!(initiative(h, &by_tool).await["owner"], BOB);
+}
+
+#[tokio::test]
+async fn edit_initiative_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let made = an_initiative(h, "ir-i1", "Bookings").await;
+    let before = initiative(h, &made).await;
+    let entries_before = trail(h, &made).await.len();
+    let said = |change: Value| {
+        let mut arguments = change;
+        if arguments.get("key").is_none() {
+            arguments["key"] = json!(made);
+        }
+        if arguments.get("version").is_none() {
+            arguments["version"] = json!(1);
+        }
+        refusal(h, &dan, "edit_initiative", arguments)
+    };
+    assert_eq!(
+        said(json!({"version": 0, "title": "Stale"})).await,
+        format!(
+            "{made} changed since you read it and is now at version 1. Read it again with get_initiative, check what changed, and send only the change the person asked for, with version 1."
+        )
+    );
+    assert_eq!(
+        said(json!({"owner": BOB, "clear_owner": true})).await,
+        "clear_owner and owner cannot be sent together."
+    );
+    assert_eq!(
+        said(json!({"target_month": "2027-03", "clear_target_month": true})).await,
+        "clear_target_month and target_month cannot be sent together."
+    );
+    assert_eq!(
+        said(json!({})).await,
+        "Nothing to change: send at least one field besides key and version."
+    );
+    assert_eq!(
+        said(json!({"brief": "The start[cut: 9000 more characters]"})).await,
+        "brief ends with the marker of a text get_initiative cut. The whole text cannot be read here, so it cannot be replaced here: tell the person to edit it in the CLI or the web client."
+    );
+    assert_eq!(
+        said(json!({"owner": "eve@elsewhere.org"})).await,
+        "eve@elsewhere.org is not an allowed user"
+    );
+    assert_eq!(
+        said(json!({"target_month": "2027-3"})).await,
+        "target month must be YYYY-MM, for example 2027-03, not \"2027-3\""
+    );
+    assert_eq!(
+        said(json!({"horizon": "Someday"})).await,
+        "horizon \"Someday\" is not one of the configured buckets"
+    );
+    assert_eq!(
+        said(json!({"key": "TST-9999", "title": "Nobody"})).await,
+        "No initiative with key \"TST-9999\". Keys look like TST-123."
+    );
+    assert_eq!(
+        initiative(h, &made).await,
+        before,
+        "the initiative is as it was"
+    );
+    assert_eq!(
+        trail(h, &made).await.len(),
+        entries_before,
+        "no entry was written"
+    );
+    // The control.
+    answer(
+        h,
+        &dan,
+        "edit_initiative",
+        json!({"key": made, "version": 1, "title": "Accepted"}),
+    )
+    .await;
+}
+
+/// The last guard never turns a committed write into an error (as `a_write_with_a_very_long_description_succeeds_
+/// with_a_small_receipt` holds for a story): whatever an initiative holds, a create and an edit answer a receipt of
+/// a few hundred bytes. The brief is sent through the tool. The horizon and the target month are written into the
+/// row, because no request can store a long one: a horizon must be a configured bucket and a target month a month,
+/// but a row may hold either from before (a bucket that was renamed away, a month from before it was checked), and
+/// an edit that leaves them alone is valid.
+#[tokio::test]
+async fn an_initiative_write_answers_a_small_receipt_whatever_the_initiative_holds() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    // 100 000 characters of two bytes each: 200 000 bytes, nearly three times the largest answer (70 000 bytes).
+    let long = "å".repeat(100_000);
+    let created = answer(
+        h,
+        &dan,
+        "create_initiative",
+        json!({"idempotency_key": "big-1", "title": "Big", "horizon": "Now", "brief": long}),
+    )
+    .await;
+    let made = key(&created);
+    assert_eq!(
+        created,
+        json!({"key": made, "title": "Big", "version": 1, "created": true})
+    );
+
+    sqlx::query("UPDATE initiatives SET horizon = $1, target_month = $1 WHERE key = $2")
+        .bind(&long)
+        .bind(&made)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let chars = |item: &Value, name: &str| item[name].as_str().map(|text| text.chars().count());
+    let stored = initiative(h, &made).await;
+    assert_eq!(
+        (
+            chars(&stored, "horizon"),
+            chars(&stored, "target_month"),
+            chars(&stored, "brief")
+        ),
+        (Some(100_000), Some(100_000), Some(100_000)),
+        "the control: the row holds all three, each far over the largest answer"
+    );
+
+    // An edit that names neither the horizon nor the month is valid, is committed, and answers a receipt.
+    let edited = answer(
+        h,
+        &dan,
+        "edit_initiative",
+        json!({"key": made, "version": 1, "title": "Still big", "brief": format!("{long}.")}),
+    )
+    .await;
+    assert_eq!(
+        edited,
+        json!({"key": made, "title": "Still big", "version": 2})
+    );
+    assert!(
+        edited.to_string().len() < 300,
+        "{} bytes",
+        edited.to_string().len()
+    );
+    let after = initiative(h, &made).await;
+    assert_eq!(
+        (
+            chars(&after, "horizon"),
+            chars(&after, "target_month"),
+            chars(&after, "brief")
+        ),
+        (Some(100_000), Some(100_000), Some(100_001)),
+        "the edit was written, and what it did not name is as it was"
+    );
+    // A repeated create answers the same small receipt, with its note.
+    let repeat = answer(
+        h,
+        &dan,
+        "create_initiative",
+        json!({"idempotency_key": "big-1", "title": "Big", "horizon": "Now"}),
+    )
+    .await;
+    assert_eq!(repeat["created"], false);
+    assert!(
+        repeat.to_string().len() < 500,
+        "{} bytes",
+        repeat.to_string().len()
+    );
 }
