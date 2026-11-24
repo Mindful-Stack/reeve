@@ -7,6 +7,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry, Goal, Sprint, SprintCounts, SprintPlanning, Sprints, SprintView } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
+import { fullLabel } from '#lib/board.ts';
 import { activity, bucketInitiative, goal, goalGates, goalInitiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
@@ -180,7 +181,7 @@ describe('the active sprint', () => {
 		expect(t).toContain('4 todo');
 		expect(text(panel)).toContain('7 of 24 completed stories were upkeep (29%; team line 20%)');
 		const demo = q('[data-testid="demo"]')!; // folded below the columns, no longer in the sprint's panel
-		expect(text(q('summary', demo))).toBe('Done in the last 7 days (1)');
+		expect(text(q('summary h2', demo))).toBe('Done in the last 7 days (1)');
 		expect(text(demo)).toContain('RV-9');
 		expect(text(demo)).toContain('Booking form');
 	});
@@ -737,7 +738,7 @@ describe('planning by goal', () => {
 		});
 		await open();
 		const block = q('[data-testid="goal-1"] [data-testid="gates"]')!;
-		expect(text(q('h5', block))).toBe('Waits on');
+		expect(text(q('h3', block))).toBe('Waits on');
 		expect(q<HTMLAnchorElement>('[data-testid="discovery-ABC-1"] a', block)!.getAttribute('href')).toBe('/initiatives/ABC-1');
 		expect(text(q('[data-testid="discovery-ABC-1"]', block))).toBe('ABC-1 Bookings initiative in discovery');
 		const row = q('[data-testid="decision-7"]', block)!;
@@ -859,20 +860,31 @@ describe('the redesigned page', () => {
 		expect(document.querySelectorAll('button.disclose[aria-expanded="false"]').length).toBe(3);
 		expect(document.body.textContent).not.toContain('check one');
 		expect(document.body.textContent).not.toContain('check five');
-		// Flat, in the order served: no initiative headings.
-		expect(q('[data-testid^="active-group-"]')).toBeNull();
 	});
 
 	it('keeps a goal open across a refetch, and forgets one that left', async () => {
-		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one' }), goal({ id: 2, check: 'check two' })]);
-		await open({ closed: true });
-		q<HTMLButtonElement>('[data-testid="goal-1"] button.disclose')!.click();
-		flushSync();
-		expect(text(q('[data-testid="goal-1"]'))).toContain('check one');
-		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one, edited' }), goal({ id: 2, check: 'check two' })]);
+		const both = (c1: string) => activeWith([goal({ id: 1, check: c1 }), goal({ id: 2, check: 'check two' })]);
+		net.sprints!.active = both('check one');
+		await open(); // both open
+		expect(text(q('[data-testid="goal-2"]'))).toContain('check two');
+		// Goal 2 leaves: its open state is pruned (this pins the pruning code; the server does not reuse ids, so a returning id
+		// is only a way to observe it).
+		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one, edited' })]);
 		onLiveHandler!();
-		await settle(() => expect(text(q('[data-testid="goal-1"]'))).toContain('check one, edited'));
+		await settle(() => expect(q('[data-testid="goal-2"]')).toBeNull());
+		expect(text(q('[data-testid="goal-1"]'))).toContain('check one, edited');
+		net.sprints!.active = both('check one, edited');
+		onLiveHandler!();
+		await settle(() => expect(q('[data-testid="goal-2"]')).not.toBeNull());
 		expect(text(q('[data-testid="goal-2"]'))).not.toContain('check two');
+		expect(text(q('[data-testid="goal-1"]'))).toContain('check one, edited');
+	});
+
+	it('lists goals in the order served', async () => {
+		net.sprints!.active = activeWith([goal({ id: 2 }), goal({ id: 1 })]);
+		await open({ closed: true });
+		const ids = [...document.querySelectorAll('[data-testid="active-sprint"] [data-testid^="goal-"]')].map((e) => e.getAttribute('data-testid'));
+		expect(ids).toEqual(['goal-2', 'goal-1']);
 	});
 
 	it('keeps a half-typed form and the tick boxes across a refetch', async () => {
@@ -884,8 +896,9 @@ describe('the redesigned page', () => {
 		flushSync();
 		type(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]')!, 'half');
 		onLiveHandler!();
+		await settle(() => expect(net.reads.filter((r) => r === '/api/v1/sprints/planning').length).toBe(2));
 		await settle(() => expect(net.reads.filter((r) => r === '/api/v1/sprints').length).toBe(2));
-		await new Promise((r) => setTimeout(r, 20));
+		await Promise.resolve();
 		flushSync();
 		expect(q<HTMLInputElement>('input[aria-label="Goes in at open: outcome 6"]')!.checked).toBe(false);
 		expect(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]')!.value).toBe('half');
@@ -911,6 +924,49 @@ describe('the redesigned page', () => {
 		expect(writes('/api/v1/goals')[0].body).toMatchObject({ outcome: 'A late goal', check: 'it is done', active: true });
 	});
 
+	it('shows a refused add in words, keeps the form open and what was typed', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		net.answer = () => refused([{ reason: 'sprint_not_active' }]);
+		await open();
+		const column = q('[data-testid="active-sprint"]')!;
+		button('+ goal', column)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'A late goal');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'done');
+		form.requestSubmit();
+		await settle(() => expect(text(q('[role="alert"]', form))).toBe(fullLabel({ reason: 'sprint_not_active' })));
+		expect(q('form[aria-label="New goal for this sprint"]', column)).not.toBeNull();
+		expect(q<HTMLInputElement>('input[name="outcome"]', form)!.value).toBe('A late goal');
+	});
+
+	it('puts the form under this sprint\'s end date, and focuses its own outcome input with an Edit form open', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		await open();
+		const column = q('[data-testid="active-sprint"]')!;
+		button('Edit', q('[data-testid="goal-1"]')!)!.click();
+		flushSync();
+		button('+ goal', column)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('form[aria-label="New goal for this sprint"] input[name="outcome"]', column)));
+		expect(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]', column)!.placeholder).toBe('By 2026-11-13, <who> can <outcome>');
+		button('Cancel', q('form[aria-label="New goal for this sprint"]', column)!)!.click();
+		await settle(() => expect(document.activeElement).toBe(button('+ goal', column)));
+	});
+
+	it('focuses the new goal\'s row after an add to this sprint', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		await open();
+		const column = q('[data-testid="active-sprint"]')!;
+		button('+ goal', column)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'New one');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'c');
+		net.sprints!.active = activeWith([goal({ id: 1 }), goal({ id: 99 })]);
+		form.requestSubmit();
+		await settle(() => expect(document.activeElement).toBe(q('[data-testid="goal-99"]')));
+	});
+
 	it('adds to the next sprint without the active flag', async () => {
 		net.sprints!.draft = draft();
 		await open();
@@ -932,7 +988,7 @@ describe('the redesigned page', () => {
 		expect(button(/^Open sprint with 1 goal$/)).toBeDefined();
 	});
 
-	it('keeps the tick boxes beside an active sprint, and the close step still carries the unticked goals', async () => {
+	it('shows the tick boxes beside an active sprint, and counts the unticked goals as staying', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1 })]);
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2 }), goal({ id: 6, sprint_id: 2 })]);
 		await open({ closed: true });
@@ -941,6 +997,7 @@ describe('the redesigned page', () => {
 		box.click();
 		flushSync();
 		expect(text(q('[data-testid="next-sprint"]'))).toContain('1 goal stays in Next sprint when it opens.');
+		expect(text(q('[data-testid="next-sprint"]'))).toContain('Ticked goals go in when the sprint opens.');
 	});
 
 	it('lists the first bucket with its goals, or no goal, in the order served', async () => {
@@ -953,17 +1010,20 @@ describe('the redesigned page', () => {
 			],
 			first_bucket: 'Soon',
 			first_bucket_initiatives: [
-				bucketInitiative({ key: 'ABC-9', title: 'Bookings', target_month: '2026-11', goals: [1, 5] }),
-				bucketInitiative({ key: 'ABC-7', title: 'Payments', discovery_complete: true })
+				// Served order is what counts: the old client rule (dated first, then title) would put ABC-9 first.
+				bucketInitiative({ key: 'ABC-7', title: 'A Payments', discovery_complete: true }),
+				bucketInitiative({ key: 'ABC-9', title: 'Z Bookings', target_month: '2026-11', goals: [1, 5, 77] })
 			]
 		});
 		await open({ closed: true });
 		const section = q('[data-testid="bucket-initiatives"]')!;
 		expect(text(q('h2', section))).toBe('Soon initiatives');
-		expect([...section.querySelectorAll('[data-testid^="bucket-ABC"]')].map((r) => r.getAttribute('data-testid'))).toEqual(['bucket-ABC-9', 'bucket-ABC-7']);
+		expect([...section.querySelectorAll('[data-testid^="bucket-ABC"]')].map((r) => r.getAttribute('data-testid'))).toEqual(['bucket-ABC-7', 'bucket-ABC-9']);
 		const first = q('[data-testid="bucket-ABC-9"]')!;
 		expect(text(first)).toContain('Nov 2026');
 		expect(text(first)).toContain('in discovery');
+		// A goal id the page does not hold (the reads raced) shows as a count, not nothing.
+		expect(text(q('.muted.more', first))).toBe('1 more');
 		expect([...first.querySelectorAll('a.goal-chip')].map((a) => [text(a), a.getAttribute('href')])).toEqual([
 			['Bookings work · this sprint', '#goal-1'],
 			['Reports work · next sprint', '#goal-5']
@@ -972,7 +1032,6 @@ describe('the redesigned page', () => {
 		expect(text(second)).toContain('no goal');
 		expect(text(second)).not.toContain('in discovery');
 		expect(button('+ goal', second)).toBeDefined();
-		expect(text(section)).not.toContain('urgent');
 	});
 
 	it('shows no bucket section when the server names no bucket', async () => {
@@ -987,10 +1046,10 @@ describe('the redesigned page', () => {
 		expect(text(q('[data-testid="active-sprint"]'))).toContain('nothing completed yet (team line 20%)');
 		const demo = q<HTMLDetailsElement>('details[data-testid="demo"]')!;
 		expect(demo.open).toBe(false);
-		expect(text(q('summary', demo))).toBe('Done in the last 7 days (1)');
+		expect(text(q('summary h2', demo))).toBe('Done in the last 7 days (1)');
 		const history = q<HTMLDetailsElement>('details[data-testid="history"]')!;
 		expect(history.open).toBe(false);
-		expect(text(q('summary', history))).toBe('History (0)');
+		expect(text(q('summary h2', history))).toBe('History (0)');
 	});
 
 	const mark = (id: number) => q(`[data-testid="goal-${id}"] .tag .mark`);

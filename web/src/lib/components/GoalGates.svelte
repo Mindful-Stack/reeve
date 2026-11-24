@@ -32,7 +32,7 @@
 </script>
 
 <div class="gates" data-testid="gates">
-	<h5>Waits on</h5>
+	<h3>Waits on</h3>
 	{#if !linked}
 		<p class="muted">No linked items yet</p>
 	{:else}
@@ -70,7 +70,7 @@
 		padding-top: 6px;
 		border-top: 1px solid var(--line);
 	}
-	h5 {
+	h3 {
 		margin: 0;
 		font-size: 13px;
 	}

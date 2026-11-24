@@ -197,8 +197,9 @@
 	let goalFor = $state<string | null>(null);
 	/** The bucket rows, by initiative key, to put focus inside them. */
 	const rows: Record<string, HTMLElement | undefined> = {};
-	let activeColumn = $state<HTMLElement | undefined>();
-	const holder = (key: string) => (key === 'active' ? activeColumn : rows[key]);
+	/** The new-goal form under this sprint: its own element, so the query never finds an Edit form's inputs. */
+	let activeForm = $state<HTMLElement | undefined>();
+	const holder = (key: string) => (key === 'active' ? activeForm : rows[key]);
 	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	async function openGoal(key: string) {
 		goalFor = key;
@@ -283,7 +284,7 @@
 	{/if}
 
 	<div class="columns" data-testid="columns">
-		<section class="panel" data-testid="active-sprint" aria-labelledby="active-title" bind:this={activeColumn}>
+		<section class="panel" data-testid="active-sprint" aria-labelledby="active-title">
 			{#if active}
 				{@const progress = new Map(active.counts.goals.map((p) => [p.goal_id, p]))}
 				<div class="panel-head">
@@ -305,11 +306,19 @@
 				{:else}
 					<p class="muted">The active sprint has no goals.</p>
 				{/each}
-				{#if goalFor === 'active'}
-					<GoalForm title="New goal for this sprint" active oncreated={({ goal }) => added(goal.id)} oncancel={() => closeGoal('active')} />
-				{:else}
-					<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('active')}>+ goal</button>
-				{/if}
+				<div bind:this={activeForm} class="add-slot">
+					{#if goalFor === 'active'}
+						<GoalForm
+							title="New goal for this sprint"
+							active
+							endsOn={active.sprint.ends_on}
+							oncreated={({ goal }) => added(goal.id)}
+							oncancel={() => closeGoal('active')}
+						/>
+					{:else}
+						<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('active')}>+ goal</button>
+					{/if}
+				</div>
 			{:else}
 				<h2 id="active-title">This sprint</h2>
 				<p class="muted">No active sprint.</p>
@@ -325,6 +334,7 @@
 					<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
 				{/if}
 			</div>
+			{#if draft?.goals.length}<p class="muted">Ticked goals go in when the sprint opens.</p>{/if}
 			{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
 			{#if openWarnings.length && active}
 				<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
@@ -369,6 +379,9 @@
 							<span class="muted">no goal</span>
 							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 						{/each}
+						{#if i.goals.some((id) => !everyGoal.has(id))}
+							<span class="muted more">{i.goals.filter((id) => !everyGoal.has(id)).length} more</span>
+						{/if}
 					</div>
 					{#if goalFor === i.key}
 						<GoalForm
@@ -388,7 +401,7 @@
 
 	{#if active}
 		<details class="panel" data-testid="demo">
-			<summary>Done in the last 7 days ({active.demo.length})</summary>
+			<summary><h2>Done in the last 7 days ({active.demo.length})</h2></summary>
 			{#if active.demo.length}
 				<ul>
 					{#each active.demo as d (d.key)}
@@ -402,7 +415,7 @@
 	{/if}
 
 	<details class="panel" data-testid="history">
-		<summary>History ({sprints.closed.length})</summary>
+		<summary><h2>History ({sprints.closed.length})</h2></summary>
 		{#each sprints.closed as s (s.id)}
 			<SprintHistoryEntry sprint={s} {refresh} />
 		{:else}
@@ -515,9 +528,11 @@
 		font-size: 13px;
 	}
 	summary {
-		font-size: 18px; /* the size app.css gives h2 */
-		font-weight: 600;
 		cursor: pointer;
+	}
+	/* The folded sections' headings sit inside the summary, so the disclosure marker stays on the same line. */
+	summary h2 {
+		display: inline;
 	}
 	.add-goal {
 		justify-self: start;
