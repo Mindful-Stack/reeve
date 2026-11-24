@@ -10383,3 +10383,279 @@ async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row
     );
     assert_eq!(left("item_link_removed").await, (0, 2), "the control");
 }
+
+/// kb/ADR-0031 R3: item links are read by no gate and change no item. Readiness (from the list, and one story at a
+/// time), delivery, resolution, rank, progress, the active sprint's goal with its link and its numbers, and every
+/// item's version are the same before any link exists, with every name in place between and on stories, an epic and
+/// an initiative, and after they are removed. A story that `follows` an unstarted story still starts, and a blocked
+/// story is refused for its blocker alone. And at the query level: computing readiness and moving a story send no
+/// statement that names `item_links`.
+#[tokio::test]
+async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
+    use reeve_protocol::LinkType::{Duplicates, Follows, RelatesTo};
+    // `pg_counted`: this database has `pg_stat_statements`, which the query-level check at the end reads.
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = ctx("dan@example.com", false);
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let e = h
+        .create_epic(&c, "e", "E", Some(i.clone()), "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    h.mark_discovery(&c, ItemType::Initiative, &i, 1, true)
+        .await
+        .unwrap();
+    h.mark_discovery(&c, ItemType::Epic, &e, 1, true)
+        .await
+        .unwrap();
+    let mut keys = Vec::new();
+    for (n, criteria) in [
+        ("ready", vec!["ok".to_string()]),
+        ("bare", vec![]),
+        ("blocked", vec!["ok".to_string()]),
+        ("decided", vec!["ok".to_string()]),
+        ("done", vec!["ok".to_string()]),
+    ] {
+        keys.push(
+            h.create_story(
+                &c,
+                n,
+                n,
+                Kind::Story,
+                Some(e.clone()),
+                "",
+                criteria,
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone(),
+        );
+    }
+    // `blocked` waits on `bare`, which is never started here, so its blocker reason holds throughout.
+    h.add_block(&c, &keys[2], &keys[1]).await.unwrap();
+    h.require_decision(&c, "d", &keys[3], "Pick", "dan@example.com", None, None)
+        .await
+        .unwrap();
+    mark_done_at(&h, &keys[4], c.now).await;
+    // An active sprint whose one goal serves the epic, which is one of the linked items below (R3 names "a goal").
+    let (goal, _) = h
+        .add_goal(&c, "g", "Invoices go out", "one did", None, "", false, &[])
+        .await
+        .unwrap();
+    h.link_goal(&c, goal.id, std::slice::from_ref(&e))
+        .await
+        .unwrap();
+    let draft = h.sprints(c.now).await.unwrap().draft.unwrap();
+    h.open_sprint(&c, draft.id, draft.version, None)
+        .await
+        .unwrap();
+
+    type Snapshot = (
+        Vec<(
+            Key,
+            reeve_protocol::Readiness,
+            i32,
+            DeliveryState,
+            Option<Resolution>,
+            i64,
+        )>,
+        Vec<(Key, Option<f32>, i64)>,
+        Vec<(Key, i64)>,
+        Vec<reeve_protocol::Readiness>,
+        // The goal's view: the active sprint, every goal (its confidence, verdict and version), the goal links,
+        // and the numbers the sprint view derives from the stories its goals serve.
+        (Option<Sprint>, Vec<Goal>, Vec<GoalLink>, Option<Summary>),
+    );
+    let snapshot = || async {
+        let board = h
+            .list_stories(
+                &StoryFilter::default(),
+                None,
+                None,
+                false,
+                DoneFilter::All,
+                c.now,
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r.story.key,
+                    r.readiness,
+                    r.story.rank,
+                    r.story.delivery,
+                    r.story.resolution,
+                    r.story.version,
+                )
+            })
+            .collect();
+        let initiatives = h
+            .list_initiatives(c.now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| (i.key, i.progress, i.version))
+            .collect();
+        let epics = h
+            .epic_dtos(None, c.now)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.key, e.version))
+            .collect();
+        let mut one_at_a_time = Vec::new();
+        for k in &keys {
+            one_at_a_time.push(h.readiness(k).await.unwrap());
+        }
+        let sprints = h.sprints(c.now).await.unwrap();
+        let goals = (
+            sprints.active,
+            sprints.goals,
+            sprints.links,
+            sprints.active_summary,
+        );
+        let s: Snapshot = (board, initiatives, epics, one_at_a_time, goals);
+        s
+    };
+    let before = snapshot().await;
+    assert_eq!(before.0.len(), 5, "every story is in the snapshot");
+    assert!(before.0.iter().any(|(_, r, ..)| r.ready), "one is ready");
+    assert!(before.0.iter().any(|(_, r, ..)| !r.ready), "one is not");
+    assert!(before.1[0].1.is_some(), "the initiative has progress");
+    assert!(before.4.0.is_some(), "the sprint is active");
+    assert_eq!(
+        before.4.2,
+        vec![GoalLink {
+            goal_id: goal.id,
+            item_key: e.clone(),
+        }],
+        "the goal and its link to a linked item are in the snapshot"
+    );
+
+    // Every name, in both directions, between stories and on an epic and an initiative.
+    let links = [
+        (&keys[0], Follows, &keys[1]),
+        (&keys[1], Follows, &keys[0]),
+        (&keys[2], Duplicates, &keys[0]),
+        (&keys[3], RelatesTo, &keys[4]),
+        (&keys[0], Follows, &e),
+        (&e, Duplicates, &i),
+        (&i, RelatesTo, &keys[2]),
+        (&e, Follows, &keys[4]),
+    ];
+    for (from, t, to) in links {
+        assert!(
+            h.add_item_link(&c, from, t, to).await.unwrap(),
+            "{from} {t:?} {to}"
+        );
+    }
+    assert_eq!(
+        h.link_listing(&keys[0]).await.unwrap().links.len(),
+        4,
+        "the control: the links are in place"
+    );
+    assert_eq!(snapshot().await, before, "with every link in place");
+
+    for (from, t, to) in links {
+        assert!(
+            h.remove_item_link(&c, from, t, to).await.unwrap(),
+            "{from} {t:?} {to}"
+        );
+    }
+    assert_eq!(snapshot().await, before, "after removing them");
+
+    // Moving reads none of it: `ready` follows the unstarted `bare` and still starts; `blocked` also follows
+    // `ready` and is refused for exactly the reasons it had before any link existed.
+    h.add_item_link(&c, &keys[0], Follows, &keys[1])
+        .await
+        .unwrap();
+    h.add_item_link(&c, &keys[2], Follows, &keys[0])
+        .await
+        .unwrap();
+    let blocked_reasons = before.3[2].reasons.clone();
+    assert!(
+        !blocked_reasons.is_empty(),
+        "the control: `blocked` is not ready"
+    );
+    let version = |k: &Key| {
+        let (h, k) = (h.clone(), k.clone());
+        async move { h.get_story(&k).await.unwrap().version() }
+    };
+
+    // Query level. `common::statements` resets this database's `pg_stat_statements` entries and runs the block;
+    // afterwards the view holds the text of every statement the block sent. `naming` counts those that name a
+    // table. The count's own statement names none: the table's name is a bound parameter.
+    let naming = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_statements \
+                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+                 AND query ILIKE '%' || $1 || '%'",
+            )
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    // The control: a read of the table is seen when there is one, so a zero below means "no statement", not "the
+    // view records nothing".
+    common::statements(&pool, || async {
+        h.link_listing(&keys[0]).await.unwrap();
+    })
+    .await;
+    assert!(
+        naming("item_links").await > 0,
+        "the control: a read of item_links is seen"
+    );
+    common::statements(&pool, || async {
+        // Readiness: one story at a time, and from the list.
+        for k in &keys {
+            h.readiness(k).await.unwrap();
+        }
+        h.list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            c.now,
+        )
+        .await
+        .unwrap();
+        // A move that passes the gate, and one the gate refuses.
+        let v = version(&keys[0]).await;
+        let started = h
+            .move_story(&c, &keys[0], v, DeliveryState::InProgress, None, None)
+            .await
+            .unwrap();
+        assert_eq!(started.delivery(), DeliveryState::InProgress);
+        let v = version(&keys[2]).await;
+        match h
+            .move_story(&c, &keys[2], v, DeliveryState::InProgress, None, None)
+            .await
+        {
+            Err(HandlerError::Refused(reasons)) => assert_eq!(reasons, blocked_reasons),
+            other => panic!("the blocked story must stay refused: {other:?}"),
+        }
+    })
+    .await;
+    assert_eq!(
+        naming("item_links").await,
+        0,
+        "computing readiness and moving a story send no statement that names item_links"
+    );
+}

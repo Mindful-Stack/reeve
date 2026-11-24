@@ -1172,3 +1172,49 @@ fn the_importer_has_no_path_to_a_promise() {
         );
     }
 }
+
+/// kb/ADR-0031 R2: the importer has no path to an item link. Neither the server's import handler and route nor the
+/// CLI's Jira importer, which is the code that knows another tool's relations, names an item link or the route
+/// that writes one, so an import never turns another tool's relation (a blocking one least of all) into an item
+/// link.
+#[test]
+fn the_importer_has_no_path_to_an_item_link() {
+    for (path, src) in [
+        (
+            "reeve-planning/src/handler/import.rs",
+            include_str!("../../reeve-planning/src/handler/import.rs"),
+        ),
+        (
+            "reeve-server/src/routes/import.rs",
+            include_str!("../src/routes/import.rs"),
+        ),
+        (
+            "reeve/src/commands/import.rs",
+            include_str!("../../reeve/src/commands/import.rs"),
+        ),
+        (
+            "reeve/src/jira/mod.rs",
+            include_str!("../../reeve/src/jira/mod.rs"),
+        ),
+        (
+            "reeve/src/jira/plan.rs",
+            include_str!("../../reeve/src/jira/plan.rs"),
+        ),
+        (
+            "reeve/src/jira/mapping.rs",
+            include_str!("../../reeve/src/jira/mapping.rs"),
+        ),
+        (
+            "reeve/src/jira/client.rs",
+            include_str!("../../reeve/src/jira/client.rs"),
+        ),
+    ] {
+        let src = src.to_lowercase();
+        // `item_link` is every function, port field and table name; `itemlink` is the types (`ItemLink`,
+        // `ItemLinkRepo`), lowercased; `/links` is the route a client writes one through
+        // (`/api/v1/items/{key}/links`), which is how the CLI would do it.
+        for name in ["item_link", "itemlink", "/links"] {
+            assert!(!src.contains(name), "{path} names an item link ({name})");
+        }
+    }
+}
