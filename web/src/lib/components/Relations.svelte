@@ -41,13 +41,19 @@
 	} = $props();
 
 	const id = $props.id();
+	/** The host's lists, each a new value whenever the host passes its next read: a write compares the one it started
+	 *  under with the one current when its answer arrives (`===`) to learn whether the host read meanwhile. */
+	const hostLinks = $derived(links);
+	const hostWeb = $derived(webLinks);
 	/** What is listed: the host's lists. A write's answer is assigned over them and shows until the host passes its
-	 *  next read, which replaces it. */
-	let shownLinks = $derived(links);
-	let shownWeb = $derived(webLinks);
+	 *  next read, which replaces it. An answer that arrives after the host passed a read is not assigned: that read is
+	 *  the newer one (a live reload, with what someone else added meanwhile), and it stays while the refetch that
+	 *  `onchanged` asks for runs, and if that refetch fails. */
+	let shownLinks = $derived(hostLinks);
+	let shownWeb = $derived(hostWeb);
 	const groups = $derived(groupLinks(shownLinks));
 
-	/** One write at a time, in both sections: a late answer can then never undo a newer one. */
+	/** One write at a time, in both sections: a late answer can then never undo a newer write's. */
 	let busy = $state(false);
 	let linkSection = $state<HTMLElement>();
 
@@ -117,6 +123,7 @@
 		linkError = null;
 		listError = null;
 		note = null;
+		const under = hostLinks;
 		let answer: ItemLink[];
 		try {
 			answer = await unwrap(api.POST('/api/v1/items/{key}/links', { params: { path: { key: itemKey } }, body: { type: linkType, to: other.key } }));
@@ -129,7 +136,7 @@
 			return;
 		}
 		busy = false;
-		shownLinks = answer;
+		if (hostLinks === under) shownLinks = answer;
 		note = followsNote(linkType, itemKey, level, other);
 		await closeLink();
 		onchanged?.();
@@ -199,6 +206,7 @@
 		busy = true;
 		webError = null;
 		webListError = null;
+		const under = hostWeb;
 		let answer: WebLink[];
 		try {
 			answer = await unwrap(api.POST('/api/v1/items/{key}/web-links', { params: { path: { key: itemKey } }, body }));
@@ -210,17 +218,20 @@
 			return;
 		}
 		busy = false;
-		shownWeb = answer;
+		if (hostWeb === under) shownWeb = answer;
 		await closeWeb();
 		onchanged?.();
 	}
 
 	/** `DELETE /items/{key}/web-links/{id}`: the answer is this item's web links. No confirmation: a web link can be
-	 *  added again, and its activity entry keeps the title and the URL. */
+	 *  added again, and its activity entry keeps the title and the URL. When the host passed a read while the request
+	 *  was out, the answer is not shown: the row is dropped from that read instead, which may be from before the
+	 *  removal. */
 	async function removeWeb(w: WebLink, pressed: HTMLButtonElement) {
 		if (busy) return;
 		busy = true;
 		webListError = null;
+		const under = hostWeb;
 		let answer: WebLink[];
 		try {
 			answer = await unwrap(api.DELETE('/api/v1/items/{key}/web-links/{id}', { params: { path: { key: itemKey, id: w.id } } }));
@@ -231,7 +242,7 @@
 			await refocus(pressed, () => pressed);
 			return;
 		}
-		shownWeb = answer;
+		shownWeb = hostWeb === under ? answer : shownWeb.filter((x) => x.id !== w.id);
 		busy = false;
 		// To the section's add control (its button, or the open form's first field), never to another row's Remove.
 		await refocus(pressed, () => document.getElementById(`${id}-web-add`) ?? webForm()?.querySelector<HTMLElement>('input'));

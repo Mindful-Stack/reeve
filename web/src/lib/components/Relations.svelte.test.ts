@@ -352,6 +352,36 @@ describe('Relations: item links', () => {
 		expect(document.activeElement).toBe(elsewhere);
 	});
 
+	it('keeps the list the host passed while an add was out: the late answer does not hide what someone else added', async () => {
+		net.hits = [searchHit({ key: 'ABC-11' })];
+		const { props, changed } = render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		await pick('ABC-11', 'ABC-11');
+		const mine = itemLink({ type: 'follows', direction: 'out', label: 'follows', item: to('ABC-11') });
+		const theirs = itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-3', 'epic') });
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			// The list as it was when the server wrote the link: before the other person's.
+			return [mine];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		// While the answer is out, a live event makes the host refetch: both links are there by now.
+		props.links = [mine, theirs];
+		flushSync();
+		g.release();
+		// The host is still asked to refetch, and until it has (or if that read fails) the newer list stays.
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(groups()).toEqual([
+			['follows', ['/board?story=ABC-11']],
+			['relates to', ['/epics/ABC-3']]
+		]);
+		expect(form('Add item link')).toBeNull();
+	});
+
 	it('disables Add again when something else is typed after a pick, and sends nothing for the item picked before', async () => {
 		net.hits = [searchHit({ key: 'ABC-11' })];
 		render();
@@ -478,6 +508,8 @@ describe('Relations: item links', () => {
 
 describe('Relations: web links', () => {
 	const inputs = (f: HTMLFormElement) => [...f.querySelectorAll<HTMLInputElement>('input')];
+	/** Where the listed web links point, in order. */
+	const hrefs = () => [...section('Web links').querySelectorAll('li a')].map((a) => a.getAttribute('href'));
 
 	it('adds a web link, lists it as the server stored it, and closes the form onto its button', async () => {
 		const { changed } = render({ level: 'epic', itemKey: 'ABC-5' });
@@ -562,6 +594,54 @@ describe('Relations: web links', () => {
 		await settle();
 		flushSync();
 		expect(document.activeElement).toBe(elsewhere);
+	});
+
+	it('keeps the list the host passed while a web link add was out: the late answer does not hide what someone else added', async () => {
+		const { props, changed } = render();
+		const f = await openForm('Web links', '+ Add web link', 'Add web link');
+		const [title, url] = inputs(f);
+		fill(title, 'Scenario page');
+		fill(url, 'https://example.com/wiki/scenario');
+		const mine = webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' });
+		const theirs = webLink({ id: 5, title: 'Runbook', url: 'https://example.com/runbook' });
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return [mine];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		props.webLinks = [mine, theirs];
+		flushSync();
+		g.release();
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(hrefs()).toEqual(['https://example.com/wiki/scenario', 'https://example.com/runbook']);
+		expect(form('Add web link')).toBeNull();
+	});
+
+	it('keeps the list the host passed while a web link removal was out: the late answer does not hide what someone else added', async () => {
+		const gone = webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' });
+		const theirs = webLink({ id: 5, title: 'Runbook', url: 'https://example.com/runbook' });
+		const { props, changed } = render({ webLinks: [gone] });
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			// The list as it was when the server removed the web link: before the other person's.
+			return [];
+		};
+		button(section('Web links'), 'Remove web link Scenario page').click();
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		// The host's read, taken after someone else added a web link and before the removal landed: the row removed
+		// here is dropped from it, and the other person's stays.
+		props.webLinks = [gone, theirs];
+		flushSync();
+		g.release();
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(hrefs()).toEqual(['https://example.com/runbook']);
 	});
 
 	it('shows what the server refuses beside the fields and keeps what was typed', async () => {
