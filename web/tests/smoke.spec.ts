@@ -1252,6 +1252,30 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 	await expectTablesScrollInside(page, '.item .brief', 1);
 });
 
+test('on paper a wide table takes the width of the page and wraps, since nothing scrolls there', async ({ page }) => {
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table print smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: WIDE_TABLE
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wrap = page.locator('.brief [data-table-scroll]');
+	await expect(wrap).toHaveAttribute('tabindex', '0');
+	await page.emulateMedia({ media: 'print' });
+	// Nothing to scroll to, so no tab stop either; the table is exactly as wide as its wrapper.
+	await expect(wrap).not.toHaveAttribute('tabindex');
+	const m = await wrap.evaluate((w) => {
+		const s = getComputedStyle(w);
+		return { overflow: s.overflowX, image: s.backgroundImage, wrap: w.getBoundingClientRect().width, table: w.firstElementChild!.getBoundingClientRect().width, page: document.documentElement.scrollWidth, viewport: window.innerWidth };
+	});
+	expect(m.overflow).toBe('visible');
+	expect(m.image).toBe('none');
+	expect(Math.abs(m.table - m.wrap)).toBeLessThanOrEqual(1);
+	expect(m.page).toBe(m.viewport);
+});
+
 test('a long link in a table cell wraps instead of setting the width of the table', async ({ page }) => {
 	const url = `https://example.com/${'a'.repeat(100)}`;
 	expect(url).toHaveLength(120);

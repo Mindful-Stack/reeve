@@ -363,3 +363,17 @@ textarea[data-drop] {
 [data-table-scroll] th:not([align]) {
 	text-align: left;
 }
+/* Paper does not scroll: the table takes the width of the page and its cells wrap wherever they must. */
+@media print {
+	[data-table-scroll] {
+		overflow: visible;
+		background: none;
+	}
+	[data-table-scroll] table {
+		width: 100%;
+		max-width: 100%;
+	}
+	[data-table-scroll] :is(th, td) {
+		overflow-wrap: anywhere;
+	}
+}
