@@ -3514,18 +3514,10 @@ mod planning_gates {
     async fn without_a_configured_bucket_the_read_has_gates_and_no_bucket() {
         let (_c, pool) = super::common::pg().await;
         let (h, _) = mk(pool.clone());
-        let h = Handlers {
-            ports: make_planning_ports(pool.clone()),
-            activity: h.activity.clone(),
-            pool,
-            settings: Settings {
-                horizon_buckets: vec![],
-                ..h.settings.clone()
-            },
-        };
         let me = ctx(Via::Interactive, 2);
-        let e = h
-            .create_epic(&me, "e", "Calendar", None, "", None)
+        // An initiative in "Now" exists; the read below is made with settings that configure no bucket at all.
+        let i = h
+            .create_initiative(&me, "i", "Bookings", "", "Now", None, None, None)
             .await
             .unwrap();
         let g = h
@@ -3537,16 +3529,31 @@ mod planning_gates {
                 None,
                 "",
                 false,
-                std::slice::from_ref(e.key()),
+                std::slice::from_ref(i.key()),
             )
             .await
             .unwrap()
             .0;
-        let planned = h.sprint_planning().await.unwrap();
+        let bare = Handlers {
+            ports: make_planning_ports(pool.clone()),
+            activity: h.activity.clone(),
+            pool,
+            settings: Settings {
+                horizon_buckets: vec![],
+                ..h.settings.clone()
+            },
+        };
+        let planned = bare.sprint_planning().await.unwrap();
         assert_eq!(planned.first_bucket, None);
-        assert!(planned.first_bucket_initiatives.is_empty());
+        assert!(
+            planned.first_bucket_initiatives.is_empty(),
+            "{:?}",
+            planned.first_bucket_initiatives
+        );
+        assert!(planned.initiatives.iter().any(|x| x.key() == i.key()));
         assert_eq!(planned.gates.len(), 1);
         assert_eq!(planned.gates[0].goal_id, g.id);
+        assert_eq!(planned.gates[0].initiatives, vec![i.key().clone()]);
     }
 
     /// The first bucket is the configured one, not a name the read knows: an initiative in "Now" is not listed when
