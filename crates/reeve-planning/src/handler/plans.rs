@@ -52,8 +52,8 @@ fn plan_key(id: &str, name: &str) -> String {
 #[derive(Debug, Default)]
 struct Refs {
     planned: HashMap<String, ItemType>,
-    /// (the level's name, the reference) -> the existing item of that level.
-    typed: HashMap<(&'static str, String), Key>,
+    /// (the level, the reference) -> the existing item of that level.
+    typed: HashMap<(ItemType, String), Key>,
     /// The reference -> the existing item of any level.
     any: HashMap<String, (ItemType, Key)>,
 }
@@ -68,7 +68,7 @@ impl Refs {
         match wanted {
             Some(t) => self
                 .typed
-                .get(&(type_name(t), r.to_owned()))
+                .get(&(t, r.to_owned()))
                 .map(|k| Target::Existing(t, k.clone())),
             None => self
                 .any
@@ -79,7 +79,7 @@ impl Refs {
     fn keep(&mut self, r: String, wanted: Option<ItemType>, found: (ItemType, Key)) {
         match wanted {
             Some(t) => {
-                self.typed.insert((type_name(t), r), found.1);
+                self.typed.insert((t, r), found.1);
             }
             None => {
                 self.any.insert(r, found);
