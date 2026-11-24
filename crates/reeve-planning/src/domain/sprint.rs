@@ -344,6 +344,62 @@ pub fn goal_gates(
         .collect()
 }
 
+/// One initiative of the first horizon bucket with the ids of the goals whose links reach it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BucketInitiative {
+    pub key: Key,
+    /// The active sprint's goals first, then the draft's; by id inside each.
+    pub goals: Vec<i64>,
+}
+
+/// The initiatives whose horizon is `first_bucket`, each with the goals that reach it, for display beside the goals:
+/// goals and horizons do not set each other (kb/ADR-0026, Consequences), so nothing here is a rule about either. The
+/// order is target month, earliest first, none last; then title by code point; then key number. A goal reaches an
+/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). `first_bucket` is the configured
+/// name (kb/ADR-0016 R2), passed in: this function knows no configuration. Nothing here reads urgency (kb/ADR-0024 R7).
+pub fn first_bucket_initiatives(
+    first_bucket: &str,
+    initiatives: &[Initiative],
+    gates: &[GoalGates],
+    goals: &[Goal],
+    active_sprint: Option<i64>,
+) -> Vec<BucketInitiative> {
+    use std::cmp::Ordering;
+    let mut bucket: Vec<&Initiative> = initiatives
+        .iter()
+        .filter(|i| i.horizon() == first_bucket)
+        .collect();
+    bucket.sort_by(|a, b| {
+        let month = match (a.target_month(), b.target_month()) {
+            (Some(x), Some(y)) => x.cmp(y),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        month
+            .then_with(|| a.title().cmp(b.title()))
+            .then_with(|| a.key().number().cmp(&b.key().number()))
+    });
+    bucket
+        .into_iter()
+        .map(|i| {
+            let mut reaching: Vec<&Goal> = goals
+                .iter()
+                .filter(|g| {
+                    gates
+                        .iter()
+                        .any(|x| x.goal_id == g.id && x.initiatives.contains(i.key()))
+                })
+                .collect();
+            reaching.sort_by_key(|g| (Some(g.sprint_id) != active_sprint, g.id));
+            BucketInitiative {
+                key: i.key().clone(),
+                goals: reaching.iter().map(|g| g.id).collect(),
+            }
+        })
+        .collect()
+}
+
 /// One goal's counts over a sprint's window (kb/ADR-0014 R2).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GoalProgress {
@@ -1319,6 +1375,123 @@ mod tests {
                 discovery_total: 0,
                 decisions_total: 0,
             }]
+        );
+    }
+
+    /// An initiative with a title, a horizon and a target month; `ini` fixes all three.
+    fn ini_in(key: &str, title: &str, horizon: &str, month: Option<&str>) -> Initiative {
+        Initiative::from_persisted(
+            k(key),
+            title.into(),
+            String::new(),
+            horizon.into(),
+            month.map(str::to_owned),
+            None,
+            None,
+            None,
+            1,
+        )
+    }
+    fn goal_in(id: i64, sprint_id: i64) -> Goal {
+        Goal {
+            id,
+            sprint_id,
+            outcome: format!("o{id}"),
+            check: "c".into(),
+            owner: "dan".into(),
+            notes: String::new(),
+            confidence: None,
+            confidence_note: None,
+            confidence_at: None,
+            suggested_confidence: None,
+            suggested_note: None,
+            suggested_at: None,
+            suggested_by: None,
+            verdict: None,
+            verdict_note: None,
+            version: 1,
+            created_at: t(1, 0),
+        }
+    }
+    /// A goal's gates holding only the initiatives its links reach.
+    fn reaches(goal_id: i64, keys: &[&str]) -> GoalGates {
+        GoalGates {
+            goal_id,
+            initiatives: keys.iter().map(|s| k(s)).collect(),
+            discoveries: vec![],
+            decisions: vec![],
+            discovery_total: 0,
+            decisions_total: 0,
+        }
+    }
+    fn bucket(key: &str, goals: &[i64]) -> BucketInitiative {
+        BucketInitiative {
+            key: k(key),
+            goals: goals.to_vec(),
+        }
+    }
+
+    #[test]
+    fn the_bucket_lists_only_its_own_initiatives_each_with_the_goals_that_reach_it() {
+        let initiatives = [
+            ini_in("ABC-1", "Bookings", "Now", None),
+            ini_in("ABC-2", "Payments", "Later", None),
+            ini_in("ABC-3", "Reports", "Now", None),
+        ];
+        let goals = [goal_in(10, 1), goal_in(11, 1)];
+        let gates = [reaches(10, &["ABC-1", "ABC-2"]), reaches(11, &[])];
+        assert_eq!(
+            first_bucket_initiatives("Now", &initiatives, &gates, &goals, Some(1)),
+            vec![bucket("ABC-1", &[10]), bucket("ABC-3", &[])]
+        );
+    }
+
+    #[test]
+    fn the_bucket_orders_by_target_month_then_title_then_key_number() {
+        let initiatives = [
+            ini_in("ABC-9", "Same", "Now", None),
+            ini_in("ABC-4", "Zeta", "Now", Some("2026-12")),
+            ini_in("ABC-5", "alpha", "Now", None),
+            ini_in("ABC-6", "Beta", "Now", Some("2027-01")),
+            ini_in("ABC-10", "Same", "Now", None),
+            ini_in("ABC-7", "Alpha", "Now", Some("2026-12")),
+        ];
+        let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
+            .iter()
+            .map(|b| b.key.to_string())
+            .collect();
+        // Months first, earliest first; then no month. Titles by code point ("Same" before "alpha": upper case
+        // sorts first). Two with the same title by key number, so ABC-9 before ABC-10 (not by text).
+        assert_eq!(
+            keys,
+            ["ABC-7", "ABC-4", "ABC-6", "ABC-9", "ABC-10", "ABC-5"]
+        );
+    }
+
+    #[test]
+    fn a_bucket_initiatives_goals_are_the_active_sprints_first_then_by_id() {
+        let initiatives = [ini_in("ABC-1", "Bookings", "Now", None)];
+        // Sprint 2 is active, sprint 3 the draft; goal ids do not follow that order.
+        let goals = [
+            goal_in(20, 3),
+            goal_in(21, 2),
+            goal_in(22, 3),
+            goal_in(23, 2),
+        ];
+        let gates = [
+            reaches(20, &["ABC-1"]),
+            reaches(21, &["ABC-1"]),
+            reaches(22, &["ABC-1"]),
+            reaches(23, &["ABC-1"]),
+        ];
+        assert_eq!(
+            first_bucket_initiatives("Now", &initiatives, &gates, &goals, Some(2)),
+            vec![bucket("ABC-1", &[21, 23, 20, 22])]
+        );
+        // Without an active sprint every goal is the draft's: by id alone.
+        assert_eq!(
+            first_bucket_initiatives("Now", &initiatives, &gates, &goals, None),
+            vec![bucket("ABC-1", &[20, 21, 22, 23])]
         );
     }
 }
