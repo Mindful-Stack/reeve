@@ -29,11 +29,16 @@ pub fn parse_link_name(s: &str) -> Result<ItemLinkType, String> {
     })
 }
 
-/// What `link add` says after a `follows` between two stories: the link is informational, and how to hold the
-/// story back if that was meant.
-pub fn not_a_blocker(story: &Key, other: &Key) -> String {
-    format!(
-        "Informational: this does not hold {story} back. To hold it back: `reeve story block {story} --by {other}`."
+/// What `link add` says after an item link was added, when there is something to say: for a `follows` between two
+/// stories, that the link is informational (the protocol's sentence, and its condition), and how to hold the story
+/// back if that was meant. `story` is the item that follows and `other` the one it follows, each with its level.
+pub fn not_a_blocker(
+    link_type: ItemLinkType,
+    (story_level, story): (ItemType, &Key),
+    (other_level, other): (ItemType, &Key),
+) -> Option<String> {
+    reeve_protocol::follows_is_informational(link_type, story_level, other_level, story).map(
+        |sentence| format!("{sentence} To hold it back: `reeve story block {story} --by {other}`."),
     )
 }
 
@@ -355,8 +360,32 @@ mod tests {
     fn the_informational_line_names_the_story_and_the_command_that_would_hold_it_back() {
         let (story, other): (Key, Key) = ("GRA-12".parse().unwrap(), "GRA-7".parse().unwrap());
         assert_eq!(
-            not_a_blocker(&story, &other),
-            "Informational: this does not hold GRA-12 back. To hold it back: `reeve story block GRA-12 --by GRA-7`."
+            not_a_blocker(
+                ItemLinkType::Follows,
+                (ItemType::Story, &story),
+                (ItemType::Story, &other)
+            )
+            .as_deref(),
+            Some(
+                "Informational: this does not hold GRA-12 back. To hold it back: `reeve story block GRA-12 --by GRA-7`."
+            )
+        );
+        // The CLI adds nothing of its own to the condition: no line for an epic's end or another name.
+        assert_eq!(
+            not_a_blocker(
+                ItemLinkType::Follows,
+                (ItemType::Story, &story),
+                (ItemType::Epic, &other)
+            ),
+            None
+        );
+        assert_eq!(
+            not_a_blocker(
+                ItemLinkType::RelatesTo,
+                (ItemType::Story, &story),
+                (ItemType::Story, &other)
+            ),
+            None
         );
     }
 }

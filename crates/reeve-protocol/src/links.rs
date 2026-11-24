@@ -118,6 +118,24 @@ impl ItemLinkType {
     }
 }
 
+/// What a client says after an item link was added, when there is something to say: for a `follows` between two
+/// stories, that it is informational (kb/ADR-0031, Consequences: "the clients say so when a `follows` is added
+/// between two stories"); for every other name and every other pair of levels, nothing. `from_level` and
+/// `to_level` are the levels of the two items as the server resolved them, and `story` is the key of the item that
+/// follows, which the sentence names. The condition and the wording live here once, for the CLI and the MCP tool;
+/// each adds after the sentence what its own reader can do next.
+pub fn follows_is_informational(
+    link_type: ItemLinkType,
+    from_level: ItemType,
+    to_level: ItemType,
+    story: &Key,
+) -> Option<String> {
+    (link_type == ItemLinkType::Follows
+        && from_level == ItemType::Story
+        && to_level == ItemType::Story)
+        .then(|| format!("Informational: this does not hold {story} back."))
+}
+
 /// The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
 /// reading the link as a gate (kb/ADR-0031 R3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -290,6 +308,31 @@ mod tests {
                 serde_json::from_value::<AddItemLink>(bad.clone()).is_err(),
                 "{bad}"
             );
+        }
+    }
+
+    /// The sentence the CLI and the MCP tool both say after a `follows` between two stories, and the one place
+    /// that says when: the name is `follows` and both ends are stories. Every other name and every other pair of
+    /// levels gets nothing.
+    #[test]
+    fn the_informational_sentence_is_said_for_a_follows_between_two_stories_only() {
+        use ItemType::{Epic, Initiative, Story};
+        let story: Key = "GRA-12".parse().unwrap();
+        assert_eq!(
+            follows_is_informational(ItemLinkType::Follows, Story, Story, &story).as_deref(),
+            Some("Informational: this does not hold GRA-12 back.")
+        );
+        for link_type in ItemLinkType::ALL {
+            for from in [Initiative, Epic, Story] {
+                for to in [Initiative, Epic, Story] {
+                    let said = follows_is_informational(link_type, from, to, &story);
+                    assert_eq!(
+                        said.is_some(),
+                        link_type == ItemLinkType::Follows && from == Story && to == Story,
+                        "{link_type:?} {from:?} {to:?}"
+                    );
+                }
+            }
         }
     }
 }
