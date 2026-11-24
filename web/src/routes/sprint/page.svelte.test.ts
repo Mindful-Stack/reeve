@@ -5,9 +5,9 @@
 // only when they differ (kb/ADR-0014 R6).
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActivityEntry, Goal, GoalGates, Initiative, Sprint, SprintCounts, Sprints, SprintView } from '#lib/api/types.ts';
+import type { ActivityEntry, Goal, Sprint, SprintCounts, SprintPlanning, Sprints, SprintView } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
-import { activity, config, goal, goalGates, goalInitiative, initiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
+import { activity, bucketInitiative, goal, goalGates, goalInitiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
@@ -32,8 +32,7 @@ const net = vi.hoisted(() => ({
 	closedEntries: {} as Record<number, ActivityEntry[]>,
 	writes: [] as Write[],
 	reads: [] as string[],
-	gates: [] as GoalGates[],
-	initiatives: [] as Initiative[],
+	planning: null as null | SprintPlanning,
 	/** Fails a read with a 500 when it answers true. */
 	fail: null as null | ((path: string) => boolean),
 	/** Answers a write instead of the default (a value, or a Response for a refusal or error). */
@@ -53,8 +52,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			if (path === '/api/v1/sprints') value = structuredClone(net.sprints);
 			else if (one) value = net.views[Number(one[1])];
 			else if (path === '/api/v1/activity') value = net.closedEntries[Number(url.searchParams.get('entity_key'))] ?? [];
-			else if (path === '/api/v1/sprints/planning') value = structuredClone(planning({ goals: net.gates }));
-			else if (path === '/api/v1/initiatives') value = structuredClone(net.initiatives);
+			else if (path === '/api/v1/sprints/planning') value = structuredClone(net.planning ?? planning());
 			else throw new Error(`unexpected GET ${path}`);
 			const held = net.gate?.(path);
 			if (held) await held;
@@ -87,15 +85,21 @@ afterEach(() => {
 	net.reads.length = 0;
 	net.answer = null;
 	net.gate = null;
-	net.gates = [];
-	net.initiatives = [];
+	net.planning = null;
 	net.fail = null;
 	session.config = null;
 });
 
-async function open() {
+/** Opens every closed goal row: a goal's detail is behind its disclosure. */
+function expandAll() {
+	for (const b of document.querySelectorAll<HTMLButtonElement>('button.disclose[aria-expanded="false"]')) b.click();
+	flushSync();
+}
+/** The page loaded, with every goal open unless `closed`. */
+async function open({ closed = false } = {}) {
 	app = mount(Page, { target: document.body });
 	await settle(() => expect(document.body.textContent).not.toContain('Loading…'));
+	if (!closed) expandAll();
 }
 async function settle(check: () => void) {
 	await vi.waitFor(() => {
@@ -175,8 +179,8 @@ describe('the active sprint', () => {
 		expect(t).toContain('3 in flight (1 in review)');
 		expect(t).toContain('4 todo');
 		expect(text(panel)).toContain('7 of 24 completed stories were upkeep (29%; team line 20%)');
-		const demo = q('[data-testid="demo"]', panel)!;
-		expect(text(demo)).toContain('done in the last 7 days');
+		const demo = q('[data-testid="demo"]')!; // folded below the columns, no longer in the sprint's panel
+		expect(text(q('summary', demo))).toBe('Done in the last 7 days (1)');
 		expect(text(demo)).toContain('RV-9');
 		expect(text(demo)).toContain('Booking form');
 	});
@@ -382,7 +386,7 @@ describe('editing a goal', () => {
 		};
 		await edit('active');
 		await settle(() => expect(text(document.body)).toContain('someone else changed this goal; reloaded'));
-		await settle(() => expect(text(q('[data-testid="goal-5"] h4'))).toBe('Theirs'));
+		await settle(() => expect(text(q('[data-testid="goal-5"] .outcome'))).toBe('Theirs'));
 		const form = q<HTMLFormElement>('form[aria-label="Edit goal"]')!;
 		expect(form).not.toBeNull();
 		expect(q<HTMLInputElement>('input[name="outcome"]', form)!.value).toBe('New');
@@ -718,17 +722,19 @@ describe('the history', () => {
 describe('planning by goal', () => {
 	it("shows each goal's gates: discovery by level, decisions by what they need, and the counts line", async () => {
 		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] }), goal({ id: 2, links: ['ABC-2'] })]);
-		net.gates = [
-			goalGates({ goal_id: 2, initiatives: [goalInitiative('ABC-1')], decisions_total: 2 }),
-			goalGates({
-				goal_id: 1,
-				initiatives: [goalInitiative('ABC-1')],
-				discoveries: [{ key: 'ABC-1', item: 'initiative', title: 'Bookings' }],
-				decisions: [{ on: 'ABC-2', reason: { reason: 'decision_no_record', decision_id: 7, title: 'Which calendar' } }],
-				discovery_total: 2,
-				decisions_total: 3
-			})
-		];
+		net.planning = planning({
+			goals: [
+				goalGates({ goal_id: 2, initiatives: [goalInitiative('ABC-1')], decisions_total: 2 }),
+				goalGates({
+					goal_id: 1,
+					initiatives: [goalInitiative('ABC-1')],
+					discoveries: [{ key: 'ABC-1', item: 'initiative', title: 'Bookings' }],
+					decisions: [{ on: 'ABC-2', reason: { reason: 'decision_no_record', decision_id: 7, title: 'Which calendar' } }],
+					discovery_total: 2,
+					decisions_total: 3
+				})
+			]
+		});
 		await open();
 		const block = q('[data-testid="goal-1"] [data-testid="gates"]')!;
 		expect(text(q('h5', block))).toBe('Waits on');
@@ -744,26 +750,13 @@ describe('planning by goal', () => {
 		expect(text(q('[data-testid="goal-1"]'))).not.toContain('blocked by');
 		// A goal with no discovery items words the line with decisions only.
 		expect(text(q('[data-testid="goal-2"] [data-testid="gate-counts"]'))).toBe('Decisions 2 of 2 decided');
-	});
-
-	it('says "Nothing waits" with its counts and "No linked items yet", and groups goals under their first initiative, upkeep last', async () => {
-		session.config = config({ horizon_buckets: ['Now', 'Next'] });
-		net.initiatives = [initiative({ key: 'ABC-1', title: 'Bookings', horizon: 'Next' }), initiative({ key: 'ABC-5', title: 'Payments', horizon: 'Now' })];
-		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-20'] }), goal({ id: 2 }), goal({ id: 3, links: ['ABC-5'] })]);
-		net.gates = [
-			goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-1')], discovery_total: 1 }),
-			goalGates({ goal_id: 2 }),
-			goalGates({ goal_id: 3, initiatives: [goalInitiative('ABC-5'), goalInitiative('ABC-1')] })
-		];
-		await open();
-		const panel = q('[data-testid="active-sprint"]')!;
-		const groups = [...panel.querySelectorAll('[data-testid^="active-group-"]')];
-		expect(groups.map((g) => g.getAttribute('data-testid'))).toEqual(['active-group-ABC-5', 'active-group-ABC-1', 'active-group-none']);
-		expect(text(q('h3', groups[0]))).toBe('ABC-5 Payments');
-		expect(q('[data-testid="goal-3"]', groups[0])).not.toBeNull();
-		expect(text(q('h3', groups[2]))).toBe('Upkeep / no initiative');
+		// Nothing waits, and a goal with no linked items says so.
+		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-20'] }), goal({ id: 2 })]);
+		net.planning = planning({ goals: [goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-1')], discovery_total: 1 }), goalGates({ goal_id: 2 })] });
+		onLiveHandler!();
+		await settle(() => expect(text(q('[data-testid="goal-1"] [data-testid="gates"]'))).toContain('Nothing waits'));
+		expandAll();
 		const one = q('[data-testid="goal-1"] [data-testid="gates"]')!;
-		expect(text(one)).toContain('Nothing waits');
 		expect(text(q('[data-testid="gate-counts"]', one))).toBe('Discovery 1 of 1 marked');
 		expect(text(q('[data-testid="goal-2"] [data-testid="gates"]'))).toContain('No linked items yet');
 	});
@@ -778,52 +771,7 @@ describe('planning by goal', () => {
 		expect(text(q('[data-testid="goal-5"]'))).toContain('Waiting since 3 Nov');
 	});
 
-	it('lists the Now initiatives no goal covers by target month, then title, months first, never by urgency', async () => {
-		session.config = config({ horizon_buckets: ['Now', 'Next'] });
-		net.initiatives = [
-			initiative({ key: 'ABC-7', title: 'Z', horizon: 'Now', target_month: '2026-12' }),
-			initiative({
-				key: 'ABC-8',
-				title: 'A',
-				horizon: 'Now',
-				discovery_complete: { at: '2026-11-01T00:00:00Z', by: 'ana@example.com' },
-				urgent_sources: [{ key: 'ABC-8', item: 'initiative' }]
-			}),
-			initiative({ key: 'ABC-9', title: 'B', horizon: 'Now', target_month: '2026-11' }),
-			initiative({ key: 'ABC-10', title: 'Later work', horizon: 'Next' }),
-			initiative({ key: 'ABC-11', title: 'Covered', horizon: 'Now' })
-		];
-		// Covered through the gates' initiatives, not the goal's links (an epic, ABC-20), on the active sprint.
-		net.sprints!.active = activeWith([goal({ id: 5, links: ['ABC-20'] })]);
-		net.gates = [goalGates({ goal_id: 5, initiatives: [goalInitiative('ABC-11')] })];
-		await open();
-		const section = q('[data-testid="no-goal-yet"]')!;
-		expect(text(q('h2', section))).toBe('Now, no goal yet');
-		const rows = [...section.querySelectorAll('[data-testid^="no-goal-ABC"]')].map((r) => r.getAttribute('data-testid'));
-		expect(rows).toEqual(['no-goal-ABC-9', 'no-goal-ABC-7', 'no-goal-ABC-8']);
-		expect(text(q('[data-testid="no-goal-ABC-9"]'))).toContain('Nov 2026');
-		expect(text(q('[data-testid="no-goal-ABC-9"]'))).toContain('in discovery');
-		expect(text(q('[data-testid="no-goal-ABC-8"]'))).not.toContain('in discovery');
-		expect(text(section)).not.toContain('urgent');
-	});
-
-	it('says when every Now initiative has a goal', async () => {
-		session.config = config({ horizon_buckets: ['Now'] });
-		net.initiatives = [initiative({ key: 'ABC-11', horizon: 'Now' })];
-		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, links: ['ABC-11'] })]);
-		net.gates = [goalGates({ goal_id: 5, initiatives: [goalInitiative('ABC-11')] })];
-		await open();
-		expect(text(q('[data-testid="no-goal-yet"]'))).toContain('Every Now initiative has a goal this sprint or next.');
-	});
-
-	it('shows no "no goal yet" section without a configured bucket', async () => {
-		session.config = config({ horizon_buckets: [] });
-		net.initiatives = [initiative({ key: 'ABC-11', horizon: 'Now' })];
-		await open();
-		expect(q('[data-testid="no-goal-yet"]')).toBeNull();
-	});
-
-	it('keeps the whole page and says so when one of the three reads fails on a reload', async () => {
+	it('keeps the whole page and says so when one of the two reads fails on a reload', async () => {
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, outcome: 'Five' })]);
 		await open();
 		// The server's sprints change, but the planning read fails: nothing of the new answer may show.
@@ -835,12 +783,16 @@ describe('planning by goal', () => {
 		expect(q('[data-testid="goal-6"]')).toBeNull();
 	});
 
-	it('"+ goal" opens the add form for the next sprint and sends one POST /goals linking the initiative', async () => {
-		session.config = config({ horizon_buckets: ['Now'] });
-		net.initiatives = [initiative({ key: 'ABC-7', title: 'Bookings', horizon: 'Now' })];
+	/** A first bucket "Now" holding ABC-7, and a draft with no goal. */
+	function withBucketRow() {
+		net.planning = planning({ first_bucket: 'Now', first_bucket_initiatives: [bucketInitiative({ key: 'ABC-7', title: 'Bookings' })] });
 		net.sprints!.draft = draft([]);
+	}
+
+	it('"+ goal" opens the add form for the next sprint and sends one POST /goals linking the initiative', async () => {
+		withBucketRow();
 		await open();
-		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		const row = q('[data-testid="bucket-ABC-7"]')!;
 		button('+ goal', row)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form', row)!;
@@ -857,11 +809,9 @@ describe('planning by goal', () => {
 	});
 
 	it('focuses the new goal\'s card after "+ goal" adds it, as its row unmounts', async () => {
-		session.config = config({ horizon_buckets: ['Now'] });
-		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
-		net.sprints!.draft = draft([]);
+		withBucketRow();
 		await open();
-		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		const row = q('[data-testid="bucket-ABC-7"]')!;
 		button('+ goal', row)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form', row)!;
@@ -870,17 +820,15 @@ describe('planning by goal', () => {
 		flushSync();
 		// What the reload after the add brings.
 		net.sprints!.draft = draft([goal({ id: 99, sprint_id: 2, links: ['ABC-7'] })]);
-		net.gates = [goalGates({ goal_id: 99, initiatives: [goalInitiative('ABC-7')] })];
+		net.planning = planning({ goals: [goalGates({ goal_id: 99, initiatives: [goalInitiative('ABC-7', { horizon: 'Now', in_first_bucket: true })] })], first_bucket: 'Now' });
 		button('Add goal', form)!.click();
 		await settle(() => expect(document.activeElement).toBe(q('[data-testid="goal-99"]')));
 	});
 
 	it('focuses the outcome input on "+ goal" and returns focus to the button on cancel', async () => {
-		session.config = config({ horizon_buckets: ['Now'] });
-		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
-		net.sprints!.draft = draft([]);
+		withBucketRow();
 		await open();
-		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		const row = q('[data-testid="bucket-ABC-7"]')!;
 		button('+ goal', row)!.click();
 		await settle(() => expect(document.activeElement).toBe(q('input[name="outcome"]', row)));
 		button('Cancel', row)!.click();
@@ -888,16 +836,190 @@ describe('planning by goal', () => {
 	});
 
 	it('closes the "+ goal" form when a reload brings a different draft', async () => {
-		session.config = config({ horizon_buckets: ['Now'] });
-		net.initiatives = [initiative({ key: 'ABC-7', horizon: 'Now' })];
-		net.sprints!.draft = draft([]);
+		withBucketRow();
 		await open();
-		const row = q('[data-testid="no-goal-ABC-7"]')!;
+		const row = q('[data-testid="bucket-ABC-7"]')!;
 		button('+ goal', row)!.click();
 		flushSync();
 		expect(q('form', row)).not.toBeNull();
 		net.sprints!.draft = { ...draft([]), id: 9 };
 		onLiveHandler?.();
-		await settle(() => expect(q('form', q('[data-testid="no-goal-ABC-7"]')!)).toBeNull());
+		await settle(() => expect(q('form', q('[data-testid="bucket-ABC-7"]')!)).toBeNull());
+	});
+});
+
+describe('the redesigned page', () => {
+	it('shows this sprint and the next side by side, every goal as one closed line', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one' }), goal({ id: 2, check: 'check two' })]);
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, check: 'check five' })]);
+		await open({ closed: true });
+		const columns = q('[data-testid="columns"]')!;
+		expect([...columns.children].map((c) => c.getAttribute('data-testid'))).toEqual(['active-sprint', 'next-sprint']);
+		expect(text(q('h2', q('[data-testid="active-sprint"]')!))).toContain('This sprint');
+		expect(document.querySelectorAll('button.disclose[aria-expanded="false"]').length).toBe(3);
+		expect(document.body.textContent).not.toContain('check one');
+		expect(document.body.textContent).not.toContain('check five');
+		// Flat, in the order served: no initiative headings.
+		expect(q('[data-testid^="active-group-"]')).toBeNull();
+	});
+
+	it('keeps a goal open across a refetch, and forgets one that left', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one' }), goal({ id: 2, check: 'check two' })]);
+		await open({ closed: true });
+		q<HTMLButtonElement>('[data-testid="goal-1"] button.disclose')!.click();
+		flushSync();
+		expect(text(q('[data-testid="goal-1"]'))).toContain('check one');
+		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one, edited' }), goal({ id: 2, check: 'check two' })]);
+		onLiveHandler!();
+		await settle(() => expect(text(q('[data-testid="goal-1"]'))).toContain('check one, edited'));
+		expect(text(q('[data-testid="goal-2"]'))).not.toContain('check two');
+	});
+
+	it('keeps a half-typed form and the tick boxes across a refetch', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2 }), goal({ id: 6, sprint_id: 2 })]);
+		await open({ closed: true });
+		q<HTMLInputElement>('input[aria-label="Goes in at open: outcome 6"]')!.click();
+		button('+ goal', q('[data-testid="active-sprint"]')!)!.click();
+		flushSync();
+		type(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]')!, 'half');
+		onLiveHandler!();
+		await settle(() => expect(net.reads.filter((r) => r === '/api/v1/sprints').length).toBe(2));
+		await new Promise((r) => setTimeout(r, 20));
+		flushSync();
+		expect(q<HTMLInputElement>('input[aria-label="Goes in at open: outcome 6"]')!.checked).toBe(false);
+		expect(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]')!.value).toBe('half');
+	});
+
+	it('reads exactly /sprints and /sprints/planning on load', async () => {
+		await open();
+		expect([...net.reads].sort()).toEqual(['/api/v1/sprints', '/api/v1/sprints/planning']);
+	});
+
+	it('adds a goal to the active sprint from its column', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		net.sprints!.draft = draft();
+		await open();
+		const column = q('[data-testid="active-sprint"]')!;
+		button('+ goal', column)!.click();
+		flushSync();
+		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'A late goal');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'it is done');
+		form.requestSubmit();
+		await settle(() => expect(writes('/api/v1/goals').length).toBe(1));
+		expect(writes('/api/v1/goals')[0].body).toMatchObject({ outcome: 'A late goal', check: 'it is done', active: true });
+	});
+
+	it('adds to the next sprint without the active flag', async () => {
+		net.sprints!.draft = draft();
+		await open();
+		const form = q<HTMLFormElement>('[data-testid="next-sprint"] form[aria-label="New goal"]')!;
+		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'Later');
+		type(q<HTMLInputElement>('input[name="check"]', form)!, 'c');
+		form.requestSubmit();
+		await settle(() => expect(writes('/api/v1/goals').length).toBe(1));
+		expect((writes('/api/v1/goals')[0].body as { active?: boolean }).active).not.toBe(true);
+	});
+
+	it('says there is no active sprint, with no way to close or add to one', async () => {
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2 })]);
+		await open();
+		const column = q('[data-testid="active-sprint"]')!;
+		expect(text(column)).toContain('No active sprint');
+		expect(button('Close…', column)).toBeUndefined();
+		expect(button('+ goal', column)).toBeUndefined();
+		expect(button(/^Open sprint with 1 goal$/)).toBeDefined();
+	});
+
+	it('keeps the tick boxes beside an active sprint, and the close step still carries the unticked goals', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })]);
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2 }), goal({ id: 6, sprint_id: 2 })]);
+		await open({ closed: true });
+		const box = q<HTMLInputElement>('input[aria-label="Goes in at open: outcome 6"]')!;
+		expect(box.checked).toBe(true);
+		box.click();
+		flushSync();
+		expect(text(q('[data-testid="next-sprint"]'))).toContain('1 goal stays in Next sprint when it opens.');
+	});
+
+	it('lists the first bucket with its goals, or no goal, in the order served', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1, outcome: 'Bookings work' })]);
+		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, outcome: 'Reports work' })]);
+		net.planning = planning({
+			goals: [
+				goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-9', { horizon: 'Soon', in_first_bucket: true })] }),
+				goalGates({ goal_id: 5, initiatives: [goalInitiative('ABC-9', { horizon: 'Soon', in_first_bucket: true })] })
+			],
+			first_bucket: 'Soon',
+			first_bucket_initiatives: [
+				bucketInitiative({ key: 'ABC-9', title: 'Bookings', target_month: '2026-11', goals: [1, 5] }),
+				bucketInitiative({ key: 'ABC-7', title: 'Payments', discovery_complete: true })
+			]
+		});
+		await open({ closed: true });
+		const section = q('[data-testid="bucket-initiatives"]')!;
+		expect(text(q('h2', section))).toBe('Soon initiatives');
+		expect([...section.querySelectorAll('[data-testid^="bucket-ABC"]')].map((r) => r.getAttribute('data-testid'))).toEqual(['bucket-ABC-9', 'bucket-ABC-7']);
+		const first = q('[data-testid="bucket-ABC-9"]')!;
+		expect(text(first)).toContain('Nov 2026');
+		expect(text(first)).toContain('in discovery');
+		expect([...first.querySelectorAll('a.goal-chip')].map((a) => [text(a), a.getAttribute('href')])).toEqual([
+			['Bookings work · this sprint', '#goal-1'],
+			['Reports work · next sprint', '#goal-5']
+		]);
+		const second = q('[data-testid="bucket-ABC-7"]')!;
+		expect(text(second)).toContain('no goal');
+		expect(text(second)).not.toContain('in discovery');
+		expect(button('+ goal', second)).toBeDefined();
+		expect(text(section)).not.toContain('urgent');
+	});
+
+	it('shows no bucket section when the server names no bucket', async () => {
+		net.planning = planning({ first_bucket: null });
+		await open();
+		expect(q('[data-testid="bucket-initiatives"]')).toBeNull();
+	});
+
+	it('keeps the upkeep line, and folds the demo list and the history', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })], { demo: [{ key: 'ABC-4', title: 'Done thing' }] });
+		await open();
+		expect(text(q('[data-testid="active-sprint"]'))).toContain('nothing completed yet (team line 20%)');
+		const demo = q<HTMLDetailsElement>('details[data-testid="demo"]')!;
+		expect(demo.open).toBe(false);
+		expect(text(q('summary', demo))).toBe('Done in the last 7 days (1)');
+		const history = q<HTMLDetailsElement>('details[data-testid="history"]')!;
+		expect(history.open).toBe(false);
+		expect(text(q('summary', history))).toBe('History (0)');
+	});
+
+	const mark = (id: number) => q(`[data-testid="goal-${id}"] .tag .mark`);
+
+	it('marks a goal whose initiative is outside the first bucket, or that has none, only while a bucket is named', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 }), goal({ id: 2 }), goal({ id: 3 })]);
+		const goals = [
+			goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-1', { horizon: 'Later', in_first_bucket: false })] }),
+			goalGates({ goal_id: 2 }),
+			goalGates({ goal_id: 3, initiatives: [goalInitiative('ABC-2', { horizon: 'Now', in_first_bucket: true })] })
+		];
+		net.planning = planning({ goals, first_bucket: 'Now' });
+		await open({ closed: true });
+		expect(text(mark(1))).toBe('!');
+		expect(text(mark(2))).toBe('!');
+		expect(mark(3)).toBeNull();
+
+		net.planning = planning({ goals, first_bucket: null });
+		onLiveHandler!();
+		await settle(() => expect(q('[data-testid="bucket-initiatives"]')).toBeNull());
+		expect(mark(1)).toBeNull();
+		expect(mark(2)).toBeNull();
+	});
+
+	it('draws an active goal the counts miss as an active row, with its confidence dot', async () => {
+		net.sprints!.active = activeWith([goal({ id: 1 })], { counts: counts([], 0) });
+		await open({ closed: true });
+		const row = q('[data-testid="goal-1"]')!;
+		expect(row.classList.contains('draft')).toBe(false);
+		expect(q('.dot', row)).not.toBeNull();
 	});
 });

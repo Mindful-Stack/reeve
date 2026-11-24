@@ -1,4 +1,4 @@
-<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint (`POST /goals`; the first goal creates
+<!-- web/src/lib/components/GoalForm.svelte: adds a goal to the draft sprint, or to the active one with `active` (`POST /goals`; the first goal creates
     the first draft; given `links`, the add also links those items in the same write (`POST /goals` `links`), and
     `title` heads and names the form; `links` adds only, ignored when editing), or, given `goal`, edits that goal
     (`PATCH /goals/{id}` at its version). Mount a new form under `{#key}` of the draft so a half-typed goal never
@@ -13,6 +13,7 @@
 		endsOn = null,
 		title,
 		links = [],
+		active = false,
 		goal,
 		oncreated,
 		onsaved,
@@ -25,6 +26,9 @@
 		title?: string;
 		/** Add only, ignored when editing: items the new goal links in its create; none by default. */
 		links?: string[];
+		/** Add only: the goal goes into the active sprint instead of the draft (`CreateGoal.active`; the server refuses
+		 *  it without an active sprint). */
+		active?: boolean;
 		/** The goal to edit; without it the form adds one. */
 		goal?: Goal;
 		/** Add: the goal and the sprint's warnings after the add. */
@@ -56,7 +60,8 @@
 			check: check.trim(),
 			owner: owner.trim() || null, // the server defaults the owner to the caller
 			notes: notes.trim() || null,
-			links
+			links,
+			...(active ? { active } : {}) // absent for the draft, so a next-sprint add is the same request as before
 		};
 		const out = await cycle.send(JSON.stringify(body), (idempotency_key) =>
 			unwrap(api.POST('/api/v1/goals', { body: { ...body, idempotency_key } }))
