@@ -3,29 +3,8 @@
 //! version changes. Any caller who may edit an item may add or remove its web links, whatever its token kind (R7).
 use super::*;
 use crate::domain::web_link::WebLink;
-use crate::ports::StoredWebLink;
 use reeve_protocol::WebLinkDto;
 use sqlx::{Postgres, Transaction};
-
-/// Whether `link` would be a new web link on an item that has the web links `stored`: true when none of them has
-/// its URL (compared as stored), false when one has that URL under the same title (a repeat, which changes
-/// nothing), and a validation error when one has it under another title (a web link is not edited in place: remove
-/// it first). The one place that compares and words the refusal: `add_web_link_in` calls it when its insert found
-/// the URL taken, and a check that must refuse before anything is written (plan apply's, GRA-879) calls it on the
-/// item's stored web links.
-pub(super) fn web_link_is_new(
-    stored: &[StoredWebLink],
-    link: &WebLink,
-) -> Result<bool, HandlerError> {
-    match stored.iter().find(|w| w.link.url() == link.url()) {
-        None => Ok(true),
-        Some(w) if w.link.title() == link.title() => Ok(false),
-        Some(w) => Err(HandlerError::Validation(format!(
-            "this item already has a web link to that URL, titled {:?}: remove it first, then add it with the new title",
-            w.link.title()
-        ))),
-    }
-}
 
 impl Handlers {
     /// Attaches a titled URL to an item of any level. A bad title or URL is a validation error; the item must
@@ -52,9 +31,10 @@ impl Handlers {
     /// `web_link_added` on the item, last. `item` is the item's key and `level` its level; the caller has resolved
     /// both and validated the link (`WebLink::new`). Nothing here reads through the pool, so it also serves a
     /// caller whose item is not committed yet, and it neither commits nor rolls back. The same URL with the same
-    /// title answers false and writes nothing; with another title it is `web_link_is_new`'s validation error, and
-    /// what the caller does with its transaction then is the caller's. Plan apply (GRA-879) composes it with the
-    /// plan's other writes.
+    /// title answers false and writes nothing; with another title it is `WebLink::is_new_among`'s refusal as a
+    /// validation error, and what the caller does with its transaction then is the caller's. Plan apply (GRA-879)
+    /// composes it with the plan's other writes, and its check before any write asks `is_new_among` the same
+    /// question of the item's stored web links.
     pub(super) async fn add_web_link_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -64,13 +44,14 @@ impl Handlers {
         link: &WebLink,
     ) -> Result<bool, HandlerError> {
         let Some(id) = self.ports.web_links.add_web_link(tx, item, link).await? else {
-            // The item already has this URL: the same title is a repeat, another title is not an edit.
+            // The item already has this URL: the same title is a repeat, another title is not an edit. The rows
+            // read are this one item's, which is what the rule is over.
             let stored = self
                 .ports
                 .web_links
                 .web_links_of_in(tx, std::slice::from_ref(item))
                 .await?;
-            return if web_link_is_new(&stored, link)? {
+            return if link.is_new_among(stored.iter().map(|w| &w.link))? {
                 // It was removed between the insert and the read: nothing was added, so say so.
                 Err(HandlerError::Conflict { current: -1 })
             } else {

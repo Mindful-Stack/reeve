@@ -15,6 +15,12 @@ pub enum WebLinkError {
         "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password"
     )]
     Url,
+    /// The item already has a web link to this URL under another title, `titled`. Only `WebLink::is_new_among`
+    /// makes it.
+    #[error(
+        "this item already has a web link to that URL, titled {titled:?}: remove it first, then add it with the new title"
+    )]
+    SameUrlOtherTitle { titled: String },
 }
 
 /// A title and a URL, both as stored.
@@ -39,6 +45,26 @@ impl WebLink {
             title: title.to_string(),
             url: canonical_url(url)?,
         })
+    }
+    /// Whether this would be a new web link on an item that has the web links `on_the_item`: true when none of
+    /// them has its URL (compared as stored), false when one has that URL under the same title (a repeat, which
+    /// changes nothing), and `SameUrlOtherTitle` when one has it under another title (a web link is not edited in
+    /// place: remove it first). The one place that compares and words the refusal.
+    ///
+    /// `on_the_item` must be the web links of one item, the one this is being added to: a URL is unique on an
+    /// item, not across items, and a `WebLink` does not know its item, so links of several items give an answer
+    /// about none of them.
+    pub fn is_new_among<'a>(
+        &self,
+        on_the_item: impl IntoIterator<Item = &'a WebLink>,
+    ) -> Result<bool, WebLinkError> {
+        match on_the_item.into_iter().find(|w| w.url == self.url) {
+            None => Ok(true),
+            Some(w) if w.title == self.title => Ok(false),
+            Some(w) => Err(WebLinkError::SameUrlOtherTitle {
+                titled: w.title.clone(),
+            }),
+        }
     }
     /// A stored row, as it is: no check.
     pub fn from_persisted(title: String, url: String) -> Self {
@@ -263,6 +289,45 @@ mod tests {
             canonical_url("https://example.com/people/@mia?to=mia@example.com").as_deref(),
             Ok("https://example.com/people/@mia?to=mia@example.com")
         );
+    }
+
+    /// The same-URL rule, over the web links of one item: a URL none of them has is new, the same URL under the
+    /// same title is a repeat, and under another title it is refused with the title it has.
+    #[test]
+    fn a_web_link_is_new_a_repeat_or_a_retitling_among_the_web_links_of_its_item() {
+        let link = |title, url| WebLink::new(title, url).unwrap();
+        let on_the_item = [
+            link("Board", "http://example.com/board"),
+            link("Scenario page", "https://example.com/wiki/scenario"),
+        ];
+        // New: no web link at all, or none with this URL (a title may repeat under another URL).
+        let new = link("Scenario page", "https://example.com/wiki/other");
+        assert_eq!(new.is_new_among(&[]), Ok(true));
+        assert_eq!(new.is_new_among(&on_the_item), Ok(true));
+        // A repeat: the same URL, in whatever spelling it was typed, under the same title.
+        let repeat = link(" Scenario page ", "HTTPS://Example.com/wiki/scenario");
+        assert_eq!(repeat.is_new_among(&on_the_item), Ok(false));
+        // Retitled: the same URL under another title is refused, and the refusal carries the title it has.
+        let retitled = link("Scenario", "https://example.com/wiki/scenario");
+        let refused = retitled.is_new_among(&on_the_item);
+        assert_eq!(
+            refused,
+            Err(WebLinkError::SameUrlOtherTitle {
+                titled: "Scenario page".into()
+            })
+        );
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "this item already has a web link to that URL, titled \"Scenario page\": remove it first, then add it with the new title"
+        );
+        // A title differs by case: titles are compared as stored.
+        assert!(
+            link("scenario page", "https://example.com/wiki/scenario")
+                .is_new_among(&on_the_item)
+                .is_err()
+        );
+        // Any iterator of `&WebLink` serves, so a caller holding rows passes their links.
+        assert_eq!(repeat.is_new_among(on_the_item.iter().rev()), Ok(false));
     }
 
     /// The wording a person reads when a title or a URL is refused.
