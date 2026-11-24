@@ -1,5 +1,6 @@
 #![allow(clippy::too_many_arguments)] // handlers mirror the request shapes; argument structs would only move the count
 mod attachments;
+mod brief_templates;
 mod comments;
 mod decisions;
 mod dto;
@@ -113,6 +114,11 @@ impl From<crate::domain::item_link::ItemLinkError> for HandlerError {
 }
 impl From<crate::domain::web_link::WebLinkError> for HandlerError {
     fn from(e: crate::domain::web_link::WebLinkError) -> Self {
+        Self::Validation(e.to_string())
+    }
+}
+impl From<crate::domain::brief_template::BriefTemplateError> for HandlerError {
+    fn from(e: crate::domain::brief_template::BriefTemplateError) -> Self {
         Self::Validation(e.to_string())
     }
 }
