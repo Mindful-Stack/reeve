@@ -5627,3 +5627,71 @@ fn link_takes_either_a_name_and_another_item_or_a_url() {
         );
     }
 }
+
+fn planning_json(goal_id: Option<i64>) -> serde_json::Value {
+    let goals: Vec<serde_json::Value> = goal_id
+        .map(|id| {
+            serde_json::json!({"goal_id":id,"initiatives":[],"discoveries":[],"decisions":[],
+                "discovery_total":0,"decisions_total":0})
+        })
+        .into_iter()
+        .collect();
+    serde_json::json!({"goals":goals,"first_bucket":null,"first_bucket_initiatives":[]})
+}
+
+/// `--json sprint planning` asks for the planning answer alone: the scripted server answers only that route, so a
+/// second read (`GET /sprints`) fails the test, and the value is the planning answer without the sprints.
+#[test]
+fn sprint_planning_json_reads_only_the_planning_answer() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/sprints/planning",
+        200,
+        ok(planning_json(None)),
+    )]);
+    let out = reeve_at(&url, &["--json", "sprint", "planning"]);
+    server.join().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let value = v["value"].as_object().unwrap();
+    assert!(
+        value.contains_key("first_bucket") && value["first_bucket"].is_null(),
+        "{v}"
+    );
+    assert!(!value.contains_key("sprints"), "{v}");
+}
+
+/// The text reads the sprints, then the planning answer, and prints what both give.
+#[test]
+fn sprint_planning_text_reads_the_sprints_then_the_planning_answer() {
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/sprints",
+            200,
+            ok(serde_json::json!({"active":null,"draft":sprint_json(5, "draft", 1),"closed":[]})),
+        ),
+        (
+            "GET /api/v1/sprints/planning",
+            200,
+            ok(planning_json(Some(12))),
+        ),
+    ]);
+    let out = reeve_at(&url, &["sprint", "planning"]);
+    server.join().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Next sprint #5"), "{text}");
+    assert!(
+        text.contains("goal #12 Bookings work\n    initiatives: no initiative\n"),
+        "{text}"
+    );
+}

@@ -250,6 +250,7 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
             crate::render::sprint_list,
         ),
         Sprint::Planning => finish(planning(c, json).await?, json, |p| {
+            // The empty fallback is unreachable: `--json` is the only mode without sprints and never renders.
             p.sprints.as_ref().map_or_else(String::new, |sprints| {
                 crate::render::sprint_planning(sprints, &p.planning)
             })
