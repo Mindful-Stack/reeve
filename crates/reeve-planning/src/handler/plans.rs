@@ -39,6 +39,68 @@ fn plan_key(id: &str, name: &str) -> String {
     format!("plan:{}:{id}:{name}", id.len())
 }
 
+/// What every reference of a plan names, kept by the place a reference stands in. A plan name is one item
+/// wherever it stands (names are unique and never key-shaped). Anything else is an existing item, and which one
+/// depends on what the place takes: a place that takes one level (a story's `epic`, an epic's `initiative`, a
+/// blocker's two stories) is resolved as `resolve_ref` does for that level, and a place that takes an item of any
+/// level (a decision's `on`, an item link's ends, a web link's `on`) as `resolve_any` does. The two can differ for
+/// one spelling: `OLD-1` may be the native key of an epic and the external reference of a story. So an answer is
+/// kept under the scope it was asked in and never served to the other.
+#[derive(Debug, Default)]
+struct Refs {
+    planned: HashMap<String, ItemType>,
+    /// (the level's name, the reference) -> the existing item of that level.
+    typed: HashMap<(&'static str, String), Key>,
+    /// The reference -> the existing item of any level.
+    any: HashMap<String, (ItemType, Key)>,
+}
+
+impl Refs {
+    /// What `r` names where an item of level `wanted` stands (any level when None); None when nothing has been
+    /// resolved for it in that scope.
+    fn get(&self, r: &str, wanted: Option<ItemType>) -> Option<Target> {
+        if let Some(t) = self.planned.get(r) {
+            return Some(Target::Planned(*t));
+        }
+        match wanted {
+            Some(t) => self
+                .typed
+                .get(&(type_name(t), r.to_owned()))
+                .map(|k| Target::Existing(t, k.clone())),
+            None => self
+                .any
+                .get(r)
+                .map(|(t, k)| Target::Existing(*t, k.clone())),
+        }
+    }
+    fn keep(&mut self, r: String, wanted: Option<ItemType>, found: (ItemType, Key)) {
+        match wanted {
+            Some(t) => {
+                self.typed.insert((type_name(t), r), found.1);
+            }
+            None => {
+                self.any.insert(r, found);
+            }
+        }
+    }
+    /// The level and key `r` came to in the scope `wanted`, once the plan's items exist: `keys` holds the key of
+    /// every item the plan names, and an existing item was resolved by the validation in that same scope.
+    fn end(
+        &self,
+        keys: &HashMap<String, Key>,
+        r: &str,
+        wanted: Option<ItemType>,
+    ) -> (ItemType, Key) {
+        match self.get(r, wanted) {
+            Some(Target::Planned(t)) => (t, keys[r].clone()),
+            Some(Target::Existing(t, k)) => (t, k),
+            None => {
+                unreachable!("the validation resolved every reference of the plan in its scope")
+            }
+        }
+    }
+}
+
 fn type_name(t: ItemType) -> &'static str {
     match t {
         ItemType::Initiative => "initiative",
@@ -70,26 +132,15 @@ enum Identity {
     Name(String),
 }
 
-/// The level and key a plan reference came to, once the plan's items exist: `keys` holds the key of every item the
-/// plan names, and an existing item was resolved by the validation.
-fn end_of(refs: &HashMap<String, Target>, keys: &HashMap<String, Key>, r: &str) -> (ItemType, Key) {
-    match &refs[r] {
-        Target::Planned(t) => (*t, keys[r].clone()),
-        Target::Existing(t, k) => (*t, k.clone()),
-    }
-}
-
 impl Handlers {
     pub async fn apply_plan(&self, c: &Ctx, p: ApplyPlan) -> Result<PlanApplied, HandlerError> {
         let refs = self.validate_plan(&p).await?;
         let id = p.id.trim();
         let idem = |name: &str| plan_key(id, name);
         let mut keys: HashMap<String, Key> = HashMap::new();
-        let resolve = |keys: &HashMap<String, Key>, r: &str| -> Key {
-            match &refs[r] {
-                Target::Planned(_) => keys[r].clone(),
-                Target::Existing(_, k) => k.clone(),
-            }
+        // Each reference in the scope the validation resolved it in (`Refs`).
+        let resolve = |keys: &HashMap<String, Key>, r: &str, wanted: Option<ItemType>| -> Key {
+            refs.end(keys, r, wanted).1
         };
         let mut items = vec![];
         for i in &p.initiatives {
@@ -117,7 +168,10 @@ impl Handlers {
         }
         for e in &p.epics {
             let key = idem(&e.name);
-            let initiative = e.initiative.as_deref().map(|r| resolve(&keys, r));
+            let initiative = e
+                .initiative
+                .as_deref()
+                .map(|r| resolve(&keys, r, Some(ItemType::Initiative)));
             let (made, created) = self
                 .create_epic_reporting(
                     c,
@@ -139,7 +193,10 @@ impl Handlers {
         }
         for s in &p.stories {
             let key = idem(&s.name);
-            let epic = s.epic.as_deref().map(|r| resolve(&keys, r));
+            let epic = s
+                .epic
+                .as_deref()
+                .map(|r| resolve(&keys, r, Some(ItemType::Epic)));
             let (made, created) = self
                 .create_story_reporting(
                     c,
@@ -166,7 +223,7 @@ impl Handlers {
         }
         let mut decisions = vec![];
         for d in &p.decisions {
-            let on = resolve(&keys, &d.on);
+            let on = resolve(&keys, &d.on, None);
             let (made, created) = self
                 .require_decision_reporting(
                     c,
@@ -186,8 +243,8 @@ impl Handlers {
         }
         let mut blocks = vec![];
         for b in &p.blocks {
-            let story = resolve(&keys, &b.story);
-            let blocked_by = resolve(&keys, &b.blocked_by);
+            let story = resolve(&keys, &b.story, Some(ItemType::Story));
+            let blocked_by = resolve(&keys, &b.blocked_by, Some(ItemType::Story));
             let created = self.add_block_reporting(c, &story, &blocked_by).await?;
             blocks.push(PlannedBlock {
                 story,
@@ -218,7 +275,7 @@ impl Handlers {
         &self,
         c: &Ctx,
         p: &ApplyPlan,
-        refs: &HashMap<String, Target>,
+        refs: &Refs,
         keys: &HashMap<String, Key>,
     ) -> Result<(Vec<PlannedLink>, Vec<PlannedWebLink>), HandlerError> {
         let mut links = Vec::with_capacity(p.links.len());
@@ -226,9 +283,9 @@ impl Handlers {
             // The ends as the plan named them; `ResolvedItemLink` keeps each level with its key when a
             // `relates_to` is stored with the lower key first.
             let link = ResolvedItemLink::new(
-                end_of(refs, keys, &l.from),
+                refs.end(keys, &l.from, None),
                 l.link_type,
-                end_of(refs, keys, &l.to),
+                refs.end(keys, &l.to, None),
             )?;
             let mut tx = self.pool.begin().await?;
             let created = self.add_item_link_in(&mut tx, c, &link).await?;
@@ -245,7 +302,7 @@ impl Handlers {
         }
         let mut web_links = Vec::with_capacity(p.web_links.len());
         for w in &p.web_links {
-            let (level, on) = end_of(refs, keys, &w.on);
+            let (level, on) = refs.end(keys, &w.on, None);
             let link = WebLink::new(&w.title, &w.url)?;
             let mut tx = self.pool.begin().await?;
             let created = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
@@ -262,8 +319,8 @@ impl Handlers {
     }
 
     /// Every problem in the plan, all at once (an agent fixes the file in one pass), before anything is written. Returns
-    /// what each reference in the plan names.
-    async fn validate_plan(&self, p: &ApplyPlan) -> Result<HashMap<String, Target>, HandlerError> {
+    /// what each reference in the plan names, in the scope of the place it stands in.
+    async fn validate_plan(&self, p: &ApplyPlan) -> Result<Refs, HandlerError> {
         let mut errors: Vec<String> = vec![];
         let id = p.id.trim();
         if id.is_empty() || id.chars().count() > 100 {
@@ -273,7 +330,7 @@ impl Handlers {
         let probe_key = Key::new(prefix, 1).expect("prefix validated by config");
 
         // Names: unique across every list, and never key-shaped, so a reference is never ambiguous.
-        let mut refs: HashMap<String, Target> = HashMap::new();
+        let mut refs = Refs::default();
         let named = p
             .initiatives
             .iter()
@@ -291,7 +348,7 @@ impl Handlers {
                     "{} name {name:?} looks like a key; a name must not, so a reference is never ambiguous",
                     type_name(t)
                 ));
-            } else if refs.insert(name.clone(), Target::Planned(t)).is_some() {
+            } else if refs.planned.insert(name.clone(), t).is_some() {
                 errors.push(format!(
                     "{name:?} is used twice; every name in a plan names one item"
                 ));
@@ -299,7 +356,7 @@ impl Handlers {
         }
         let mut decision_names = std::collections::HashSet::new();
         for d in &p.decisions {
-            if refs.contains_key(&d.name) || !decision_names.insert(&d.name) {
+            if refs.planned.contains_key(&d.name) || !decision_names.insert(&d.name) {
                 errors.push(format!(
                     "{:?} is used twice; every name in a plan names one item",
                     d.name
@@ -409,7 +466,8 @@ impl Handlers {
             ));
         }
 
-        // Item links (kb/ADR-0031): each end is an item of any level, resolved as a decision's `on` is.
+        // Item links (kb/ADR-0031): each end is an item of any level, resolved as a decision's `on` is and as
+        // `reeve link add` resolves it (`resolve_any`), never by an answer a typed place got for the same spelling.
         for l in &p.links {
             let at = link_at(l);
             pending.push((l.from.clone(), None, format!("{at}: from {:?}", l.from)));
@@ -432,20 +490,20 @@ impl Handlers {
         }
 
         for (r, wanted, at) in pending {
-            match refs.get(&r) {
-                Some(Target::Planned(t)) | Some(Target::Existing(t, _)) => {
-                    if wanted.is_some_and(|w| w != *t) {
+            match refs.get(&r, wanted) {
+                Some(Target::Planned(t)) => {
+                    if let Some(w) = wanted.filter(|w| *w != t) {
                         errors.push(format!(
                             "{at} is a {} in the plan, not a {}",
-                            type_name(*t),
-                            type_name(wanted.unwrap())
+                            type_name(t),
+                            type_name(w)
                         ));
                     }
                 }
+                // Resolved in this scope already.
+                Some(Target::Existing(..)) => {}
                 None => match self.existing(&r, wanted).await? {
-                    Some((t, k)) => {
-                        refs.insert(r, Target::Existing(t, k));
-                    }
+                    Some(found) => refs.keep(r, wanted, found),
                     None => errors.push(match wanted {
                         Some(w) => format!(
                             "{at} is neither a name in the plan nor an existing {}",
@@ -550,7 +608,7 @@ impl Handlers {
     async fn plan_identities(
         &self,
         p: &ApplyPlan,
-        refs: &HashMap<String, Target>,
+        refs: &Refs,
     ) -> Result<HashMap<String, Identity>, HandlerError> {
         let id = p.id.trim();
         let named = p
@@ -563,14 +621,14 @@ impl Handlers {
             if ids.contains_key(r) {
                 continue;
             }
-            let identity = match refs.get(r) {
+            let identity = match refs.get(r, None) {
                 None => continue,
-                Some(Target::Existing(_, k)) => Identity::Key(k.clone()),
+                Some(Target::Existing(_, k)) => Identity::Key(k),
                 Some(Target::Planned(t)) => {
                     match self
                         .ports
                         .keys
-                        .find_by_idempotency(*t, &plan_key(id, r))
+                        .find_by_idempotency(t, &plan_key(id, r))
                         .await?
                     {
                         Some(k) => Identity::Key(k),

@@ -11603,3 +11603,116 @@ async fn a_plan_web_link_whose_entry_is_refused_is_left_out_and_the_earlier_web_
     );
     assert_eq!(left().await, (2, 2));
 }
+
+/// A reference in a plan is resolved for the place it stands in. `OLD-1` is the native key of an epic (issued
+/// under an earlier prefix) and the external reference of a newer story. A blocker's end is a story, so it names
+/// the story; an item link's end, a web link's `on` and a decision's `on` are any item, resolved as `resolve_any`
+/// does (native keys of any level first), so they name the epic, which is what `reeve link add OLD-1 …` does.
+/// Neither answer is taken for the other, whichever the plan asks for first.
+#[tokio::test]
+async fn a_plan_reference_that_is_a_native_key_and_an_external_reference_names_each_in_its_place() {
+    use reeve_protocol::ItemType;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let old = Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: Arc::new(MemSink(Mutex::new(vec![]))),
+        pool: pool.clone(),
+        settings: Settings {
+            key_prefix: "OLD".into(),
+            ..settings()
+        },
+    };
+    let c = ctx("dan@example.com", false);
+    let old_epic = old
+        .create_epic(&c, "oe", "Old epic", None, "", None)
+        .await
+        .unwrap();
+    let raw = old_epic.key().to_string();
+    let story = |idem: &'static str, title: &'static str| {
+        let (h, c) = (&h, &c);
+        async move {
+            h.create_story(
+                c,
+                idem,
+                title,
+                Kind::Story,
+                None,
+                "",
+                vec![],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone()
+        }
+    };
+    let imported = story("is", "Imported").await;
+    let held = story("held", "Held").await;
+    sqlx::query("UPDATE stories SET external_ref = $1 WHERE key = $2")
+        .bind(&raw)
+        .bind(imported.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            h.resolve_ref(&raw, ItemType::Story).await.unwrap(),
+            h.resolve_any(&raw).await.unwrap()
+        ),
+        (imported.clone(), (ItemType::Epic, old_epic.key().clone())),
+        "the control: as a story the reference is the imported story, untyped it is the epic"
+    );
+
+    // The blocker is resolved first and names the story; the item link and the web link name the epic.
+    let plan: reeve_protocol::ApplyPlan = serde_json::from_value(serde_json::json!({
+        "id": "collision",
+        "blocks": [{"story": held, "blocked_by": raw}],
+        "links": [{"from": held, "type": "follows", "to": raw}],
+        "web_links": [{"on": raw, "title": "Page", "url": "https://example.com/"}]
+    }))
+    .unwrap();
+    let applied = h.apply_plan(&c, plan).await.unwrap();
+    assert_eq!(applied.blocks[0].blocked_by, imported, "the blocker");
+    assert_eq!(
+        (&applied.links[0].to, applied.links[0].to_level),
+        (old_epic.key(), ItemType::Epic),
+        "the item link"
+    );
+    assert_eq!(
+        (&applied.web_links[0].on, applied.web_links[0].level),
+        (old_epic.key(), ItemType::Epic),
+        "the web link"
+    );
+    let on_epic = h.link_listing(old_epic.key()).await.unwrap();
+    assert_eq!(
+        (on_epic.links.len(), on_epic.web_links.len()),
+        (1, 1),
+        "both are on the epic"
+    );
+    let on_story = h.link_listing(&imported).await.unwrap();
+    assert_eq!(
+        (on_story.links.len(), on_story.web_links.len()),
+        (0, 0),
+        "and none on the story that has the reference"
+    );
+
+    // The other way round: a decision's `on` is resolved before the blocker and names the epic; the blocker still
+    // names the story.
+    let plan: reeve_protocol::ApplyPlan = serde_json::from_value(serde_json::json!({
+        "id": "collision-2",
+        "decisions": [{"name": "d", "on": raw, "title": "Pick", "decider": "dan@example.com"}],
+        "blocks": [{"story": held, "blocked_by": raw}]
+    }))
+    .unwrap();
+    let applied = h.apply_plan(&c, plan).await.unwrap();
+    assert_eq!(applied.blocks[0].blocked_by, imported);
+    let decisions = h
+        .list_decisions(Some(old_epic.key()), false, true)
+        .await
+        .unwrap();
+    assert_eq!(decisions.len(), 1, "the decision is on the epic");
+}
