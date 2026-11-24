@@ -351,6 +351,10 @@ textarea[data-drop] {
 	/* The surrounding text breaks anywhere; in a cell that squeezes a column down to one letter per line. */
 	overflow-wrap: break-word;
 }
+/* A long URL would otherwise set the table's width: a cell breaks only between words, a link in it anywhere. */
+[data-table-scroll] :is(th, td) a {
+	overflow-wrap: anywhere;
+}
 [data-table-scroll] th {
 	/* A wash, not the opaque --lighter-background it comes close to: the wrapper's scroll shadows lie under the cells. */
 	background: color-mix(in srgb, var(--foreground) 7%, transparent);

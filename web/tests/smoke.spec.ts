@@ -1250,6 +1250,25 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 	await expectTablesScrollInside(page, '.item .brief', 1);
 });
 
+test('a long link in a table cell wraps instead of setting the width of the table', async ({ page }) => {
+	const url = `https://example.com/${'a'.repeat(100)}`;
+	expect(url).toHaveLength(120);
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table link smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `| Source | Link | Note |\n|---|---|---|\n| The design file | ${url} | Read before the workshop |`
+	});
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wrap = page.locator('.brief [data-table-scroll]');
+	await expect(wrap.getByRole('link', { name: url })).toBeVisible();
+	const m = await wrap.evaluate((w) => ({ scroll: w.scrollWidth, client: w.clientWidth }));
+	expect(m.client).toBeGreaterThan(0);
+	expect(m.scroll).toBeLessThanOrEqual(m.client);
+	await expect(wrap).not.toHaveAttribute('tabindex');
+});
+
 // A 4×3 PNG, small enough to inline; every image assertion waits for it to really decode (a broken image is visible too).
 const PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADAQMAAACOOjyFAAAAA1BMVEUzZswgIiSpAAAAC0lEQVQI12NgAAEAAAYAAWb0yWwAAAAASUVORK5CYII=',
