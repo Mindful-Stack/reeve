@@ -69,13 +69,13 @@ describe('rendered tables', () => {
 	it('leaves the wrapper of a table that fits out of the tab order', () => {
 		stubResize();
 		const box = mountBox(table);
-		expect(stop(box.querySelector('.table-scroll')!)).toEqual([null, null, null]);
+		expect(stop(box.querySelector('[data-table-scroll]')!)).toEqual([null, null, null]);
 	});
 
 	it('makes a wrapper that scrolls sideways a named tab stop, and takes that back when the table fits again', () => {
 		stubResize();
 		const box = mountBox(`${table}\n\ntext\n\n${table}`);
-		const [wide, narrow] = box.querySelectorAll('.table-scroll');
+		const [wide, narrow] = box.querySelectorAll('[data-table-scroll]');
 		widths(wide, 900, 320);
 		widths(narrow, 200, 320);
 		resized();
@@ -86,11 +86,24 @@ describe('rendered tables', () => {
 		expect(stop(wide)).toEqual([null, null, null]);
 	});
 
+	it('leaves a table alone whose author gave it the class of a wrapper', () => {
+		stubResize();
+		const box = mountBox('<table class="table-scroll" aria-label="Budget" tabindex="0"><tr><td>1</td></tr></table>');
+		const authored = box.querySelector('table')!;
+		expect([authored.getAttribute('aria-label'), authored.getAttribute('tabindex')]).toEqual(['Budget', '0']);
+		// Only the wrapper `renderMarkdown` made is the action's to change.
+		const wrap = authored.parentElement!;
+		widths(wrap, 900, 320);
+		resized();
+		expect(wrap.getAttribute('tabindex')).toBe('0');
+		expect([authored.getAttribute('aria-label'), authored.getAttribute('tabindex'), authored.getAttribute('role')]).toEqual(['Budget', '0', null]);
+	});
+
 	it('checks the tables again when the Markdown is replaced', async () => {
 		stubResize();
 		const box = mountBox('no table yet');
 		box.innerHTML = renderMarkdown(table);
-		const wrap = box.querySelector('.table-scroll')!;
+		const wrap = box.querySelector('[data-table-scroll]')!;
 		widths(wrap, 900, 320);
 		// The check runs when the children change; give the observer its turn.
 		box.append(document.createElement('p'));

@@ -98,11 +98,19 @@ describe('tables', () => {
 
 	it('puts each table in a wrapper that scrolls, so a wide table never widens the page', () => {
 		const el = parse(`before\n\n${table}\n\nafter`);
-		const wrap = el.querySelector('div.table-scroll');
+		const wrap = el.querySelector('div[data-table-scroll]');
 		expect(wrap?.children).toHaveLength(1);
 		expect(wrap?.firstElementChild?.tagName).toBe('TABLE');
 		// Not a tab stop by itself: `rendered` (#lib/rendered.ts) makes it one only while it really scrolls.
 		expect(wrap?.hasAttribute('tabindex')).toBe(false);
+	});
+
+	it('marks the wrapper it made with an attribute no author can write', () => {
+		const el = parse(`<div data-table-scroll class="table-scroll">mine</div>\n\n<table class="table-scroll" data-table-scroll><tr><td>1</td></tr></table>`);
+		const marked = el.querySelectorAll('[data-table-scroll]');
+		expect(marked).toHaveLength(1);
+		expect(marked[0].tagName).toBe('DIV');
+		expect(marked[0].firstElementChild?.tagName).toBe('TABLE');
 	});
 });
 

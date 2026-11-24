@@ -1119,14 +1119,14 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	});
 	await page.setViewportSize({ width: 360, height: 800 });
 	await page.goto(`/initiatives/${ini.key}`);
-	const wraps = page.locator('.brief .table-scroll');
+	const wraps = page.locator('.brief [data-table-scroll]');
 	await expect(wraps).toHaveCount(2);
 	// The wide one is a named region the keyboard can reach and scroll; the one that fits is no stop.
 	await expect(page.getByRole('region', { name: 'Scrollable table' })).toHaveCount(1);
 	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
 	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
 	const m = await page.evaluate(() => {
-		const w = document.querySelector('.brief .table-scroll')!;
+		const w = document.querySelector('.brief [data-table-scroll]')!;
 		return { page: document.documentElement.scrollWidth, viewport: window.innerWidth, scroll: w.scrollWidth, client: w.clientWidth };
 	});
 	expect(m.page).toBe(m.viewport);

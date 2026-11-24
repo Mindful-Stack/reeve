@@ -1,9 +1,9 @@
 // web/src/lib/rendered.ts: for containers of rendered Markdown (Brief, CommentBody). An attachment image that fails to
 // load, or is deleted while shown (`reeve:attachment-removed`, from #lib/components/Attachments.svelte), becomes a
 // muted "image unavailable" chip; an image already painted would otherwise stay on screen after its delete.
-// A table's wrapper (`.table-scroll`, from `renderMarkdown`) is a named tab stop while the table is wider than it.
+// A table's wrapper (`[data-table-scroll]`, from `renderMarkdown`) is a named tab stop while the table is wider than it.
 import type { Attachment } from 'svelte/attachments';
-import { ATTACHMENT_SRC } from '#lib/markdown.ts';
+import { ATTACHMENT_SRC, TABLE_SCROLL } from '#lib/markdown.ts';
 
 function unavailable(img: HTMLImageElement): void {
 	const chip = img.ownerDocument.createElement('span');
@@ -20,7 +20,7 @@ function unavailable(img: HTMLImageElement): void {
  *  fits gets no stop. Checked on mount, when the container resizes and when its Markdown is replaced. */
 function tableStops(el: HTMLElement): () => void {
 	const check = () => {
-		for (const wrap of el.querySelectorAll('.table-scroll')) {
+		for (const wrap of el.querySelectorAll(`[${TABLE_SCROLL}]`)) {
 			if (wrap.scrollWidth > wrap.clientWidth) {
 				wrap.setAttribute('tabindex', '0');
 				wrap.setAttribute('role', 'region');
