@@ -30,7 +30,9 @@ pub(crate) use decisions::{
 };
 pub(crate) use epics::{EpicQuery, get_epic, list_epics};
 pub(crate) use initiatives::{get_initiative, list_initiatives};
-pub(crate) use links::{add_item_link, list_item_links, remove_item_link};
+pub(crate) use links::{
+    add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
+};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Via};
 pub(crate) use search::{SearchQuery, search};

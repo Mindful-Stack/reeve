@@ -117,6 +117,7 @@ mod reads;
 mod sprints;
 mod stories;
 mod urgency;
+mod web_links;
 
 pub use self::{
     attachments::{AttachmentRepo, ClaimOutcome},
@@ -132,6 +133,7 @@ pub use self::{
     sprints::SprintRepo,
     stories::StoryRepo,
     urgency::UrgencyRepo,
+    web_links::{StoredWebLink, WebLinkRepo},
 };
 
 /// Every planning port, each a view of one adapter (`frameworks/rust/repo-port-adapter`, "Single-impl,
@@ -150,6 +152,7 @@ pub struct PlanningPorts {
     pub urgency: Arc<dyn UrgencyRepo>,
     pub promises: Arc<dyn PromiseRepo>,
     pub item_links: Arc<dyn ItemLinkRepo>,
+    pub web_links: Arc<dyn WebLinkRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

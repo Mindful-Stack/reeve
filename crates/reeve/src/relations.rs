@@ -1,7 +1,9 @@
 //! Text for an item's relations (kb/ADR-0031): the item link name as the command line spells it, the line that
-//! tells a `follows` from a blocker, and the `relations:` block of `show`, `story context` and `link ls`.
+//! tells a `follows` from a blocker, and the `relations:` and `web links:` blocks of `show`, `story context` and
+//! `link ls`.
 use crate::glyphs::{Level, mark};
 use reeve_protocol::*;
+use std::borrow::Cow;
 use std::fmt::Write;
 
 /// Clap's parser for an item link name. Blocking is not an item link (kb/ADR-0031 R2), so the words people try
@@ -80,14 +82,236 @@ pub fn relations(blockers: &[BlockerLine<'_>], links: &[ItemLinkDto]) -> Option<
     Some(out)
 }
 
-/// What `reeve link ls` prints.
+/// What `reeve link ls` prints: the relations block, then the web links block.
 pub fn listing(v: &LinkListingDto) -> String {
-    relations(&[], &v.links).unwrap_or_else(|| "no item links".into())
+    let blocks: Vec<String> = [relations(&[], &v.links), web_links(&v.web_links)]
+        .into_iter()
+        .flatten()
+        .collect();
+    if blocks.is_empty() {
+        "no item links or web links".into()
+    } else {
+        blocks.join("\n")
+    }
+}
+
+/// The `web links:` block: one line per web link, title then URL, oldest first as the server sent them, each with
+/// its control characters escaped (`for_terminal`). None when there are none. Every text form of a web link is
+/// this block: `link ls`, `show`, `story context` and the answers of `link add --url` and `link rm --url`.
+pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
+    if links.is_empty() {
+        return None;
+    }
+    let mut out = String::from("web links:");
+    for l in links {
+        let _ = write!(
+            out,
+            "\n  {}  {}",
+            for_terminal(&l.title),
+            for_terminal(&l.url)
+        );
+    }
+    Some(out)
+}
+
+/// A web link's title or URL as text output prints it: every control character (Unicode category Cc: ESC, NUL, a
+/// line break, a tab and the rest), the line and paragraph separators (U+2028, U+2029) and the bidirectional
+/// controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) written as their Rust escape (`\u{1b}`,
+/// `\n`, `\u{202e}`), so stored text cannot drive the reader's terminal, pass for another line of output or reorder
+/// the URL printed after a title. The zero-width joiner and non-joiner (U+200D, U+200C) print as they are, so a
+/// joined emoji does. The server refuses the control characters and the separators in a title and its URL parser
+/// leaves none in a URL; this is the output's own guard, for a row stored before that refusal or by another
+/// server. `--json` does not come through here and stays lossless.
+pub fn for_terminal(s: &str) -> Cow<'_, str> {
+    if !s.chars().any(escaped_in_text) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if escaped_in_text(c) {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// What `for_terminal` escapes.
+fn escaped_in_text(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Whether a URL as a person typed it names a stored web link. The stored form is the server's URL parser's
+/// serialisation, so the typed one is parsed the same way first; text the parser refuses is compared as typed.
+pub fn same_url(typed: &str, stored: &str) -> bool {
+    let typed = typed.trim();
+    typed == stored || url::Url::parse(typed).is_ok_and(|u| u.as_str() == stored)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn web(id: i64, title: &str, url: &str) -> WebLinkDto {
+        WebLinkDto {
+            id,
+            title: title.into(),
+            url: url.into(),
+        }
+    }
+
+    #[test]
+    fn web_links_print_title_then_url_and_nothing_when_there_are_none() {
+        assert_eq!(web_links(&[]), None);
+        assert_eq!(
+            web_links(&[
+                web(1, "Scenario page", "https://example.com/wiki/scenario"),
+                web(2, "Board", "http://example.com/board"),
+            ])
+            .as_deref(),
+            Some(
+                "web links:\n  Scenario page  https://example.com/wiki/scenario\n  Board  http://example.com/board"
+            )
+        );
+    }
+
+    /// A title or a URL from a server that stored a control character (a row older than the server's refusal, or
+    /// another server) is printed with it escaped: the terminal shows the text and runs none of it.
+    #[test]
+    fn a_control_character_in_a_web_link_is_printed_escaped() {
+        assert_eq!(
+            web_links(&[web(
+                1,
+                "Report\u{1b}[2J\u{1b}[Hfake\noutput\ttab\0\u{9b}K\u{7f}",
+                "http://example.com/a\u{1b}]0;x\u{7}\r"
+            )])
+            .as_deref(),
+            Some(
+                "web links:\n  Report\\u{1b}[2J\\u{1b}[Hfake\\noutput\\ttab\\u{0}\\u{9b}K\\u{7f}  http://example.com/a\\u{1b}]0;x\\u{7}\\r"
+            )
+        );
+        // Text without one is printed as it is, whatever its script, and is not copied to be so.
+        for plain in [
+            "Scenario page",
+            "Scenariosida för ärenden",
+            "シナリオ 🚀",
+            "a\\nb",
+        ] {
+            assert!(matches!(for_terminal(plain), Cow::Borrowed(s) if s == plain));
+        }
+    }
+
+    /// A line or paragraph separator would start a line of its own, and a bidirectional control would reorder what
+    /// follows it on the line, the URL printed after a title among it: each is printed escaped.
+    #[test]
+    fn a_line_separator_or_a_bidirectional_control_is_printed_escaped() {
+        assert_eq!(
+            for_terminal("Report\u{2028}second line\u{2029}paragraph"),
+            "Report\\u{2028}second line\\u{2029}paragraph"
+        );
+        for (c, escaped) in [
+            ('\u{061c}', "\\u{61c}"),
+            ('\u{200e}', "\\u{200e}"),
+            ('\u{200f}', "\\u{200f}"),
+            ('\u{202a}', "\\u{202a}"),
+            ('\u{202b}', "\\u{202b}"),
+            ('\u{202c}', "\\u{202c}"),
+            ('\u{202d}', "\\u{202d}"),
+            ('\u{202e}', "\\u{202e}"),
+            ('\u{2066}', "\\u{2066}"),
+            ('\u{2067}', "\\u{2067}"),
+            ('\u{2068}', "\\u{2068}"),
+            ('\u{2069}', "\\u{2069}"),
+        ] {
+            assert_eq!(
+                for_terminal(&format!("Report{c}page")),
+                format!("Report{escaped}page"),
+                "{c:?}"
+            );
+        }
+        assert_eq!(
+            web_links(&[web(1, "Report\u{202e}gnp.exe", "https://example.com/a")]).as_deref(),
+            Some("web links:\n  Report\\u{202e}gnp.exe  https://example.com/a")
+        );
+        // The joiners are not escaped: a joined emoji prints as it is, and is not copied to be so.
+        for joined in [
+            "Family \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} page",
+            "Rainbow flag \u{1f3f3}\u{fe0f}\u{200d}\u{1f308}",
+            "\u{645}\u{200c}\u{6cc}\u{62e}\u{648}\u{627}\u{647}\u{645}",
+        ] {
+            assert!(
+                matches!(for_terminal(joined), Cow::Borrowed(s) if s == joined),
+                "{joined:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typed_url_finds_its_stored_form() {
+        let stored = "http://example.com/";
+        for typed in [
+            "http://example.com/",
+            "HTTP://Example.COM",
+            " http://example.com ",
+            "http://example.com:80",
+        ] {
+            assert!(same_url(typed, stored), "{typed}");
+        }
+        for other in [
+            "https://example.com/",
+            "http://example.com/a",
+            "example.com",
+            "",
+        ] {
+            assert!(!same_url(other, stored), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_listing_prints_both_blocks_or_says_there_is_nothing() {
+        let follows = ItemLinkDto {
+            link_type: ItemLinkType::Follows,
+            direction: ItemLinkDirection::Out,
+            label: "follows".into(),
+            item: LinkedItemDto {
+                key: "ABC-5".parse().unwrap(),
+                level: ItemType::Epic,
+                title: "Billing".into(),
+            },
+        };
+        let both = LinkListingDto {
+            links: vec![follows],
+            web_links: vec![web(1, "Board", "http://example.com/board")],
+        };
+        assert_eq!(
+            listing(&both),
+            "relations:\n  follows  ■ ABC-5 Billing\nweb links:\n  Board  http://example.com/board"
+        );
+        let only_web = LinkListingDto {
+            links: vec![],
+            web_links: both.web_links.clone(),
+        };
+        assert_eq!(
+            listing(&only_web),
+            "web links:\n  Board  http://example.com/board"
+        );
+        let none = LinkListingDto {
+            links: vec![],
+            web_links: vec![],
+        };
+        assert_eq!(listing(&none), "no item links or web links");
+    }
 
     #[test]
     fn a_name_is_spelled_with_a_hyphen_and_blocking_words_point_at_story_block() {

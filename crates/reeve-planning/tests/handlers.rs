@@ -1990,8 +1990,9 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
     for s in &fresh {
         let mut dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
         // The one difference between the two readers, by design (kb/ADR-0031): only a read of one item
-        // carries its item links. None exist here.
+        // carries its item links and its web links. None exist here.
         assert_eq!(dto.links.take(), Some(vec![]));
+        assert_eq!(dto.web_links.take(), Some(vec![]));
         single.push(dto);
     }
     assert_eq!(batched, single);
@@ -4095,8 +4096,9 @@ async fn list_initiatives_progress_matches_one_at_a_time() {
     for dto in &listed {
         let key = dto.key.clone();
         let mut single = h.initiative_dto(&key, Utc::now()).await.unwrap();
-        // Only a read of one item carries its item links (kb/ADR-0031); none exist here.
+        // Only a read of one item carries its item links and its web links (kb/ADR-0031); none exist here.
         assert_eq!(single.links.take(), Some(vec![]));
+        assert_eq!(single.web_links.take(), Some(vec![]));
         assert_eq!(dto, &single);
     }
     assert_eq!(listed.iter().filter(|d| d.progress.is_none()).count(), 2);
@@ -10464,14 +10466,14 @@ async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row
     assert_eq!(left("item_link_removed").await, (0, 2), "the control");
 }
 
-/// kb/ADR-0031 R3: item links are read by no gate and change no item. Readiness (from the list, and one story at a
+/// kb/ADR-0031 R3: item links and web links are read by no gate and change no item. Readiness (from the list, and one story at a
 /// time), delivery, resolution, rank, progress, the active sprint's goal with its link and its numbers, and every
 /// item's version are the same before any link exists, with every name in place between and on stories, an epic and
 /// an initiative, and after they are removed. A story that `follows` an unstarted story still starts, and a blocked
 /// story is refused for its blocker alone. And at the query level: computing readiness and moving a story send no
-/// statement that names `item_links`.
+/// statement that names `item_links` or `web_links`.
 #[tokio::test]
-async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
+async fn item_links_and_web_links_change_no_readiness_delivery_progress_rank_or_version() {
     use reeve_protocol::ItemLinkType::{Duplicates, Follows, RelatesTo};
     // `pg_counted`: this database has `pg_stat_statements`, which the query-level check at the end reads.
     let (_c, pool) = common::pg_counted().await;
@@ -10646,6 +10648,21 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         4,
         "the control: the links are in place"
     );
+    // A web link on stories in every state of readiness, on the epic and on the initiative.
+    let linked: Vec<&Key> = keys.iter().chain([&e, &i]).collect();
+    for (n, k) in linked.iter().enumerate() {
+        assert!(
+            h.add_web_link(&c, k, "Page", &format!("https://example.com/{n}"))
+                .await
+                .unwrap(),
+            "{k}"
+        );
+    }
+    assert_eq!(
+        h.link_listing(&keys[0]).await.unwrap().web_links.len(),
+        1,
+        "the control: the web links are in place"
+    );
     assert_eq!(snapshot().await, before, "with every link in place");
 
     for (from, t, to) in links {
@@ -10653,6 +10670,10 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
             h.remove_item_link(&c, from, t, to).await.unwrap(),
             "{from} {t:?} {to}"
         );
+    }
+    for k in &linked {
+        let id = h.link_listing(k).await.unwrap().web_links[0].id;
+        assert!(h.remove_web_link(&c, k, id).await.unwrap(), "{k}");
     }
     assert_eq!(snapshot().await, before, "after removing them");
 
@@ -10664,6 +10685,15 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
     h.add_item_link(&c, &keys[2], Follows, &keys[0])
         .await
         .unwrap();
+    // Web links are in place through the moves too: on the story that starts and on the one that is refused.
+    for (n, k) in [&keys[0], &keys[2]].into_iter().enumerate() {
+        assert!(
+            h.add_web_link(&c, k, "Page", &format!("https://example.com/moved/{n}"))
+                .await
+                .unwrap(),
+            "{k}"
+        );
+    }
     let blocked_reasons = before.3[2].reasons.clone();
     assert!(
         !blocked_reasons.is_empty(),
@@ -10700,6 +10730,10 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
     assert!(
         naming("item_links").await > 0,
         "the control: a read of item_links is seen"
+    );
+    assert!(
+        naming("web_links").await > 0,
+        "the control: a read of web_links is seen"
     );
     common::statements(&pool, || async {
         // Readiness: one story at a time, and from the list.
@@ -10738,13 +10772,18 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         0,
         "computing readiness and moving a story send no statement that names item_links"
     );
+    assert_eq!(
+        naming("web_links").await,
+        0,
+        "computing readiness and moving a story send no statement that names web_links"
+    );
 }
 
-/// The reads of one item (story, epic, initiative, and the story of a context) always carry `links`, an empty
-/// list when there are none; every read of several items, and the items that come along in a context, leave it
-/// out, in Rust and in the JSON.
+/// The reads of one item (story, epic, initiative, and the story of a context) always carry `links` and
+/// `web_links`, an empty list when there are none; every read of several items, and the items that come along in
+/// a context, leave both out, in Rust and in the JSON.
 #[tokio::test]
-async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
+async fn single_item_reads_carry_links_and_web_links_and_list_reads_do_not() {
     use reeve_protocol::ItemLinkType::{Follows, RelatesTo};
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
@@ -10786,6 +10825,26 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
     assert!(h.add_item_link(&c, &s[0], Follows, &s[1]).await.unwrap());
     assert!(h.add_item_link(&c, &e, RelatesTo, &i).await.unwrap());
     h.add_block(&c, &s[0], &s[1]).await.unwrap();
+    assert!(
+        h.add_web_link(&c, &s[0], "Page", "https://example.com/s")
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&c, &e, "Page", "https://example.com/e")
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&c, &i, "Page", "https://example.com/i")
+            .await
+            .unwrap()
+    );
+    let urls = |links: &Option<Vec<reeve_protocol::WebLinkDto>>| -> Option<Vec<String>> {
+        links
+            .as_ref()
+            .map(|l| l.iter().map(|w| w.url.clone()).collect())
+    };
 
     let shown = |links: &Option<Vec<reeve_protocol::ItemLinkDto>>| -> Option<Vec<String>> {
         links.as_ref().map(|l| {
@@ -10815,10 +10874,31 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         shown(&h.initiative_dto(&i, now).await.unwrap().links),
         Some(vec![format!("relates to {e}")])
     );
+    assert_eq!(
+        urls(&h.story_dto(&s[0], now).await.unwrap().web_links),
+        Some(vec!["https://example.com/s".to_string()])
+    );
+    assert_eq!(
+        urls(&h.story_dto(&s[2], now).await.unwrap().web_links),
+        Some(vec![]),
+        "none is an empty list, not an absent one"
+    );
+    assert_eq!(
+        urls(&h.epic_dto(&e, now).await.unwrap().web_links),
+        Some(vec!["https://example.com/e".to_string()])
+    );
+    assert_eq!(
+        urls(&h.initiative_dto(&i, now).await.unwrap().web_links),
+        Some(vec!["https://example.com/i".to_string()])
+    );
     let context = h.story_context(&s[0], now).await.unwrap();
     assert_eq!(
         shown(&context.story.links),
         Some(vec![format!("follows {}", s[1])])
+    );
+    assert_eq!(
+        urls(&context.story.web_links),
+        Some(vec!["https://example.com/s".to_string()])
     );
     assert_eq!(
         context.blockers.len(),
@@ -10826,8 +10906,13 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         "the control: a blocker comes along"
     );
     assert_eq!(context.blockers[0].links, None);
-    assert_eq!(context.epic.unwrap().links, None);
-    assert_eq!(context.initiative.unwrap().links, None);
+    assert_eq!(context.blockers[0].web_links, None);
+    // The epic and the initiative have links and web links of their own (added above), so `None` here means
+    // "not loaded", not "none".
+    let epic = context.epic.unwrap();
+    assert_eq!((epic.links, epic.web_links), (None, None));
+    let initiative = context.initiative.unwrap();
+    assert_eq!((initiative.links, initiative.web_links), (None, None));
 
     let listed = h
         .list_stories(
@@ -10845,25 +10930,342 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         3,
         "the control: the list holds the linked stories"
     );
-    assert!(listed.iter().all(|r| r.story.links.is_none()));
     assert!(
-        serde_json::to_value(&listed[0]).unwrap()["story"]
-            .get("links")
-            .is_none(),
-        "left out of the JSON, not sent as null"
+        listed
+            .iter()
+            .all(|r| r.story.links.is_none() && r.story.web_links.is_none())
+    );
+    let row = serde_json::to_value(&listed[0]).unwrap();
+    assert!(
+        row["story"].get("links").is_none() && row["story"].get("web_links").is_none(),
+        "left out of the JSON, not sent as null: {row}"
     );
     assert!(
         h.epic_dtos(None, now)
             .await
             .unwrap()
             .iter()
-            .all(|e| e.links.is_none())
+            .all(|e| e.links.is_none() && e.web_links.is_none())
     );
     assert!(
         h.list_initiatives(now)
             .await
             .unwrap()
             .iter()
-            .all(|i| i.links.is_none())
+            .all(|i| i.links.is_none() && i.web_links.is_none())
+    );
+}
+
+/// kb/ADR-0031 R5, R7. A web link is on one item, one per URL (compared as stored), listed oldest first, logged
+/// on its item on each change and never for a no-op, and removed by its id on that item only.
+#[tokio::test]
+async fn web_links_are_one_per_url_logged_on_their_item_and_removed_by_id() {
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("bot@example.com", true);
+    let e = h
+        .create_epic(&dan, "e", "Invoices", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "Template",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let entries = |action: &str| -> Vec<(String, String, serde_json::Value)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == action)
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.payload.clone(),
+                )
+            })
+            .collect()
+    };
+    let web = |k: &Key| {
+        let (h, k) = (h.clone(), k.clone());
+        async move { h.link_listing(&k).await.unwrap().web_links }
+    };
+    let scenario = "https://example.com/wiki/scenario";
+
+    // Added by an automation caller, stored trimmed and in the parser's form.
+    assert!(
+        h.add_web_link(
+            &bot,
+            &e,
+            "  Scenario page ",
+            "HTTPS://Example.com/wiki/scenario"
+        )
+        .await
+        .unwrap()
+    );
+    let listed = web(&e).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].title.as_str(), listed[0].url.as_str()),
+        ("Scenario page", scenario)
+    );
+    let id = listed[0].id;
+    let added = json!({"id": id, "title": "Scenario page", "url": scenario});
+    assert_eq!(
+        entries("web_link_added"),
+        vec![("epic".to_string(), e.to_string(), added.clone())]
+    );
+
+    // The same URL in another spelling, same title: already there.
+    assert!(
+        !h.add_web_link(
+            &bot,
+            &e,
+            "Scenario page",
+            "https://EXAMPLE.com/wiki/scenario"
+        )
+        .await
+        .unwrap()
+    );
+    // The same URL with another title is not an edit: remove it first.
+    assert!(matches!(
+        h.add_web_link(&bot, &e, "Scenario", scenario).await,
+        Err(HandlerError::Validation(m))
+            if m == "this item already has a web link to that URL, titled \"Scenario page\": remove it first, then add it with the new title"
+    ));
+    assert_eq!(entries("web_link_added").len(), 1, "neither wrote an entry");
+    assert_eq!(web(&e).await, listed, "and neither changed the list");
+
+    // The same URL on another item, and a second one on the epic, which lists after the first.
+    assert!(
+        h.add_web_link(&dan, &s, "Scenario page", scenario)
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&dan, &e, "Board", "http://example.com/board")
+            .await
+            .unwrap()
+    );
+    let titles = |links: &[reeve_protocol::WebLinkDto]| -> Vec<String> {
+        links.iter().map(|w| w.title.clone()).collect()
+    };
+    assert_eq!(titles(&web(&e).await), vec!["Scenario page", "Board"]);
+    assert_eq!(entries("web_link_added")[1].0, "story");
+
+    // Removed by id, on its own item only.
+    assert!(
+        !h.remove_web_link(&bot, &s, id).await.unwrap(),
+        "the epic's id on the story"
+    );
+    assert!(h.remove_web_link(&bot, &e, id).await.unwrap());
+    assert!(
+        !h.remove_web_link(&bot, &e, id).await.unwrap(),
+        "already gone"
+    );
+    assert_eq!(
+        entries("web_link_removed"),
+        vec![("epic".to_string(), e.to_string(), added)],
+        "the entry keeps what was removed"
+    );
+    assert_eq!(titles(&web(&e).await), vec!["Board"]);
+    assert_eq!(
+        web(&s).await.len(),
+        1,
+        "the story's own web link is untouched"
+    );
+
+    // Refusals write nothing: no entry, and no row. A URL with a user name or a password is among them, so a
+    // credential typed into one reaches neither the table nor the activity log.
+    let before = sink.0.lock().unwrap().len();
+    let stored = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM web_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let rows = stored().await;
+    assert_eq!(
+        rows, 2,
+        "the control: the epic's Board and the story's Scenario page are stored"
+    );
+    for (title, url) in [
+        ("", "https://example.com/"),
+        ("ok", "ftp://example.com/x"),
+        ("ok", "javascript:alert(1)"),
+        ("ok", "example.com/wiki"),
+        ("ok", "https://mia:secret@example.com/wiki"),
+        ("ok", "https://mia@example.com/wiki"),
+    ] {
+        assert!(
+            matches!(
+                h.add_web_link(&bot, &e, title, url).await,
+                Err(HandlerError::Validation(_))
+            ),
+            "{title:?} {url:?}"
+        );
+    }
+    let ghost: Key = "ABC-999".parse().unwrap();
+    assert!(matches!(
+        h.add_web_link(&bot, &ghost, "ok", "https://example.com/")
+            .await,
+        Err(HandlerError::NotFound)
+    ));
+    assert!(matches!(
+        h.remove_web_link(&bot, &ghost, id).await,
+        Err(HandlerError::NotFound)
+    ));
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        before,
+        "no entry for a refusal"
+    );
+    assert_eq!(stored().await, rows, "and no row");
+    assert!(
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| !r.payload.to_string().contains("secret")),
+        "nothing of the refused URL is in the log"
+    );
+}
+
+/// What plan apply (GRA-879) relies on when it calls `add_web_link_in` and `remove_web_link_in` inside the plan's
+/// transaction: they write on the caller's transaction only, so nothing of them is left when it is not committed.
+/// As for item links (Task 3), the caller is the public form and what stops it short of the commit is the sink
+/// refusing the entry, by which time the `_in` form has written the row.
+#[tokio::test]
+async fn a_web_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row_and_no_entry() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_table_sink(pool.clone()).await;
+    let c = ctx("dan@example.com", false);
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "s",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    // (rows of web_links, entries with this action), as another connection sees them: what was committed.
+    let left = |action: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM web_links")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            (rows, entries_committed(&pool, action).await)
+        }
+    };
+
+    sink.refuse(Some(&s));
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        left("web_link_added").await,
+        (0, 0),
+        "no row and no entry of the add is left"
+    );
+    // The control: the same call, not refused, leaves the row and its entry.
+    sink.refuse(None);
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .unwrap()
+    );
+    assert_eq!(left("web_link_added").await, (1, 1), "the control");
+
+    let id = h.link_listing(&s).await.unwrap().web_links[0].id;
+    sink.refuse(Some(&s));
+    assert!(h.remove_web_link(&c, &s, id).await.is_err());
+    assert_eq!(
+        left("web_link_removed").await,
+        (1, 0),
+        "the web link is still there and no entry says otherwise"
+    );
+    sink.refuse(None);
+    assert!(h.remove_web_link(&c, &s, id).await.unwrap());
+    assert_eq!(left("web_link_removed").await, (0, 1), "the control");
+}
+
+/// kb/ADR-0010 R5: a web link and its entry commit together.
+#[tokio::test]
+async fn a_web_link_and_its_entry_commit_together() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_probe(
+        pool.clone(),
+        "SELECT (SELECT title FROM web_links WHERE item_key = $1 LIMIT 1)",
+    );
+    let c = ctx("dan@example.com", false);
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "s",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .unwrap()
+    );
+    let added = sink.entries("web_link_added");
+    assert_eq!(added.len(), 1);
+    assert_eq!(
+        added[0].1.as_deref(),
+        Some("Page"),
+        "written before its entry"
+    );
+    assert_eq!(added[0].2, None, "not committed before its entry");
+    let id = h.link_listing(&s).await.unwrap().web_links[0].id;
+    assert!(h.remove_web_link(&c, &s, id).await.unwrap());
+    let removed = sink.entries("web_link_removed");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].1, None, "deleted before its entry");
+    assert_eq!(
+        removed[0].2.as_deref(),
+        Some("Page"),
+        "the delete is not committed yet"
     );
 }

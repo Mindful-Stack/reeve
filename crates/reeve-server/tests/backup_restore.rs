@@ -287,6 +287,14 @@ async fn seed(h: &Harness) -> Seeded {
         json!({"type":"follows","to":active}),
     )
     .await;
+    // A web link (migration 1014, kb/ADR-0031) with its activity entry.
+    post(
+        app,
+        t,
+        &format!("/api/v1/items/{todo}/web-links"),
+        json!({"title":"Scenario page","url":"https://example.com/wiki/scenario"}),
+    )
+    .await;
     Seeded { todo, active }
 }
 

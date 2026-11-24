@@ -799,7 +799,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The item's item links, each read from this item's side. `key` is a key or an external reference of an
+         * The item's item links, each read from this item's side, and its web links, oldest first. `key` is a key or an external reference of an
          *     initiative, an epic or a story.
          */
         get: operations["list_item_links"];
@@ -832,6 +832,48 @@ export interface paths {
          *     changes nothing. Answers the item's links.
          */
         delete: operations["remove_item_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control
+         *     character, and an `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has
+         *     with the same title answers ok and changes nothing; with another title it is a validation error (remove it
+         *     first). Answers the item's web links, oldest first.
+         */
+        post: operations["add_web_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes one web link of the item by its id. An id the item does not have answers ok and changes nothing.
+         *     Answers the item's web links.
+         */
+        delete: operations["remove_web_link"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1389,6 +1431,15 @@ export interface components {
             type: components["schemas"]["ItemLinkType"];
         };
         /**
+         * @description `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line, with no tab or
+         *     other control character; the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused
+         *     rather than ignored.
+         */
+        AddWebLink: {
+            title: string;
+            url: string;
+        };
+        /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
          *     historical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.
          */
@@ -1839,6 +1890,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
         EpicPromiseCleared: {
@@ -2086,6 +2142,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client. */
         InstanceConfigDto: {
@@ -2150,12 +2211,14 @@ export interface components {
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
         };
-        /**
-         * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
-         *     the item's web links when they exist (GRA-878).
-         */
+        /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
         LinkListingDto: {
             links: components["schemas"]["ItemLinkDto"][];
+            /**
+             * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+             *     none.
+             */
+            web_links: components["schemas"]["WebLinkDto"][];
         };
         LinkRecord: {
             path: string;
@@ -2871,6 +2934,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3096,6 +3164,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3191,12 +3264,14 @@ export interface components {
         Response_LinkListingDto: {
             /** @enum {string} */
             outcome: "ok";
-            /**
-             * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
-             *     the item's web links when they exist (GRA-878).
-             */
+            /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
             value: {
                 links: components["schemas"]["ItemLinkDto"][];
+                /**
+                 * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+                 *     none.
+                 */
+                web_links: components["schemas"]["WebLinkDto"][];
             };
         } | {
             /** @enum {string} */
@@ -3578,6 +3653,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3825,6 +3905,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             }[];
         } | {
             /** @enum {string} */
@@ -3965,6 +4050,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             }[];
         } | {
             /** @enum {string} */
@@ -4266,6 +4356,38 @@ export interface components {
             /** @enum {string} */
             outcome: "error";
         };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_WebLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: int64 */
+                id: number;
+                title: string;
+                /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+                url: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
         /**
          * @description How hard a required decision is to undo (kb/ADR-0013 R1). Unset (`None`) behaves as two-way.
          * @enum {string}
@@ -4479,6 +4601,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /**
          * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
@@ -4581,6 +4708,17 @@ export interface components {
         /** @description The war-room rows the caller saw; bulk clear and renew act on exactly these. */
         WarRoomItems: {
             items: components["schemas"]["ItemRefDto"][];
+        };
+        /**
+         * @description A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come
+         *     oldest first.
+         */
+        WebLinkDto: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+            url: string;
         };
     };
     responses: never;
@@ -8964,6 +9102,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddWebLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
                 };
             };
             /** @description validation error */

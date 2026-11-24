@@ -168,6 +168,23 @@
         ],
         "type": "object"
       },
+      "AddWebLink": {
+        "additionalProperties": false,
+        "description": "`POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line, with no tab or\nother control character; the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused\nrather than ignored.",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "type": "object"
+      },
       "AffectedStoryDto": {
         "description": "A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is\nhistorical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.",
         "properties": {
@@ -1638,6 +1655,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2455,6 +2482,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2650,17 +2687,25 @@
         "type": "object"
       },
       "LinkListingDto": {
-        "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+        "description": "`GET /items/{key}/links`: what `reeve link ls` shows.",
         "properties": {
           "links": {
             "items": {
               "$ref": "#/components/schemas/ItemLinkDto"
             },
             "type": "array"
+          },
+          "web_links": {
+            "description": "The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as\nnone.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "links"
+          "links",
+          "web_links"
         ],
         "type": "object"
       },
@@ -5123,6 +5168,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -5845,6 +5900,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -6143,17 +6208,25 @@
                 "type": "string"
               },
               "value": {
-                "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+                "description": "`GET /items/{key}/links`: what `reeve link ls` shows.",
                 "properties": {
                   "links": {
                     "items": {
                       "$ref": "#/components/schemas/ItemLinkDto"
                     },
                     "type": "array"
+                  },
+                  "web_links": {
+                    "description": "The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as\nnone.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
-                  "links"
+                  "links",
+                  "web_links"
                 ],
                 "type": "object"
               }
@@ -7353,6 +7426,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -8170,6 +8253,16 @@
                     "version": {
                       "format": "int64",
                       "type": "integer"
+                    },
+                    "web_links": {
+                      "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                      "items": {
+                        "$ref": "#/components/schemas/WebLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -8633,6 +8726,16 @@
                     "version": {
                       "format": "int64",
                       "type": "integer"
+                    },
+                    "web_links": {
+                      "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                      "items": {
+                        "$ref": "#/components/schemas/WebLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -9664,6 +9767,107 @@
           }
         ]
       },
+      "Response_Vec_WebLinkDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come\noldest first.",
+                  "properties": {
+                    "id": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "description": "As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`).",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "url"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Reversibility": {
         "description": "How hard a required decision is to undo (kb/ADR-0013 R1). Unset (`None`) behaves as two-way.",
         "enum": [
@@ -10273,6 +10477,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -10630,6 +10844,28 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "WebLinkDto": {
+        "description": "A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come\noldest first.",
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "description": "As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "url"
         ],
         "type": "object"
       }
@@ -16033,7 +16269,7 @@
             "bearer": []
           }
         ],
-        "summary": "The item's item links, each read from this item's side. `key` is a key or an external reference of an\ninitiative, an epic or a story."
+        "summary": "The item's item links, each read from this item's side, and its web links, oldest first. `key` is a key or an external reference of an\ninitiative, an epic or a story."
       },
       "post": {
         "operationId": "add_item_link",
@@ -16224,6 +16460,191 @@
           }
         ],
         "summary": "Removes \"`key` <type> `to`\", the forward form: a link an item shows as \"is followed by X\" is removed by naming\nX first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and\nchanges nothing. Answers the item's links."
+      }
+    },
+    "/api/v1/items/{key}/web-links": {
+      "post": {
+        "operationId": "add_web_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddWebLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_WebLinkDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control\ncharacter, and an `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has\nwith the same title answers ok and changes nothing; with another title it is a validation error (remove it\nfirst). Answers the item's web links, oldest first."
+      }
+    },
+    "/api/v1/items/{key}/web-links/{id}": {
+      "delete": {
+        "operationId": "remove_web_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_WebLinkDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Removes one web link of the item by its id. An id the item does not have answers ok and changes nothing.\nAnswers the item's web links."
       }
     },
     "/api/v1/me": {

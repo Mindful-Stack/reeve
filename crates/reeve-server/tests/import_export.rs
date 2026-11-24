@@ -684,9 +684,13 @@ async fn export_holds_every_item_created_before_it() {
     )
     .await;
     // The one difference between the export's row and a read of one item, by design (kb/ADR-0031): only the
-    // read of one item carries its item links. None exist here.
+    // read of one item carries its item links and its web links. None exist here.
     assert_eq!(
         story["value"].as_object_mut().unwrap().remove("links"),
+        Some(json!([]))
+    );
+    assert_eq!(
+        story["value"].as_object_mut().unwrap().remove("web_links"),
         Some(json!([]))
     );
     assert_eq!(stories[0], story["value"]);
@@ -1179,12 +1183,14 @@ fn the_importer_has_no_path_to_a_promise() {
     }
 }
 
-/// kb/ADR-0031 R2: the importer has no path to an item link. Neither the server's import handler and route nor the
-/// CLI's Jira importer, which is the code that knows another tool's relations, names an item link or the route
-/// that writes one, so an import never turns another tool's relation (a blocking one least of all) into an item
-/// link.
+/// The importer has no path to an item link or a web link. For item links that is kb/ADR-0031 R2 (an importer must
+/// not turn another tool's blocking relation into an item link); no rule of the record speaks of web links and an
+/// import: the import is unchanged by design, it creates none, and this test holds it. Neither the server's import
+/// handler and route nor the CLI's Jira importer, which is the code that knows another tool's relations, names one
+/// or a route that writes one, so an import never turns another tool's relation (a blocking one least of all) into
+/// an item link and never attaches a web link.
 #[test]
-fn the_importer_has_no_path_to_an_item_link() {
+fn the_importer_has_no_path_to_an_item_link_or_a_web_link() {
     for (path, src) in [
         (
             "reeve-planning/src/handler/import.rs",
@@ -1216,11 +1222,21 @@ fn the_importer_has_no_path_to_an_item_link() {
         ),
     ] {
         let src = src.to_lowercase();
-        // `item_link` is every function, port field and table name; `itemlink` is the types (`ItemLink`,
-        // `ItemLinkRepo`), lowercased; `/links` is the route a client writes one through
-        // (`/api/v1/items/{key}/links`), which is how the CLI would do it.
-        for name in ["item_link", "itemlink", "/links"] {
-            assert!(!src.contains(name), "{path} names an item link ({name})");
+        // `item_link` and `web_link` are every function, port field and table name; `itemlink` and `weblink` are
+        // the types (`ItemLink`, `WebLinkRepo`), lowercased; `/links` and `/web-links` are the routes a client
+        // writes them through, which is how the CLI would do it.
+        for name in [
+            "item_link",
+            "itemlink",
+            "/links",
+            "web_link",
+            "weblink",
+            "/web-links",
+        ] {
+            assert!(
+                !src.contains(name),
+                "{path} names an item link or a web link ({name})"
+            );
         }
     }
 }

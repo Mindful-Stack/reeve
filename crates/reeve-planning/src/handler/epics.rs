@@ -200,6 +200,7 @@ impl Handlers {
                 .await?;
             let mut dto = epic_dto_of(&e, &urg, promises.epics.remove(key).as_ref(), &clock);
             dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
             Ok(dto)
         }
         .await;

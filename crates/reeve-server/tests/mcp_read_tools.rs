@@ -20,6 +20,7 @@ async fn mcp_token(h: &Harness, email: &str) -> String {
 /// What a read tool adds to the API's item when nothing was left out (the plan's Tasks 9 and 18).
 fn none_omitted(mut item: Value) -> Value {
     item["links_omitted"] = json!(0);
+    item["web_links_omitted"] = json!(0);
     item
 }
 
@@ -948,8 +949,8 @@ async fn get_sprint_reads_the_current_sprint_as_the_cli_picks_it() {
     );
 }
 
-/// `get_story`, `get_epic` and `get_initiative` show the item's item links as the API's read of one item does,
-/// with the number left out beside them (GRA-877).
+/// `get_story`, `get_epic` and `get_initiative` show the item's item links and web links as the API's read of one
+/// item does, with the number left out of each beside them (GRA-877, GRA-878).
 #[tokio::test]
 async fn the_read_tools_show_an_item_s_links() {
     let h = mcp_harness().await;
@@ -965,6 +966,18 @@ async fn the_read_tools_show_an_item_s_links() {
         &h,
         &format!("/api/v1/items/{}/links", s.epic),
         json!({"type": "relates_to", "to": s.initiative}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/web-links", s.bobs),
+        json!({"title": "Scenario page", "url": "https://example.com/wiki/scenario"}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/web-links", s.epic),
+        json!({"title": "Epic notes", "url": "https://example.com/wiki/epic"}),
     )
     .await;
 
@@ -983,9 +996,19 @@ async fn the_read_tools_show_an_item_s_links() {
     let told = answer(&h, &bob, "get_story", json!({"key": s.bobs})).await;
     assert_eq!(told["story"]["links"], context["story"]["links"]);
     assert_eq!(told["links_omitted"], 0);
+    assert_eq!(
+        context["story"]["web_links"][0]["title"], "Scenario page",
+        "the control"
+    );
+    assert_eq!(told["story"]["web_links"], context["story"]["web_links"]);
+    assert_eq!(told["web_links_omitted"], 0);
 
     let epic = api(&h, &h.victim_token, &format!("/api/v1/epics/{}", s.epic)).await;
     assert_eq!(epic["links"][0]["label"], "relates to", "the control");
+    assert_eq!(
+        epic["web_links"][0]["url"], "https://example.com/wiki/epic",
+        "the control"
+    );
     assert_eq!(
         answer(&h, &bob, "get_epic", json!({"key": s.epic})).await,
         none_omitted(epic)

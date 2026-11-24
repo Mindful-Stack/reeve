@@ -219,6 +219,7 @@ pub fn story(
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         },
         readiness: Readiness {
             ready: true,

@@ -32,6 +32,7 @@ mod reads;
 mod sprints;
 mod stories;
 mod urgency;
+mod web_links;
 
 pub(crate) struct PgPlanningRepo {
     pool: PgPool,
@@ -56,6 +57,7 @@ pub fn make_planning_ports(pool: PgPool) -> PlanningPorts {
         urgency: r.clone(),
         promises: r.clone(),
         item_links: r.clone(),
+        web_links: r.clone(),
         reads: r,
     }
 }

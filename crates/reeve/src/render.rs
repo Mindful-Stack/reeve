@@ -1,7 +1,7 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
 use crate::promise;
-use crate::relations::{BlockerLine, relations};
+use crate::relations::{BlockerLine, relations, web_links};
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -124,7 +124,7 @@ fn with_block(text: String, block: Option<String>) -> String {
 }
 
 /// `story` for `story show`: with the urgent lines, then the promise line, after the first line, and the
-/// relations block last. A blocker is printed by its key and nothing else: a `StoryDto` holds no more of it, and
+/// relations block and the web links block last. A blocker is printed by its key and nothing else: a `StoryDto` holds no more of it, and
 /// whether it holds the story back is the readiness reasons' to say, not this block's.
 pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
     story_with_relations(s, &[], now)
@@ -144,8 +144,11 @@ pub fn story_with_relations(s: &StoryDto, blockers: &[StoryDto], now: DateTime<U
         })
         .collect();
     with_block(
-        with_urgency(story(s), lines),
-        relations(&blocked_by, s.links.as_deref().unwrap_or(&[])),
+        with_block(
+            with_urgency(story(s), lines),
+            relations(&blocked_by, s.links.as_deref().unwrap_or(&[])),
+        ),
+        web_links(s.web_links.as_deref().unwrap_or(&[])),
     )
 }
 
@@ -225,25 +228,32 @@ pub fn epic_promise_answer(e: &EpicDto) -> String {
     }
 }
 
-/// `initiative` for `initiative show`: with the urgent lines after the first line, and the relations block last.
+/// `initiative` for `initiative show`: with the urgent lines after the first line, and the relations block
+/// and the web links block last.
 pub fn initiative_show(i: &InitiativeDto, now: DateTime<Utc>) -> String {
     with_block(
-        with_urgency(
-            initiative(i),
-            urgent_lines(i.urgent_mark.as_ref(), &i.urgent_sources, &i.key, now),
+        with_block(
+            with_urgency(
+                initiative(i),
+                urgent_lines(i.urgent_mark.as_ref(), &i.urgent_sources, &i.key, now),
+            ),
+            relations(&[], i.links.as_deref().unwrap_or(&[])),
         ),
-        relations(&[], i.links.as_deref().unwrap_or(&[])),
+        web_links(i.web_links.as_deref().unwrap_or(&[])),
     )
 }
 
 /// `epic` for `epic show`: with the urgent lines, then the promise line, after the first line, and the relations
-/// block last.
+/// block and the web links block last.
 pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
     let mut lines = urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now);
     lines.extend(e.promise.as_ref().map(promise::epic_line_text));
     with_block(
-        with_urgency(epic(e), lines),
-        relations(&[], e.links.as_deref().unwrap_or(&[])),
+        with_block(
+            with_urgency(epic(e), lines),
+            relations(&[], e.links.as_deref().unwrap_or(&[])),
+        ),
+        web_links(e.web_links.as_deref().unwrap_or(&[])),
     )
 }
 
@@ -1147,6 +1157,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 
@@ -1192,6 +1203,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         };
         let out = epic(&e);
         assert!(
@@ -1267,6 +1279,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         };
         assert!(epic(&e).contains(" from: SCRUM-480"), "{}", epic(&e));
         let i = InitiativeDto {
@@ -1283,6 +1296,7 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             links: None,
+            web_links: None,
         };
         assert!(
             initiative(&i).contains(" from: JPD-30"),
@@ -1337,6 +1351,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 
@@ -1355,6 +1370,7 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             links: None,
+            web_links: None,
         }
     }
 
@@ -1993,5 +2009,44 @@ mod tests {
             out.contains("\n## Blockers\n\n- ● ABC-28 [in-review] Invoice template"),
             "the existing section stays: {out}"
         );
+    }
+
+    /// The web links block comes after the relations block, on all three levels and in the context, and is
+    /// absent when there are none.
+    #[test]
+    fn show_prints_web_links_after_the_relations() {
+        let page = WebLinkDto {
+            id: 1,
+            title: "Scenario page".into(),
+            url: "https://example.com/wiki/scenario".into(),
+        };
+        let block = "web links:\n  Scenario page  https://example.com/wiki/scenario";
+        let s = StoryDto {
+            blocked_by: vec!["ABC-28".parse().unwrap()],
+            web_links: Some(vec![page.clone()]),
+            ..dto(vec![])
+        };
+        assert_eq!(
+            story_show(&s, now()),
+            format!("{}\nrelations:\n  blocked by  ● ABC-28\n{block}", story(&s))
+        );
+        let e = EpicDto {
+            web_links: Some(vec![page.clone()]),
+            ..epic_dto()
+        };
+        assert_eq!(epic_show(&e, now()), format!("{}\n{block}", epic(&e)));
+        let i = InitiativeDto {
+            web_links: Some(vec![page]),
+            ..initiative_dto()
+        };
+        assert_eq!(
+            initiative_show(&i, now()),
+            format!("{}\n{block}", initiative(&i))
+        );
+        let plain = StoryDto {
+            web_links: Some(vec![]),
+            ..dto(vec![])
+        };
+        assert_eq!(story_show(&plain, now()), story(&plain));
     }
 }

@@ -1,5 +1,6 @@
-//! `reeve link`: item links (kb/ADR-0031), informational connections between two items of any level. A blocker
-//! is not an item link: `reeve story block` holds a story back, nothing here does.
+//! `reeve link`: item links and web links (kb/ADR-0031). An item link is an informational connection between two
+//! items of any level; a web link is a titled URL on one item (`--url`, `--title`). Neither is a blocker:
+//! `reeve story block` holds a story back, nothing here does.
 use super::finish;
 use crate::client::{Client, Outcome};
 use crate::relations::parse_link_name;
@@ -8,40 +9,72 @@ use reeve_protocol::*;
 
 #[derive(Subcommand)]
 pub enum Link {
-    /// Say that an item follows, duplicates or relates to another. Informational: it never holds work back (to
-    /// hold a story back, use `reeve story block <KEY> --by <OTHER>`). Adding a link that exists succeeds and
-    /// changes nothing.
+    /// Say that an item follows, duplicates or relates to another, or, with --url and --title, attach a web link
+    /// to it. Both are informational: neither holds work back (to hold a story back, use `reeve story block <KEY>
+    /// --by <OTHER>`). Adding what is already there succeeds and changes nothing; a URL the item already has under
+    /// another title is refused (remove it first).
     Add {
-        /// The item that follows, duplicates or relates: an initiative, an epic or a story.
+        /// The item: for an item link, the one that follows, duplicates or relates. An initiative, an epic or a
+        /// story.
         key: KeyRef,
         /// follows, duplicates or relates-to.
-        #[arg(value_parser = parse_link_name, value_name = "follows|duplicates|relates-to")]
-        name: ItemLinkType,
+        #[arg(
+            value_parser = parse_link_name,
+            value_name = "follows|duplicates|relates-to",
+            required_unless_present = "url"
+        )]
+        name: Option<ItemLinkType>,
         /// The other item, of any level.
-        other: KeyRef,
+        #[arg(required_unless_present = "url")]
+        other: Option<KeyRef>,
+        /// Attach a web link instead: an http or https URL.
+        #[arg(long, conflicts_with_all = ["name", "other"], requires = "title")]
+        url: Option<String>,
+        /// The web link's title, 1 to 200 characters on one line, with no tab or other control character.
+        #[arg(long, requires = "url")]
+        title: Option<String>,
     },
     /// Remove an item link, named as it was added: <KEY> is the item that follows, duplicates or relates. A line
-    /// printed as "is followed by ABC-12" is removed with `reeve link rm ABC-12 follows <KEY>`. Removing a link
-    /// that does not exist succeeds and changes nothing.
+    /// printed as "is followed by ABC-12" is removed with `reeve link rm ABC-12 follows <KEY>`. With --url, remove
+    /// the item's web link to that URL. Removing what is not there succeeds and changes nothing.
     Rm {
-        /// The item that follows, duplicates or relates.
+        /// The item: for an item link, the one that follows, duplicates or relates.
         key: KeyRef,
         /// follows, duplicates or relates-to.
-        #[arg(value_parser = parse_link_name, value_name = "follows|duplicates|relates-to")]
-        name: ItemLinkType,
+        #[arg(
+            value_parser = parse_link_name,
+            value_name = "follows|duplicates|relates-to",
+            required_unless_present = "url"
+        )]
+        name: Option<ItemLinkType>,
         /// The other item.
-        other: KeyRef,
+        #[arg(required_unless_present = "url")]
+        other: Option<KeyRef>,
+        /// Remove the web link with this URL instead.
+        #[arg(long, conflicts_with_all = ["name", "other"])]
+        url: Option<String>,
     },
-    /// List an item's item links, each read from that item's side.
+    /// List an item's item links, each read from that item's side, and its web links.
     Ls {
         /// An initiative, an epic or a story.
         key: KeyRef,
     },
 }
 
+/// The item's web links as text, for the answers of `add --url` and `rm --url`.
+#[allow(clippy::ptr_arg)] // `finish` hands its renderer exactly `&Vec<_>`
+fn web_links_text(links: &Vec<WebLinkDto>) -> String {
+    crate::relations::web_links(links).unwrap_or_else(|| "no web links".into())
+}
+
 pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
     Ok(match cmd {
-        Link::Add { key, name, other } => {
+        Link::Add {
+            key,
+            name: Some(name),
+            other: Some(other),
+            ..
+        } => {
             let out = c
                 .post::<Vec<ItemLinkDto>>(
                     &format!("/items/{key}/links"),
@@ -62,7 +95,26 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
                 }
             })
         }
-        Link::Rm { key, name, other } => finish(
+        Link::Add {
+            key,
+            url: Some(url),
+            title: Some(title),
+            ..
+        } => finish(
+            c.post::<Vec<WebLinkDto>>(
+                &format!("/items/{key}/web-links"),
+                serde_json::json!({"title": title, "url": url}),
+            )
+            .await?,
+            json,
+            web_links_text,
+        ),
+        Link::Rm {
+            key,
+            name: Some(name),
+            other: Some(other),
+            ..
+        } => finish(
             c.delete::<Vec<ItemLinkDto>>(&format!("/items/{key}/links/{}/{other}", name.wire()))
                 .await?,
             json,
@@ -73,6 +125,46 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
                 )
             },
         ),
+        Link::Rm {
+            key,
+            url: Some(url),
+            ..
+        } => {
+            // The web link is removed by id; its id is found by its URL in the item's listing.
+            let listed = c
+                .get::<LinkListingDto>(&format!("/items/{key}/links"))
+                .await?;
+            match listed {
+                Outcome::Ok(v) => {
+                    let found = v
+                        .web_links
+                        .iter()
+                        .find(|w| crate::relations::same_url(&url, &w.url))
+                        .map(|w| w.id);
+                    match found {
+                        Some(id) => finish(
+                            c.delete::<Vec<WebLinkDto>>(&format!("/items/{key}/web-links/{id}"))
+                                .await?,
+                            json,
+                            |left| format!("web link removed\n{}", web_links_text(left)),
+                        ),
+                        // Removing one that does not exist succeeds and changes nothing. The item's web links
+                        // follow, as after a removal: the stored spelling of the one that was meant is among them.
+                        None => finish(Outcome::Ok(v.web_links), json, |still| {
+                            format!(
+                                "no web link with that URL: nothing removed\n{}",
+                                web_links_text(still)
+                            )
+                        }),
+                    }
+                }
+                other => finish(other, json, |_| String::new()),
+            }
+        }
+        // Clap's rules (each form complete, the two exclusive) leave no other shape.
+        Link::Add { .. } | Link::Rm { .. } => {
+            anyhow::bail!("give <NAME> <OTHER>, or --url (with --title to add)")
+        }
         Link::Ls { key } => finish(
             c.get::<LinkListingDto>(&format!("/items/{key}/links"))
                 .await?,

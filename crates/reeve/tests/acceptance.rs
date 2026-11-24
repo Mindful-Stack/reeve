@@ -1743,6 +1743,67 @@ async fn flow() {
         "{left}"
     );
 
+    // Web links (GRA-878): a titled URL on one item, stored in the parser's form, shown by `show`, removed by URL.
+    let web = ok(reeve(&bot)
+        .args([
+            "link",
+            "add",
+            &mine,
+            "--url",
+            "HTTPS://Example.com/wiki/scenario",
+            "--title",
+            "Scenario page",
+        ])
+        .output()
+        .unwrap());
+    assert_eq!(web["value"][0]["title"], "Scenario page", "{web}");
+    assert_eq!(web["value"][0]["url"], "https://example.com/wiki/scenario");
+    let shown = text(&["story", "show", &mine]);
+    assert!(
+        shown.ends_with("web links:\n  Scenario page  https://example.com/wiki/scenario\n"),
+        "{shown}"
+    );
+    let listed = ok(reeve(&member).args(["link", "ls", &mine]).output().unwrap());
+    assert_eq!(listed["value"]["web_links"], web["value"], "{listed}");
+    // The same URL under another title is refused; a validation error exits 1.
+    let retitled = reeve(&human)
+        .args([
+            "link",
+            "add",
+            &mine,
+            "--url",
+            "https://example.com/wiki/scenario",
+            "--title",
+            "Scenario",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(retitled.status.code(), Some(1));
+    let retitled: serde_json::Value = serde_json::from_slice(&retitled.stdout).unwrap();
+    assert_eq!(retitled["code"], "validation", "{retitled}");
+    // Removed by its URL, typed in another spelling; removing it again is fine.
+    let gone = ok(reeve(&human)
+        .args([
+            "link",
+            "rm",
+            &mine,
+            "--url",
+            "https://EXAMPLE.com/wiki/scenario",
+        ])
+        .output()
+        .unwrap());
+    assert_eq!(gone["value"], serde_json::json!([]), "{gone}");
+    ok(reeve(&human)
+        .args([
+            "link",
+            "rm",
+            &mine,
+            "--url",
+            "https://example.com/wiki/scenario",
+        ])
+        .output()
+        .unwrap());
+
     // Connections (GRA-669): one made as `reeve-server mcp-token-issue` makes it, listed and revoked by the CLI.
     let floor = reeve_identity::AccessPolicy::floor_only(&identity);
     let developer = reeve_identity::issue_mcp_token(

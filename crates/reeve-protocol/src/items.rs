@@ -36,6 +36,10 @@ pub struct InitiativeDto {
     /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<crate::links::ItemLinkDto>>,
+    /// The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+    /// left out of every read that answers several items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_links: Option<Vec<crate::links::WebLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -64,6 +68,10 @@ pub struct EpicDto {
     /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<crate::links::ItemLinkDto>>,
+    /// The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+    /// left out of every read that answers several items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_links: Option<Vec<crate::links::WebLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -113,6 +121,10 @@ pub struct StoryDto {
     /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<crate::links::ItemLinkDto>>,
+    /// The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+    /// left out of every read that answers several items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_links: Option<Vec<crate::links::WebLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

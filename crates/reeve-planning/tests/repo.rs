@@ -5,7 +5,7 @@ use reeve_planning::{
     ActivityRecord, ActivitySink, BlockerFact, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative,
     ItemLink, ItemType, PlanningPorts, Promisable, Promise, PromiseFacts, PromiseItem,
     PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings, Story, StoryFilter,
-    StoryPromiseRow, StoryText, UrgentMark, compute_readiness, make_planning_ports,
+    StoryPromiseRow, StoryText, UrgentMark, WebLink, compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason, Resolution,
@@ -3513,4 +3513,121 @@ async fn the_item_links_table_refuses_what_the_domain_refuses() {
         insert("ABC-2", "ABC-1", "follows").await.is_err(),
         "the same link twice"
     );
+}
+
+/// kb/ADR-0031 R5: a web link is on one item, one per URL on that item, listed oldest first, removed by its id on
+/// that item only. The table has no foreign key, so no item row is needed here.
+#[tokio::test]
+async fn web_links_are_one_per_url_on_an_item_and_listed_oldest_first() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let key = |s: &str| -> Key { s.parse().unwrap() };
+    let link = |title: &str, url: &str| WebLink::new(title, url).unwrap();
+    let (a, b) = (key("ABC-1"), key("ABC-2"));
+    let mut tx = pool.begin().await.unwrap();
+
+    let first = ports
+        .web_links
+        .add_web_link(
+            &mut tx,
+            &a,
+            &link("Scenario page", "https://example.com/wiki/scenario"),
+        )
+        .await
+        .unwrap()
+        .expect("the first add writes");
+    assert_eq!(
+        ports
+            .web_links
+            .add_web_link(
+                &mut tx,
+                &a,
+                &link("Another title", "https://example.com/wiki/scenario")
+            )
+            .await
+            .unwrap(),
+        None,
+        "the same URL on the same item writes nothing, whatever the title"
+    );
+    let second = ports
+        .web_links
+        .add_web_link(&mut tx, &a, &link("Board", "https://example.com/board"))
+        .await
+        .unwrap()
+        .expect("another URL is another web link");
+    assert!(second > first, "ids rise with insertion");
+    let on_b = ports
+        .web_links
+        .add_web_link(
+            &mut tx,
+            &b,
+            &link("Scenario page", "https://example.com/wiki/scenario"),
+        )
+        .await
+        .unwrap()
+        .expect("the same URL on another item is its own web link");
+
+    let of_a = ports
+        .web_links
+        .web_links_of_in(&mut tx, std::slice::from_ref(&a))
+        .await
+        .unwrap();
+    assert_eq!(
+        of_a.iter()
+            .map(|w| (w.id, w.item.clone(), w.link.title()))
+            .collect::<Vec<_>>(),
+        vec![
+            (first, a.clone(), "Scenario page"),
+            (second, a.clone(), "Board")
+        ],
+        "oldest first, and the first title is the one stored"
+    );
+    assert_eq!(
+        ports
+            .web_links
+            .web_links_of_in(&mut tx, &[a.clone(), b.clone()])
+            .await
+            .unwrap()
+            .len(),
+        3,
+        "several items in one read"
+    );
+
+    assert_eq!(
+        ports
+            .web_links
+            .remove_web_link(&mut tx, &a, on_b)
+            .await
+            .unwrap(),
+        None,
+        "an id of another item's web link removes nothing"
+    );
+    assert_eq!(
+        ports
+            .web_links
+            .remove_web_link(&mut tx, &a, first)
+            .await
+            .unwrap(),
+        Some(link("Scenario page", "https://example.com/wiki/scenario")),
+        "the removed link comes back, for the activity entry"
+    );
+    assert_eq!(
+        ports
+            .web_links
+            .remove_web_link(&mut tx, &a, first)
+            .await
+            .unwrap(),
+        None,
+        "removing again removes nothing"
+    );
+    let left = ports
+        .web_links
+        .web_links_of_in(&mut tx, &[a, b])
+        .await
+        .unwrap();
+    assert_eq!(
+        left.iter().map(|w| w.id).collect::<Vec<_>>(),
+        vec![second, on_b]
+    );
+    tx.rollback().await.unwrap();
 }
