@@ -6,21 +6,23 @@
 //! by the handlers the plan calls. A story carrying a migrated ticket's active state is grandfathered as the
 //! importer does: created in that state and logged `imported`, never through `move_story`.
 //!
-//! Each create commits on its own: a plan has no transaction around its items. Its item links (kb/ADR-0031) are
-//! written last, once every item it names exists, each in a transaction of its own, through the transaction-taking
-//! form of the item link handler, which records the entry on both items; the ports' writers are never named here
-//! (the isolation lint refuses them). One transaction per link, never one for all: an activity entry takes the
-//! activity log's lock until its transaction ends, so nothing may be inserted after it in the same transaction.
-//! The links are idempotent by their content, so a second apply answers each as existing, and finishes a plan
-//! whose earlier apply stopped at a link, once whatever made that link fail is corrected.
+//! Each create commits on its own: a plan has no transaction around its items. Its item links and web links
+//! (kb/ADR-0031) are written last, once every item it names exists, each in a transaction of its own, through the
+//! transaction-taking forms of the item link and web link handlers, which record the entry on every item named; the
+//! ports' writers are never named here (the isolation lint refuses them). One transaction per link, never one for
+//! all: an activity entry takes the activity log's lock until its transaction ends, so nothing may be inserted
+//! after it in the same transaction. Both are idempotent by their content, so a second apply answers each as
+//! existing, and finishes a plan whose earlier apply stopped at a link, once whatever made that link fail is
+//! corrected (a web link retitled meanwhile is then reported by the check).
 use super::import::check_item_ref;
 use super::item_links::ResolvedItemLink;
 use super::*;
 use crate::domain::item_link::{ItemLink, ItemLinkError};
 use crate::domain::items::*;
+use crate::domain::web_link::{WebLink, WebLinkError};
 use reeve_protocol::{
-    ApplyPlan, DeliveryState, Kind, PlanApplied, PlanLink, PlannedBlock, PlannedDecision,
-    PlannedItem, PlannedLink,
+    ApplyPlan, DeliveryState, Kind, PlanApplied, PlanLink, PlanWebLink, PlannedBlock,
+    PlannedDecision, PlannedItem, PlannedLink, PlannedWebLink,
 };
 use std::collections::HashMap;
 
@@ -49,6 +51,13 @@ fn type_name(t: ItemType) -> &'static str {
 /// the same answer may name a plan's blockers and a decision's record link.
 fn link_at(l: &PlanLink) -> String {
     format!("item link {:?} {} {:?}", l.from, l.link_type.wire(), l.to)
+}
+
+/// Where a problem with a web link is: its title (the first 40 characters) and the item it is on. Never the URL:
+/// one refused for carrying a user name or a password must not come back in an error message.
+fn web_link_at(w: &PlanWebLink) -> String {
+    let title: String = w.title.trim().chars().take(40).collect();
+    format!("web link {title:?} on {:?}", w.on)
 }
 
 /// Which item a reference of a plan names, as one comparable value. `Key`: the item exists, either an existing
@@ -186,30 +195,32 @@ impl Handlers {
                 created,
             });
         }
-        let links = self.apply_plan_links(c, &p, &refs, &keys).await?;
+        let (links, web_links) = self.apply_plan_links(c, &p, &refs, &keys).await?;
         Ok(PlanApplied {
             items,
             decisions,
             blocks,
             links,
+            web_links,
         })
     }
 
-    /// The plan's item links, written after its items exist, each in a transaction of its own (begin, the `_in`
-    /// form, commit), as the plan's blockers commit one by one: a link's row and its two entries commit together or
-    /// not at all. Never one transaction for all of them: the entry takes the activity log's lock until its
-    /// transaction ends, and a transaction that went on to insert the next link while holding it could deadlock
+    /// The plan's item links and web links, written after its items exist, each in a transaction of its own (begin,
+    /// the `_in` form, commit), as the plan's blockers commit one by one: a link's row and its entries commit
+    /// together or not at all. Never one transaction for all of them: an entry takes the activity log's lock until
+    /// its transaction ends, and a transaction that went on to insert the next link while holding it could deadlock
     /// with a caller adding that same link. A link that fails leaves the earlier ones in; applying the same plan id
-    /// again finishes, once whatever made the link fail is corrected. The ends are the plan's own (the level from
-    /// the validation, the key from the item just created or the existing one), so nothing is looked up here. A
-    /// link that is already there answers `created` false and writes nothing.
+    /// again finishes, once whatever made the link fail is corrected (a web link retitled meanwhile is then
+    /// reported by the check). The ends are the plan's own (the level from the validation, the key from the item
+    /// just created or the existing one), so nothing is looked up here. An item link or a web link that is already
+    /// there answers `created` false and writes nothing.
     async fn apply_plan_links(
         &self,
         c: &Ctx,
         p: &ApplyPlan,
         refs: &HashMap<String, Target>,
         keys: &HashMap<String, Key>,
-    ) -> Result<Vec<PlannedLink>, HandlerError> {
+    ) -> Result<(Vec<PlannedLink>, Vec<PlannedWebLink>), HandlerError> {
         let mut links = Vec::with_capacity(p.links.len());
         for l in &p.links {
             // The ends as the plan named them; `ResolvedItemLink` keeps each level with its key when a
@@ -232,7 +243,22 @@ impl Handlers {
                 created,
             });
         }
-        Ok(links)
+        let mut web_links = Vec::with_capacity(p.web_links.len());
+        for w in &p.web_links {
+            let (level, on) = end_of(refs, keys, &w.on);
+            let link = WebLink::new(&w.title, &w.url)?;
+            let mut tx = self.pool.begin().await?;
+            let created = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
+            tx.commit().await?;
+            web_links.push(PlannedWebLink {
+                on,
+                level,
+                title: link.title().to_owned(),
+                url: link.url().to_owned(),
+                created,
+            });
+        }
+        Ok((links, web_links))
     }
 
     /// Every problem in the plan, all at once (an agent fixes the file in one pass), before anything is written. Returns
@@ -390,6 +416,21 @@ impl Handlers {
             pending.push((l.to.clone(), None, format!("{at}: to {:?}", l.to)));
         }
 
+        // Web links: the title and URL by the constructor the handler uses; `on` is an item of any level. An entry
+        // that fails here is None in `web` and takes no part in the checks on URLs below.
+        let mut web: Vec<Option<WebLink>> = Vec::with_capacity(p.web_links.len());
+        for w in &p.web_links {
+            let at = web_link_at(w);
+            match WebLink::new(&w.title, &w.url) {
+                Ok(link) => web.push(Some(link)),
+                Err(e) => {
+                    errors.push(format!("{at}: {e}"));
+                    web.push(None);
+                }
+            }
+            pending.push((w.on.clone(), None, format!("{at}: on {:?}", w.on)));
+        }
+
         for (r, wanted, at) in pending {
             match refs.get(&r) {
                 Some(Target::Planned(t)) | Some(Target::Existing(t, _)) => {
@@ -439,6 +480,8 @@ impl Handlers {
                 errors.push(format!("{}: {e}", link_at(l)));
             }
         }
+        self.check_plan_web_links(p, &ids, &web, &mut errors)
+            .await?;
         self.check_external_refs(p, &mut errors).await?;
         if errors.is_empty() {
             Ok(refs)
@@ -500,7 +543,7 @@ impl Handlers {
         Ok(())
     }
 
-    /// The identity of every reference the plan's item links name, resolved once. A key or an external reference is
+    /// The identity of every reference the plan's item links and web links name, resolved once. A key or an external reference is
     /// the key it resolved to; a plan name is the key an earlier apply of this plan gave it (the lookup
     /// `check_external_refs` makes, through the item's idempotency key), or the name itself when there is none. A
     /// reference that names nothing has no entry: the check has reported it already.
@@ -510,7 +553,11 @@ impl Handlers {
         refs: &HashMap<String, Target>,
     ) -> Result<HashMap<String, Identity>, HandlerError> {
         let id = p.id.trim();
-        let named = p.links.iter().flat_map(|l| [&l.from, &l.to]);
+        let named = p
+            .links
+            .iter()
+            .flat_map(|l| [&l.from, &l.to])
+            .chain(p.web_links.iter().map(|w| &w.on));
         let mut ids: HashMap<String, Identity> = HashMap::new();
         for r in named {
             if ids.contains_key(r) {
@@ -534,6 +581,70 @@ impl Handlers {
             ids.insert(r.clone(), identity);
         }
         Ok(ids)
+    }
+
+    /// An item has a URL once (spec section 1): the same URL under the same title is a repeat, under another title
+    /// an error. Checked here, before anything is written, in two places. Within the plan: the first title a URL
+    /// gets on an item is the one a later entry must repeat. Against what is stored: the web links the item has
+    /// today. Both ask `WebLink::is_new_among`, the one comparison there is (the web link handler's too). "The item" is the entry's
+    /// identity (`ids`), not its spelling: an existing item whichever way it is named, and for a plan name the item
+    /// an earlier apply of this plan created, or the name itself while there is none.
+    async fn check_plan_web_links(
+        &self,
+        p: &ApplyPlan,
+        ids: &HashMap<String, Identity>,
+        web: &[Option<WebLink>],
+        errors: &mut Vec<String>,
+    ) -> Result<(), HandlerError> {
+        // The item -> the web links the plan's earlier entries give it. `WebLink::is_new_among` decides, as it does
+        // against what is stored; only the wording is the plan's own, since nothing is "already" on the item.
+        let mut earlier: HashMap<&Identity, Vec<&WebLink>> = HashMap::new();
+        // (where, the item's key today, the link) for every entry whose item exists already.
+        let mut stored_checks: Vec<(String, Key, &WebLink)> = vec![];
+        for (w, link) in p.web_links.iter().zip(web) {
+            let (Some(link), Some(who)) = (link.as_ref(), ids.get(&w.on)) else {
+                continue;
+            };
+            let at = web_link_at(w);
+            let on_the_item = earlier.entry(who).or_default();
+            match link.is_new_among(on_the_item.iter().copied()) {
+                Ok(true) => on_the_item.push(link),
+                Ok(false) => {}
+                Err(WebLinkError::SameUrlOtherTitle { titled }) => errors.push(format!(
+                    "{at}: the plan gives {:?} that URL under two titles ({titled:?} and {:?}); an item has a URL once",
+                    w.on,
+                    link.title()
+                )),
+                // `is_new_among` makes no other error; were it to, the plan is refused with its words.
+                Err(e) => errors.push(format!("{at}: {e}")),
+            }
+            if let Identity::Key(key) = who {
+                stored_checks.push((at, key.clone(), link));
+            }
+        }
+        if stored_checks.is_empty() {
+            return Ok(());
+        }
+        let keys: Vec<Key> = stored_checks.iter().map(|(_, k, _)| k.clone()).collect();
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let read = self
+            .ports
+            .web_links
+            .web_links_of_in(&mut tx, &keys)
+            .await
+            .map_err(HandlerError::from);
+        let stored = end_read(tx, read).await?;
+        for (at, key, link) in stored_checks {
+            // One item's rows only: `is_new_among` takes the web links of one item.
+            let of_item = stored.iter().filter(|s| s.item == key).map(|s| &s.link);
+            if let Err(e) = link.is_new_among(of_item) {
+                errors.push(format!("{at}: {e}"));
+            }
+        }
+        Ok(())
     }
 
     /// The existing item a reference names, of the wanted type (any type for a decision's target), or None.

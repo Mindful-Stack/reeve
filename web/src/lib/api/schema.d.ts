@@ -1483,6 +1483,8 @@ export interface components {
              */
             links?: components["schemas"]["PlanLink"][];
             stories?: components["schemas"]["PlanStory"][];
+            /** @description Web links (kb/ADR-0031): titled URLs on items of any level. */
+            web_links?: components["schemas"]["PlanWebLink"][];
         };
         ApproveConnection: {
             approval: string;
@@ -2344,7 +2346,7 @@ export interface components {
         };
         /**
          * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-         *     this plan had made it, and every blocker edge and item link with `created` false when it was already there.
+         *     this plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.
          */
         PlanApplied: {
             blocks: components["schemas"]["PlannedBlock"][];
@@ -2355,6 +2357,11 @@ export interface components {
              *     server) reads as none.
              */
             links: components["schemas"]["PlannedLink"][];
+            /**
+             * @description One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+             *     server) reads as none.
+             */
+            web_links: components["schemas"]["PlannedWebLink"][];
         };
         /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key. */
         PlanBlock: {
@@ -2410,6 +2417,15 @@ export interface components {
             name: string;
             title: string;
         };
+        /**
+         * @description A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is
+         *     1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.
+         */
+        PlanWebLink: {
+            on: string;
+            title: string;
+            url: string;
+        };
         PlannedBlock: {
             blocked_by: components["schemas"]["Key"];
             created: boolean;
@@ -2438,6 +2454,17 @@ export interface components {
             to: components["schemas"]["Key"];
             to_level: components["schemas"]["ItemType"];
             type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is
+         *     false when the item already had that URL under that title.
+         */
+        PlannedWebLink: {
+            created: boolean;
+            level: components["schemas"]["ItemType"];
+            on: components["schemas"]["Key"];
+            title: string;
+            url: string;
         };
         /**
          * @description A pull request's state as GitHub last reported it; a cache, never a driver of delivery.
@@ -3363,7 +3390,7 @@ export interface components {
             outcome: "ok";
             /**
              * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-             *     this plan had made it, and every blocker edge and item link with `created` false when it was already there.
+             *     this plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.
              */
             value: {
                 blocks: components["schemas"]["PlannedBlock"][];
@@ -3374,6 +3401,11 @@ export interface components {
                  *     server) reads as none.
                  */
                 links: components["schemas"]["PlannedLink"][];
+                /**
+                 * @description One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+                 *     server) reads as none.
+                 */
+                web_links: components["schemas"]["PlannedWebLink"][];
             };
         } | {
             /** @enum {string} */

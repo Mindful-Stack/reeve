@@ -1,5 +1,5 @@
-//! `POST /plans` (`reeve apply`): a plan of new items, required decisions, blockers and item links, sent as one
-//! request.
+//! `POST /plans` (`reeve apply`): a plan of new items, required decisions, blockers, item links and web links, sent
+//! as one request.
 use crate::{enums::*, ids::Key, links::ItemLinkType};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -27,6 +27,9 @@ pub struct ApplyPlan {
     /// does that.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<PlanLink>,
+    /// Web links (kb/ADR-0031): titled URLs on items of any level.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub web_links: Vec<PlanWebLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -120,8 +123,18 @@ pub struct PlanLink {
     pub to: String,
 }
 
+/// A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is
+/// 1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlanWebLink {
+    pub on: String,
+    pub title: String,
+    pub url: String,
+}
+
 /// What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-/// this plan had made it, and every blocker edge and item link with `created` false when it was already there.
+/// this plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PlanApplied {
     pub items: Vec<PlannedItem>,
@@ -132,6 +145,11 @@ pub struct PlanApplied {
     #[serde(default)]
     #[schema(required = true)]
     pub links: Vec<PlannedLink>,
+    /// One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+    /// server) reads as none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub web_links: Vec<PlannedWebLink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -166,6 +184,17 @@ pub struct PlannedLink {
     pub link_type: ItemLinkType,
     pub to: Key,
     pub to_level: ItemType,
+    pub created: bool,
+}
+
+/// A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is
+/// false when the item already had that URL under that title.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct PlannedWebLink {
+    pub on: Key,
+    pub level: ItemType,
+    pub title: String,
+    pub url: String,
     pub created: bool,
 }
 
@@ -204,6 +233,38 @@ mod tests {
             json!({"id": "p", "links": [{"from": "a", "kind": "follows", "to": "b"}]}),
             json!({"id": "p", "links": [{"from": "a", "type": "follows", "to": "b", "direction": "in"}]}),
             json!({"id": "p", "links": [{"from": "a", "type": "follows"}]}),
+        ] {
+            assert!(
+                serde_json::from_value::<ApplyPlan>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plan_without_web_links_goes_out_as_before_and_a_web_link_travels_as_on_title_url() {
+        let plain: ApplyPlan =
+            serde_json::from_value(json!({"id": "p", "stories": [{"name": "s", "title": "S"}]}))
+                .unwrap();
+        let sent = serde_json::to_value(&plain).unwrap();
+        assert!(
+            sent.get("blocks").is_some(),
+            "the control: an empty list that was always sent"
+        );
+        assert!(sent.get("web_links").is_none(), "{sent}");
+
+        let entry = json!({"on": "s", "title": "Scenario page", "url": "https://example.com/wiki"});
+        let with: ApplyPlan =
+            serde_json::from_value(json!({"id": "p", "web_links": [entry.clone()]})).unwrap();
+        assert_eq!(
+            serde_json::to_value(&with).unwrap()["web_links"],
+            json!([entry])
+        );
+        for bad in [
+            json!({"id": "p", "web_links": [{"on": "s", "title": "T", "url": "https://example.com/", "note": "x"}]}),
+            json!({"id": "p", "web_links": [{"item": "s", "title": "T", "url": "https://example.com/"}]}),
+            json!({"id": "p", "web_links": [{"on": "s", "url": "https://example.com/"}]}),
+            json!({"id": "p", "weblinks": []}),
         ] {
             assert!(
                 serde_json::from_value::<ApplyPlan>(bad.clone()).is_err(),

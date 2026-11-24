@@ -288,6 +288,13 @@
               "$ref": "#/components/schemas/PlanStory"
             },
             "type": "array"
+          },
+          "web_links": {
+            "description": "Web links (kb/ADR-0031): titled URLs on items of any level.",
+            "items": {
+              "$ref": "#/components/schemas/PlanWebLink"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -3133,7 +3140,7 @@
         "type": "object"
       },
       "PlanApplied": {
-        "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge and item link with `created` false when it was already there.",
+        "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.",
         "properties": {
           "blocks": {
             "items": {
@@ -3159,13 +3166,21 @@
               "$ref": "#/components/schemas/PlannedLink"
             },
             "type": "array"
+          },
+          "web_links": {
+            "description": "One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older\nserver) reads as none.",
+            "items": {
+              "$ref": "#/components/schemas/PlannedWebLink"
+            },
+            "type": "array"
           }
         },
         "required": [
           "items",
           "decisions",
           "blocks",
-          "links"
+          "links",
+          "web_links"
         ],
         "type": "object"
       },
@@ -3398,6 +3413,27 @@
         ],
         "type": "object"
       },
+      "PlanWebLink": {
+        "additionalProperties": false,
+        "description": "A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is\n1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.",
+        "properties": {
+          "on": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "on",
+          "title",
+          "url"
+        ],
+        "type": "object"
+      },
       "PlannedBlock": {
         "properties": {
           "blocked_by": {
@@ -3488,6 +3524,34 @@
           "type",
           "to",
           "to_level",
+          "created"
+        ],
+        "type": "object"
+      },
+      "PlannedWebLink": {
+        "description": "A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is\nfalse when the item already had that URL under that title.",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "on": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "on",
+          "level",
+          "title",
+          "url",
           "created"
         ],
         "type": "object"
@@ -6471,7 +6535,7 @@
                 "type": "string"
               },
               "value": {
-                "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge and item link with `created` false when it was already there.",
+                "description": "What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of\nthis plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.",
                 "properties": {
                   "blocks": {
                     "items": {
@@ -6497,13 +6561,21 @@
                       "$ref": "#/components/schemas/PlannedLink"
                     },
                     "type": "array"
+                  },
+                  "web_links": {
+                    "description": "One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older\nserver) reads as none.",
+                    "items": {
+                      "$ref": "#/components/schemas/PlannedWebLink"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
                   "items",
                   "decisions",
                   "blocks",
-                  "links"
+                  "links",
+                  "web_links"
                 ],
                 "type": "object"
               }

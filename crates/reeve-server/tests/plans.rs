@@ -609,3 +609,311 @@ async fn a_reapplied_plan_that_links_an_item_to_itself_under_two_spellings_write
     );
     assert_eq!(rows(&h, "item_links").await, 1);
 }
+
+/// kb/ADR-0031 R5, R7 through a plan. A plan attaches web links to an item it creates and to one that exists; each
+/// is stored trimmed and in the URL parser's form and logged on its item; the same URL may be on two items; a web
+/// link that was there, and one the plan lists twice, answer `created` false; a second apply creates nothing.
+#[tokio::test]
+async fn a_plan_attaches_web_links_and_reapplying_it_creates_nothing() {
+    let h = harness().await;
+    let (_, held) = post(
+        &h,
+        "/api/v1/stories",
+        json!({"idempotency_key":"h","title":"Held","kind":"chore","criteria":[],"labels":[]}),
+    )
+    .await;
+    let held = held["value"]["key"].as_str().unwrap().to_string();
+    let (st, b) = post(
+        &h,
+        &format!("/api/v1/items/{held}/web-links"),
+        json!({"title": "Board", "url": "https://example.com/board"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let held_version = get(&h, &format!("/api/v1/stories/{held}")).await["version"].clone();
+    assert!(
+        held_version.is_number(),
+        "the control: a story read carries its version"
+    );
+
+    let scenario = "https://example.com/wiki/scenario";
+    let plan = json!({
+        "id": "pages",
+        "epics": [{"name": "e", "title": "E"}],
+        "stories": [{"name": "s", "title": "S", "epic": "e"}],
+        "web_links": [
+            {"on": "s", "title": "  Scenario page ", "url": "HTTPS://Example.com/wiki/scenario"},
+            {"on": "e", "title": "Scenario page", "url": scenario},
+            {"on": held, "title": "Board", "url": "https://EXAMPLE.com/board"},
+            {"on": "s", "title": "Scenario page", "url": scenario}
+        ]
+    });
+    let (st, b) = post(&h, "/api/v1/plans", plan.clone()).await;
+    assert_eq!(st, 200, "{b}");
+    let v = b["value"].clone();
+    let key = |name: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == name)
+            .unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let want = |created: [bool; 4]| {
+        json!([
+            {"on": key("s"), "level": "story", "title": "Scenario page", "url": scenario, "created": created[0]},
+            {"on": key("e"), "level": "epic", "title": "Scenario page", "url": scenario, "created": created[1]},
+            {"on": held, "level": "story", "title": "Board", "url": "https://example.com/board", "created": created[2]},
+            {"on": key("s"), "level": "story", "title": "Scenario page", "url": scenario, "created": created[3]}
+        ])
+    };
+    assert_eq!(v["web_links"], want([true, true, false, false]), "{v}");
+
+    let on_s = get(&h, &format!("/api/v1/items/{}/links", key("s"))).await;
+    let listed = on_s["web_links"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{on_s}");
+    assert_eq!(
+        (&listed[0]["title"], &listed[0]["url"]),
+        (&json!("Scenario page"), &json!(scenario))
+    );
+    let logged = [(key("s"), 1), (key("e"), 1), (held.clone(), 1)];
+    for (item, n) in &logged {
+        assert_eq!(entries(&h, item, "web_link_added").await, *n, "{item}");
+    }
+    assert_eq!(rows(&h, "web_links").await, 3);
+
+    let (st, again) = post(&h, "/api/v1/plans", plan).await;
+    assert_eq!(st, 200, "{again}");
+    assert_eq!(again["value"]["web_links"], want([false; 4]), "{again}");
+    for (item, n) in &logged {
+        assert_eq!(
+            entries(&h, item, "web_link_added").await,
+            *n,
+            "{item} after the second apply"
+        );
+    }
+    assert_eq!(rows(&h, "web_links").await, 3);
+
+    // kb/ADR-0031 R3: a web link is no field of its item. The plan above only repeated what `held` had, so another
+    // plan attaches a web link to it that is new, and the story's version is where it was.
+    let (st, more) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "pages-2", "web_links": [{"on": held, "title": "Notes", "url": "https://example.com/notes"}]}),
+    )
+    .await;
+    assert_eq!(st, 200, "{more}");
+    assert_eq!(
+        more["value"]["web_links"][0]["created"], true,
+        "the control: this one was written: {more}"
+    );
+    assert_eq!(
+        get(&h, &format!("/api/v1/stories/{held}")).await["version"],
+        held_version,
+        "a plan's web link leaves the version of the item it is on alone"
+    );
+}
+
+/// The all-or-nothing check covers web links: an `on` that names nothing, a bad title, a URL with a user name and
+/// a password, a scheme that is not http or https, one URL under two titles on one item within the plan, and a URL
+/// an existing item already has under another title are each reported, and nothing of the plan is written. The
+/// same URL under another title on a *different* item is no problem, and no message repeats a refused URL.
+#[tokio::test]
+async fn a_plan_with_a_bad_web_link_writes_nothing_and_names_every_problem() {
+    let h = harness().await;
+    let mut made = vec![];
+    for (idem, title, page, url) in [
+        ("h", "Held", "Board", "https://example.com/board"),
+        ("o", "Other", "Roadmap", "https://example.com/roadmap"),
+    ] {
+        let (_, s) = post(
+            &h,
+            "/api/v1/stories",
+            json!({"idempotency_key": idem, "title": title, "kind": "chore", "criteria": [], "labels": []}),
+        )
+        .await;
+        let k = s["value"]["key"].as_str().unwrap().to_string();
+        let (st, b) = post(
+            &h,
+            &format!("/api/v1/items/{k}/web-links"),
+            json!({"title": page, "url": url}),
+        )
+        .await;
+        assert_eq!(st, 200, "{b}");
+        made.push(k);
+    }
+    let (held, other) = (made[0].clone(), made[1].clone());
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "bad-pages",
+            "stories": [{"name": "a", "title": "A"}, {"name": "b", "title": "B"}],
+            "web_links": [
+                {"on": "ghost", "title": "Lost", "url": "https://example.com/"},
+                {"on": "a", "title": "  ", "url": "https://example.com/"},
+                {"on": "a", "title": "Creds", "url": "https://mia:secret@example.com/wiki"},
+                {"on": "a", "title": "Ftp", "url": "ftp://example.com/x"},
+                {"on": "b", "title": "One", "url": "https://example.com/page"},
+                {"on": "b", "title": "Two", "url": "HTTPS://EXAMPLE.com/page"},
+                {"on": held, "title": "Kanban", "url": "https://example.com/board"},
+                // Not problems: a repeat of what `other` has, and `other`'s URL on `held` under another title.
+                // The repeat is here so that `other`'s stored rows are among those the check reads.
+                {"on": other, "title": "Roadmap", "url": "https://example.com/roadmap"},
+                {"on": held, "title": "Roadmap 2", "url": "https://example.com/roadmap"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    let m = b["message"].as_str().unwrap();
+    for want in [
+        "web link \"Lost\" on \"ghost\": on \"ghost\" is neither a name in the plan nor an existing item".to_string(),
+        "web link \"\" on \"a\": a web link's title".to_string(),
+        "web link \"Creds\" on \"a\": a web link's URL".to_string(),
+        "web link \"Ftp\" on \"a\": a web link's URL".to_string(),
+        "web link \"Two\" on \"b\": the plan gives \"b\" that URL under two titles (\"One\" and \"Two\")".to_string(),
+        format!("web link \"Kanban\" on \"{held}\": this item already has a web link to that URL, titled \"Board\""),
+    ] {
+        assert!(m.contains(&want), "missing {want:?} in {m}");
+    }
+    assert!(
+        !m.contains("Roadmap 2"),
+        "another item's URL is no problem: {m}"
+    );
+    assert!(
+        !m.contains("\"One\" on"),
+        "the first title a URL gets is not the problem: {m}"
+    );
+    assert!(!m.contains("secret"), "a refused URL is not repeated: {m}");
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        2,
+        "only the two stories made before the plan"
+    );
+    assert_eq!(rows(&h, "web_links").await, 2);
+
+    // A misspelt field in an entry is refused as the body is read.
+    let (st, _) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "t", "stories": [{"name": "a", "title": "A"}],
+               "web_links": [{"on": "a", "title": "T", "link": "https://example.com/"}]}),
+    )
+    .await;
+    assert_eq!(st, 400);
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        2
+    );
+}
+
+/// "Against what is stored" includes what an earlier apply of this plan stored. A plan edited to give a URL a new
+/// title is refused by the check, before anything is written: the message says where in the plan, and the story the
+/// edited plan adds is not created.
+#[tokio::test]
+async fn a_plan_edited_to_retitle_a_web_link_is_refused_before_anything_is_written() {
+    let h = harness().await;
+    let plan = |title: &str, more: bool| {
+        let mut stories = vec![json!({"name": "s", "title": "S"})];
+        if more {
+            stories.push(json!({"name": "t", "title": "T"}));
+        }
+        json!({
+            "id": "edited",
+            "stories": stories,
+            "web_links": [{"on": "s", "title": title, "url": "https://example.com/page"}]
+        })
+    };
+    let (st, b) = post(&h, "/api/v1/plans", plan("One", false)).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["web_links"][0]["created"], true);
+
+    let (st, b) = post(&h, "/api/v1/plans", plan("Two", true)).await;
+    assert_eq!(st, 400, "{b}");
+    let m = b["message"].as_str().unwrap();
+    assert!(
+        m.contains("web link \"Two\" on \"s\": this item already has a web link to that URL, titled \"One\""),
+        "{m}"
+    );
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        1,
+        "the story the edited plan adds was not created"
+    );
+    assert_eq!(rows(&h, "web_links").await, 1);
+}
+
+/// "Within the plan" is about the item, not about how the plan spells it. A plan applied again that gives one
+/// item one URL under two titles, naming the item by its plan name in one entry and by its key in the other, is
+/// refused by the check: nothing is written, and the story the edited plan adds does not exist afterwards.
+#[tokio::test]
+async fn a_plan_web_link_on_one_item_under_two_spellings_cannot_have_two_titles() {
+    let h = harness().await;
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "two-spellings", "stories": [{"name": "s", "title": "S"}]}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let s = b["value"]["items"][0]["key"].as_str().unwrap().to_string();
+
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "two-spellings",
+            "stories": [{"name": "s", "title": "S"}, {"name": "t", "title": "T"}],
+            "web_links": [
+                {"on": "s", "title": "One", "url": "https://example.com/page"},
+                {"on": s, "title": "Two", "url": "https://example.com/page"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    let want = format!(
+        "web link \"Two\" on \"{s}\": the plan gives \"{s}\" that URL under two titles (\"One\" and \"Two\")"
+    );
+    assert!(
+        b["message"].as_str().unwrap().contains(&want),
+        "missing {want:?} in {b}"
+    );
+    assert_eq!(
+        get(&h, "/api/v1/stories").await.as_array().unwrap().len(),
+        1,
+        "the story the edited plan adds was not created"
+    );
+    assert_eq!(rows(&h, "web_links").await, 0, "neither title was written");
+    assert_eq!(entries(&h, &s, "web_link_added").await, 0);
+
+    // The control: the same two spellings with one title are one web link, listed twice.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "two-spellings",
+            "stories": [{"name": "s", "title": "S"}],
+            "web_links": [
+                {"on": "s", "title": "One", "url": "https://example.com/page"},
+                {"on": s, "title": "One", "url": "https://example.com/page"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let created: Vec<_> = b["value"]["web_links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["created"].clone())
+        .collect();
+    assert_eq!(created, vec![json!(true), json!(false)], "{b}");
+    assert_eq!(rows(&h, "web_links").await, 1);
+}
