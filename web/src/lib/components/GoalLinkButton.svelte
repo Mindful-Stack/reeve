@@ -1,5 +1,6 @@
 <!-- web/src/lib/components/GoalLinkButton.svelte: while the header picker is linking, links or unlinks one initiative or
-     epic to the picked goal ("+ Link" / "✓ Linked"; the goal is named in the header, the tooltip and the accessible
+     epic to the picked goal ("+ Link to goal" / "✓ Linked to goal": said in full, because item links and web links
+     have add controls beside it, kb/ADR-0031 R6; the goal is named in the header, the tooltip and the accessible
      name); renders nothing otherwise. A link is a link, never a parent or progress (kb/ADR-0014 R3). -->
 <script lang="ts">
 	import { linkingGoal, picker, toggleLink } from '#lib/goalPicker.svelte.ts';
@@ -19,7 +20,7 @@
 		aria-label="Link {key} to goal: {goal.outcome}"
 		title={linked ? `Linked to: ${goal.outcome} (click to unlink)` : `Link to: ${goal.outcome}`}
 		aria-disabled={picker.writing}
-		onclick={() => toggleLink(key)}>{linked ? '✓ Linked' : '+ Link'}</button
+		onclick={() => toggleLink(key)}>{linked ? '✓ Linked to goal' : '+ Link to goal'}</button
 	>
 {/if}
 
