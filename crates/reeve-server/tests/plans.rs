@@ -471,6 +471,72 @@ async fn a_plan_links_items_of_any_level_and_reapplying_it_creates_nothing() {
     assert_eq!(rows(&h, "item_links").await, 4);
 }
 
+/// kb/ADR-0031 R3 for a plan: a `follows` between two stories that a plan adds is no blocker. The plan is applied
+/// without the link, then again with it: the follower's `blocked_by` stays empty and its readiness and its version
+/// are what they were. The control is the same plan with the relation under `blocks`, which the same reads see.
+#[tokio::test]
+async fn a_plan_follows_between_two_stories_blocks_nothing_and_leaves_readiness_alone() {
+    let h = harness().await;
+    let plan = |extra: serde_json::Value| {
+        let mut p = json!({
+            "id": "r3",
+            "stories": [
+                {"name": "first", "title": "First", "criteria": ["it works"]},
+                {"name": "second", "title": "Second", "criteria": ["it works"]}
+            ]
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        p
+    };
+    let (st, b) = post(&h, "/api/v1/plans", plan(json!({}))).await;
+    assert_eq!(st, 200, "{b}");
+    let first = b["value"]["items"][0]["key"].as_str().unwrap().to_string();
+    let second = b["value"]["items"][1]["key"].as_str().unwrap().to_string();
+    // (blocked_by, version, readiness) of the follower.
+    let seen = || async {
+        let story = get(&h, &format!("/api/v1/stories/{second}")).await;
+        let ready = get(&h, &format!("/api/v1/stories/{second}/ready")).await;
+        (story["blocked_by"].clone(), story["version"].clone(), ready)
+    };
+    let before = seen().await;
+    assert_eq!(before.0, json!([]), "the control: no blocker yet");
+
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        plan(json!({"links": [{"from": "second", "type": "follows", "to": "first"}]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(
+        b["value"]["links"],
+        json!([{"from": second, "from_level": "story", "type": "follows",
+                "to": first, "to_level": "story", "created": true}]),
+        "the control: the follows was written: {b}"
+    );
+    assert_eq!(b["value"]["blocks"], json!([]), "{b}");
+    assert_eq!(
+        seen().await,
+        before,
+        "the follower has no blocker, and its version and readiness are what they were"
+    );
+    assert_eq!(rows(&h, "story_blocks").await, 0);
+
+    // The control: the relation under `blocks` is a blocker, and the same reads show it.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        plan(json!({"blocks": [{"story": "second", "blocked_by": "first"}]})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let after = seen().await;
+    assert_eq!(after.0, json!([first]), "the control: a blocker is listed");
+    assert_ne!(after.2, before.2, "the control: readiness sees a blocker");
+}
+
 /// The all-or-nothing check covers item links: an end that names nothing, a link from an item to itself (by one
 /// name, and by two spellings of one existing item) and a key that no item has are each reported, and nothing of
 /// the plan is written.
