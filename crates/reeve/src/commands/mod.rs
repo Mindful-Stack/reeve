@@ -78,7 +78,7 @@ pub enum Cmd {
     /// Attachments (screenshots) on initiatives, epics and stories: download one to a file.
     #[command(subcommand)]
     Attachment(attachment::Attachment),
-    /// Create a plan of items, required decisions and blockers from a YAML or JSON file, in one request.
+    // No doc comment here: one on the variant would replace the `Apply` struct's, which is this command's help.
     Apply(apply::Apply),
     /// Find items by text in their title, brief, description or Jira reference.
     Search(search::Search),

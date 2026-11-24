@@ -1804,6 +1804,82 @@ async fn flow() {
         .output()
         .unwrap());
 
+    // Plans (GRA-879): `reeve apply` links the items a plan creates, to each other and to an item that exists, and
+    // attaches a web link; applying it again creates nothing.
+    let plan_dir = tempfile::tempdir().unwrap();
+    let plan_file = plan_dir.path().join("links-plan.yaml");
+    std::fs::write(
+        &plan_file,
+        format!(
+            "id: acceptance-links\nepics:\n  - {{name: rollout, title: Rollout}}\nstories:\n  - {{name: first, title: First step, epic: rollout, criteria: [done]}}\n  - {{name: second, title: Second step, epic: rollout, criteria: [done]}}\nlinks:\n  - {{from: second, type: follows, to: first}}\n  - {{from: rollout, type: relates_to, to: {mine}}}\nweb_links:\n  - {{on: rollout, title: Rollout page, url: \"HTTPS://Example.com/rollout\"}}\n"
+        ),
+    )
+    .unwrap();
+    let applied = ok(reeve(&bot)
+        .args(["apply", plan_file.to_str().unwrap()])
+        .output()
+        .unwrap());
+    let planned = |name: &str| {
+        applied["value"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == name)
+            .unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let all_created = |answer: &serde_json::Value, list: &str, want: bool| {
+        let rows = answer["value"][list].as_array().unwrap();
+        !rows.is_empty() && rows.iter().all(|r| r["created"] == want)
+    };
+    for list in ["items", "links", "web_links"] {
+        assert!(all_created(&applied, list, true), "{list}: {applied}");
+    }
+    assert_eq!(
+        applied["value"]["links"].as_array().unwrap().len(),
+        2,
+        "{applied}"
+    );
+    assert_eq!(
+        applied["value"]["web_links"][0]["url"], "https://example.com/rollout",
+        "stored in the parser's form"
+    );
+    // The link between two items the plan created, read from the other end.
+    let seen = ok(reeve(&member)
+        .args(["link", "ls", &planned("first")])
+        .output()
+        .unwrap());
+    assert_eq!(
+        seen["value"]["links"],
+        serde_json::json!([{"type": "follows", "direction": "in", "label": "is followed by",
+            "item": {"key": planned("second"), "level": "story", "title": "Second step"}}]),
+        "{seen}"
+    );
+    // The epic the plan created: its link to a story that existed, and its web link.
+    let on_epic = ok(reeve(&member)
+        .args(["link", "ls", &planned("rollout")])
+        .output()
+        .unwrap());
+    assert_eq!(
+        on_epic["value"]["links"][0]["item"]["key"],
+        mine.as_str(),
+        "{on_epic}"
+    );
+    assert_eq!(
+        on_epic["value"]["web_links"][0]["title"], "Rollout page",
+        "{on_epic}"
+    );
+    // The same plan again: nothing created.
+    let again = ok(reeve(&bot)
+        .args(["apply", plan_file.to_str().unwrap()])
+        .output()
+        .unwrap());
+    for list in ["items", "links", "web_links"] {
+        assert!(all_created(&again, list, false), "{list}: {again}");
+    }
+
     // Connections (GRA-669): one made as `reeve-server mcp-token-issue` makes it, listed and revoked by the CLI.
     let floor = reeve_identity::AccessPolicy::floor_only(&identity);
     let developer = reeve_identity::issue_mcp_token(

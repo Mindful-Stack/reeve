@@ -89,7 +89,7 @@ if [ -d "$planning/handler" ]; then
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7, kb/ADR-0031 R3: moving a story never reads sprints, goals, urgency
   # or the decision queue's windows, and never reads or writes promises, item links or web links.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b|${lb}ports\.web_links|web_links_of|${lb}web_link_dtos_in\b|${lb}(add|remove)_web_link(_in)?\b")
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|all_item_links_in|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b|${lb}ports\.web_links|all_web_links_in|web_links_of|${lb}web_link_dtos_in\b|${lb}(add|remove)_web_link(_in)?\b")
     if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises, item links or web links"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of

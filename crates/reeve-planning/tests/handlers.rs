@@ -10389,11 +10389,11 @@ async fn item_links_list_linked_items_by_key_number_across_prefixes() {
     assert_eq!(order, vec!["LONG-2", "A-3", "A-10"]);
 }
 
-/// What plan apply (GRA-879) relies on when it calls `add_item_link_in` and `remove_item_link_in` inside the plan's
-/// transaction: they write on the caller's transaction only. When that transaction is not committed after they
-/// ran, no row and no entry is left. The caller here is the public form (begin, the `_in` form, commit), and what
-/// stops it short of the commit is the sink refusing the second item's entry, by which time the `_in` form has
-/// written the row and the first item's entry.
+/// What plan apply (GRA-879) relies on when it calls the `_in` forms in a transaction it opens per link: they write
+/// on the caller's transaction only. When that transaction is not committed after they ran, no row and no entry is
+/// left. The caller here is the public form (begin, the `_in` form, commit), and what stops it short of the commit
+/// is the sink refusing the second item's entry, by which time the `_in` form has written the row and the first
+/// item's entry.
 #[tokio::test]
 async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row_and_no_entry() {
     use reeve_protocol::ItemLinkType::Follows;
@@ -11148,8 +11148,8 @@ async fn web_links_are_one_per_url_logged_on_their_item_and_removed_by_id() {
     );
 }
 
-/// What plan apply (GRA-879) relies on when it calls `add_web_link_in` and `remove_web_link_in` inside the plan's
-/// transaction: they write on the caller's transaction only, so nothing of them is left when it is not committed.
+/// What plan apply (GRA-879) relies on when it calls the `_in` forms in a transaction it opens per link: they write
+/// on the caller's transaction only, so nothing of them is left when it is not committed.
 /// As for item links (Task 3), the caller is the public form and what stops it short of the commit is the sink
 /// refusing the entry, by which time the `_in` form has written the row.
 #[tokio::test]
@@ -11267,5 +11267,675 @@ async fn a_web_link_and_its_entry_commit_together() {
         removed[0].2.as_deref(),
         Some("Page"),
         "the delete is not committed yet"
+    );
+}
+
+/// kb/ADR-0010 R5 and kb/ADR-0031 R7 for a plan: each item link and each web link is a transaction of its own,
+/// holding its row and its entries. The plan's items exist already (an earlier apply made them). The sink refuses
+/// the entry on `c`, which the plan's second item link names: by then the first item link (`a` follows `b`) and
+/// its two entries are committed, and the second link's row is written. The first link stays, the second link's
+/// row does not, and the web link after it is never reached. Applying the plan again, once the sink refuses
+/// nothing, finishes it.
+#[tokio::test]
+async fn a_plan_link_whose_entry_is_refused_is_left_out_and_the_earlier_links_stay() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_table_sink(pool.clone()).await;
+    let dan = ctx("dan@example.com", false);
+    let plan = |with_links: bool| -> reeve_protocol::ApplyPlan {
+        let mut v = serde_json::json!({
+            "id": "one-by-one",
+            "stories": [
+                {"name": "a", "title": "A"},
+                {"name": "b", "title": "B"},
+                {"name": "c", "title": "C"}
+            ]
+        });
+        if with_links {
+            v["links"] = serde_json::json!([
+                {"from": "a", "type": "follows", "to": "b"},
+                {"from": "c", "type": "follows", "to": "a"}
+            ]);
+            v["web_links"] =
+                serde_json::json!([{"on": "b", "title": "Page", "url": "https://example.com/"}]);
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let made = h.apply_plan(&dan, plan(false)).await.unwrap();
+    let c_key = made
+        .items
+        .iter()
+        .find(|i| i.name == "c")
+        .unwrap()
+        .key
+        .clone();
+    // (item link rows, web link rows, item link entries, web link entries) as another connection sees them.
+    let left = || {
+        let pool = pool.clone();
+        async move {
+            let count = |table: &'static str| {
+                let pool = pool.clone();
+                async move {
+                    sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap()
+                }
+            };
+            (
+                count("item_links").await,
+                count("web_links").await,
+                entries_committed(&pool, "item_link_added").await,
+                entries_committed(&pool, "web_link_added").await,
+            )
+        }
+    };
+
+    assert_eq!(
+        left().await,
+        (0, 0, 0, 0),
+        "the control: nothing before the plan's links"
+    );
+
+    sink.refuse(Some(&c_key));
+    // The control for the refusal below: replaying the items records nothing, so a plan without links is not
+    // refused, and the failure that follows is the second link's entry on `c` and nothing earlier.
+    assert!(
+        h.apply_plan(&dan, plan(false)).await.is_ok(),
+        "the control: a replay of the items writes no entry"
+    );
+    assert!(h.apply_plan(&dan, plan(true)).await.is_err());
+    assert_eq!(
+        left().await,
+        (1, 0, 2, 0),
+        "the first link and its two entries stay; the refused link left no row and no entry, and the web link \
+         after it was not written"
+    );
+
+    // Applying the same plan again, not refused, finishes it: the first link is there, the rest is created.
+    sink.refuse(None);
+    let applied = h.apply_plan(&dan, plan(true)).await.unwrap();
+    assert_eq!(
+        (
+            applied.links[0].created,
+            applied.links[1].created,
+            applied.web_links[0].created
+        ),
+        (false, true, true)
+    );
+    assert_eq!(left().await, (2, 1, 4, 1));
+}
+
+/// Two applies of one plan at once both answer, with the same complete lists; each item link and web link is
+/// reported created by exactly one of them, and is stored and logged exactly once. Each round uses a plan id of
+/// its own, so nothing of the round exists when the two start.
+#[tokio::test]
+async fn concurrent_applies_of_one_plan_report_each_link_created_once() {
+    use reeve_protocol::{ItemLinkType, ItemType, PlannedLink, PlannedWebLink};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let dan = ctx("dan@example.com", false);
+    let count = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    // Everything an answer says about a link but `created`.
+    let link_ids = |v: &[PlannedLink]| {
+        v.iter()
+            .map(|l| {
+                (
+                    l.from.clone(),
+                    l.from_level,
+                    l.link_type,
+                    l.to.clone(),
+                    l.to_level,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let web_ids = |v: &[PlannedWebLink]| {
+        v.iter()
+            .map(|w| (w.on.clone(), w.level, w.title.clone(), w.url.clone()))
+            .collect::<Vec<_>>()
+    };
+    for round in 0..5_i64 {
+        let plan: reeve_protocol::ApplyPlan = serde_json::from_value(serde_json::json!({
+            "id": format!("race-{round}"),
+            "epics": [{"name": "e", "title": "E"}],
+            "stories": [{"name": "a", "title": "A", "epic": "e"}, {"name": "b", "title": "B", "epic": "e"}],
+            "links": [
+                {"from": "b", "type": "follows", "to": "a"},
+                {"from": "b", "type": "relates_to", "to": "e"}
+            ],
+            "web_links": [{"on": "e", "title": "Page", "url": "https://example.com/page"}]
+        }))
+        .unwrap();
+        let (x, y) = tokio::join!(
+            h.apply_plan(&dan, plan.clone()),
+            h.apply_plan(&dan, plan.clone())
+        );
+        let (x, y) = (x.unwrap(), y.unwrap());
+        let key = |name: &str| x.items.iter().find(|i| i.name == name).unwrap().key.clone();
+        let (e, a, b) = (key("e"), key("a"), key("b"));
+
+        // Both answers are complete: the lengths first, so that nothing below compares against a short list.
+        assert_eq!(
+            (x.links.len(), x.web_links.len()),
+            (2, 1),
+            "round {round}: x"
+        );
+        assert_eq!(
+            (y.links.len(), y.web_links.len()),
+            (2, 1),
+            "round {round}: y"
+        );
+        // Both name the same links, whole (keys, levels and name), in the plan's order.
+        assert_eq!(link_ids(&x.links), link_ids(&y.links), "round {round}");
+        assert_eq!(
+            web_ids(&x.web_links),
+            web_ids(&y.web_links),
+            "round {round}"
+        );
+        // And they are the plan's links, on this round's items.
+        assert_eq!(
+            link_ids(&x.links)[0],
+            (
+                b.clone(),
+                ItemType::Story,
+                ItemLinkType::Follows,
+                a.clone(),
+                ItemType::Story
+            ),
+            "round {round}"
+        );
+        let related = link_ids(&x.links)[1].clone();
+        assert!(
+            related
+                == (
+                    e.clone(),
+                    ItemType::Epic,
+                    ItemLinkType::RelatesTo,
+                    b.clone(),
+                    ItemType::Story
+                )
+                || related
+                    == (
+                        b.clone(),
+                        ItemType::Story,
+                        ItemLinkType::RelatesTo,
+                        e.clone(),
+                        ItemType::Epic
+                    ),
+            "round {round}: the relates_to joins the epic and b, each with its own level: {related:?}"
+        );
+        assert_eq!(
+            web_ids(&x.web_links),
+            vec![(
+                e.clone(),
+                ItemType::Epic,
+                "Page".to_string(),
+                "https://example.com/page".to_string()
+            )],
+            "round {round}"
+        );
+        // Each was created by exactly one of the two applies.
+        for i in 0..2 {
+            assert!(
+                x.links[i].created != y.links[i].created,
+                "round {round}: {:?} was created by exactly one apply",
+                link_ids(&x.links)[i]
+            );
+        }
+        assert!(
+            x.web_links[0].created != y.web_links[0].created,
+            "round {round}: the web link was created by exactly one apply"
+        );
+        // What is committed agrees with what was reported: one row per link, one entry per item a link names.
+        let rounds = round + 1;
+        assert_eq!(
+            count("item_links").await,
+            2 * rounds,
+            "round {round}: item link rows"
+        );
+        assert_eq!(
+            count("web_links").await,
+            rounds,
+            "round {round}: web link rows"
+        );
+        assert_eq!(
+            entries_committed(&pool, "item_link_added").await,
+            4 * rounds,
+            "round {round}: two entries per item link"
+        );
+        assert_eq!(
+            entries_committed(&pool, "web_link_added").await,
+            rounds,
+            "round {round}: one entry per web link"
+        );
+    }
+}
+
+/// kb/ADR-0010 R5 and kb/ADR-0031 R7 for a plan's web links: each is a transaction of its own, holding its row
+/// and its entry. The plan's items exist already (an earlier apply made them). The sink refuses the entry on `b`,
+/// which the plan's second web link is on: by then the first web link (on `a`) and its entry are committed, and
+/// the second's row is written. The first stays with its entry, the second leaves neither row nor entry, and
+/// applying the same plan again, once the sink refuses nothing, answers the first as existing and creates the
+/// second.
+#[tokio::test]
+async fn a_plan_web_link_whose_entry_is_refused_is_left_out_and_the_earlier_web_link_stays() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_table_sink(pool.clone()).await;
+    let dan = ctx("dan@example.com", false);
+    let plan = |with_web_links: bool| -> reeve_protocol::ApplyPlan {
+        let mut v = serde_json::json!({
+            "id": "web-one-by-one",
+            "stories": [
+                {"name": "a", "title": "A"},
+                {"name": "b", "title": "B"}
+            ]
+        });
+        if with_web_links {
+            v["web_links"] = serde_json::json!([
+                {"on": "a", "title": "Page A", "url": "https://example.com/a"},
+                {"on": "b", "title": "Page B", "url": "https://example.com/b"}
+            ]);
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let made = h.apply_plan(&dan, plan(false)).await.unwrap();
+    let key = |name: &str| {
+        made.items
+            .iter()
+            .find(|i| i.name == name)
+            .unwrap()
+            .key
+            .clone()
+    };
+    let (a_key, b_key) = (key("a"), key("b"));
+    // (web link rows, web link entries) as another connection sees them.
+    let left = || {
+        let pool = pool.clone();
+        async move {
+            (
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM web_links")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap(),
+                entries_committed(&pool, "web_link_added").await,
+            )
+        }
+    };
+
+    assert_eq!(
+        left().await,
+        (0, 0),
+        "the control: nothing before the plan's web links"
+    );
+
+    sink.refuse(Some(&b_key));
+    // The control for the refusal below: replaying the items records nothing, so a plan without web links is not
+    // refused, and the failure that follows is the second web link's entry on `b` and nothing earlier.
+    assert!(
+        h.apply_plan(&dan, plan(false)).await.is_ok(),
+        "the control: a replay of the items writes no entry"
+    );
+    assert!(h.apply_plan(&dan, plan(true)).await.is_err());
+    assert_eq!(
+        left().await,
+        (1, 1),
+        "the first web link and its entry stay; the refused one left no row and no entry"
+    );
+
+    // Applying the same plan again, not refused: the first web link was there, the second is created.
+    sink.refuse(None);
+    let applied = h.apply_plan(&dan, plan(true)).await.unwrap();
+    assert_eq!(
+        applied
+            .web_links
+            .iter()
+            .map(|w| (w.on.clone(), w.created))
+            .collect::<Vec<_>>(),
+        vec![(a_key, false), (b_key, true)]
+    );
+    assert_eq!(left().await, (2, 2));
+}
+
+/// A reference in a plan is resolved for the place it stands in. `OLD-1` is the native key of an epic (issued
+/// under an earlier prefix) and the external reference of a newer story. A blocker's end is a story, so it names
+/// the story; an item link's end, a web link's `on` and a decision's `on` are any item, resolved as `resolve_any`
+/// does (native keys of any level first), so they name the epic, which is what `reeve link add OLD-1 …` does.
+/// Neither answer is taken for the other, whichever the plan asks for first.
+#[tokio::test]
+async fn a_plan_reference_that_is_a_native_key_and_an_external_reference_names_each_in_its_place() {
+    use reeve_protocol::ItemType;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let old = Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: Arc::new(MemSink(Mutex::new(vec![]))),
+        pool: pool.clone(),
+        settings: Settings {
+            key_prefix: "OLD".into(),
+            ..settings()
+        },
+    };
+    let c = ctx("dan@example.com", false);
+    let old_epic = old
+        .create_epic(&c, "oe", "Old epic", None, "", None)
+        .await
+        .unwrap();
+    let raw = old_epic.key().to_string();
+    let story = |idem: &'static str, title: &'static str| {
+        let (h, c) = (&h, &c);
+        async move {
+            h.create_story(
+                c,
+                idem,
+                title,
+                Kind::Story,
+                None,
+                "",
+                vec![],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone()
+        }
+    };
+    let imported = story("is", "Imported").await;
+    let held = story("held", "Held").await;
+    sqlx::query("UPDATE stories SET external_ref = $1 WHERE key = $2")
+        .bind(&raw)
+        .bind(imported.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            h.resolve_ref(&raw, ItemType::Story).await.unwrap(),
+            h.resolve_any(&raw).await.unwrap()
+        ),
+        (imported.clone(), (ItemType::Epic, old_epic.key().clone())),
+        "the control: as a story the reference is the imported story, untyped it is the epic"
+    );
+
+    // The blocker is resolved first and names the story; the item link and the web link name the epic.
+    let plan: reeve_protocol::ApplyPlan = serde_json::from_value(serde_json::json!({
+        "id": "collision",
+        "blocks": [{"story": held, "blocked_by": raw}],
+        "links": [{"from": held, "type": "follows", "to": raw}],
+        "web_links": [{"on": raw, "title": "Page", "url": "https://example.com/"}]
+    }))
+    .unwrap();
+    let applied = h.apply_plan(&c, plan).await.unwrap();
+    assert_eq!(applied.blocks[0].blocked_by, imported, "the blocker");
+    assert_eq!(
+        (&applied.links[0].to, applied.links[0].to_level),
+        (old_epic.key(), ItemType::Epic),
+        "the item link"
+    );
+    assert_eq!(
+        (&applied.web_links[0].on, applied.web_links[0].level),
+        (old_epic.key(), ItemType::Epic),
+        "the web link"
+    );
+    let on_epic = h.link_listing(old_epic.key()).await.unwrap();
+    assert_eq!(
+        (on_epic.links.len(), on_epic.web_links.len()),
+        (1, 1),
+        "both are on the epic"
+    );
+    let on_story = h.link_listing(&imported).await.unwrap();
+    assert_eq!(
+        (on_story.links.len(), on_story.web_links.len()),
+        (0, 0),
+        "and none on the story that has the reference"
+    );
+
+    // The other way round: a decision's `on` is resolved before the blocker and names the epic; the blocker still
+    // names the story.
+    let plan: reeve_protocol::ApplyPlan = serde_json::from_value(serde_json::json!({
+        "id": "collision-2",
+        "decisions": [{"name": "d", "on": raw, "title": "Pick", "decider": "dan@example.com"}],
+        "blocks": [{"story": held, "blocked_by": raw}]
+    }))
+    .unwrap();
+    let applied = h.apply_plan(&c, plan).await.unwrap();
+    assert_eq!(applied.blocks[0].blocked_by, imported);
+    let decisions = h
+        .list_decisions(Some(old_epic.key()), false, true)
+        .await
+        .unwrap();
+    assert_eq!(decisions.len(), 1, "the decision is on the epic");
+}
+
+/// The scopes the other way round: `OLD-1` is the native key of a story (issued under an earlier prefix) and the
+/// external reference of an epic. A story's `epic` takes an epic, so it names the epic; a decision's `on` takes any
+/// item, native keys first, so it names the story. A re-apply answers the same decision on the same story and
+/// creates nothing. What it catches: one cache of resolved references shared by the typed and the untyped scope,
+/// which would hand the decision the epic the story's `epic` resolved first (or the epic the story), and on the
+/// re-apply move or duplicate the decision.
+#[tokio::test]
+async fn a_plan_decision_on_a_native_story_key_that_is_an_epic_external_reference_is_on_the_story()
+{
+    use reeve_protocol::ItemType;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let old = Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: Arc::new(MemSink(Mutex::new(vec![]))),
+        pool: pool.clone(),
+        settings: Settings {
+            key_prefix: "OLD".into(),
+            ..settings()
+        },
+    };
+    let c = ctx("dan@example.com", false);
+    let old_story = old
+        .create_story(
+            &c,
+            "os",
+            "Old story",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let raw = old_story.to_string();
+    let epic = h
+        .create_epic(&c, "ie", "Imported epic", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    sqlx::query("UPDATE epics SET external_ref = $1 WHERE key = $2")
+        .bind(&raw)
+        .bind(epic.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            h.resolve_ref(&raw, ItemType::Epic).await.unwrap(),
+            h.resolve_any(&raw).await.unwrap()
+        ),
+        (epic.clone(), (ItemType::Story, old_story.clone())),
+        "the control: as an epic the reference is the imported epic, untyped it is the story"
+    );
+
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(serde_json::json!({
+            "id": "collision-3",
+            "stories": [{"name": "s", "title": "S", "epic": raw}],
+            "decisions": [{"name": "d", "on": raw, "title": "Pick", "decider": "dan@example.com"}]
+        }))
+        .unwrap()
+    };
+    let counts = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64, i64)>(
+                "SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM epics), \
+                 (SELECT count(*) FROM required_decisions)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let first = h.apply_plan(&c, plan()).await.unwrap();
+    let s = h.get_story(&first.items[0].key).await.unwrap();
+    assert_eq!(s.epic(), Some(&epic), "the story lands under the epic");
+    let on_story = h
+        .list_decisions(Some(&old_story), false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        on_story
+            .iter()
+            .map(|d| (d.id(), d.on_type()))
+            .collect::<Vec<_>>(),
+        vec![(first.decisions[0].id, ItemType::Story)],
+        "the decision is on the native story"
+    );
+    assert!(
+        h.list_decisions(Some(&epic), false, true)
+            .await
+            .unwrap()
+            .is_empty(),
+        "and none on the epic"
+    );
+
+    let before = counts().await;
+    let again = h.apply_plan(&c, plan()).await.unwrap();
+    assert_eq!(counts().await, before, "the re-apply creates nothing");
+    assert_eq!(
+        (again.items[0].created, again.decisions[0].created),
+        (false, false)
+    );
+    assert_eq!(
+        again.decisions[0].id, first.decisions[0].id,
+        "the same decision"
+    );
+    let on_story = h
+        .list_decisions(Some(&old_story), false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        on_story
+            .iter()
+            .map(|d| (d.id(), d.on()))
+            .collect::<Vec<_>>(),
+        vec![(first.decisions[0].id, &old_story)],
+        "still on the native story"
+    );
+}
+
+/// A replay of a plan opens no write transaction for a link that is already there: the item links and web links
+/// of the plan's items are read once before the link phase, and an entry found there answers `created` false
+/// without an insert. Seen at the statement level: the first apply sends the inserts, the replay sends none and
+/// reads the item links once, however many the plan lists.
+#[tokio::test]
+async fn a_replayed_plan_reads_its_links_once_and_sends_no_insert_for_one_that_exists() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let dan = ctx("dan@example.com", false);
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(serde_json::json!({
+            "id": "replay",
+            "epics": [{"name": "e", "title": "E"}],
+            "stories": [
+                {"name": "a", "title": "A", "epic": "e"},
+                {"name": "b", "title": "B", "epic": "e"},
+                {"name": "c", "title": "C", "epic": "e"}
+            ],
+            "links": [
+                {"from": "b", "type": "follows", "to": "a"},
+                {"from": "c", "type": "follows", "to": "b"},
+                {"from": "c", "type": "relates_to", "to": "a"},
+                {"from": "e", "type": "duplicates", "to": "c"}
+            ],
+            "web_links": [
+                {"on": "a", "title": "Page", "url": "https://example.com/a"},
+                {"on": "a", "title": "Notes", "url": "https://example.com/notes"},
+                {"on": "e", "title": "Page", "url": "https://example.com/a"}
+            ]
+        }))
+        .unwrap()
+    };
+    // How many times the statements whose text holds `text` were sent, in the block last measured.
+    let calls = |text: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT coalesce(sum(calls), 0)::bigint FROM pg_stat_statements \
+                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+                 AND query ILIKE '%' || $1 || '%'",
+            )
+            .bind(text)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    common::statements(&pool, || async {
+        let first = h.apply_plan(&dan, plan()).await.unwrap();
+        assert!(first.links.iter().all(|l| l.created));
+        assert!(first.web_links.iter().all(|w| w.created));
+    })
+    .await;
+    assert_eq!(
+        (
+            calls("INSERT INTO item_links").await,
+            calls("INSERT INTO web_links").await
+        ),
+        (4, 3),
+        "the control: the first apply sends one insert per link, and the view shows them"
+    );
+
+    common::statements(&pool, || async {
+        let again = h.apply_plan(&dan, plan()).await.unwrap();
+        assert_eq!(
+            (again.links.len(), again.web_links.len()),
+            (4, 3),
+            "every entry is answered"
+        );
+        assert!(again.links.iter().all(|l| !l.created));
+        assert!(again.web_links.iter().all(|w| !w.created));
+    })
+    .await;
+    assert_eq!(
+        (
+            calls("INSERT INTO item_links").await,
+            calls("INSERT INTO web_links").await
+        ),
+        (0, 0),
+        "the replay sends no insert"
+    );
+    assert_eq!(
+        calls("FROM item_links").await,
+        1,
+        "the item links of the plan's items are read once"
+    );
+    assert_eq!(
+        calls("FROM web_links").await,
+        2,
+        "the web links are read once by the validation and once before the link phase"
     );
 }

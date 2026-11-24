@@ -55,4 +55,20 @@ impl ItemLinkRepo for PgPlanningRepo {
             })
             .collect()
     }
+    async fn all_item_links_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<ItemLink>, RepoError> {
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT from_key, to_key, link_type FROM item_links")
+                .fetch_all(&mut **tx)
+                .await?;
+        rows.into_iter()
+            .map(|(from, to, name)| -> Result<ItemLink, RepoError> {
+                let link_type = reeve_protocol::ItemLinkType::from_wire(&name)
+                    .ok_or_else(|| bad("item link name", &name))?;
+                Ok(ItemLink::from_persisted(key(&from), link_type, key(&to)))
+            })
+            .collect()
+    }
 }

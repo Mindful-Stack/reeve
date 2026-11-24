@@ -1494,6 +1494,11 @@ fn apply_sends_a_yaml_plan_in_one_request_and_lists_the_keys() {
     assert_eq!(sent["id"], "refine-hosting");
     assert_eq!(sent["stories"][1]["kind"], "chore");
     assert_eq!(sent["blocks"][0]["blocked_by"], "db");
+    // A plan that lists no item link and no web link is sent as it always was.
+    assert!(
+        sent.get("links").is_none() && sent.get("web_links").is_none(),
+        "{sent}"
+    );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
         text.contains("db") && text.contains("● TST-3") && text.contains("created"),
@@ -1518,6 +1523,316 @@ fn apply_sends_a_yaml_plan_in_one_request_and_lists_the_keys() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// `reeve apply` takes item links and web links in a plan file, YAML or JSON, sends them as written, and prints
+/// each with its keys' level glyphs and whether this apply created it; `--json` prints the envelope and nothing
+/// else.
+#[test]
+fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let yaml = dir.path().join("plan.yaml");
+    std::fs::write(
+        &yaml,
+        "id: sequence\nstories:\n  - {name: first, title: First}\n  - {name: second, title: Second}\nlinks:\n  - {from: second, type: follows, to: first}\n  - {from: first, type: relates_to, to: TST-1}\nweb_links:\n  - {on: first, title: Scenario page, url: \"https://example.com/wiki/scenario\"}\n",
+    )
+    .unwrap();
+    let as_json = dir.path().join("plan.json");
+    std::fs::write(
+        &as_json,
+        serde_json::json!({
+            "id": "sequence",
+            "stories": [{"name": "first", "title": "First"}, {"name": "second", "title": "Second"}],
+            "links": [
+                {"from": "second", "type": "follows", "to": "first"},
+                {"from": "first", "type": "relates_to", "to": "TST-1"}
+            ],
+            "web_links": [{"on": "first", "title": "Scenario page", "url": "https://example.com/wiki/scenario"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let applied = || {
+        serde_json::json!({
+            "items": [
+                {"name": "first", "item": "story", "key": "TST-3", "created": true},
+                {"name": "second", "item": "story", "key": "TST-4", "created": true}
+            ],
+            "decisions": [],
+            "blocks": [],
+            "links": [
+                {"from": "TST-4", "from_level": "story", "type": "follows",
+                 "to": "TST-3", "to_level": "story", "created": true},
+                {"from": "TST-1", "from_level": "initiative", "type": "relates_to",
+                 "to": "TST-3", "to_level": "story", "created": false}
+            ],
+            "web_links": [
+                {"on": "TST-3", "level": "story", "id": 7, "title": "Scenario page",
+                 "url": "https://example.com/wiki/scenario", "created": true}
+            ]
+        })
+    };
+
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(applied()))]);
+    let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
+    let from_yaml: serde_json::Value = serde_json::from_str(&server.join().unwrap()[0]).unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        from_yaml["links"],
+        serde_json::json!([
+            {"from": "second", "type": "follows", "to": "first"},
+            {"from": "first", "type": "relates_to", "to": "TST-1"}
+        ])
+    );
+    assert_eq!(
+        from_yaml["web_links"],
+        serde_json::json!([{"on": "first", "title": "Scenario page", "url": "https://example.com/wiki/scenario"}])
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in [
+        "● TST-4 follows ● TST-3\tcreated",
+        "◆ TST-1 relates to ● TST-3\texisting",
+        "web link on ● TST-3: Scenario page  https://example.com/wiki/scenario\tcreated",
+        "Informational: follows does not hold a story back. To hold one back, list it under blocks.",
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "missing {line:?} in:\n{text}"
+        );
+    }
+
+    // The same plan as JSON is the same request.
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(applied()))]);
+    let out = reeve_at(&url, &["--json", "apply", as_json.to_str().unwrap()]);
+    let from_json: serde_json::Value = serde_json::from_str(&server.join().unwrap()[0]).unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(from_json, from_yaml);
+    // `--json`: the envelope with both lists, and no line of prose.
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(printed["value"]["links"][1]["created"], false);
+    assert_eq!(printed["value"]["web_links"][0]["title"], "Scenario page");
+    // The web link's id (how one is removed) is in the JSON; text mode prints the same line as before (above).
+    assert_eq!(printed["value"]["web_links"][0]["id"], 7);
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("Informational"));
+
+    // The line is about what the answer holds, not about what this apply created: a first apply that made the
+    // `follows` and failed later never printed it, and the apply that finishes the plan reports the link existing.
+    let mut replayed = applied();
+    replayed["links"][0]["created"] = serde_json::json!(false);
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(replayed))]);
+    let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines()
+            .any(|l| l == "● TST-4 follows ● TST-3\texisting"),
+        "the control: the link is reported existing:\n{text}"
+    );
+    assert_eq!(
+        text.lines()
+            .filter(|l| l.starts_with("Informational"))
+            .count(),
+        1,
+        "an existing follows between two stories still gets the line, once:\n{text}"
+    );
+
+    // No `follows` between two stories in the answer: no informational line. Another name between two stories,
+    // and a `follows` whose other end is no story.
+    for (name, to_level) in [("duplicates", "story"), ("follows", "epic")] {
+        let mut quiet = applied();
+        quiet["links"][0]["type"] = serde_json::json!(name);
+        quiet["links"][0]["to_level"] = serde_json::json!(to_level);
+        let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(quiet))]);
+        let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
+        server.join().unwrap();
+        assert!(out.status.success(), "{name} to a {to_level}");
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("Informational"),
+            "{name} to a {to_level}"
+        );
+    }
+
+    // A web link's title and URL are stored text: a control or bidirectional character in either is printed
+    // escaped (`relations::for_terminal`), as `reeve link ls` prints it, and `--json` stays lossless.
+    let mut hostile = applied();
+    hostile["web_links"][0]["title"] = serde_json::json!("Scenario\u{1b}[2J page");
+    hostile["web_links"][0]["url"] = serde_json::json!("https://example.com/\u{202e}gnp.exe");
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(hostile.clone()))]);
+    let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
+    server.join().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines().any(|l| l
+            == "web link on ● TST-3: Scenario\\u{1b}[2J page  https://example.com/\\u{202e}gnp.exe\tcreated"),
+        "{text:?}"
+    );
+    assert!(
+        !text.contains('\u{1b}') && !text.contains('\u{202e}'),
+        "{text:?}"
+    );
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(hostile))]);
+    let out = reeve_at(&url, &["--json", "apply", yaml.to_str().unwrap()]);
+    server.join().unwrap();
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        printed["value"]["web_links"][0]["title"],
+        "Scenario\u{1b}[2J page"
+    );
+}
+
+/// A plan file with a field the plan does not have, or an item link name outside the three, is refused before
+/// anything is sent (the address below accepts no connection).
+#[test]
+fn apply_refuses_unknown_fields_and_names_in_links_and_web_links_before_sending() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("plan.yaml");
+    for (plan, names) in [
+        (
+            "id: x\nlinks:\n  - {from: a, kind: follows, to: b}\n",
+            "kind",
+        ),
+        (
+            "id: x\nlinks:\n  - {from: a, type: follows, to: b, direction: in}\n",
+            "direction",
+        ),
+        (
+            "id: x\nlinks:\n  - {from: a, type: precedes, to: b}\n",
+            "precedes",
+        ),
+        (
+            "id: x\nweb_links:\n  - {on: a, title: T, url: \"https://example.com/\", note: x}\n",
+            "note",
+        ),
+        ("id: x\nweblinks: []\n", "weblinks"),
+    ] {
+        std::fs::write(&file, plan).unwrap();
+        let out = reeve_at("http://127.0.0.1:9", &["apply", file.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(1), "{plan}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(names), "{plan}: {err}");
+        assert!(
+            err.contains("reading the plan"),
+            "refused while reading the file, not by a server: {err}"
+        );
+        assert!(
+            !err.contains("blocking is not an item link"),
+            "the blocking pointer is for blocking words only: {err}"
+        );
+    }
+    // The control: the same shapes, well formed, get as far as the network (and fail there, for another reason).
+    std::fs::write(
+        &file,
+        "id: x\nlinks:\n  - {from: a, type: follows, to: b}\nweb_links:\n  - {on: a, title: T, url: \"https://example.com/\"}\n",
+    )
+    .unwrap();
+    let out = reeve_at("http://127.0.0.1:9", &["apply", file.to_str().unwrap()]);
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("reading the plan"),
+        "the control: a well-formed plan is read: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// kb/ADR-0031 R2 in a plan file: a blocking word as an item link's `type` is answered with where blocking goes in
+/// a plan, for every spelling `reeve link` answers, in YAML and in JSON, and nothing is sent (the address below
+/// accepts no connection, and the error is the one raised while the file is read).
+#[test]
+fn apply_points_a_blocking_word_under_links_at_the_blocks_list_and_sends_nothing() {
+    const POINTER: &str = "blocking is not an item link: list it under `blocks` as `{story, blocked_by}` \
+                           (stories only; otherwise leave it out)";
+    let dir = tempfile::tempdir().unwrap();
+    let refused = |file: &std::path::Path, what: &str| {
+        let out = reeve_at("http://127.0.0.1:9", &["apply", file.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(1), "{what}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(POINTER), "{what}: {err}");
+        assert!(
+            err.contains("reading the plan"),
+            "{what}: refused while reading the file: {err}"
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "{what}: nothing is printed as a result"
+        );
+    };
+    let yaml = dir.path().join("plan.yaml");
+    for word in [
+        "blocks",
+        "blocked-by",
+        "blocked_by",
+        "depends-on",
+        "depends_on",
+    ] {
+        std::fs::write(
+            &yaml,
+            format!("id: x\nstories:\n  - {{name: a, title: A}}\n  - {{name: b, title: B}}\nlinks:\n  - {{from: b, type: follows, to: a}}\n  - {{from: a, type: {word}, to: b}}\n"),
+        )
+        .unwrap();
+        refused(&yaml, word);
+    }
+    let as_json = dir.path().join("plan.json");
+    std::fs::write(
+        &as_json,
+        serde_json::json!({
+            "id": "x",
+            "stories": [{"name": "a", "title": "A"}, {"name": "b", "title": "B"}],
+            "links": [{"from": "a", "type": "depends_on", "to": "b"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    refused(&as_json, "json");
+    // The pointer is given even when the file has another mistake that would stop the typed parse first.
+    std::fs::write(
+        &yaml,
+        "id: x\nstoreys: []\nlinks:\n  - {from: a, type: blocks, to: b}\n",
+    )
+    .unwrap();
+    refused(&yaml, "with another mistake");
+    // The control: `blocks` as the plan's own list is not a blocking word under `links`, and such a plan is read
+    // (it gets as far as the network, and fails there for another reason).
+    std::fs::write(
+        &yaml,
+        "id: x\nstories:\n  - {name: a, title: A}\n  - {name: b, title: B}\nblocks:\n  - {story: a, blocked_by: b}\nlinks:\n  - {from: a, type: follows, to: b}\n",
+    )
+    .unwrap();
+    let out = reeve_at("http://127.0.0.1:9", &["apply", yaml.to_str().unwrap()]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !err.contains(POINTER) && !err.contains("reading the plan"),
+        "the control: a plan that blocks under `blocks` is read: {err}"
+    );
+}
+
+/// The help of `reeve apply` shows which end follows which, and says where another tool's blocking relation goes.
+#[test]
+fn apply_help_shows_the_direction_of_follows_and_where_blocking_goes() {
+    let out = reeve_at("http://127.0.0.1:9", &["apply", "--help"]);
+    assert!(out.status.success());
+    // clap may wrap the text: compare with every run of white space as one space.
+    let help = String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for want in [
+        "`{from: step-2, type: follows, to: step-1}` means step-2 comes after step-1",
+        "`web_links` is a list of `{on, title, url}`",
+        "A plan holds at most 500 item links and 500 web links",
+        "put the rest in another plan that names the items by key (a name is local to one plan id)",
+        "any level (native keys first) under `links`, `web_links` and a decision's `on`",
+        "to hold a story back, list it under `blocks` as `{story, blocked_by}`",
+        "puts a blocking relation under `blocks` or leaves it out, never under `links`",
+    ] {
+        assert!(help.contains(want), "missing {want:?} in:\n{help}");
+    }
 }
 
 /// `reeve search` lists hits with their level glyph and where they matched; --json gives the hits.

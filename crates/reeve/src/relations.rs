@@ -6,13 +6,19 @@ use reeve_protocol::*;
 use std::borrow::Cow;
 use std::fmt::Write;
 
+/// The words people try for blocking where an item link name goes (kb/ADR-0031 R2). The one list: the name parser
+/// of `reeve link` and `reeve apply`'s reading of a plan file both ask here.
+pub fn is_blocking_word(s: &str) -> bool {
+    matches!(
+        s,
+        "blocks" | "blocked-by" | "blocked_by" | "depends-on" | "depends_on"
+    )
+}
+
 /// Clap's parser for an item link name. Blocking is not an item link (kb/ADR-0031 R2), so the words people try
 /// for it are answered with where blocking lives.
 pub fn parse_link_name(s: &str) -> Result<ItemLinkType, String> {
-    if matches!(
-        s,
-        "blocks" | "blocked-by" | "blocked_by" | "depends-on" | "depends_on"
-    ) {
+    if is_blocking_word(s) {
         return Err(
             "blocking is not an item link: use `reeve story block <KEY> --by <OTHER>`".into(),
         );
