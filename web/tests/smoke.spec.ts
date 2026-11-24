@@ -1202,6 +1202,22 @@ async function expectScrollShadows(wrap: Locator): Promise<{ shadow: string; sur
 	return { shadow: m.shadow, surface: m.surface };
 }
 
+/** The text of every element `selector` matches stays inside that element's parent: no line of it crosses the
+ *  parent's right edge (spilled, or cut by an ancestor that clips). */
+async function expectTextInside(page: Page, selector: string): Promise<void> {
+	await expect(page.locator(selector).first()).toBeVisible();
+	const over = await page.locator(selector).evaluateAll((all) =>
+		all.flatMap((el) => {
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const edge = el.parentElement!.getBoundingClientRect().right;
+			return [...range.getClientRects()].filter((r) => r.right > edge + 1).map((r) => `${el.className}: ${Math.round(r.right)} > ${Math.round(edge)}`);
+		})
+	);
+	expect(over).toEqual([]);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth), 'the page does not widen').toBe(await page.evaluate(() => window.innerWidth));
+}
+
 test('a wide table in a brief scrolls inside its wrapper on a phone, and only a wrapper that scrolls is a tab stop', async ({ page }) => {
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 		idempotency_key: crypto.randomUUID(),
@@ -1405,6 +1421,63 @@ test('on paper a wide table fits the page and wraps, a small one keeps its width
 	expect(m[1].headers).toEqual(['Step: 1', 'What it checks: 1']);
 	expect(m[2].headers).toEqual(['a: 1', 'b: 1']);
 	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(794);
+});
+
+test('a long unbroken word beside a wide-table grid wraps inside its row: a decision, a comment, the triage heading', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const word = `Unbroken${'x'.repeat(112)}`;
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Unbroken smoke epic ${suffix}` });
+	const open = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Unbroken smoke open ${suffix}`,
+		decider: 'smoke@example.com',
+		reversibility: 'two_way'
+	});
+	const closed = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Unbroken smoke closed ${suffix}`,
+		decider: 'smoke@example.com',
+		reversibility: 'two_way'
+	});
+	await post(page, `/api/v1/decisions/${open.id}/comments`, { body: word, idempotency_key: crypto.randomUUID() });
+	await post(page, `/api/v1/decisions/${closed.id}/close`, { kind: 'decided', reason: word });
+	await post(page, `/api/v1/items/${epic.key}/comments`, { body: word, idempotency_key: crypto.randomUUID() });
+	const untriaged = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `${word} ${suffix}`,
+		kind: 'chore',
+		epic: null,
+		criteria: [],
+		labels: []
+	});
+
+	// A phone has no queue list to pick from: pick the item with room for the list, then narrow the page.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto('/triage');
+	await page.getByRole('option', { name: new RegExp(`^${untriaged.key}\\b`) }).click();
+	await expect(page.locator('.item h2')).toContainText(word);
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expectTextInside(page, '.item h2');
+	await expectTextInside(page, '.item .meta');
+
+	await page.goto(`/epics/${epic.key}`);
+	// The item's own thread: the author line and the comment.
+	await expectTextInside(page, '.thread > li > .muted');
+	await expectTextInside(page, '.thread .comment-body p');
+	// The decisions, closed ones included: the outcome of the closed one, the thread of the open one.
+	await page.getByRole('button', { name: 'Show closed (1)' }).click();
+	await expect(page.locator('.decision-list .outcome')).toContainText(word);
+	await expectTextInside(page, '.decision-list .outcome');
+	await page.getByRole('button', { name: `Discussion of Unbroken smoke open ${suffix}` }).click();
+	await expect(page.locator('.decision-list .comment-body')).toContainText(word);
+	await expectTextInside(page, '.decision-list .thread > li > .muted');
+	await expectTextInside(page, '.decision-list .comment-body p');
+	// The lines no fixture here can make long (a record's path, an owner's address) break the same way.
+	for (const selector of ['.decision-list .outcome', '.decision-list .thread > li > .muted', '.thread > li > .muted']) {
+		expect(await page.locator(selector).first().evaluate((e) => getComputedStyle(e).overflowWrap), selector).toBe('anywhere');
+	}
 });
 
 test('a long link in a table cell wraps instead of setting the width of the table', async ({ page }) => {

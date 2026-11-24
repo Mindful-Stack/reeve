@@ -96,6 +96,8 @@
 <style>
 	/* One column no wider than the pane: a wide table in the description scrolls in its own wrapper. */
 	.item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+	/* In that bounded column a long unbroken word (a pasted identifier in the title, an owner's address) breaks. */
+	h2, .meta, .warn, .gone { overflow-wrap: anywhere; }
 	/* Focused on a phone (no queue list), it scrolls into view below the sticky notice, not behind it. */
 	h2 { scroll-margin-top: 4em; }
 	.meta { color: var(--muted); }

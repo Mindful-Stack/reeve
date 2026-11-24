@@ -102,6 +102,8 @@
 		padding: 0;
 		list-style: none;
 		font-size: 14px;
+		/* The column is bounded, so a long unbroken author name breaks instead of crossing the edge. */
+		overflow-wrap: anywhere;
 	}
 	form {
 		display: grid;
