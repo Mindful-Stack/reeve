@@ -87,7 +87,7 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
 const NOTICE_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The informational line for a `follows` that was just added, when both items of the link that was written are
-/// stories, named by their native keys. The two items are taken from the server's own answers, never from a
+/// stories, both named by their native keys. The two items are taken from the server's own answers, never from a
 /// resolution of the CLI's: `links` is the add's answer (the item links of `key`, so the item it now follows is
 /// in it with its level), and one read of the other item's links, through the same route family and so the same
 /// resolution as the write (`/items/{other}/links`), names the item that follows it. A typed lookup such as
@@ -95,8 +95,8 @@ const NOTICE_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 /// that native key.
 ///
 /// Best effort: the read happens only when the item followed is a story, within `NOTICE_BUDGET`, and anything
-/// else in that time (another level, a failed request, a server that does not answer, an end that cannot be told
-/// from the answers) gives no line and no error.
+/// else in that time (another level, a failed request, a server that does not answer, an end not named by its own
+/// key in the answers) gives no line and no error.
 async fn not_a_blocker(
     c: &Client,
     key: &KeyRef,
@@ -117,23 +117,20 @@ async fn not_a_blocker(
 }
 
 /// The item at the other end of the `follows` link that was just written, among one item's links read from
-/// `direction`'s side; `named` is how the command line named that other item. It is the one whose native key is
+/// `direction`'s side; `named` is how the command line named that other item. Only the entry whose key is exactly
 /// `named` (a native key always wins over an external reference when the server resolves, so that is the item the
-/// write used), or else the only candidate (the link was just written, so it is among them). With several
-/// candidates and a name that is none of their keys (an external reference), nothing tells them apart: None.
+/// write used); anything else is a guess and gives None. Not "the only candidate": the read after the write is a
+/// separate request, so another caller may have removed the link in between and left an unrelated item as the only
+/// one. So a link added by naming an item through its external reference gets no line, which is accepted: the line
+/// is optional, and a wrong `story block` suggestion is worse than none.
 fn followed_end<'a>(
     links: &'a [ItemLinkDto],
     direction: ItemLinkDirection,
     named: &KeyRef,
 ) -> Option<&'a LinkedItemDto> {
-    let ends: Vec<&LinkedItemDto> = links
+    links
         .iter()
         .filter(|l| l.link_type == ItemLinkType::Follows && l.direction == direction)
         .map(|l| &l.item)
-        .collect();
-    match ends.iter().find(|i| i.key.to_string() == named.as_str()) {
-        Some(end) => Some(end),
-        None if ends.len() == 1 => Some(ends[0]),
-        None => None,
-    }
+        .find(|i| i.key.to_string() == named.as_str())
 }

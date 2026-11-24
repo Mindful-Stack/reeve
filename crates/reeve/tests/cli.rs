@@ -4684,9 +4684,9 @@ fn link_add_posts_the_forward_form() {
 }
 
 /// After a `follows` between two stories the text output says the link is informational and how to block
-/// instead, with the stories' native keys. Both items come from the server's answers: the add's own (the item
-/// now followed) and one read of that item's links through `/items/{other}/links`, which resolves as the write
-/// did. Not between other levels, and never with `--json`.
+/// instead, with the stories' native keys, when both were named by those keys. Both items come from the server's
+/// answers: the add's own (the item now followed) and one read of that item's links through `/items/{other}/links`,
+/// which resolves as the write did. Not between other levels, and never with `--json`.
 #[test]
 fn link_add_follows_between_two_stories_says_it_is_informational() {
     let linked = || {
@@ -4711,14 +4711,26 @@ fn link_add_follows_between_two_stories_says_it_is_informational() {
     };
     let (url, server) = serve(vec![
         ("POST /api/v1/items/TST-12/links", 200, linked()),
-        ("GET /api/v1/items/SCRUM-7/links", 200, followed_by("story")),
+        ("GET /api/v1/items/TST-7/links", 200, followed_by("story")),
     ]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\nInformational: this does not hold TST-12 back. To hold it back: `reeve story block TST-12 --by TST-7`.\n"
+    );
+
+    // The item followed named through its external reference: its key in the answer is not the name given, so it
+    // is not identified, nothing is read after the write, and there is no line (accepted: the line is optional, a
+    // guess is not).
+    let (url, server) = serve(vec![("POST /api/v1/items/TST-12/links", 200, linked())]);
     let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "SCRUM-7"]);
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "TST-12 follows SCRUM-7\nInformational: this does not hold TST-12 back. To hold it back: `reeve story block TST-12 --by TST-7`.\n"
+        "TST-12 follows SCRUM-7\n"
     );
 
     // The item that follows is not a story: no line, and the exit status is still the add's.
@@ -4886,6 +4898,32 @@ fn link_add_says_nothing_about_a_story_the_write_did_not_link() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "JIRA-5 follows GRA-30\n"
+    );
+
+    // The follower the write linked is gone from the read (another caller removed `OLD-1 follows GRA-30` between
+    // the POST and the GET), and one unrelated story follower remains: no line, never one naming that story.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/OLD-1/links", 200, linked()),
+        (
+            "GET /api/v1/items/GRA-30/links",
+            200,
+            ok(serde_json::json!({"links": [item_link_json(
+                "follows",
+                "in",
+                "is followed by",
+                "GRA-20",
+                "story",
+                "Imported"
+            )]})),
+        ),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "OLD-1", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "OLD-1 follows GRA-30\n",
+        "the follower is not identified: no line, and none about GRA-20"
     );
 
     // The control: the story named by its own key, among the same candidates, gets the line with native keys.
