@@ -34,6 +34,7 @@
 	import ActivityList from '#lib/components/ActivityList.svelte';
 	import Brief from '#lib/components/Brief.svelte';
 	import Attachments from '#lib/components/Attachments.svelte';
+	import Relations from '#lib/components/Relations.svelte';
 	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
 	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 	import Comments from '#lib/components/Comments.svelte';
@@ -523,11 +524,7 @@
 		// The removed row's button left the DOM; keep keyboard focus in the section.
 		if (ok) {
 			await tick();
-			(
-				document.getElementById('drawer-blocker') ??
-				document.getElementById('drawer-blocker-edit') ??
-				document.getElementById('drawer-blockers')
-			)?.focus();
+			(document.getElementById('drawer-blocker') ?? document.getElementById('drawer-blocker-edit'))?.focus();
 		}
 		return ok;
 	}
@@ -892,31 +889,33 @@
 			{/if}
 		</section>
 
-		<section aria-labelledby="drawer-blockers">
-			<h3 id="drawer-blockers" tabindex="-1">Blocked by</h3>
-			{#if s.blocked_by.length === 0}
-				<p class="muted">Nothing blocks this story.</p>
-			{:else}
-				<ul class="blockers">
-					{#each s.blocked_by as b (b)}
-						<li>
-							<a data-sveltekit-reset="false" href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
-							<button type="button" aria-label="Remove block by {b}" disabled={busy} onclick={() => removeBlocker(b)}>Remove</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-			{#if editing.has('blocker')}
-				<form id="drawer-blocker-form" onsubmit={addBlocker} onkeydown={cancelOnEscape('blocker')}>
-					<label for="drawer-blocker">Add blocker</label>
-					<input id="drawer-blocker" bind:value={blocker} disabled={locked('blocker')} placeholder="story key" />
-					<button type="button" disabled={locked('blocker')} onclick={() => cancel('blocker')}>Cancel</button>
-					<button type="submit" disabled={busy || !blocker.trim()}>Add</button>
-				</form>
-			{:else}
-				<button type="button" class="add" id="drawer-blocker-edit" onclick={() => edit('blocker')}>+ Add blocker</button>
-			{/if}
-		</section>
+		<!-- The story's own key, not the URL's (which may be an external reference): writes name it in their path. -->
+		<Relations itemKey={s.key} level="story" links={s.links ?? []} webLinks={s.web_links ?? []} heading="h3" onchanged={reload}>
+			{#snippet blockers(label: string)}
+				{#if s.blocked_by.length === 0}
+					<p class="muted">Nothing blocks this story.</p>
+				{:else}
+					<ul class="blockers" aria-labelledby={label}>
+						{#each s.blocked_by as b (b)}
+							<li>
+								<a data-sveltekit-reset="false" href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>
+								<button type="button" aria-label="Remove block by {b}" disabled={busy} onclick={() => removeBlocker(b)}>Remove</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if editing.has('blocker')}
+					<form id="drawer-blocker-form" onsubmit={addBlocker} onkeydown={cancelOnEscape('blocker')}>
+						<label for="drawer-blocker">Add blocker</label>
+						<input id="drawer-blocker" bind:value={blocker} disabled={locked('blocker')} placeholder="story key" />
+						<button type="button" disabled={locked('blocker')} onclick={() => cancel('blocker')}>Cancel</button>
+						<button type="submit" disabled={busy || !blocker.trim()}>Add</button>
+					</form>
+				{:else}
+					<button type="button" class="add" id="drawer-blocker-edit" onclick={() => edit('blocker')}>+ Add blocker</button>
+				{/if}
+			{/snippet}
+		</Relations>
 
 		<section aria-labelledby="drawer-prs">
 			<h3 id="drawer-prs">Pull requests</h3>
@@ -1095,7 +1094,8 @@
 	h2 .key {
 		white-space: nowrap;
 	}
-	h3 {
+	h3,
+	.drawer :global(h3.relations-heading) {
 		margin: 0 0 6px;
 		font-size: 13px;
 		font-weight: 600;
@@ -1282,11 +1282,36 @@
 		justify-content: flex-end;
 		gap: 0.5rem;
 	}
-	.reasons,
-	.blockers {
+	.reasons {
 		margin: 0 0 0.5rem;
 		padding-left: 1.2rem;
 		font-size: 14px;
+	}
+	/* The blockers are the first group of Relations: their rows line up with the item link rows under them (no bullet,
+	   the link first, a small Remove at the row's end). */
+	.blockers {
+		display: grid;
+		gap: 4px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		font-size: 14px;
+	}
+	.blockers li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		align-items: baseline;
+		min-width: 0;
+	}
+	.blockers a {
+		flex: 1 1 12rem;
+		min-width: 0;
+	}
+	.blockers button {
+		height: 24px;
+		padding: 0 8px;
+		font-size: 13px;
 	}
 	.toggle {
 		display: block;

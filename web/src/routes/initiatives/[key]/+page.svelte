@@ -31,6 +31,7 @@
 	import { INITIATIVE_SAME, fieldsText, initiativeDetails, initiativeEdit, mergeDraft, type InitiativeDetails } from '#lib/forms.ts';
 	import { tick } from 'svelte';
 	import Attachments from '#lib/components/Attachments.svelte';
+	import Relations from '#lib/components/Relations.svelte';
 	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
 	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 	import { focusIsFree } from '#lib/focus.ts';
@@ -579,6 +580,8 @@
 			{/if}
 			<Attachments itemKey={i.key} />
 		</section>
+
+		<Relations itemKey={i.key} level="initiative" links={i.links ?? []} webLinks={i.web_links ?? []} onchanged={reload} />
 
 		<section id="epics" aria-labelledby="epics-h">
 			<div class="section-head">

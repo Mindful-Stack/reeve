@@ -1,3 +1,5 @@
+import { LINK_TYPES, linkTypeText } from '#lib/relations.ts';
+
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -76,9 +78,23 @@ function promisedWords(payload: unknown, key: string | undefined): string {
 	return to == null ? `removed ${recipient}` : `changed ${recipient} to ${to}`;
 }
 
-/** An activity entry's action in its own words: an attachment's names its file, a promise's its date and recipient (from
- *  the payload); null for every other action, which reads as `plainAction`. The one place an action is worded. `key`
- *  names the item in a promise's words, where the note is not already about one item (`freshNote`). */
+/** An item link entry's words: both items and the name between them, as stored. The same entry is logged on both
+ *  items (kb/ADR-0031 R7), so the words name both rather than saying "this". The name is worded by `linkTypeText`,
+ *  the one function that words a name; a payload whose `type` is not a name this client knows gets the words
+ *  without the link. */
+function itemLinkWords(action: string, payload: unknown): string {
+	const verb = action === 'item_link_added' ? 'added' : 'removed';
+	const stored = payloadField(payload, 'type');
+	const type = LINK_TYPES.find((t) => t === stored);
+	const from = nonEmpty(payloadField(payload, 'from'));
+	const to = nonEmpty(payloadField(payload, 'to'));
+	return type === undefined || from == null || to == null ? `${verb} item link` : `${verb} item link: ${from} ${linkTypeText(type)} ${to}`;
+}
+
+/** An activity entry's action in its own words: an attachment's names its file, a promise's its date and recipient, an
+ *  item link's its two items and its name, a web link's its title and, once removed, its URL (from the payload); null
+ *  for every other action, which reads as `plainAction`. The one place an action is worded. `key` names the item in a
+ *  promise's words, where the note is not already about one item (`freshNote`). */
 export function actionLabel(action: string, payload: unknown, key?: string): string | null {
 	if (action === 'attachment_added' || action === 'attachment_removed') {
 		const name = nonEmpty(payloadField(payload, 'filename'));
@@ -86,6 +102,15 @@ export function actionLabel(action: string, payload: unknown, key?: string): str
 	}
 	if (action === 'promised') return promisedWords(payload, key);
 	if (action === 'promise_cleared') return key == null ? 'cleared the promise' : `cleared the promise on ${key}`;
+	if (action === 'item_link_added' || action === 'item_link_removed') return itemLinkWords(action, payload);
+	if (action === 'web_link_added' || action === 'web_link_removed') {
+		const title = nonEmpty(payloadField(payload, 'title'));
+		const named = title == null ? '' : ` ${title}`;
+		if (action === 'web_link_added') return `added web link${named}`;
+		// A removed web link is listed nowhere any more, so its entry also says where it pointed.
+		const url = nonEmpty(payloadField(payload, 'url'));
+		return `removed web link${named}${url == null ? '' : ` (${url})`}`;
+	}
 	return null;
 }
 
