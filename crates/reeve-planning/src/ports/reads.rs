@@ -25,6 +25,13 @@ pub trait PlanningReads: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         keys: &[Key],
     ) -> Result<Vec<Story>, RepoError>;
+    /// The level and title of each key that names an item of any level, in one statement on the caller's
+    /// transaction; a key that names none is absent. Callers may pass a key twice.
+    async fn item_heads_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        keys: &[Key],
+    ) -> Result<HashMap<Key, ItemHead>, RepoError>;
     /// The pull requests linked to many stories in one statement on the caller's transaction, each list by repo then
     /// number; a story without pull requests has no entry.
     async fn pull_requests_for_many(

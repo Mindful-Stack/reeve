@@ -33,10 +33,10 @@ pub use domain::{
 pub use handler::*;
 pub use ports::{
     ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
-    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, ItemLinkRepo, KeyRepo, PlanningPorts,
-    PlanningReads, PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, PullRequestRepo,
-    RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryPromiseRow, StoryRepo,
-    StoryText, UrgencyRepo,
+    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, ItemHead, ItemLinkRepo, KeyRepo,
+    PlanningPorts, PlanningReads, PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow,
+    PullRequestRepo, RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryPromiseRow,
+    StoryRepo, StoryText, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;

@@ -34,6 +34,14 @@ pub struct SearchRow {
     pub external_ref: Option<String>,
 }
 
+/// The level and title of one item: what an item link shows of the item at its other end
+/// (`PlanningReads::item_heads_in`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemHead {
+    pub level: ItemType,
+    pub title: String,
+}
+
 /// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`,
 /// `urgent` and `promised`, which the handler applies after the read (on values computed in the same snapshot,
 /// kb/ADR-0021 R4).

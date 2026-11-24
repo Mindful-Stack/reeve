@@ -76,6 +76,65 @@ fn mk_probe(pool: sqlx::PgPool, sql: &'static str) -> (Handlers, Arc<ProbeSink>)
     (h, sink)
 }
 
+/// Writes each entry into a table the test made, on the mutation's own transaction, as the real activity log does,
+/// and refuses the entry on the item `refuse` names, after writing it. A mutation whose entry is refused has by
+/// then written its row, and any earlier entry, on a transaction that its caller never commits.
+struct TableSink {
+    refuse: Mutex<Option<String>>,
+}
+#[async_trait]
+impl ActivitySink for TableSink {
+    async fn record(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        rec: ActivityRecord,
+    ) -> Result<(), RepoError> {
+        let refused = self.refuse.lock().unwrap().as_deref() == Some(rec.entity_key.as_str());
+        sqlx::query("INSERT INTO entries_seen (action, entity_key) VALUES ($1, $2)")
+            .bind(rec.action)
+            .bind(&rec.entity_key)
+            .execute(&mut **tx)
+            .await?;
+        if refused {
+            return Err(RepoError::Db(sqlx::Error::Protocol(
+                "the test's sink refuses this entry".into(),
+            )));
+        }
+        Ok(())
+    }
+}
+impl TableSink {
+    /// Refuses the next entries on `key`, or none.
+    fn refuse(&self, key: Option<&Key>) {
+        *self.refuse.lock().unwrap() = key.map(Key::to_string);
+    }
+}
+/// Handlers over a `TableSink`, with its table made.
+async fn mk_table_sink(pool: sqlx::PgPool) -> (Handlers, Arc<TableSink>) {
+    sqlx::query("CREATE TABLE entries_seen (action TEXT NOT NULL, entity_key TEXT NOT NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let sink = Arc::new(TableSink {
+        refuse: Mutex::new(None),
+    });
+    let h = Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: sink.clone(),
+        pool,
+        settings: settings(),
+    };
+    (h, sink)
+}
+/// How many entries with this action are committed: counted on another connection than any mutation's.
+async fn entries_committed(pool: &sqlx::PgPool, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM entries_seen WHERE action = $1")
+        .bind(action)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 fn ctx(actor: &str, automation: bool) -> Ctx {
     ctx_via(
         actor,
@@ -9913,4 +9972,414 @@ async fn every_entry_of_a_write_made_through_a_client_names_the_client() {
         records.iter().all(|r| r.payload.is_object()),
         "a payload that is not an object could not carry the client"
     );
+}
+
+/// kb/ADR-0031 R1, R4, R7. An item link joins items of any level, is added once (a repeat writes and logs
+/// nothing), is logged on both items with the same payload, reads from each end with that side's wording and the
+/// other item's level and title, and is removed only by its forward form; `relates_to` is one link from either
+/// end. An automation caller may do all of it.
+#[tokio::test]
+async fn item_links_are_added_once_logged_on_both_items_and_read_from_either_end() {
+    use reeve_protocol::LinkType::{Duplicates, Follows, RelatesTo};
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("bot@example.com", true);
+    let i = h
+        .create_initiative(&dan, "i", "Billing", "", "Now", None, None, None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let e = h
+        .create_epic(&dan, "e", "Invoices", Some(i.clone()), "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "Template",
+            Kind::Story,
+            Some(e.clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let entries = |action: &str| -> Vec<(String, String, serde_json::Value)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == action)
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.payload.clone(),
+                )
+            })
+            .collect()
+    };
+    let links = |k: &Key| {
+        let (h, k) = (h.clone(), k.clone());
+        async move { serde_json::to_value(h.link_listing(&k).await.unwrap().links).unwrap() }
+    };
+
+    // The story follows the epic.
+    assert!(
+        h.add_item_link(&bot, &s, Follows, &e).await.unwrap(),
+        "added"
+    );
+    assert!(
+        !h.add_item_link(&bot, &s, Follows, &e).await.unwrap(),
+        "already there"
+    );
+    let follows = json!({"type": "follows", "from": s, "to": e});
+    assert_eq!(
+        entries("item_link_added"),
+        vec![
+            ("story".to_string(), s.to_string(), follows.clone()),
+            ("epic".to_string(), e.to_string(), follows.clone()),
+        ],
+        "one entry on each item, none for the repeat"
+    );
+    assert_eq!(
+        links(&s).await,
+        json!([{"type": "follows", "direction": "out", "label": "follows",
+                "item": {"key": e, "level": "epic", "title": "Invoices"}}])
+    );
+    assert_eq!(
+        links(&e).await,
+        json!([{"type": "follows", "direction": "in", "label": "is followed by",
+                "item": {"key": s, "level": "story", "title": "Template"}}])
+    );
+
+    // relates_to named from either end is one link, `out` on both sides. The initiative has the lower key.
+    assert!(h.add_item_link(&bot, &s, RelatesTo, &i).await.unwrap());
+    assert!(
+        !h.add_item_link(&bot, &i, RelatesTo, &s).await.unwrap(),
+        "the same link from the other end"
+    );
+    assert_eq!(
+        links(&i).await,
+        json!([{"type": "relates_to", "direction": "out", "label": "relates to",
+                "item": {"key": s, "level": "story", "title": "Template"}}])
+    );
+    let related = json!({"type": "relates_to", "from": i, "to": s});
+    assert_eq!(entries("item_link_added").len(), 4);
+    assert_eq!(
+        entries("item_link_added")[2..],
+        [
+            ("initiative".to_string(), i.to_string(), related.clone()),
+            ("story".to_string(), s.to_string(), related.clone()),
+        ],
+        "the entry names the ends as stored"
+    );
+
+    // Order on one item: by name, `out` before `in`, then the other key.
+    assert!(h.add_item_link(&bot, &e, Duplicates, &s).await.unwrap());
+    assert!(h.add_item_link(&bot, &e, Follows, &s).await.unwrap());
+    let on_story = links(&s).await;
+    let shape: Vec<(String, String)> = on_story
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["label"].as_str().unwrap().to_string(),
+                l["item"]["key"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("follows".to_string(), e.to_string()),
+            ("is followed by".to_string(), e.to_string()),
+            ("is duplicated by".to_string(), e.to_string()),
+            ("relates to".to_string(), i.to_string()),
+        ]
+    );
+
+    // Removing: a directed link only by its forward form.
+    assert!(
+        !h.remove_item_link(&bot, &e, Duplicates, &i).await.unwrap(),
+        "no such link"
+    );
+    assert!(h.remove_item_link(&bot, &s, Follows, &e).await.unwrap());
+    assert!(
+        !h.remove_item_link(&bot, &s, Follows, &e).await.unwrap(),
+        "already gone"
+    );
+    assert_eq!(
+        entries("item_link_removed"),
+        vec![
+            ("story".to_string(), s.to_string(), follows.clone()),
+            ("epic".to_string(), e.to_string(), follows),
+        ]
+    );
+    assert_eq!(
+        links(&s).await.as_array().unwrap().len(),
+        3,
+        "the epic's own `follows` of the story is another link and stays"
+    );
+    assert!(
+        h.remove_item_link(&bot, &s, RelatesTo, &i).await.unwrap(),
+        "relates_to from the other end"
+    );
+    assert_eq!(links(&i).await, json!([]));
+
+    // Refusals write nothing.
+    let before = sink.0.lock().unwrap().len();
+    let ghost: Key = "ABC-999".parse().unwrap();
+    assert!(matches!(
+        h.add_item_link(&bot, &s, Follows, &s).await,
+        Err(HandlerError::Validation(m)) if m == "an item cannot have an item link to itself"
+    ));
+    for (from, to) in [(&s, &ghost), (&ghost, &s)] {
+        assert!(matches!(
+            h.add_item_link(&bot, from, Follows, to).await,
+            Err(HandlerError::NotFound)
+        ));
+        assert!(matches!(
+            h.remove_item_link(&bot, from, Follows, to).await,
+            Err(HandlerError::NotFound)
+        ));
+    }
+    assert!(matches!(
+        h.link_listing(&ghost).await,
+        Err(HandlerError::NotFound)
+    ));
+    assert_eq!(sink.0.lock().unwrap().len(), before);
+}
+
+/// kb/ADR-0010 R5: the row and its entries commit together. At the moment each entry is recorded, the mutation's
+/// own transaction already shows the change and another connection does not yet.
+#[tokio::test]
+async fn an_item_link_and_its_entries_commit_together() {
+    use reeve_protocol::LinkType::Follows;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_probe(
+        pool.clone(),
+        "SELECT (SELECT link_type FROM item_links WHERE from_key = $1 OR to_key = $1 LIMIT 1)",
+    );
+    let c = ctx("dan@example.com", false);
+    let mut keys = Vec::new();
+    for n in ["a", "b"] {
+        keys.push(
+            h.create_story(&c, n, n, Kind::Chore, None, "", vec![], vec![], None, None)
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+        );
+    }
+    assert!(
+        h.add_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .unwrap()
+    );
+    let added = sink.entries("item_link_added");
+    assert_eq!(added.len(), 2);
+    for (rec, inside, outside) in &added {
+        assert_eq!(
+            inside.as_deref(),
+            Some("follows"),
+            "{}: written before its entry",
+            rec.entity_key
+        );
+        assert_eq!(
+            *outside, None,
+            "{}: not committed before its entry",
+            rec.entity_key
+        );
+    }
+    assert!(
+        h.remove_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .unwrap()
+    );
+    let removed = sink.entries("item_link_removed");
+    assert_eq!(removed.len(), 2);
+    for (rec, inside, outside) in &removed {
+        assert_eq!(
+            *inside, None,
+            "{}: deleted before its entry",
+            rec.entity_key
+        );
+        assert_eq!(
+            outside.as_deref(),
+            Some("follows"),
+            "{}: the delete is not committed yet",
+            rec.entity_key
+        );
+    }
+}
+
+/// Linked items of one name and side come in key-number order, whatever their prefix. After a prefix change an
+/// instance holds native keys under two prefixes, each numbered by its own counter (`next_key` counts per prefix),
+/// and `LONG-2` comes before `A-3`, which comes before `A-10`.
+#[tokio::test]
+async fn item_links_list_linked_items_by_key_number_across_prefixes() {
+    use reeve_protocol::LinkType::Follows;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = ctx("dan@example.com", false);
+    // The same instance under its earlier prefix and under its later one. `KeyRepo::next_key` keeps one counter
+    // per prefix, so the two stories made under `LONG` are LONG-1 and LONG-2 and the ten made under `A` are A-1
+    // to A-10, whatever was made under the other prefix. Every create has an idempotency key of its own.
+    let under = |prefix: &str| Handlers {
+        settings: Settings {
+            key_prefix: prefix.into(),
+            ..settings()
+        },
+        ..h.clone()
+    };
+    let mut made = Vec::new();
+    for (prefix, count) in [("LONG", 2), ("A", 10)] {
+        let by = under(prefix);
+        let mut keys = Vec::new();
+        for n in 1..=count {
+            keys.push(
+                by.create_story(
+                    &c,
+                    &format!("{prefix}-story-{n}"),
+                    "S",
+                    Kind::Chore,
+                    None,
+                    "",
+                    vec![],
+                    vec![],
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+            );
+        }
+        made.push(keys);
+    }
+    let (long, a) = (&made[0], &made[1]);
+    // The item that has the links, and the three it links to: `a[2]` is the third key under `A`, `a[9]` the tenth.
+    let (from, second, third, tenth) = (&long[0], &long[1], &a[2], &a[9]);
+    assert_eq!(
+        (
+            from.to_string(),
+            second.to_string(),
+            third.to_string(),
+            tenth.to_string()
+        ),
+        (
+            "LONG-1".to_string(),
+            "LONG-2".to_string(),
+            "A-3".to_string(),
+            "A-10".to_string()
+        ),
+        "the control: the keys this test is about"
+    );
+    // Added in an order that is none of the candidate orders.
+    for other in [tenth, second, third] {
+        assert!(
+            h.add_item_link(&c, from, Follows, other).await.unwrap(),
+            "{other}"
+        );
+    }
+    let order: Vec<String> = h
+        .link_listing(from)
+        .await
+        .unwrap()
+        .links
+        .iter()
+        .map(|l| l.item.key.to_string())
+        .collect();
+    assert_eq!(order, vec!["LONG-2", "A-3", "A-10"]);
+}
+
+/// What plan apply (GRA-879) relies on when it calls `add_item_link_in` and `remove_item_link_in` inside the plan's
+/// transaction: they write on the caller's transaction only. When that transaction is not committed after they
+/// ran, no row and no entry is left. The caller here is the public form (begin, the `_in` form, commit), and what
+/// stops it short of the commit is the sink refusing the second item's entry, by which time the `_in` form has
+/// written the row and the first item's entry.
+#[tokio::test]
+async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row_and_no_entry() {
+    use reeve_protocol::LinkType::Follows;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_table_sink(pool.clone()).await;
+    let c = ctx("dan@example.com", false);
+    let mut keys = Vec::new();
+    for n in ["a", "b"] {
+        keys.push(
+            h.create_story(&c, n, n, Kind::Chore, None, "", vec![], vec![], None, None)
+                .await
+                .unwrap()
+                .key()
+                .clone(),
+        );
+    }
+    // (rows of item_links, entries with this action), as another connection sees them: what was committed.
+    let left = |action: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM item_links")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            (rows, entries_committed(&pool, action).await)
+        }
+    };
+
+    // The add: the row and the entry on `a` are written, the entry on `b` is refused.
+    sink.refuse(Some(&keys[1]));
+    assert!(
+        h.add_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        left("item_link_added").await,
+        (0, 0),
+        "no row and no entry of the add is left"
+    );
+
+    // The control: the same call, not refused, leaves the row and both entries, so the zeros above are the
+    // rollback's doing and this sink's table does show an entry that was committed.
+    sink.refuse(None);
+    assert!(
+        h.add_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .unwrap()
+    );
+    assert_eq!(left("item_link_added").await, (1, 2), "the control");
+
+    // The remove: the delete and the entry on `a` are written, the entry on `b` is refused.
+    sink.refuse(Some(&keys[1]));
+    assert!(
+        h.remove_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        left("item_link_removed").await,
+        (1, 0),
+        "the link is still there and no entry says otherwise"
+    );
+    sink.refuse(None);
+    assert!(
+        h.remove_item_link(&c, &keys[0], Follows, &keys[1])
+            .await
+            .unwrap()
+    );
+    assert_eq!(left("item_link_removed").await, (0, 2), "the control");
 }

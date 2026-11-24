@@ -7,14 +7,16 @@ use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
+use crate::ports::ItemHead;
 use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
     DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
     EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto,
-    InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
-    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    InitiativeDto, ItemLinkDto, Key, LinkDirection, LinkType, LinkedItemDto, PromiseDue,
+    PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
+    RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto,
+    StoryDto, StoryPromiseDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -536,5 +538,25 @@ impl From<reeve_protocol::SetPromise> for promise::Request {
             shortcut: b.shortcut.map(Into::into),
             to: b.to,
         }
+    }
+}
+
+/// An item link as one of its ends reads it: the side, the wording for that side from the protocol's name table,
+/// and the item at the other end.
+pub(crate) fn item_link_dto(
+    link_type: LinkType,
+    direction: LinkDirection,
+    other: &Key,
+    head: &ItemHead,
+) -> ItemLinkDto {
+    ItemLinkDto {
+        link_type,
+        direction,
+        label: link_type.label(direction).to_string(),
+        item: LinkedItemDto {
+            key: other.clone(),
+            level: head.level,
+            title: head.title.clone(),
+        },
     }
 }

@@ -152,6 +152,44 @@ impl PlanningReads for PgPlanningRepo {
         }
         Ok(keys.iter().filter_map(|k| by_key.remove(k)).collect())
     }
+    async fn item_heads_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        keys: &[Key],
+    ) -> Result<HashMap<Key, ItemHead>, RepoError> {
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+        // One key sequence, so at most one table has each key; DISTINCT ON guards the map anyway, story first, as
+        // `item_types_in` does.
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (key) key, t, title FROM (\
+               SELECT key, 'story' AS t, title, 0 AS o FROM stories WHERE key = ANY($1) \
+               UNION ALL SELECT key, 'epic', title, 1 FROM epics WHERE key = ANY($1) \
+               UNION ALL SELECT key, 'initiative', title, 2 FROM initiatives WHERE key = ANY($1) \
+             ) x ORDER BY key, o",
+        )
+        .bind(keys.iter().map(Key::to_string).collect::<Vec<_>>())
+        .fetch_all(&mut **tx)
+        .await?;
+        let mut out = HashMap::with_capacity(rows.len());
+        for r in rows {
+            let level = match r.get::<&str, _>("t") {
+                "story" => ItemType::Story,
+                "epic" => ItemType::Epic,
+                "initiative" => ItemType::Initiative,
+                other => return Err(bad("item type", other).into()),
+            };
+            out.insert(
+                key(r.get("key")),
+                ItemHead {
+                    level,
+                    title: r.get("title"),
+                },
+            );
+        }
+        Ok(out)
+    }
     async fn pull_requests_for_many(
         &self,
         tx: &mut Transaction<'_, Postgres>,
