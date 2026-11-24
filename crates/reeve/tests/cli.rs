@@ -1746,8 +1746,8 @@ fn apply_refuses_unknown_fields_and_names_in_links_and_web_links_before_sending(
 /// accepts no connection, and the error is the one raised while the file is read).
 #[test]
 fn apply_points_a_blocking_word_under_links_at_the_blocks_list_and_sends_nothing() {
-    const POINTER: &str =
-        "blocking is not an item link: list it under `blocks` as `{story, blocked_by}`";
+    const POINTER: &str = "blocking is not an item link: list it under `blocks` as `{story, blocked_by}` \
+                           (stories only; otherwise leave it out)";
     let dir = tempfile::tempdir().unwrap();
     let refused = |file: &std::path::Path, what: &str| {
         let out = reeve_at("http://127.0.0.1:9", &["apply", file.to_str().unwrap()]);

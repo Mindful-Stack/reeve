@@ -37,9 +37,10 @@ const FOLLOWS_NOTE: &str =
     "Informational: follows does not hold a story back. To hold one back, list it under blocks.";
 
 /// The answer to a blocking word written as an item link's `type` in a plan file: the plan's form of the pointer
-/// `reeve link` gives (kb/ADR-0031 R2).
-const BLOCKING_IN_A_PLAN: &str =
-    "blocking is not an item link: list it under `blocks` as `{story, blocked_by}`";
+/// `reeve link` gives (kb/ADR-0031 R2). A blocker is between two stories, so the relation of anything else has no
+/// place in a plan and is left out, never written as an item link.
+const BLOCKING_IN_A_PLAN: &str = "blocking is not an item link: list it under `blocks` as `{story, blocked_by}` \
+                                  (stories only; otherwise leave it out)";
 
 pub async fn run(c: &Client, a: Apply, json: bool) -> anyhow::Result<i32> {
     let text = super::text_arg(None, Some(a.file.clone()))?.unwrap_or_default();
