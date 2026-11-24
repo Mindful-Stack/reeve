@@ -3,7 +3,7 @@
 //! actions.
 use super::Acting;
 use crate::{error::AppError, state::AppState};
-use reeve_protocol::{AddItemLink, ItemLinkDto, LinkListingDto, LinkType};
+use reeve_protocol::{AddItemLink, ItemLinkDto, ItemLinkType, LinkListingDto};
 
 /// `reeve link ls <KEY>`: the item links of one item of any level. Behind `GET /api/v1/items/{key}/links`. `key`
 /// is what the route takes: its path parameter, a key or an external reference.
@@ -44,13 +44,13 @@ pub(crate) async fn remove_item_link(
     link_type: &str,
     to: &str,
 ) -> Result<Vec<ItemLinkDto>, AppError> {
-    let link_type = LinkType::from_wire(link_type).ok_or_else(|| {
+    let link_type = ItemLinkType::from_wire(link_type).ok_or_else(|| {
         // The names come from the protocol's table, in its order and its wire spelling: a name added there is
         // listed here without an edit.
         AppError::Validation(format!(
             "unknown item link name {:?}: one of {}",
             crate::text::echo(link_type),
-            LinkType::ALL.map(LinkType::wire).join(", ")
+            ItemLinkType::ALL.map(ItemLinkType::wire).join(", ")
         ))
     })?;
     let (_, from) = state.handlers.resolve_any(key).await?;

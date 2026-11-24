@@ -8,7 +8,7 @@ use reeve_planning::{
     StoryPromiseRow, StoryText, UrgentMark, compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
-    CheckResult, ClosureKind, DeliveryState, Key, Kind, LinkType, Reason, Resolution,
+    CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason, Resolution,
     Reversibility, SprintState, TokenKind, Via,
 };
 use std::sync::Arc;
@@ -3323,7 +3323,7 @@ async fn add_link(
     ports: &PlanningPorts,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     from: &str,
-    t: LinkType,
+    t: ItemLinkType,
     to: &str,
 ) -> bool {
     let link = ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap();
@@ -3334,7 +3334,7 @@ async fn remove_link(
     ports: &PlanningPorts,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     from: &str,
-    t: LinkType,
+    t: ItemLinkType,
     to: &str,
 ) -> bool {
     let link = ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap();
@@ -3347,7 +3347,7 @@ async fn remove_link(
 /// no item row is needed here.
 #[tokio::test]
 async fn item_links_are_stored_once_and_read_from_either_end() {
-    use LinkType::{Duplicates, Follows, RelatesTo};
+    use ItemLinkType::{Duplicates, Follows, RelatesTo};
     let (_c, pool) = common::pg().await;
     let ports = make_planning_ports(pool.clone());
     let link = |from: &str, t, to: &str| {
@@ -3474,15 +3474,15 @@ async fn the_item_links_table_refuses_what_the_domain_refuses() {
     assert!(insert("ABC-10", "ABC-9", "relates_to").await.is_ok());
     assert!(insert("NEW-9", "OLD-9", "relates_to").await.is_ok());
     // Every name of the protocol's table, in its wire spelling, is one the table's check accepts: a name added to
-    // `LinkType` without a migration that widens the check fails here.
-    for t in LinkType::ALL {
+    // `ItemLinkType` without a migration that widens the check fails here.
+    for t in ItemLinkType::ALL {
         assert!(insert("ABC-20", "ABC-21", t.wire()).await.is_ok(), "{t:?}");
     }
     // The table's order check and the protocol's `directed` column say the same thing for every name: an
     // undirected name is refused with the higher key first, a directed one is accepted in both orders. A name
     // whose `directed` changes, or a new one, without a migration that changes the check fails here.
     assert!("ABC-30".as_bytes() < "ABC-31".as_bytes(), "the control");
-    for t in LinkType::ALL {
+    for t in ItemLinkType::ALL {
         let lower_first = insert("ABC-30", "ABC-31", t.wire()).await;
         let higher_first = insert("ABC-31", "ABC-30", t.wire()).await;
         assert!(lower_first.is_ok(), "{t:?}, the lower key first");

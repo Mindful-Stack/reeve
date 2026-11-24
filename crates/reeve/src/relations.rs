@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 /// Clap's parser for an item link name. Blocking is not an item link (kb/ADR-0031 R2), so the words people try
 /// for it are answered with where blocking lives.
-pub fn parse_link_name(s: &str) -> Result<LinkType, String> {
+pub fn parse_link_name(s: &str) -> Result<ItemLinkType, String> {
     if matches!(
         s,
         "blocks" | "blocked-by" | "blocked_by" | "depends-on" | "depends_on"
@@ -15,8 +15,8 @@ pub fn parse_link_name(s: &str) -> Result<LinkType, String> {
             "blocking is not an item link: use `reeve story block <KEY> --by <OTHER>`".into(),
         );
     }
-    LinkType::from_cli(s).ok_or_else(|| {
-        let [first, second, last] = LinkType::ALL.map(LinkType::cli);
+    ItemLinkType::from_cli(s).ok_or_else(|| {
+        let [first, second, last] = ItemLinkType::ALL.map(ItemLinkType::cli);
         format!("`{s}` is not an item link name: use {first}, {second} or {last}")
     })
 }
@@ -91,9 +91,9 @@ mod tests {
 
     #[test]
     fn a_name_is_spelled_with_a_hyphen_and_blocking_words_point_at_story_block() {
-        assert_eq!(parse_link_name("follows"), Ok(LinkType::Follows));
-        assert_eq!(parse_link_name("duplicates"), Ok(LinkType::Duplicates));
-        assert_eq!(parse_link_name("relates-to"), Ok(LinkType::RelatesTo));
+        assert_eq!(parse_link_name("follows"), Ok(ItemLinkType::Follows));
+        assert_eq!(parse_link_name("duplicates"), Ok(ItemLinkType::Duplicates));
+        assert_eq!(parse_link_name("relates-to"), Ok(ItemLinkType::RelatesTo));
         for blocking in [
             "blocks",
             "blocked-by",

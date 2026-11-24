@@ -1,6 +1,6 @@
 //! Item links (kb/ADR-0031): a named, informational connection between two different items of any level. An edge
 //! of its own, owned by neither item (R4). Pure: no item is read here, and nothing here is a readiness fact (R3).
-use reeve_protocol::{Key, LinkDirection, LinkType};
+use reeve_protocol::{ItemLinkDirection, ItemLinkType, Key};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ItemLinkError {
@@ -12,7 +12,7 @@ pub enum ItemLinkError {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemLink {
     from: Key,
-    link_type: LinkType,
+    link_type: ItemLinkType,
     to: Key,
 }
 
@@ -21,7 +21,7 @@ impl ItemLink {
     /// it is stored with the lower key in `from`, whichever end the caller named (R4). "Lower" is byte order of
     /// the whole key text (`OLD-9` and `NEW-9` never tie, `ABC-10` is below `ABC-9`); the order means nothing
     /// beyond making the row unique, and the table's check holds the same order (`COLLATE "C"`).
-    pub fn new(from: Key, link_type: LinkType, to: Key) -> Result<Self, ItemLinkError> {
+    pub fn new(from: Key, link_type: ItemLinkType, to: Key) -> Result<Self, ItemLinkError> {
         if from == to {
             return Err(ItemLinkError::SelfLink);
         }
@@ -35,7 +35,7 @@ impl ItemLink {
         })
     }
     /// A stored row, as it is: no check.
-    pub fn from_persisted(from: Key, link_type: LinkType, to: Key) -> Self {
+    pub fn from_persisted(from: Key, link_type: ItemLinkType, to: Key) -> Self {
         Self {
             from,
             link_type,
@@ -45,7 +45,7 @@ impl ItemLink {
     pub fn from_key(&self) -> &Key {
         &self.from
     }
-    pub fn link_type(&self) -> LinkType {
+    pub fn link_type(&self) -> ItemLinkType {
         self.link_type
     }
     pub fn to_key(&self) -> &Key {
@@ -53,14 +53,14 @@ impl ItemLink {
     }
     /// How the link reads from `item`: the side, and the item at the other end. None when `item` is at neither
     /// end. Both ends of a `relates_to` read it as `out`.
-    pub fn seen_from(&self, item: &Key) -> Option<(LinkDirection, &Key)> {
+    pub fn seen_from(&self, item: &Key) -> Option<(ItemLinkDirection, &Key)> {
         if *item == self.from {
-            Some((LinkDirection::Out, &self.to))
+            Some((ItemLinkDirection::Out, &self.to))
         } else if *item == self.to {
             let direction = if self.link_type.directed() {
-                LinkDirection::In
+                ItemLinkDirection::In
             } else {
-                LinkDirection::Out
+                ItemLinkDirection::Out
             };
             Some((direction, &self.from))
         } else {
@@ -72,7 +72,7 @@ impl ItemLink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use LinkType::{Duplicates, Follows, RelatesTo};
+    use ItemLinkType::{Duplicates, Follows, RelatesTo};
 
     fn k(s: &str) -> Key {
         s.parse().unwrap()
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn a_link_from_an_item_to_itself_is_refused_for_every_name() {
-        for t in LinkType::ALL {
+        for t in ItemLinkType::ALL {
             assert_eq!(
                 ItemLink::new(k("ABC-1"), t, k("ABC-1")),
                 Err(ItemLinkError::SelfLink),
@@ -119,21 +119,21 @@ mod tests {
         let follows = ItemLink::new(k("ABC-2"), Follows, k("ABC-1")).unwrap();
         assert_eq!(
             follows.seen_from(&k("ABC-2")),
-            Some((LinkDirection::Out, &k("ABC-1")))
+            Some((ItemLinkDirection::Out, &k("ABC-1")))
         );
         assert_eq!(
             follows.seen_from(&k("ABC-1")),
-            Some((LinkDirection::In, &k("ABC-2")))
+            Some((ItemLinkDirection::In, &k("ABC-2")))
         );
         assert_eq!(follows.seen_from(&k("ABC-3")), None);
         let relates = ItemLink::new(k("ABC-2"), RelatesTo, k("ABC-1")).unwrap();
         assert_eq!(
             relates.seen_from(&k("ABC-1")),
-            Some((LinkDirection::Out, &k("ABC-2")))
+            Some((ItemLinkDirection::Out, &k("ABC-2")))
         );
         assert_eq!(
             relates.seen_from(&k("ABC-2")),
-            Some((LinkDirection::Out, &k("ABC-1")))
+            Some((ItemLinkDirection::Out, &k("ABC-1")))
         );
     }
 }

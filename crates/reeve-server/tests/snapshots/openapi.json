@@ -159,7 +159,7 @@
             "description": "A key or an external reference of an item of any level."
           },
           "type": {
-            "$ref": "#/components/schemas/LinkType"
+            "$ref": "#/components/schemas/ItemLinkType"
           }
         },
         "required": [
@@ -2546,11 +2546,19 @@
         ],
         "type": "object"
       },
+      "ItemLinkDirection": {
+        "description": "The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.\n`in`: it is the other one. `relates_to` has no direction and is always `out`.",
+        "enum": [
+          "out",
+          "in"
+        ],
+        "type": "string"
+      },
       "ItemLinkDto": {
         "description": "An item link as one of its two items reads it.",
         "properties": {
           "direction": {
-            "$ref": "#/components/schemas/LinkDirection"
+            "$ref": "#/components/schemas/ItemLinkDirection"
           },
           "item": {
             "$ref": "#/components/schemas/LinkedItemDto"
@@ -2560,7 +2568,7 @@
             "type": "string"
           },
           "type": {
-            "$ref": "#/components/schemas/LinkType"
+            "$ref": "#/components/schemas/ItemLinkType"
           }
         },
         "required": [
@@ -2570,6 +2578,15 @@
           "item"
         ],
         "type": "object"
+      },
+      "ItemLinkType": {
+        "description": "The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back\n(R2); a name is added only by an observation on that record. Declared in display order: `follows`,\n`duplicates`, `relates_to`.",
+        "enum": [
+          "follows",
+          "duplicates",
+          "relates_to"
+        ],
+        "type": "string"
       },
       "ItemRefDto": {
         "description": "An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is.",
@@ -2614,14 +2631,6 @@
           "story",
           "bug",
           "chore"
-        ],
-        "type": "string"
-      },
-      "LinkDirection": {
-        "description": "The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.\n`in`: it is the other one. `relates_to` has no direction and is always `out`.",
-        "enum": [
-          "out",
-          "in"
         ],
         "type": "string"
       },
@@ -2679,15 +2688,6 @@
           "record_id"
         ],
         "type": "object"
-      },
-      "LinkType": {
-        "description": "The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back\n(R2); a name is added only by an observation on that record. Declared in display order: `follows`,\n`duplicates`, `relates_to`.",
-        "enum": [
-          "follows",
-          "duplicates",
-          "relates_to"
-        ],
-        "type": "string"
       },
       "LinkedItemDto": {
         "description": "The item at the other end of an item link. No delivery state on purpose: a state beside \"follows\" would invite\nreading the link as a gate (kb/ADR-0031 R3).",
@@ -8729,7 +8729,7 @@
                   "description": "An item link as one of its two items reads it.",
                   "properties": {
                     "direction": {
-                      "$ref": "#/components/schemas/LinkDirection"
+                      "$ref": "#/components/schemas/ItemLinkDirection"
                     },
                     "item": {
                       "$ref": "#/components/schemas/LinkedItemDto"
@@ -8739,7 +8739,7 @@
                       "type": "string"
                     },
                     "type": {
-                      "$ref": "#/components/schemas/LinkType"
+                      "$ref": "#/components/schemas/ItemLinkType"
                     }
                   },
                   "required": [
@@ -16144,7 +16144,7 @@
             "name": "type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/LinkType"
+              "$ref": "#/components/schemas/ItemLinkType"
             }
           },
           {

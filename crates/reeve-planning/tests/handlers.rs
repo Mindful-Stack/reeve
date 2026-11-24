@@ -9987,7 +9987,7 @@ async fn every_entry_of_a_write_made_through_a_client_names_the_client() {
 /// end. An automation caller may do all of it.
 #[tokio::test]
 async fn item_links_are_added_once_logged_on_both_items_and_read_from_either_end() {
-    use reeve_protocol::LinkType::{Duplicates, Follows, RelatesTo};
+    use reeve_protocol::ItemLinkType::{Duplicates, Follows, RelatesTo};
     use serde_json::json;
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk(pool.clone());
@@ -10174,7 +10174,7 @@ async fn item_links_are_added_once_logged_on_both_items_and_read_from_either_end
 /// own transaction already shows the change and another connection does not yet.
 #[tokio::test]
 async fn an_item_link_and_its_entries_commit_together() {
-    use reeve_protocol::LinkType::Follows;
+    use reeve_protocol::ItemLinkType::Follows;
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk_probe(
         pool.clone(),
@@ -10238,7 +10238,7 @@ async fn an_item_link_and_its_entries_commit_together() {
 /// and `LONG-2` comes before `A-3`, which comes before `A-10`.
 #[tokio::test]
 async fn item_links_list_linked_items_by_key_number_across_prefixes() {
-    use reeve_protocol::LinkType::Follows;
+    use reeve_protocol::ItemLinkType::Follows;
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let c = ctx("dan@example.com", false);
@@ -10321,7 +10321,7 @@ async fn item_links_list_linked_items_by_key_number_across_prefixes() {
 /// written the row and the first item's entry.
 #[tokio::test]
 async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row_and_no_entry() {
-    use reeve_protocol::LinkType::Follows;
+    use reeve_protocol::ItemLinkType::Follows;
     let (_c, pool) = common::pg().await;
     let (h, sink) = mk_table_sink(pool.clone()).await;
     let c = ctx("dan@example.com", false);
@@ -10399,7 +10399,7 @@ async fn an_item_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row
 /// statement that names `item_links`.
 #[tokio::test]
 async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
-    use reeve_protocol::LinkType::{Duplicates, Follows, RelatesTo};
+    use reeve_protocol::ItemLinkType::{Duplicates, Follows, RelatesTo};
     // `pg_counted`: this database has `pg_stat_statements`, which the query-level check at the end reads.
     let (_c, pool) = common::pg_counted().await;
     let (h, _sink) = mk(pool.clone());
@@ -10672,7 +10672,7 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
 /// out, in Rust and in the JSON.
 #[tokio::test]
 async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
-    use reeve_protocol::LinkType::{Follows, RelatesTo};
+    use reeve_protocol::ItemLinkType::{Follows, RelatesTo};
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let c = ctx("dan@example.com", false);

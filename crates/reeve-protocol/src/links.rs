@@ -15,7 +15,7 @@ use utoipa::ToSchema;
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum LinkType {
+pub enum ItemLinkType {
     Follows,
     Duplicates,
     RelatesTo,
@@ -27,14 +27,14 @@ pub enum LinkType {
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum LinkDirection {
+pub enum ItemLinkDirection {
     Out,
     In,
 }
 
 /// One row of the name table.
 struct Name {
-    link_type: LinkType,
+    link_type: ItemLinkType,
     /// On the wire and in the database.
     wire: &'static str,
     /// On the command line.
@@ -49,11 +49,11 @@ struct Name {
     directed: bool,
 }
 
-/// The one table of names, in `LinkType`'s declaration order: `LinkType::name` indexes it, and a test holds the
+/// The one table of names, in `ItemLinkType`'s declaration order: `ItemLinkType::name` indexes it, and a test holds the
 /// two in step.
 const NAMES: [Name; 3] = [
     Name {
-        link_type: LinkType::Follows,
+        link_type: ItemLinkType::Follows,
         wire: "follows",
         cli: "follows",
         out: "follows",
@@ -61,7 +61,7 @@ const NAMES: [Name; 3] = [
         directed: true,
     },
     Name {
-        link_type: LinkType::Duplicates,
+        link_type: ItemLinkType::Duplicates,
         wire: "duplicates",
         cli: "duplicates",
         out: "duplicates",
@@ -69,7 +69,7 @@ const NAMES: [Name; 3] = [
         directed: true,
     },
     Name {
-        link_type: LinkType::RelatesTo,
+        link_type: ItemLinkType::RelatesTo,
         wire: "relates_to",
         cli: "relates-to",
         out: "relates to",
@@ -78,8 +78,12 @@ const NAMES: [Name; 3] = [
     },
 ];
 
-impl LinkType {
-    pub const ALL: [LinkType; 3] = [LinkType::Follows, LinkType::Duplicates, LinkType::RelatesTo];
+impl ItemLinkType {
+    pub const ALL: [ItemLinkType; 3] = [
+        ItemLinkType::Follows,
+        ItemLinkType::Duplicates,
+        ItemLinkType::RelatesTo,
+    ];
 
     fn name(self) -> &'static Name {
         &NAMES[self as usize]
@@ -94,10 +98,10 @@ impl LinkType {
     }
     /// Display text for one side ("is followed by"). Behaviour depends on the type and the direction, never on
     /// this text.
-    pub fn label(self, direction: LinkDirection) -> &'static str {
+    pub fn label(self, direction: ItemLinkDirection) -> &'static str {
         match direction {
-            LinkDirection::Out => self.name().out,
-            LinkDirection::In => self.name().inward,
+            ItemLinkDirection::Out => self.name().out,
+            ItemLinkDirection::In => self.name().inward,
         }
     }
     pub fn from_wire(s: &str) -> Option<Self> {
@@ -127,8 +131,8 @@ pub struct LinkedItemDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ItemLinkDto {
     #[serde(rename = "type")]
-    pub link_type: LinkType,
-    pub direction: LinkDirection,
+    pub link_type: ItemLinkType,
+    pub direction: ItemLinkDirection,
     /// Display text for this side ("is followed by"), from the name table.
     pub label: String,
     pub item: LinkedItemDto,
@@ -140,7 +144,7 @@ pub struct ItemLinkDto {
 #[serde(deny_unknown_fields)]
 pub struct AddItemLink {
     #[serde(rename = "type")]
-    pub link_type: LinkType,
+    pub link_type: ItemLinkType,
     /// A key or an external reference of an item of any level.
     pub to: KeyRef,
 }
@@ -155,14 +159,14 @@ pub struct LinkListingDto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use LinkDirection::{In, Out};
-    use LinkType::{Duplicates, Follows, RelatesTo};
+    use ItemLinkDirection::{In, Out};
+    use ItemLinkType::{Duplicates, Follows, RelatesTo};
     use serde_json::json;
 
     /// The whole table written out by hand, not read back through `NAMES`.
     #[test]
     fn every_name_has_its_spellings_and_its_wording_for_each_side() {
-        let table: Vec<_> = LinkType::ALL
+        let table: Vec<_> = ItemLinkType::ALL
             .iter()
             .map(|t| {
                 (
@@ -208,10 +212,10 @@ mod tests {
 
     #[test]
     fn the_wire_spelling_is_what_serde_writes_and_the_set_is_closed() {
-        for t in LinkType::ALL {
+        for t in ItemLinkType::ALL {
             assert_eq!(serde_json::to_value(t).unwrap(), json!(t.wire()));
-            assert_eq!(LinkType::from_wire(t.wire()), Some(t));
-            assert_eq!(LinkType::from_cli(t.cli()), Some(t));
+            assert_eq!(ItemLinkType::from_wire(t.wire()), Some(t));
+            assert_eq!(ItemLinkType::from_cli(t.cli()), Some(t));
         }
         for unknown in [
             "blocks",
@@ -221,15 +225,15 @@ mod tests {
             "Follows",
             "",
         ] {
-            assert_eq!(LinkType::from_wire(unknown), None, "{unknown}");
+            assert_eq!(ItemLinkType::from_wire(unknown), None, "{unknown}");
             assert!(
-                serde_json::from_value::<LinkType>(json!(unknown)).is_err(),
+                serde_json::from_value::<ItemLinkType>(json!(unknown)).is_err(),
                 "{unknown}"
             );
         }
         // The command line takes the hyphen only.
-        assert_eq!(LinkType::from_cli("relates_to"), None);
-        assert_eq!(LinkType::from_cli("blocks"), None);
+        assert_eq!(ItemLinkType::from_cli("relates_to"), None);
+        assert_eq!(ItemLinkType::from_cli("blocks"), None);
     }
 
     #[test]

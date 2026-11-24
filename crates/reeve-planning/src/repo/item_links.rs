@@ -49,7 +49,7 @@ impl ItemLinkRepo for PgPlanningRepo {
         .await?;
         rows.into_iter()
             .map(|(from, to, name)| -> Result<ItemLink, RepoError> {
-                let link_type = reeve_protocol::LinkType::from_wire(&name)
+                let link_type = reeve_protocol::ItemLinkType::from_wire(&name)
                     .ok_or_else(|| bad("item link name", &name))?;
                 Ok(ItemLink::from_persisted(key(&from), link_type, key(&to)))
             })

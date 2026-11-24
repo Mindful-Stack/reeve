@@ -41,7 +41,7 @@ async fn add_item_link(
 /// Removes "`key` <type> `to`", the forward form: a link an item shows as "is followed by X" is removed by naming
 /// X first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and
 /// changes nothing. Answers the item's links.
-#[utoipa::path(delete, path = "/items/{key}/links/{type}/{to}", params(("key" = String, Path), ("type" = LinkType, Path), ("to" = String, Path)), responses((status = 200, body = Response<Vec<ItemLinkDto>>)))]
+#[utoipa::path(delete, path = "/items/{key}/links/{type}/{to}", params(("key" = String, Path), ("type" = ItemLinkType, Path), ("to" = String, Path)), responses((status = 200, body = Response<Vec<ItemLinkDto>>)))]
 async fn remove_item_link(
     State(s): State<AppState>,
     c: Caller,

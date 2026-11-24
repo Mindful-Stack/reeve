@@ -1386,7 +1386,7 @@ export interface components {
         AddItemLink: {
             /** @description A key or an external reference of an item of any level. */
             to: components["schemas"]["KeyRef"];
-            type: components["schemas"]["LinkType"];
+            type: components["schemas"]["ItemLinkType"];
         };
         /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
@@ -2112,14 +2112,27 @@ export interface components {
             secret: string;
             token: components["schemas"]["TokenDto"];
         };
+        /**
+         * @description The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.
+         *     `in`: it is the other one. `relates_to` has no direction and is always `out`.
+         * @enum {string}
+         */
+        ItemLinkDirection: "out" | "in";
         /** @description An item link as one of its two items reads it. */
         ItemLinkDto: {
-            direction: components["schemas"]["LinkDirection"];
+            direction: components["schemas"]["ItemLinkDirection"];
             item: components["schemas"]["LinkedItemDto"];
             /** @description Display text for this side ("is followed by"), from the name table. */
             label: string;
-            type: components["schemas"]["LinkType"];
+            type: components["schemas"]["ItemLinkType"];
         };
+        /**
+         * @description The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back
+         *     (R2); a name is added only by an observation on that record. Declared in display order: `follows`,
+         *     `duplicates`, `relates_to`.
+         * @enum {string}
+         */
+        ItemLinkType: "follows" | "duplicates" | "relates_to";
         /** @description An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is. */
         ItemRefDto: {
             item: components["schemas"]["ItemType"];
@@ -2133,12 +2146,6 @@ export interface components {
         KeyRef: string;
         /** @enum {string} */
         Kind: "story" | "bug" | "chore";
-        /**
-         * @description The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.
-         *     `in`: it is the other one. `relates_to` has no direction and is always `out`.
-         * @enum {string}
-         */
-        LinkDirection: "out" | "in";
         /** @description Items to link, each a key or external reference of any level. */
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
@@ -2156,13 +2163,6 @@ export interface components {
             record_id: string;
             repo: string;
         };
-        /**
-         * @description The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back
-         *     (R2); a name is added only by an observation on that record. Declared in display order: `follows`,
-         *     `duplicates`, `relates_to`.
-         * @enum {string}
-         */
-        LinkType: "follows" | "duplicates" | "relates_to";
         /**
          * @description The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
          *     reading the link as a gate (kb/ADR-0031 R3).
@@ -3992,11 +3992,11 @@ export interface components {
             /** @enum {string} */
             outcome: "ok";
             value: {
-                direction: components["schemas"]["LinkDirection"];
+                direction: components["schemas"]["ItemLinkDirection"];
                 item: components["schemas"]["LinkedItemDto"];
                 /** @description Display text for this side ("is followed by"), from the name table. */
                 label: string;
-                type: components["schemas"]["LinkType"];
+                type: components["schemas"]["ItemLinkType"];
             }[];
         } | {
             /** @enum {string} */
@@ -8951,7 +8951,7 @@ export interface operations {
             header?: never;
             path: {
                 key: string;
-                type: components["schemas"]["LinkType"];
+                type: components["schemas"]["ItemLinkType"];
                 to: string;
             };
             cookie?: never;

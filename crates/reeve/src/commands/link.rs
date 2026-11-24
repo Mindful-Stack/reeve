@@ -16,7 +16,7 @@ pub enum Link {
         key: KeyRef,
         /// follows, duplicates or relates-to.
         #[arg(value_parser = parse_link_name, value_name = "follows|duplicates|relates-to")]
-        name: LinkType,
+        name: ItemLinkType,
         /// The other item, of any level.
         other: KeyRef,
     },
@@ -28,7 +28,7 @@ pub enum Link {
         key: KeyRef,
         /// follows, duplicates or relates-to.
         #[arg(value_parser = parse_link_name, value_name = "follows|duplicates|relates-to")]
-        name: LinkType,
+        name: ItemLinkType,
         /// The other item.
         other: KeyRef,
     },
@@ -48,13 +48,13 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
                     serde_json::json!({"type": name, "to": other}),
                 )
                 .await?;
-            let note = if !json && name == LinkType::Follows && matches!(out, Outcome::Ok(_)) {
+            let note = if !json && name == ItemLinkType::Follows && matches!(out, Outcome::Ok(_)) {
                 not_a_blocker(c, &key, &other).await
             } else {
                 None
             };
             finish(out, json, |_| {
-                let line = format!("{key} {} {other}", name.label(LinkDirection::Out));
+                let line = format!("{key} {} {other}", name.label(ItemLinkDirection::Out));
                 match &note {
                     Some(note) => format!("{line}\n{note}"),
                     None => line,
@@ -65,7 +65,12 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
             c.delete::<Vec<ItemLinkDto>>(&format!("/items/{key}/links/{}/{other}", name.wire()))
                 .await?,
             json,
-            |_| format!("removed: {key} {} {other}", name.label(LinkDirection::Out)),
+            |_| {
+                format!(
+                    "removed: {key} {} {other}",
+                    name.label(ItemLinkDirection::Out)
+                )
+            },
         ),
         Link::Ls { key } => finish(
             c.get::<LinkListingDto>(&format!("/items/{key}/links"))

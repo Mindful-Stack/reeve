@@ -1851,8 +1851,8 @@ mod tests {
     }
 
     fn item_link(
-        t: LinkType,
-        direction: LinkDirection,
+        t: ItemLinkType,
+        direction: ItemLinkDirection,
         key: &str,
         level: ItemType,
         title: &str,
@@ -1874,18 +1874,24 @@ mod tests {
     /// holds the story back: this block does not know); with no blockers and no links there is no block at all.
     #[test]
     fn show_prints_blockers_then_item_links_and_nothing_when_there_are_none() {
-        use LinkDirection::{In, Out};
+        use ItemLinkDirection::{In, Out};
         let links = vec![
             item_link(
-                LinkType::Follows,
+                ItemLinkType::Follows,
                 Out,
                 "ABC-25",
                 ItemType::Story,
                 "Billing account",
             ),
-            item_link(LinkType::Follows, In, "ABC-31", ItemType::Story, "Dunning"),
             item_link(
-                LinkType::RelatesTo,
+                ItemLinkType::Follows,
+                In,
+                "ABC-31",
+                ItemType::Story,
+                "Dunning",
+            ),
+            item_link(
+                ItemLinkType::RelatesTo,
                 Out,
                 "ABC-40",
                 ItemType::Epic,
@@ -1959,8 +1965,8 @@ mod tests {
             story: StoryDto {
                 blocked_by: vec![blocker.key.clone(), unowned.key.clone()],
                 links: Some(vec![item_link(
-                    LinkType::Duplicates,
-                    LinkDirection::In,
+                    ItemLinkType::Duplicates,
+                    ItemLinkDirection::In,
                     "ABC-50",
                     ItemType::Story,
                     "Old invoice",

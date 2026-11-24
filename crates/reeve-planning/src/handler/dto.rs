@@ -13,7 +13,7 @@ use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
     DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
     EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto,
-    InitiativeDto, ItemLinkDto, Key, LinkDirection, LinkType, LinkedItemDto, PromiseDue,
+    InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue,
     PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
     RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto,
     StoryDto, StoryPromiseDto,
@@ -547,8 +547,8 @@ impl From<reeve_protocol::SetPromise> for promise::Request {
 /// An item link as one of its ends reads it: the side, the wording for that side from the protocol's name table,
 /// and the item at the other end.
 pub(crate) fn item_link_dto(
-    link_type: LinkType,
-    direction: LinkDirection,
+    link_type: ItemLinkType,
+    direction: ItemLinkDirection,
     other: &Key,
     head: &ItemHead,
 ) -> ItemLinkDto {

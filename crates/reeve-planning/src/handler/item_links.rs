@@ -4,7 +4,7 @@
 //! its token kind (R7).
 use super::*;
 use crate::domain::item_link::ItemLink;
-use reeve_protocol::{ItemLinkDto, LinkListingDto, LinkType};
+use reeve_protocol::{ItemLinkDto, ItemLinkType, LinkListingDto};
 use sqlx::{Postgres, Transaction};
 
 impl Handlers {
@@ -14,7 +14,7 @@ impl Handlers {
     async fn item_link_ends(
         &self,
         from: &Key,
-        link_type: LinkType,
+        link_type: ItemLinkType,
         to: &Key,
     ) -> Result<(ItemLink, [(ItemType, Key); 2]), HandlerError> {
         let link = ItemLink::new(from.clone(), link_type, to.clone())?;
@@ -71,7 +71,7 @@ impl Handlers {
         &self,
         c: &Ctx,
         from: &Key,
-        link_type: LinkType,
+        link_type: ItemLinkType,
         to: &Key,
     ) -> Result<bool, HandlerError> {
         let (link, ends) = self.item_link_ends(from, link_type, to).await?;
@@ -108,7 +108,7 @@ impl Handlers {
         &self,
         c: &Ctx,
         from: &Key,
-        link_type: LinkType,
+        link_type: ItemLinkType,
         to: &Key,
     ) -> Result<bool, HandlerError> {
         let (link, ends) = self.item_link_ends(from, link_type, to).await?;
