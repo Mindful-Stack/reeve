@@ -10170,6 +10170,69 @@ async fn item_links_are_added_once_logged_on_both_items_and_read_from_either_end
     assert_eq!(sink.0.lock().unwrap().len(), before);
 }
 
+/// kb/ADR-0031 R7. A `relates_to` between an epic and a story, named with the higher key (the story) first: the
+/// link is stored with the epic first, and each entry of the add and of the remove is recorded under its own
+/// item's level and key, never under the other's.
+#[tokio::test]
+async fn a_relates_to_named_with_the_higher_key_first_is_logged_under_each_items_own_level() {
+    use reeve_protocol::ItemLinkType::RelatesTo;
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let c = ctx("dan@example.com", false);
+    let e = h
+        .create_epic(&c, "e", "Invoices", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "Template",
+            Kind::Story,
+            Some(e.clone()),
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    assert!(
+        e.to_string() < s.to_string(),
+        "the control: the story has the higher key, {e} < {s}"
+    );
+    let entries = |action: &str| -> Vec<(String, String, serde_json::Value)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == action)
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.payload.clone(),
+                )
+            })
+            .collect()
+    };
+    let stored = json!({"type": "relates_to", "from": e, "to": s});
+    let want = vec![
+        ("epic".to_string(), e.to_string(), stored.clone()),
+        ("story".to_string(), s.to_string(), stored.clone()),
+    ];
+    assert!(h.add_item_link(&c, &s, RelatesTo, &e).await.unwrap());
+    assert_eq!(entries("item_link_added"), want);
+    assert!(h.remove_item_link(&c, &s, RelatesTo, &e).await.unwrap());
+    assert_eq!(entries("item_link_removed"), want);
+}
+
 /// kb/ADR-0010 R5: the row and its entries commit together. At the moment each entry is recorded, the mutation's
 /// own transaction already shows the change and another connection does not yet.
 #[tokio::test]
