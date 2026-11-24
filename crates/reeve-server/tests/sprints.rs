@@ -466,7 +466,8 @@ async fn new_initiative(h: &Harness, idem: &str, title: &str, horizon: &str) -> 
 async fn planning_compares_goals_with_the_first_horizon_bucket() {
     let h = harness().await;
     // The harness keeps the default buckets, which start "Now", "Next" (`default_buckets` in config.rs).
-    // Created in the reverse of their title order, so a list in creation or key order would fail.
+    // The bucket's two members are created in the reverse of their title order ("No goal reaches it" first, so it has
+    // the lower key), so a bucket list in creation or key order instead of title order would fail.
     let empty = new_initiative(&h, "i-empty", "No goal reaches it", "Now").await;
     let outside = new_initiative(&h, "i-out", "Outside it", "Next").await;
     let inside = new_initiative(&h, "i-in", "In the bucket", "Now").await;
