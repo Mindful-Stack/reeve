@@ -284,8 +284,11 @@
 				{#each LINK_TYPES as t (t)}<option value={t}>{linkTypeText(t)}</option>{/each}
 			</select>
 			<ItemSearch label="Other item" bind:picked exclude={itemKey} disabled={busy} />
-			<button type="button" disabled={busy} onclick={closeLink}>Cancel</button>
-			<button type="submit" disabled={busy || !picked}>Add</button>
+			<!-- One flex child, so the two buttons wrap together and never part onto two rows. -->
+			<span class="actions">
+				<button type="button" disabled={busy} onclick={closeLink}>Cancel</button>
+				<button type="submit" disabled={busy || !picked}>Add</button>
+			</span>
 			{#if hint}<p class="muted hint" id="{id}-link-hint">{hint}</p>{/if}
 			{#if linkError}<p class="error" role="alert">{linkError}</p>{/if}
 		</form>
@@ -340,8 +343,10 @@
 				</label>
 				<p class="muted hint" id="{id}-url-hint">The full address, starting with https://</p>
 			</div>
-			<button type="button" disabled={busy} onclick={closeWeb}>Cancel</button>
-			<button type="submit" disabled={busy || !title.trim() || !url.trim()}>Add</button>
+			<span class="actions">
+				<button type="button" disabled={busy} onclick={closeWeb}>Cancel</button>
+				<button type="submit" disabled={busy || !title.trim() || !url.trim()}>Add</button>
+			</span>
 			{#if webError}<p class="error" role="alert" id="{id}-web-error">{webError}</p>{/if}
 		</form>
 	{:else}
@@ -410,8 +415,20 @@
 		font-size: 13px;
 	}
 	/* The add buttons sit at the start of their row, not stretched across the grid. */
+	/* Their text starts at the section's left edge, as the drawer's other add controls do; the small padding is room
+	   for the hover background. */
 	.ghost {
 		justify-self: start;
+		margin-left: -4px;
+		padding: 0 4px;
+	}
+	/* A note under the rows, in their size. */
+	.standing {
+		font-size: 14px;
+	}
+	.actions {
+		display: flex;
+		gap: 8px;
 	}
 	/* Every control may shrink and wrap: at phone width the form stacks instead of scrolling the page sideways. */
 	.add-form {

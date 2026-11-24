@@ -1282,11 +1282,36 @@
 		justify-content: flex-end;
 		gap: 0.5rem;
 	}
-	.reasons,
-	.blockers {
+	.reasons {
 		margin: 0 0 0.5rem;
 		padding-left: 1.2rem;
 		font-size: 14px;
+	}
+	/* The blockers are the first group of Relations: their rows line up with the item link rows under them (no bullet,
+	   the link first, a small Remove at the row's end). */
+	.blockers {
+		display: grid;
+		gap: 4px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		font-size: 14px;
+	}
+	.blockers li {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		align-items: baseline;
+		min-width: 0;
+	}
+	.blockers a {
+		flex: 1 1 12rem;
+		min-width: 0;
+	}
+	.blockers button {
+		height: 24px;
+		padding: 0 8px;
+		font-size: 13px;
 	}
 	.toggle {
 		display: block;
