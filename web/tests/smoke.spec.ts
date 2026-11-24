@@ -1187,6 +1187,36 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	}
 });
 
+test('a table of two or three columns wraps on a phone instead of scrolling; only one of four or more keeps a readable width', async ({ page }) => {
+	const url = `https://example.com/${'a'.repeat(100)}`;
+	const three = `| Source | Link | Note |\n|---|---|---|\n| The design file for the meeting point flow | ${url} | Read it before the workshop on Thursday, and bring the notes from the last one |`;
+	const glossary = `| Term | Definition |\n|---|---|\n| Meeting point | The place the group is sent to, computed from where every member is and how each of them travels |\n| Member | Somebody who has joined the group and shares a position while the group is open |`;
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table columns smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `${three}\n\ntext\n\n${glossary}\n\ntext\n\n${WIDE_TABLE}`
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wraps = page.locator('.brief [data-table-scroll]');
+	await expect(wraps).toHaveCount(3);
+	await expect(wraps.nth(2)).toHaveAttribute('tabindex', '0');
+	const m = await wraps.evaluateAll((all) => all.map((w) => ({ scroll: w.scrollWidth, client: w.clientWidth, table: w.firstElementChild!.getBoundingClientRect().width })));
+	// Three columns with a sentence and a long link, and a glossary: as wide as the page, wrapped, nothing to scroll to.
+	for (const w of m.slice(0, 2)) {
+		expect(w.client).toBeGreaterThan(0);
+		expect(w.scroll).toBeLessThanOrEqual(w.client);
+		expect(w.table).toBeLessThanOrEqual(w.client);
+	}
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	// Six columns would be a word or two a line at that width: it scrolls, at a width that can be read.
+	expect(m[2].scroll).toBeGreaterThan(m[2].client);
+	expect(m[2].table).toBeGreaterThan(600);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+});
+
 test('a wide table in a description or a comment scrolls inside its wrapper: the drawer, the pages and triage do not widen', async ({ page }) => {
 	const suffix = crypto.randomUUID().slice(0, 6);
 	const comment = (key: string) => post(page, `/api/v1/items/${key}/comments`, { body: `See the steps:\n\n${WIDE_TABLE}`, idempotency_key: crypto.randomUUID() });

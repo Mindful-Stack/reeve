@@ -338,10 +338,16 @@ textarea[data-drop] {
 [data-table-scroll] table {
 	border-collapse: collapse;
 	font-size: 0.9375em;
-	/* As wide as its content, up to the wrapper; where the wrapper is narrow (a phone, the drawer) up to 44rem, so a
-	   table that has to scroll anyway keeps lines that can be read instead of one or two words per line. */
+	/* As wide as its content, up to the wrapper: two or three columns wrap inside it, even with a sentence in a cell. */
 	width: max-content;
-	max-width: max(100%, 44rem);
+	max-width: 100%;
+}
+/* Four columns or more in a narrow wrapper (a phone, the drawer) would be one or two words per line: such a table may
+   grow to 44rem and scroll, so its lines can be read. On paper nothing scrolls, so this holds on screen only. */
+@media screen {
+	[data-table-scroll] table:has(tr > :nth-child(4)) {
+		max-width: max(100%, 44rem);
+	}
 }
 [data-table-scroll] th,
 [data-table-scroll] td {
