@@ -83,7 +83,7 @@ without that ever changing whether a story may start.
 
 ## Later observations
 <!-- append-only, accepted records only; newest last -->
-- 2026-11-24 (GRA-877, https://github.com/Mindful-Stack/reeve/pull/73): how R3 is read for the answers of writes. The answer of a write that returns one item (create, edit, move, mark) carries the item's item links, because it is built by the same reader as a read of one item. That reader runs after the write's commit, in a separate read that cannot influence the move, so R3's "MUST NOT be read when … a story is moved" is read as: not read by the move or by the readiness it computes. It is held by the isolation lint (`handler/moves.rs` may name none of the item-link functions), by the snapshot test (`item_links_change_no_readiness_delivery_progress_rank_or_version`) and by its query-level check that readiness and a move send no statement naming `item_links`. No trigger fired; the decision holds.
+- 2026-11-24 (GRA-877, https://github.com/Mindful-Stack/reeve/pull/73): the answers of writes and R3. The answer of a write that returns one item (create, edit, move, mark) carries the item's item links, because it is built by the same reader as a read of one item. That reader reads item links after the write's commit, in a separate read-only transaction, so no item link is read while a story is moved and R3 holds as written. It is held by the isolation lint (`handler/moves.rs` may name none of the item-link functions), by the snapshot test (`item_links_change_no_readiness_delivery_progress_rank_or_version`) and by its statement-level check that readiness and a move send no statement naming `item_links`. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0027 (the blocker and the gate)
