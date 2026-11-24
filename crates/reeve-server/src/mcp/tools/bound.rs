@@ -23,6 +23,19 @@ pub(super) const MAX_WHOLE_LIST: usize = 50;
 /// client's limit.
 pub(super) const MAX_ANSWER: usize = 60_000;
 
+/// How many of an item's item links are sent: the first ones, in the list's own order (by name, `out` before `in`,
+/// then the other item's key number).
+pub(super) const MAX_LINKS: usize = 50;
+
+/// A linked item's title is cut at this many bytes. Bytes, not characters: fifty titles of 200 four-byte
+/// characters would be 40 000 bytes of one answer. Bytes of text, not of JSON: escaping can still inflate a cut
+/// title, which is why the list is also fitted (`bound_links`).
+pub(super) const MAX_LINK_TITLE_BYTES: usize = 200;
+
+/// The two bytes of an empty JSON list, `[]`. A baseline (see `room`) holds them for its list, so the list's rows
+/// may take them back.
+const EMPTY_LIST: usize = 2;
+
 pub(super) use crate::text::{cut, echo};
 
 /// Keeps the last `keep` of `items`, which are oldest first, and returns how many were left out (0 when all fit).
@@ -40,6 +53,69 @@ pub(super) fn capped<T>(items: &mut Vec<T>, keep: usize) -> usize {
     omitted
 }
 
+/// Cuts `text` to at most `limit` bytes, on a character boundary, when it is longer, and appends
+/// `[cut: <n> more characters]`, n being the number of characters removed: `cut`'s marker, at a byte limit.
+pub(super) fn cut_bytes(text: &mut String, limit: usize) {
+    if text.len() <= limit {
+        return;
+    }
+    // The last character boundary at or before the limit; byte 0 always is one.
+    let mut at = limit;
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let removed = text[at..].chars().count();
+    text.truncate(at);
+    text.push_str(&format!("[cut: {removed} more characters]"));
+}
+
+/// The size of `answer` as `call_tool` measures it: the bytes of its JSON after `tools::sent`'s `to_value` (which
+/// widens an `f32`). 0 for an answer that does not serialize; sending it reports that.
+pub(super) fn sent_bytes<T: serde::Serialize>(answer: &T) -> usize {
+    serde_json::to_value(answer).map_or(0, |value| value.to_string().len())
+}
+
+/// A list as an answer carries it when none of its rows is sent, and how many rows that leaves out: empty, with
+/// the list's length; or absent, with 0, for an item read without the list. A tool puts the two into its answer to
+/// measure the answer's baseline (see `room`).
+pub(super) fn emptied<T>(list: &Option<Vec<T>>) -> (Option<Vec<T>>, usize) {
+    (
+        list.as_ref().map(|_| Vec::new()),
+        list.as_ref().map_or(0, Vec::len),
+    )
+}
+
+/// The most bytes a list of links may take as JSON, brackets included, in an answer whose baseline is `baseline`
+/// bytes. The baseline is the complete answer as `call_tool` measures it (`sent_bytes`) with the list empty and
+/// every one of its rows counted as left out: the list's property name, its two brackets and its count are in it,
+/// so only rows are added to it, and the count only gets shorter as rows are sent. The rows get what the baseline
+/// leaves of `tools::MAX_SENT`, and the two bytes of the empty list they replace. A baseline at the limit or over
+/// it leaves those two bytes: no row.
+fn room(baseline: usize) -> usize {
+    super::MAX_SENT.saturating_sub(baseline) + EMPTY_LIST
+}
+
+/// Bounds an item's item links in place: by count (the first `MAX_LINKS`), by text (each linked item's title cut at
+/// `MAX_LINK_TITLE_BYTES`), then by serialized bytes (rows dropped from the end until the list fits
+/// `room(baseline)`). `baseline` is `sent_bytes` of the tool's whole answer with this list `emptied` and its count
+/// at the number of rows. So an answer whose baseline is within `tools::MAX_SENT` stays within it. Returns how many
+/// rows the cap or the fit left out (0 when all are sent, and for an item read without its links).
+pub(super) fn bound_links(
+    links: &mut Option<Vec<reeve_protocol::ItemLinkDto>>,
+    baseline: usize,
+) -> usize {
+    let Some(links) = links.as_mut() else {
+        return 0;
+    };
+    let omitted = capped(links, MAX_LINKS);
+    for link in links.iter_mut() {
+        cut_bytes(&mut link.item.title, MAX_LINK_TITLE_BYTES);
+    }
+    // Last, on the rows as they will be sent: the caps bound neither the bytes of four-byte text nor what JSON
+    // escaping adds.
+    fit_within(links, omitted, room(baseline))
+}
+
 /// A list of summaries that is not paged: the first `MAX_LIST` rows, each as its summary, fitted to the answer
 /// budget; and how many rows the cap or the budget left out.
 pub(super) fn summaries<D, S: From<D> + serde::Serialize>(mut rows: Vec<D>) -> (Vec<S>, usize) {
@@ -55,6 +131,16 @@ pub(super) fn summaries<D, S: From<D> + serde::Serialize>(mut rows: Vec<D>) -> (
 /// differ by a few bytes a row (an `f32` is widened), which the gap between `MAX_ANSWER` and `tools::MAX_SENT`
 /// covers.
 pub(super) fn fit<T: serde::Serialize>(rows: &mut Vec<T>, omitted: usize) -> usize {
+    fit_within(rows, omitted, MAX_ANSWER)
+}
+
+/// `fit` against a budget the caller names: drops rows from the end while the rows, serialized as one JSON list,
+/// are over `budget` bytes, and returns `omitted` plus the rows dropped here.
+pub(super) fn fit_within<T: serde::Serialize>(
+    rows: &mut Vec<T>,
+    omitted: usize,
+    budget: usize,
+) -> usize {
     // The size of the list up to and including each row: the opening bracket, then each row and the comma or
     // closing bracket after it.
     let mut size = 1;
@@ -62,7 +148,7 @@ pub(super) fn fit<T: serde::Serialize>(rows: &mut Vec<T>, omitted: usize) -> usi
     for (n, row) in rows.iter().enumerate() {
         // A row that does not serialize counts as nothing here; serializing the answer reports it.
         size += serde_json::to_string(row).map_or(0, |json| json.len()) + 1;
-        if size > MAX_ANSWER {
+        if size > budget {
             keep = n;
             break;
         }
@@ -258,6 +344,274 @@ mod tests {
                 None
             )
         );
+    }
+
+    fn item_link(n: usize, title: &str) -> reeve_protocol::ItemLinkDto {
+        serde_json::from_value(serde_json::json!({
+            "type": "relates_to", "direction": "out", "label": "relates to",
+            "item": {"key": format!("TST-{n}"), "level": "initiative", "title": title}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_text_is_cut_at_a_byte_limit_on_a_character_boundary() {
+        let cut_of = |text: &str| {
+            let mut text = text.to_string();
+            cut_bytes(&mut text, MAX_LINK_TITLE_BYTES);
+            text
+        };
+        // Within the limit in bytes: unchanged, exactly at the limit included.
+        for whole in [
+            String::new(),
+            "short".to_string(),
+            "a".repeat(200),
+            "å".repeat(100),
+        ] {
+            assert_eq!(cut_of(&whole), whole, "{} bytes", whole.len());
+        }
+        // 200 two-byte characters are 400 bytes: the first 100 are kept and the other 100 counted.
+        assert_eq!(
+            cut_of(&"å".repeat(200)),
+            format!("{}[cut: 100 more characters]", "å".repeat(100))
+        );
+        // Three-byte characters do not end on byte 200: 66 are kept (198 bytes), never half of the 67th.
+        assert_eq!(
+            cut_of(&"世".repeat(200)),
+            format!("{}[cut: 134 more characters]", "世".repeat(66))
+        );
+        assert_eq!(
+            cut_of(&"a".repeat(201)),
+            format!("{}[cut: 1 more characters]", "a".repeat(200))
+        );
+    }
+
+    /// A list is emptied to what the answer carries when none of its rows is sent: empty, never absent, with every
+    /// row counted; a list that was not loaded stays absent.
+    #[test]
+    fn a_list_is_emptied_to_what_is_sent_when_none_of_its_rows_is() {
+        assert_eq!(emptied(&Some(vec![1, 2, 3])), (Some(vec![]), 3));
+        assert_eq!(
+            emptied(&Some(Vec::<u8>::new())),
+            (Some(vec![]), 0),
+            "none stays none"
+        );
+        assert_eq!(
+            emptied(&None::<Vec<u8>>),
+            (None, 0),
+            "not loaded stays not loaded"
+        );
+    }
+
+    /// Rows of a known size, as in `rows_are_dropped_from_the_end_until_the_list_fits_the_budget`: three
+    /// four-letter strings are the 22 bytes of `["aaaa","aaaa","aaaa"]`, two are 15, one is 8.
+    #[test]
+    fn rows_are_fitted_to_a_budget_the_caller_names() {
+        let rows = || vec!["aaaa".to_string(); 3];
+        assert_eq!(
+            serde_json::to_string(&rows()).unwrap().len(),
+            22,
+            "the control"
+        );
+        // (rows kept, rows left out), one row having been left out by a cap before.
+        let fitted = |budget: usize| {
+            let mut rows = rows();
+            let omitted = fit_within(&mut rows, 1, budget);
+            (rows.len(), omitted)
+        };
+        assert_eq!(
+            fitted(22),
+            (3, 1),
+            "exactly the budget: all kept, the earlier omission carried"
+        );
+        assert_eq!(
+            fitted(21),
+            (2, 2),
+            "one byte short: the last row is dropped and counted"
+        );
+        assert_eq!(fitted(15), (2, 2));
+        assert_eq!(fitted(14), (1, 3));
+        assert_eq!(
+            fitted(0),
+            (0, 4),
+            "no room at all: every row is counted, none is sent"
+        );
+    }
+
+    /// The fit at its edge, in bytes. Three links of one size, and baselines chosen against the dispatch limit: a
+    /// baseline already holds the list's two brackets, the first row adds its own bytes to it, and each later row
+    /// its bytes and a comma. A baseline a few bytes under the limit, at it or over it leaves room for no row, and
+    /// every row is counted.
+    #[test]
+    fn rows_take_exactly_what_the_baseline_leaves_of_one_answer() {
+        let limit = crate::mcp::tools::MAX_SENT;
+        let row = serde_json::to_string(&item_link(1, "Billing"))
+            .unwrap()
+            .len();
+        assert!(
+            row > 3,
+            "the control: a row is more than the few bytes left below"
+        );
+        // (rows sent, rows left out) of three, for an answer of this baseline.
+        let sent = |baseline: usize| {
+            let mut links = Some((1..=3).map(|n| item_link(n, "Billing")).collect::<Vec<_>>());
+            let omitted = bound_links(&mut links, baseline);
+            (links.unwrap().len(), omitted)
+        };
+        assert_eq!(
+            sent(limit - row),
+            (1, 2),
+            "exactly one row's bytes are left"
+        );
+        assert_eq!(sent(limit - row + 1), (0, 3), "one byte short of a row");
+        assert_eq!(
+            sent(limit - 2 * row - 1),
+            (2, 1),
+            "two rows and the comma between them"
+        );
+        assert_eq!(
+            sent(limit - 2 * row),
+            (1, 2),
+            "two rows, and no byte for the comma"
+        );
+        assert_eq!(
+            sent(limit - 3),
+            (0, 3),
+            "three bytes under the limit: nothing is sent, all are counted"
+        );
+        assert_eq!(sent(limit), (0, 3), "exactly at the limit");
+        assert_eq!(
+            sent(limit + 1),
+            (0, 3),
+            "over the limit: nothing to give, and no underflow"
+        );
+        assert_eq!(
+            sent(0),
+            (3, 0),
+            "the control: with room, all three are sent"
+        );
+    }
+
+    /// Spec section 9, the item-link half of the caps: an item with 200 item links whose titles are as long as a
+    /// title may be (200 characters, here of four bytes each) is answered with the first 50, the rest counted. With
+    /// nothing else in the answer (a baseline of 0) the fit drops none of the fifty.
+    #[test]
+    fn the_first_fifty_item_links_are_sent_with_their_titles_cut_and_the_rest_counted() {
+        let title = "𝄞".repeat(200);
+        assert_eq!(title.len(), 800, "the control: the longest title in bytes");
+        let mut links = Some((1..=200).map(|n| item_link(n, &title)).collect::<Vec<_>>());
+        assert!(
+            serde_json::to_string(&links).unwrap().len() > crate::mcp::tools::MAX_SENT,
+            "the control: unbounded, the list alone is over the limit of one answer"
+        );
+        assert_eq!(bound_links(&mut links, 0), 150);
+        let sent = links.unwrap();
+        assert_eq!(sent.len(), MAX_LINKS);
+        assert_eq!(
+            sent[0].item.key.to_string(),
+            "TST-1",
+            "the first are kept, in order"
+        );
+        assert_eq!(sent[49].item.key.to_string(), "TST-50");
+        assert_eq!(
+            sent[0].item.title,
+            format!("{}[cut: 150 more characters]", "𝄞".repeat(50))
+        );
+        assert!(
+            serde_json::to_string(&sent).unwrap().len() <= 20_000,
+            "fifty bounded links of unescaped titles leave most of an answer for the item itself"
+        );
+
+        // At the cap and below: nothing left out, short titles untouched; no list, nothing to bound.
+        let mut at_the_cap = Some(
+            (1..=MAX_LINKS)
+                .map(|n| item_link(n, "Billing"))
+                .collect::<Vec<_>>(),
+        );
+        let whole = at_the_cap.clone();
+        assert_eq!(bound_links(&mut at_the_cap, 0), 0);
+        assert_eq!(at_the_cap, whole);
+        assert_eq!(bound_links(&mut None, 0), 0);
+    }
+
+    /// The caps count rows and bytes of text, not bytes of JSON. A title of characters JSON escapes grows when it is
+    /// serialized, after it was cut: 200 control characters are 200 bytes of text and 1 200 of JSON. Whether the
+    /// planner would store such a title is not this bound's business; it must hold for whatever comes back. After
+    /// the caps the list is fitted to what the answer's baseline leaves of one answer, from the end, and what the
+    /// fit drops is counted with what the cap dropped.
+    #[test]
+    fn item_links_are_fitted_to_the_bytes_the_baseline_leaves() {
+        let escaped = "\u{1}".repeat(200);
+        let links = || {
+            Some(
+                (1..=200)
+                    .map(|n| item_link(n, &escaped))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // An item whose own text is 40 000 bytes: a description or a brief at its cut, in four-byte characters.
+        let baseline = 40_000;
+
+        // The control: the caps alone leave a list that does not fit an answer of that baseline.
+        let mut capped_only = links().unwrap();
+        capped(&mut capped_only, MAX_LINKS);
+        assert_eq!(
+            capped_only[0].item.title.len(),
+            MAX_LINK_TITLE_BYTES,
+            "the control: nothing for the title cut to cut"
+        );
+        let after_the_caps = serde_json::to_string(&capped_only).unwrap().len();
+        assert!(
+            after_the_caps > room(baseline),
+            "the control: {after_the_caps} bytes after the caps, room for {}",
+            room(baseline)
+        );
+
+        let mut fitted = links();
+        let omitted = bound_links(&mut fitted, baseline);
+        let sent = fitted.unwrap();
+        assert!(
+            !sent.is_empty() && sent.len() < MAX_LINKS,
+            "{} sent",
+            sent.len()
+        );
+        assert_eq!(
+            sent.len() + omitted,
+            200,
+            "every row is either sent or counted"
+        );
+        assert_eq!(sent[0].item.key.to_string(), "TST-1", "the first are kept");
+        assert_eq!(
+            sent[sent.len() - 1].item.key.to_string(),
+            format!("TST-{}", sent.len()),
+            "dropped from the end"
+        );
+        assert_eq!(sent[0].item.title, escaped, "a kept row is whole");
+        assert!(serde_json::to_string(&sent).unwrap().len() <= room(baseline));
+        assert!(
+            serde_json::to_string(&capped_only[..=sent.len()])
+                .unwrap()
+                .len()
+                > room(baseline),
+            "one more row would not have fitted: the fit drops no more than it must"
+        );
+
+        // Characters JSON doubles: fifty titles of 200 quotes are 10 000 bytes of text and twice that of JSON. The
+        // list fits an otherwise empty answer whole, and not one whose baseline is 50 000 bytes.
+        let quotes = "\"".repeat(200);
+        let quoted = || Some((1..=50).map(|n| item_link(n, &quotes)).collect::<Vec<_>>());
+        let mut alone = quoted();
+        assert_eq!(bound_links(&mut alone, 0), 0);
+        assert_eq!(alone, quoted(), "nothing cut, nothing dropped");
+        let mut beside = quoted();
+        let dropped = bound_links(&mut beside, 50_000);
+        assert!(dropped > 0 && dropped < 50, "{dropped} dropped");
+        assert!(serde_json::to_string(&beside).unwrap().len() <= room(50_000));
+
+        // A baseline that already fills the answer leaves no room: nothing is sent and everything is counted.
+        let mut none = links();
+        assert_eq!(bound_links(&mut none, crate::mcp::tools::MAX_SENT), 200);
+        assert_eq!(none, Some(vec![]));
     }
 
     #[test]
