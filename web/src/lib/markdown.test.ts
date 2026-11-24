@@ -101,7 +101,8 @@ describe('tables', () => {
 		const wrap = el.querySelector('div.table-scroll');
 		expect(wrap?.children).toHaveLength(1);
 		expect(wrap?.firstElementChild?.tagName).toBe('TABLE');
-		expect(wrap?.getAttribute('tabindex')).toBe('0');
+		// Not a tab stop by itself: `rendered` (#lib/rendered.ts) makes it one only while it really scrolls.
+		expect(wrap?.hasAttribute('tabindex')).toBe(false);
 	});
 });
 
