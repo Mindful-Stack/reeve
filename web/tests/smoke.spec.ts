@@ -2,6 +2,7 @@
 // (scripts/web-smoke.sh). It is the only proof that the cookie, the gate, the drawer deep link and the override prompt
 // work in a browser.
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import type { operations } from '../src/lib/api/schema';
 
 function env(name: string): string {
 	const v = process.env[name];
@@ -244,6 +245,95 @@ test('the drawer removes a block', async ({ page }) => {
 		value: { blocked_by: string[] };
 	};
 	expect(after.value.blocked_by).toEqual([]);
+});
+
+/** What `GET /api/v1/items/{key}/links` answers, from the generated schema: no shape of the wire is written here. */
+type LinkListing = operations['list_item_links']['responses'][200]['content']['application/json'];
+
+/** The rightmost edge of anything in `root`: every box, and text that overflows its box (`scrollWidth`: a long word that
+ *  does not wrap overflows a box whose own rectangle still fits). Two things are left out of the overflow check on
+ *  purpose: text clipped for screen readers only (`.visually-hidden` in app.css is wider than its 1px box by design),
+ *  and a form field's own text, which scrolls inside the field. */
+const rightEdge = (root: Locator) =>
+	root.evaluate((el) =>
+		Math.max(
+			...[el, ...el.querySelectorAll('*')]
+				.filter((n) => !n.closest('.visually-hidden'))
+				.map((n) => {
+					const r = n.getBoundingClientRect();
+					return n.matches('input, select, textarea') ? r.right : Math.max(r.right, r.left + n.scrollWidth);
+				})
+		)
+	);
+
+test('an item link added on one story shows on the other from its side, and removing it there removes the one link', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const later = await chore(page, `Smoke link later ${suffix}`);
+	const earlier = await chore(page, `Smoke link earlier ${suffix}`);
+	await page.goto('/board?story=' + later.key);
+	const relations = page.getByRole('complementary').getByRole('region', { name: 'Relations' });
+	await expect(relations).toContainText('No item links yet.');
+	await relations.getByRole('button', { name: '+ Add item link' }).click();
+	// The option's text is the wire name with spaces; the group's label below is the server's. They are the same words.
+	await relations.getByLabel('Item link name').selectOption({ label: 'follows' });
+	await relations.getByRole('combobox', { name: 'Other item' }).fill(earlier.key);
+	await relations.getByRole('option', { name: new RegExp(`^${earlier.key} `) }).click();
+	await relations.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(relations.getByRole('list', { name: 'follows', exact: true })).toContainText(earlier.key);
+	await expect(relations).toContainText(`Informational: this does not hold ${later.key} back. To hold it back, add ${earlier.key} with "+ Add blocker" above.`);
+	// It holds nothing back: the story's blockers are untouched, and the control the line points at is there, above it.
+	await expect(relations).toContainText('Nothing blocks this story.');
+	await expect(relations.getByRole('button', { name: '+ Add blocker' })).toBeVisible();
+	await expect(relations).toContainText('Item links are informational. Only a blocker holds a story back.');
+
+	// The other story reads the same link from its side.
+	await relations.getByRole('link', { name: new RegExp(earlier.key) }).click();
+	await expect(page).toHaveURL(new RegExp(`story=${earlier.key}`));
+	const there = page.getByRole('complementary').getByRole('region', { name: 'Relations' });
+	await expect(there.getByRole('list', { name: 'is followed by', exact: true })).toContainText(later.key);
+
+	// Removed from the side that did not add it: the client names the other story first.
+	await there.getByRole('button', { name: `Remove item link: is followed by ${later.key}` }).click();
+	await expect(there).toContainText('No item links yet.');
+	const left = (await (await page.request.get(`/api/v1/items/${later.key}/links`, { headers })).json()) as LinkListing;
+	// Narrowed before `value` is read: an envelope that is not `ok` fails here, with its outcome in the message.
+	if (left.outcome !== 'ok') throw new Error(`GET /items/${later.key}/links: ${JSON.stringify(left)}`);
+	expect(left.value.links).toEqual([]);
+});
+
+test('a web link on the epic page at 360px: a refused URL says why beside the fields, a good one opens in a new tab, nothing runs off the side', async ({ page }) => {
+	await page.setViewportSize({ width: 360, height: 700 });
+	const suffix = crypto.randomUUID().slice(0, 6);
+	// Unbroken, and longer than the viewport is wide: it must wrap inside its row.
+	const title = `Smoke-scenario-${suffix}-${'long'.repeat(20)}`;
+	await page.goto('/epics/' + EPIC);
+	const web = page.getByRole('region', { name: 'Web links' });
+	await web.getByRole('button', { name: '+ Add web link' }).click();
+	await web.getByLabel('Title').fill(title);
+	await web.getByLabel('URL').fill('https://mia:secret@example.com/wiki');
+	await expect(web).toContainText('The full address, starting with https://');
+	// The open form, both fields filled, fits the screen.
+	expect(await rightEdge(web)).toBeLessThanOrEqual(360);
+	await web.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(web.getByRole('alert')).toContainText('hold no user name or password');
+	await expect(web.getByLabel('Title')).toHaveValue(title);
+	// So does the form with the server's message in it.
+	expect(await rightEdge(web)).toBeLessThanOrEqual(360);
+
+	await web.getByLabel('URL').fill(`HTTPS://Example.com/wiki/${suffix}`);
+	await web.getByRole('button', { name: 'Add', exact: true }).click();
+	const link = web.getByRole('link', { name: new RegExp(suffix) });
+	await expect(link).toHaveAttribute('href', `https://example.com/wiki/${suffix}`);
+	await expect(link).toHaveAttribute('target', '_blank');
+	await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+	await expect(web).toContainText('example.com');
+	// And the list, with the long title in it, once the form has closed.
+	await expect(web.getByRole('button', { name: '+ Add web link' })).toBeVisible();
+	expect(await rightEdge(web)).toBeLessThanOrEqual(360);
+
+	// The epic is shared by other smoke tests: leave it as it was.
+	await web.getByRole('button', { name: `Remove web link ${title}` }).click();
+	await expect(web.getByRole('link', { name: new RegExp(suffix) })).toHaveCount(0);
 });
 
 test('the drawer epic picker: typing replaces the label, the active option stays in sight, Enter picks then saves', async ({ page }) => {
