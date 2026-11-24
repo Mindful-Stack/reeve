@@ -597,3 +597,231 @@ async fn a_web_link_receipt_carries_the_longest_title_and_url_whole() {
         (json!(false), json!(url))
     );
 }
+
+/// What `GET /stories/{key}/ready` answers for `story`: whether it is ready, and every reason it is not.
+async fn readiness(h: &Harness, story: &str) -> Value {
+    api(h, &h.admin_token, &format!("/api/v1/stories/{story}/ready")).await
+}
+
+/// What no link tool may change, read from the database and through the API: every blocker row, and for each of
+/// `stories` its readiness with its reasons, its delivery state, its version and its `blocked_by`.
+async fn blockers_and_state(h: &Harness, stories: &[&String]) -> Value {
+    let blocks: Vec<(String, String)> = sqlx::query_as(
+        "SELECT story_key, blocker_key FROM story_blocks ORDER BY story_key, blocker_key",
+    )
+    .fetch_all(&h.state.pool)
+    .await
+    .unwrap();
+    let mut state = Vec::new();
+    for key in stories {
+        let story = api(h, &h.admin_token, &format!("/api/v1/stories/{key}")).await;
+        state.push(json!({
+            "key": key,
+            "readiness": readiness(h, key).await,
+            "delivery": story["delivery"],
+            "version": story["version"],
+            "blocked_by": story["blocked_by"],
+        }));
+    }
+    json!({"blocks": blocks, "stories": state})
+}
+
+/// kb/ADR-0031 R3 through the router, and the owner's rule for GRA-902 (the observation on kb/ADR-0029 names this
+/// test): an item link or a web link a tool writes changes no readiness and no version, and a story that `follows`
+/// another starts before it. And where a blocker does hold a story back, every successful add and removal by each
+/// of the four link tools, on the blocked story and on its blocker, under all three item link names, leaves the
+/// blocker rows, both stories' readiness, their delivery states and their versions exactly as they were.
+#[tokio::test]
+async fn the_link_tools_gate_nothing_and_no_tool_touches_a_blocker() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let it = items(h).await;
+    let story = |key: String| async move {
+        api(h, &h.admin_token, &format!("/api/v1/stories/{key}")).await
+    };
+    let before = (
+        readiness(h, &it.b).await,
+        story(it.b.clone()).await["version"].clone(),
+        story(it.a.clone()).await["version"].clone(),
+    );
+    assert_eq!(before.0["ready"], true, "the control: {}", before.0);
+
+    answer(
+        h,
+        &dan,
+        "add_item_link",
+        json!({"key": it.b, "type": "follows", "to": it.a}),
+    )
+    .await;
+    answer(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.b, "title": "Spec", "url": "https://example.com/spec"}),
+    )
+    .await;
+    let b = story(it.b.clone()).await;
+    assert_eq!(
+        (
+            readiness(h, &it.b).await,
+            b["version"].clone(),
+            story(it.a.clone()).await["version"].clone()
+        ),
+        before,
+        "no readiness and no version moved"
+    );
+    assert_eq!(b["blocked_by"], json!([]), "an item link is not a blocker");
+    // `b` follows `a`, `a` is still in todo, and `b` starts all the same.
+    let moved = answer(
+        h,
+        &dan,
+        "move_story",
+        json!({"key": it.b, "to": "in_progress", "version": b["version"]}),
+    )
+    .await;
+    assert_eq!(moved["delivery"], "in_progress");
+
+    // Where a blocker exists: `c` is blocked by `d`, both in todo, set through the API's own route, so `c` is held.
+    let c = a_story(h, "ml-c", "Invoice email", &it.epic).await;
+    let d = a_story(h, "ml-d", "Mail provider", &it.epic).await;
+    post(
+        h,
+        &format!("/api/v1/stories/{c}/blocks"),
+        json!({"blocker": d}),
+    )
+    .await;
+    let fixed = blockers_and_state(h, &[&c, &d]).await;
+    assert_eq!(
+        fixed["blocks"],
+        json!([[c, d]]),
+        "the control: exactly one blocker row"
+    );
+    assert_eq!(
+        json!([
+            fixed["stories"][0]["readiness"]["ready"],
+            fixed["stories"][0]["readiness"]["reasons"][0]["reason"],
+            fixed["stories"][1]["readiness"]["ready"],
+        ]),
+        json!([false, "blocked_by", true]),
+        "the control: `c` is held by its blocker alone and `d` is ready: {fixed}"
+    );
+
+    // The rest runs over bob's connection: a person's limit is 30 write calls in ten minutes, refused ones
+    // included, and dan has used some.
+    let bob = token(&f, &h.victim_token, "write").await;
+    // Every name from the blocked story to its blocker, and the two directed names the other way round
+    // (`relates_to` the other way round is the same item link).
+    let links = [
+        (&c, "follows", &d),
+        (&c, "duplicates", &d),
+        (&c, "relates_to", &d),
+        (&d, "follows", &c),
+        (&d, "duplicates", &c),
+    ];
+    let named =
+        |(key, name, to): (&String, &str, &String)| json!({"key": key, "type": name, "to": to});
+    // Each step: the tool, its arguments, and whether the call must change something.
+    let mut steps: Vec<(&str, Value, bool)> = Vec::new();
+    // Before any item link joins them, a removal under every name, either way round, finds nothing: the blocker
+    // edge is not an item link under any name.
+    for link in links {
+        steps.push(("remove_item_link", named(link), false));
+    }
+    steps.push(("remove_item_link", named((&d, "relates_to", &c)), false));
+    // Then every add succeeds.
+    for link in links {
+        steps.push(("add_item_link", named(link), true));
+    }
+    for (n, (tool, arguments, changes)) in steps.into_iter().enumerate() {
+        let receipt = answer(h, &bob, tool, arguments.clone()).await;
+        assert_eq!(receipt["changed"], changes, "step {n}: {tool} {arguments}");
+        assert_eq!(
+            blockers_and_state(h, &[&c, &d]).await,
+            fixed,
+            "after step {n}: {tool} {arguments}"
+        );
+    }
+    assert_eq!(
+        rows(h, "item_links").await,
+        6,
+        "the five just added and `b follows a`: the adds really wrote"
+    );
+
+    // A web link on each of the two stories.
+    let mut web_links = Vec::new();
+    for key in [&c, &d] {
+        let receipt = answer(
+            h,
+            &bob,
+            "add_web_link",
+            json!({"key": key, "title": "Runbook", "url": format!("https://example.com/runbook/{key}")}),
+        )
+        .await;
+        assert_eq!(receipt["changed"], true, "add_web_link on {key}");
+        assert_eq!(
+            blockers_and_state(h, &[&c, &d]).await,
+            fixed,
+            "after add_web_link on {key}"
+        );
+        web_links.push((key, receipt["id"].clone()));
+    }
+    assert_eq!(
+        rows(h, "web_links").await,
+        3,
+        "the two just added and the one on `b`"
+    );
+
+    // Then every removal succeeds, of both kinds.
+    for link in links {
+        let arguments = named(link);
+        let receipt = answer(h, &bob, "remove_item_link", arguments.clone()).await;
+        assert_eq!(receipt["changed"], true, "remove_item_link {arguments}");
+        assert_eq!(
+            blockers_and_state(h, &[&c, &d]).await,
+            fixed,
+            "after remove_item_link {arguments}"
+        );
+    }
+    for (key, id) in web_links {
+        let receipt = answer(h, &bob, "remove_web_link", json!({"key": key, "id": id})).await;
+        assert_eq!(receipt["changed"], true, "remove_web_link on {key}");
+        assert_eq!(
+            blockers_and_state(h, &[&c, &d]).await,
+            fixed,
+            "after remove_web_link on {key}"
+        );
+    }
+    assert_eq!(
+        (rows(h, "item_links").await, rows(h, "web_links").await),
+        (1, 1),
+        "what was added here is gone, and nothing else"
+    );
+
+    // No name means blocking (kb/ADR-0031 R2): refused with the schema, on both item link tools.
+    for tool in ["add_item_link", "remove_item_link"] {
+        let said = refusal(h, &dan, tool, json!({"key": c, "type": "blocks", "to": d})).await;
+        assert!(said.starts_with("Invalid arguments:"), "{tool}: {said}");
+    }
+    assert_eq!(
+        blockers_and_state(h, &[&c, &d]).await,
+        fixed,
+        "still held by its blocker, by that alone"
+    );
+    // And no tool is about blockers, discovery or overriding.
+    let (_, _, body) = send(&h.app, mcp_modern(&dan, 1, "tools/list", json!({}))).await;
+    let listed = serde_json::from_str::<Value>(&body).unwrap()["result"]["tools"].clone();
+    let names: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), 21);
+    assert!(
+        !names.iter().any(|name| ["block", "discovery", "override"]
+            .iter()
+            .any(|word| name.contains(word))),
+        "{names:?}"
+    );
+}
