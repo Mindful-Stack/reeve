@@ -477,8 +477,9 @@
 		margin-left: -4px;
 		padding: 0 4px;
 	}
-	/* A note under the rows, in their size. */
-	.standing {
+	/* A note under the rows, in their size; the empty states too, so neither stands larger than the lines around it. */
+	.standing,
+	.empty {
 		font-size: 14px;
 	}
 	.actions {
