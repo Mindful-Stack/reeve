@@ -399,6 +399,7 @@
         "description": "An initiative of the first configured horizon bucket with the goals whose links reach it.",
         "properties": {
           "discovery_complete": {
+            "description": "A flag here; `InitiativeDto.discovery_complete` carries the mark itself.",
             "type": "boolean"
           },
           "goals": {
@@ -425,6 +426,7 @@
         "required": [
           "key",
           "title",
+          "target_month",
           "discovery_complete",
           "goals"
         ],
@@ -7214,6 +7216,7 @@
                 },
                 "required": [
                   "goals",
+                  "first_bucket",
                   "first_bucket_initiatives"
                 ],
                 "type": "object"
@@ -10389,6 +10392,7 @@
         },
         "required": [
           "goals",
+          "first_bucket",
           "first_bucket_initiatives"
         ],
         "type": "object"

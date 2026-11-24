@@ -36,7 +36,7 @@ pub struct SprintPlanning {
     /// Every initiative of the snapshot: the wire assembly takes from it the titles, horizons, target months and
     /// discovery marks of the ones the gates and the bucket name, and sends nothing else of them.
     pub initiatives: Vec<Initiative>,
-    /// `[planning] horizon_buckets[0]` (kb/ADR-0016 R2); None when no bucket is configured.
+    /// The first of the configured `horizon_buckets` (kb/ADR-0016 R2); None when no bucket is configured.
     pub first_bucket: Option<String>,
     /// That bucket's initiatives with their goals (`sprint::first_bucket_initiatives`); empty without a bucket.
     pub first_bucket_initiatives: Vec<sprint::BucketInitiative>,

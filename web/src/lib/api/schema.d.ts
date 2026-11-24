@@ -1529,11 +1529,12 @@ export interface components {
         };
         /** @description An initiative of the first configured horizon bucket with the goals whose links reach it. */
         BucketInitiativeDto: {
+            /** @description A flag here; `InitiativeDto.discovery_complete` carries the mark itself. */
             discovery_complete: boolean;
             /** @description Goal ids: the active sprint's first, then the draft's, by id inside each. Empty when no goal reaches it. */
             goals: number[];
             key: components["schemas"]["Key"];
-            target_month?: string | null;
+            target_month: string | null;
             title: string;
         };
         /** @description The outcome of the last record check on a required decision. */
@@ -3639,7 +3640,7 @@ export interface components {
              */
             value: {
                 /** @description The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured. */
-                first_bucket?: string | null;
+                first_bucket: string | null;
                 /** @description That bucket's initiatives: by target month (earliest first, none last), then title, then key number. */
                 first_bucket_initiatives: components["schemas"]["BucketInitiativeDto"][];
                 goals: components["schemas"]["GoalGatesDto"][];
@@ -4616,7 +4617,7 @@ export interface components {
          */
         SprintPlanningDto: {
             /** @description The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured. */
-            first_bucket?: string | null;
+            first_bucket: string | null;
             /** @description That bucket's initiatives: by target month (earliest first, none last), then title, then key number. */
             first_bucket_initiatives: components["schemas"]["BucketInitiativeDto"][];
             goals: components["schemas"]["GoalGatesDto"][];

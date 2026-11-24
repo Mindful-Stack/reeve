@@ -466,9 +466,10 @@ async fn new_initiative(h: &Harness, idem: &str, title: &str, horizon: &str) -> 
 async fn planning_compares_goals_with_the_first_horizon_bucket() {
     let h = harness().await;
     // The harness keeps the default buckets, which start "Now", "Next" (`default_buckets` in config.rs).
-    let inside = new_initiative(&h, "i-in", "In the bucket", "Now").await;
-    let outside = new_initiative(&h, "i-out", "Outside it", "Next").await;
+    // Created in the reverse of their title order, so a list in creation or key order would fail.
     let empty = new_initiative(&h, "i-empty", "No goal reaches it", "Now").await;
+    let outside = new_initiative(&h, "i-out", "Outside it", "Next").await;
+    let inside = new_initiative(&h, "i-in", "In the bucket", "Now").await;
     let goal = |idem: &'static str, links: serde_json::Value| {
         let h = &h;
         async move {
@@ -492,8 +493,8 @@ async fn planning_compares_goals_with_the_first_horizon_bucket() {
     assert_eq!(
         p["goals"][0]["initiatives"],
         json!([
-            {"key": inside, "title": "In the bucket", "horizon": "Now", "in_first_bucket": true},
-            {"key": outside, "title": "Outside it", "horizon": "Next", "in_first_bucket": false}
+            {"key": outside, "title": "Outside it", "horizon": "Next", "in_first_bucket": false},
+            {"key": inside, "title": "In the bucket", "horizon": "Now", "in_first_bucket": true}
         ]),
         "{p}"
     );
@@ -510,13 +511,28 @@ async fn planning_compares_goals_with_the_first_horizon_bucket() {
     );
 }
 
-/// Without a configured bucket the answer names none and lists none.
+/// Without a configured bucket the answer names none and lists none, and no initiative counts as in it. A server
+/// without buckets refuses to create an initiative, so one is seeded through a server that has them and read through a
+/// second server, on the same database, that has none.
 #[tokio::test]
 async fn planning_names_no_bucket_when_none_is_configured() {
-    // Edited into the configuration text: a patch after `build_state` would not reach the handlers.
-    let h = harness_with(|c| format!("horizon_buckets = []\n{c}")).await;
+    let seed = harness().await;
+    let ini = new_initiative(&seed, "i-seed", "Seeded", "Now").await;
+    ok_value(
+        &seed,
+        "POST",
+        "/api/v1/goals",
+        Some(json!({"idempotency_key": "g", "outcome": "o", "check": "c", "links": [ini]})),
+    )
+    .await;
+    let h = harness_beside(&seed, |c| format!("horizon_buckets = []\n{c}")).await;
     let p = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
+    assert!(p.as_object().unwrap().contains_key("first_bucket"), "{p}");
     assert_eq!(p["first_bucket"], json!(null), "{p}");
     assert_eq!(p["first_bucket_initiatives"], json!([]), "{p}");
-    assert_eq!(p["goals"], json!([]), "{p}");
+    assert_eq!(
+        p["goals"][0]["initiatives"],
+        json!([{"key": ini, "title": "Seeded", "horizon": "Now", "in_first_bucket": false}]),
+        "{p}"
+    );
 }

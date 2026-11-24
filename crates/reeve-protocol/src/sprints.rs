@@ -237,7 +237,10 @@ pub struct GoalInitiativeDto {
 pub struct BucketInitiativeDto {
     pub key: Key,
     pub title: String,
+    #[serde(default)]
+    #[schema(required = true)]
     pub target_month: Option<String>,
+    /// A flag here; `InitiativeDto.discovery_complete` carries the mark itself.
     pub discovery_complete: bool,
     /// Goal ids: the active sprint's first, then the draft's, by id inside each. Empty when no goal reaches it.
     pub goals: Vec<i64>,
@@ -249,6 +252,8 @@ pub struct BucketInitiativeDto {
 pub struct SprintPlanningDto {
     pub goals: Vec<GoalGatesDto>,
     /// The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured.
+    #[serde(default)]
+    #[schema(required = true)]
     pub first_bucket: Option<String>,
     /// That bucket's initiatives: by target month (earliest first, none last), then title, then key number.
     pub first_bucket_initiatives: Vec<BucketInitiativeDto>,

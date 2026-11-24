@@ -1075,11 +1075,22 @@ fn sprint_planning_dto_carries_every_field() {
         first_bucket_initiatives: vec![],
         ..p
     };
-    let dto = v!(sprint_planning_dto(&none));
-    assert_eq!(dto["first_bucket"], json!(null));
     assert_eq!(
-        dto["goals"][0]["initiatives"][0]["in_first_bucket"],
-        json!(false)
+        v!(sprint_planning_dto(&none)),
+        json!({
+            "goals": [{
+                "goal_id": 3,
+                "initiatives": [
+                    {"key": "ABC-1", "title": "Bookings", "horizon": "Now", "in_first_bucket": false},
+                    {"key": "ABC-7", "title": "Payments", "horizon": "Later", "in_first_bucket": false}
+                ],
+                "discoveries": [{"key": "ABC-2", "item": "epic", "title": "E"}],
+                "decisions": [{"on": "ABC-4", "reason": {"reason": "decision_unchecked", "decision_id": 9, "title": "D"}}],
+                "discovery_total": 4, "decisions_total": 5
+            }],
+            "first_bucket": null,
+            "first_bucket_initiatives": []
+        })
     );
 }
 
