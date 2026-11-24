@@ -13,12 +13,15 @@
 
 	let {
 		label,
+		placeholder,
 		picked = $bindable(null),
 		exclude,
 		disabled = false,
 		delay = 200
 	}: {
 		label: string;
+		/** Shown in the empty search field. */
+		placeholder?: string;
 		picked?: SearchHit | null;
 		/** The key of an item never to offer: the one the link starts from (its own key, not an external reference). */
 		exclude?: string;
@@ -86,6 +89,7 @@
 
 <Picker
 	{label}
+	{placeholder}
 	{options}
 	bind:value
 	{disabled}

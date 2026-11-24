@@ -13,6 +13,7 @@
 		options,
 		value = $bindable(''),
 		empty,
+		placeholder,
 		disabled = false,
 		onchange,
 		onquery,
@@ -23,6 +24,8 @@
 		options: readonly PickerOption[];
 		value?: string;
 		empty?: string;
+		/** Shown in the field while it is empty; never its name, which is `label`. */
+		placeholder?: string;
 		disabled?: boolean;
 		onchange?: (value: string) => void;
 		/** Called with the text as it is typed. A host that passes it fetches the options for that text itself, so the
@@ -115,6 +118,7 @@
 		aria-activedescendant={open && active >= 0 && active < shown.length ? `${id}-opt-${active}` : undefined}
 		autocomplete="off"
 		spellcheck="false"
+		{placeholder}
 		{disabled}
 		value={text}
 		onfocus={(e) => e.currentTarget.select()}

@@ -261,6 +261,9 @@ describe('Relations: item links', () => {
 		expect(select.getAttribute('aria-describedby')).toBe(hint.id);
 		// On a row of its own above the controls, where the open search list does not cover it.
 		expect(f.firstElementChild).toBe(hint);
+		// The search field says what it is for while it is empty; its name stays "Other item".
+		const search = f.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+		expect([search.getAttribute('aria-label'), search.placeholder]).toEqual(['Other item', 'Search for an item']);
 		// Nothing picked yet: there is nothing to add.
 		expect(f.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
 		await pick('ABC-11', 'ABC-11');

@@ -309,7 +309,7 @@
 			<select aria-label="Item link name" aria-describedby={hint ? `${id}-link-hint` : undefined} bind:value={linkType} disabled={busy}>
 				{#each LINK_TYPES as t (t)}<option value={t}>{linkTypeText(t)}</option>{/each}
 			</select>
-			<ItemSearch label="Other item" bind:picked exclude={itemKey} disabled={busy} />
+			<ItemSearch label="Other item" placeholder="Search for an item" bind:picked exclude={itemKey} disabled={busy} />
 			<!-- One flex child, so the two buttons wrap together and never part onto two rows. -->
 			<span class="actions">
 				<button type="button" disabled={busy} onclick={closeLink}>Cancel</button>
@@ -446,7 +446,9 @@
 	p {
 		margin: 0;
 	}
+	/* At the row's end, also when a narrow row wraps it under the title. */
 	.remove {
+		margin-left: auto;
 		height: 24px;
 		padding: 0 8px;
 		font-size: 13px;
