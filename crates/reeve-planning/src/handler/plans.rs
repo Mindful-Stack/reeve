@@ -700,8 +700,9 @@ impl Handlers {
         web: &[Option<WebLink>],
         errors: &mut Vec<String>,
     ) -> Result<(), HandlerError> {
-        // The item -> the web links the plan's earlier entries give it. `WebLink::is_new_among` decides, as it does
-        // against what is stored; only the wording is the plan's own, since nothing is "already" on the item.
+        // The item -> the web links the plan's earlier entries give it, so an entry is compared with its own item's
+        // earlier entries and no others. `WebLink::is_new_among` decides, as it does against what is stored; only
+        // the wording is the plan's own, since nothing is "already" on the item.
         let mut earlier: HashMap<&Identity, Vec<&WebLink>> = HashMap::new();
         // (where, the item's key today, the link) for every entry whose item exists already.
         let mut stored_checks: Vec<(String, Key, &WebLink)> = vec![];
@@ -729,7 +730,9 @@ impl Handlers {
         if stored_checks.is_empty() {
             return Ok(());
         }
-        let keys: Vec<Key> = stored_checks.iter().map(|(_, k, _)| k.clone()).collect();
+        let mut keys: Vec<Key> = stored_checks.iter().map(|(_, k, _)| k.clone()).collect();
+        keys.sort_unstable_by_key(|k| k.to_string());
+        keys.dedup();
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -741,10 +744,15 @@ impl Handlers {
             .await
             .map_err(HandlerError::from);
         let stored = end_read(tx, read).await?;
+        // The stored rows by item, grouped once: each entry is compared with its own item's web links only, which
+        // is also what `is_new_among` takes (the web links of one item).
+        let mut by_item: HashMap<&Key, Vec<&WebLink>> = HashMap::new();
+        for s in &stored {
+            by_item.entry(&s.item).or_default().push(&s.link);
+        }
         for (at, key, link) in stored_checks {
-            // One item's rows only: `is_new_among` takes the web links of one item.
-            let of_item = stored.iter().filter(|s| s.item == key).map(|s| &s.link);
-            if let Err(e) = link.is_new_among(of_item) {
+            let of_item = by_item.get(&key).map(Vec::as_slice).unwrap_or_default();
+            if let Err(e) = link.is_new_among(of_item.iter().copied()) {
                 errors.push(format!("{at}: {e}"));
             }
         }
