@@ -334,7 +334,7 @@
 					<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
 				{/if}
 			</div>
-			{#if draft?.goals.length}<p class="muted">Ticked goals go in when the sprint opens.</p>{/if}
+			{#if draft?.goals.length}<p class="hint">Ticked goals go in when the sprint opens.</p>{/if}
 			{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
 			{#if openWarnings.length && active}
 				<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
@@ -374,7 +374,7 @@
 						{#if !i.discovery_complete}<span class="muted">in discovery</span>{/if}
 						{#each i.goals as id (id)}
 							{@const x = everyGoal.get(id)}
-							{#if x}<a class="goal-chip" href="#goal-{id}">{x.goal.outcome} · {x.where}</a>{/if}
+							{#if x}<a class="goal-chip" href="#goal-{id}" title={x.goal.outcome}>{x.goal.outcome} · {x.where}</a>{/if}
 						{:else}
 							<span class="muted">no goal</span>
 							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
@@ -451,7 +451,10 @@
 		font-size: 14px;
 		font-weight: 400;
 	}
-	.rule {
+	/* The head's three small lines read as one block: the rule, the upkeep and the hint share a size. */
+	.rule,
+	.upkeep,
+	.hint {
 		color: var(--muted);
 		font-size: 13px;
 	}
@@ -519,9 +522,16 @@
 	}
 	.bucket-row {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 8px;
 	}
+	/* One line however long the outcome (the full text is the title); never a multi-line pill. */
 	.goal-chip {
+		box-sizing: border-box;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		padding: 1px 8px;
 		border: 1px solid var(--line);
 		border-radius: 999px;
