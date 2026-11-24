@@ -30,7 +30,9 @@ pub struct Apply {
     pub file: std::path::PathBuf,
 }
 
-/// What text mode adds when this apply created a `follows` between two stories: the word reads like a dependency.
+/// What text mode adds when the answer holds a `follows` between two stories, created by this apply or there
+/// already: the word reads like a dependency. Not only when created: an apply that made the link and failed later
+/// printed nothing, and the apply that finishes the plan reports the link existing.
 const FOLLOWS_NOTE: &str =
     "Informational: follows does not hold a story back. To hold one back, list it under blocks.";
 
@@ -131,7 +133,7 @@ fn render(p: &PlanApplied) -> String {
         |l: &PlannedLink| l.from_level == ItemType::Story && l.to_level == ItemType::Story;
     if p.links
         .iter()
-        .any(|l| l.created && l.link_type == ItemLinkType::Follows && stories(l))
+        .any(|l| l.link_type == ItemLinkType::Follows && stories(l))
     {
         let _ = writeln!(out, "{FOLLOWS_NOTE}");
     }

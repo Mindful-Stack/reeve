@@ -1623,13 +1623,42 @@ fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
     assert_eq!(printed["value"]["web_links"][0]["id"], 7);
     assert!(!String::from_utf8_lossy(&out.stdout).contains("Informational"));
 
-    // No `follows` between two stories was created: no informational line.
-    let mut quiet = applied();
-    quiet["links"][0]["created"] = serde_json::json!(false);
-    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(quiet))]);
+    // The line is about what the answer holds, not about what this apply created: a first apply that made the
+    // `follows` and failed later never printed it, and the apply that finishes the plan reports the link existing.
+    let mut replayed = applied();
+    replayed["links"][0]["created"] = serde_json::json!(false);
+    let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(replayed))]);
     let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
     server.join().unwrap();
-    assert!(!String::from_utf8_lossy(&out.stdout).contains("Informational"));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines()
+            .any(|l| l == "● TST-4 follows ● TST-3\texisting"),
+        "the control: the link is reported existing:\n{text}"
+    );
+    assert_eq!(
+        text.lines()
+            .filter(|l| l.starts_with("Informational"))
+            .count(),
+        1,
+        "an existing follows between two stories still gets the line, once:\n{text}"
+    );
+
+    // No `follows` between two stories in the answer: no informational line. Another name between two stories,
+    // and a `follows` whose other end is no story.
+    for (name, to_level) in [("duplicates", "story"), ("follows", "epic")] {
+        let mut quiet = applied();
+        quiet["links"][0]["type"] = serde_json::json!(name);
+        quiet["links"][0]["to_level"] = serde_json::json!(to_level);
+        let (url, server) = serve(vec![("POST /api/v1/plans", 200, ok(quiet))]);
+        let out = reeve_at(&url, &["apply", yaml.to_str().unwrap()]);
+        server.join().unwrap();
+        assert!(out.status.success(), "{name} to a {to_level}");
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("Informational"),
+            "{name} to a {to_level}"
+        );
+    }
 
     // A web link's title and URL are stored text: a control or bidirectional character in either is printed
     // escaped (`relations::for_terminal`), as `reeve link ls` prints it, and `--json` stays lossless.
