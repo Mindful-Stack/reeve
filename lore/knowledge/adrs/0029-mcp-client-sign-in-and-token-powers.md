@@ -161,9 +161,10 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   (`no_epic_or_initiative_tool_can_mark_or_reopen_discovery`), adds or removes a blocker
   (`the_link_tools_gate_nothing_and_no_tool_touches_a_blocker`, which comes with the four link tools) or carries an
   override reason (`no_tool_takes_an_override_reason_or_another_withheld_field`, which from this pull request on also
-  refuses an input that names a discovery mark or a blocker; `move_story_never_overrides_the_gate`). Not in the set,
-  and needing an observation of their own under R10: promises, urgent marks, and writing a required decision, a
-  sprint or a goal.
+  refuses an input that names a discovery mark or a blocker; `move_story_never_overrides_the_gate`). We decided that
+  the four link tools' descriptions say an item link is informational and holds nothing back (kb/ADR-0031 R2, R3).
+  Not in the set, and needing an observation of their own under R10: promises, urgent marks, and writing a required
+  decision, a sprint or a goal.
   We decided that `edit_epic` keeps what `reeve epic edit` can do: move an epic to another initiative or out of one.
   That changes whose discovery mark and required decisions its stories wait on, as `edit_story` already can by
   putting a story in another epic. It is an edit, not an override: readiness is derived (kb/ADR-0027 R1), no tool
@@ -174,10 +175,11 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   named fewer things when it was approved (until this pull request "create, edit, comment on and move stories"),
   and R5 ends every such connection within 30 days of its approval.
   Text in the planner can now steer a model into creating an epic or an initiative, replacing a title or a brief (an
-  `edited` entry keeps no earlier text), moving an epic, or adding or removing an item link or a web link, a URL of
-  that text's choosing included, under the person's name; the client's confirmation and the limit on changes remain
-  the only checks. Briefs, and web link titles and URLs, are text a chat model can now write as well as read, which
-  the operator's privacy statement must cover (`deploy/README.md`). No trigger fired; the decision holds.
+  `edited` entry keeps no earlier text) or moving an epic, and, once GRA-902 merges, into adding or removing an item
+  link or a web link, a URL of that text's choosing included, under the person's name; the client's confirmation and
+  the limit on changes remain the only checks. Briefs are text a chat model can now write as well as read, and web
+  link titles and URLs will be once GRA-902 merges; the operator's privacy statement must cover each
+  (`deploy/README.md`). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)
