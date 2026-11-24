@@ -1,6 +1,6 @@
-//! Item links (kb/ADR-0031): the three names with their spellings and their wording for each side, as one table,
-//! and the wire types that carry an item link. The server, the CLI and (through `label` on the wire) the web
-//! client all take the names from here.
+//! Item links and web links (kb/ADR-0031): the three item link names with their spellings and their wording for
+//! each side, as one table, and the wire types that carry an item link and a web link. The server, the CLI and
+//! (through `label` on the wire) the web client all take the names from here.
 use crate::{
     enums::ItemType,
     ids::{Key, KeyRef},
@@ -147,6 +147,25 @@ pub struct AddItemLink {
     pub link_type: ItemLinkType,
     /// A key or an external reference of an item of any level.
     pub to: KeyRef,
+}
+
+/// A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come
+/// oldest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct WebLinkDto {
+    pub id: i64,
+    pub title: String,
+    /// As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`).
+    pub url: String,
+}
+
+/// `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming; the URL is `http` or `https`
+/// and at most 1 000 characters as stored. Any other field is refused rather than ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddWebLink {
+    pub title: String,
+    pub url: String,
 }
 
 /// `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains

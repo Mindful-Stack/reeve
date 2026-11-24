@@ -29,6 +29,7 @@ pub use domain::{
         SprintCounts, StoryTimes, Summary, goal_gates, summarise,
     },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
+    web_link::{WebLink, WebLinkError},
 };
 pub use handler::*;
 pub use ports::{
