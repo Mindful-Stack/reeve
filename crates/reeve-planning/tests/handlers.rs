@@ -11148,6 +11148,53 @@ async fn web_links_are_one_per_url_logged_on_their_item_and_removed_by_id() {
     );
 }
 
+/// `add_web_link_reporting` answers the id a web link is removed by: a new one's, and on a repeat the id of the
+/// one that is there.
+#[tokio::test]
+async fn adding_a_web_link_reports_its_id_and_whether_it_was_added() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let e = h
+        .create_epic(&dan, "wr-e", "Invoices", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let (first, added) = h
+        .add_web_link_reporting(&dan, &e, "Spec", "https://example.com/spec")
+        .await
+        .unwrap();
+    assert!(added);
+    let (second, added) = h
+        .add_web_link_reporting(&dan, &e, "Board", "https://example.com/board")
+        .await
+        .unwrap();
+    assert!(added);
+    // The ids are the listing's own, in its order.
+    let listed: Vec<(i64, String)> = h
+        .link_listing(&e)
+        .await
+        .unwrap()
+        .web_links
+        .into_iter()
+        .map(|w| (w.id, w.title))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![(first, "Spec".to_string()), (second, "Board".to_string())]
+    );
+    // A repeat, in another spelling of the URL: the id of the one that is there, and nothing added.
+    assert_eq!(
+        h.add_web_link_reporting(&dan, &e, "Spec", "HTTPS://Example.com/spec")
+            .await
+            .unwrap(),
+        (first, false)
+    );
+    // And that id removes it.
+    assert!(h.remove_web_link(&dan, &e, first).await.unwrap());
+}
+
 /// What plan apply (GRA-879) relies on when it calls the `_in` forms in a transaction it opens per link: they write
 /// on the caller's transaction only, so nothing of them is left when it is not committed.
 /// As for item links (Task 3), the caller is the public form and what stops it short of the commit is the sink

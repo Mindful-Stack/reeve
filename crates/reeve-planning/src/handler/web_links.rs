@@ -22,6 +22,24 @@ pub(super) fn repeat_among<'a>(
 }
 
 impl Handlers {
+    /// `add_web_link`, answering the web link's id as well: the one this call added (true), or the one that was
+    /// already there under the same title (false). Public for the server's action, whose MCP receipt names the
+    /// web link by the id it is removed with.
+    pub async fn add_web_link_reporting(
+        &self,
+        c: &Ctx,
+        item: &Key,
+        title: &str,
+        url: &str,
+    ) -> Result<(i64, bool), HandlerError> {
+        let link = WebLink::new(title, url)?;
+        let level = self.item_type_of(item).await?;
+        let mut tx = self.pool.begin().await?;
+        let answer = self.add_web_link_in(&mut tx, c, level, item, &link).await?;
+        tx.commit().await?;
+        Ok(answer)
+    }
+
     /// Attaches a titled URL to an item of any level. A bad title or URL is a validation error; the item must
     /// exist (NotFound otherwise). Answers whether this call added it: the same URL with the same title is already
     /// there and changes nothing; the same URL with another title is a validation error that says to remove it
@@ -34,12 +52,9 @@ impl Handlers {
         title: &str,
         url: &str,
     ) -> Result<bool, HandlerError> {
-        let link = WebLink::new(title, url)?;
-        let level = self.item_type_of(item).await?;
-        let mut tx = self.pool.begin().await?;
-        let (_, added) = self.add_web_link_in(&mut tx, c, level, item, &link).await?;
-        tx.commit().await?;
-        Ok(added)
+        self.add_web_link_reporting(c, item, title, url)
+            .await
+            .map(|(_, added)| added)
     }
 
     /// Inside the caller's transaction: attaches `link` to `item` and, when this call added it, records

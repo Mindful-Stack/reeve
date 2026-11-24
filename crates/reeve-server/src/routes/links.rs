@@ -34,9 +34,9 @@ async fn add_item_link(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<AddItemLink>,
 ) -> Result<Json<Response<Vec<ItemLinkDto>>>, AppError> {
-    Ok(ok(
-        crate::actions::add_item_link(&s, &c.acting(), &key, b).await?
-    ))
+    Ok(ok(crate::actions::add_item_link(&s, &c.acting(), &key, b)
+        .await?
+        .links))
 }
 
 /// Removes "`key` <type> `to`", the forward form: a link an item shows as "is followed by X" is removed by naming
@@ -55,7 +55,8 @@ async fn remove_item_link(
         &link_type,
         &to,
     )
-    .await?))
+    .await?
+    .links))
 }
 
 /// Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control
@@ -69,9 +70,9 @@ async fn add_web_link(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<AddWebLink>,
 ) -> Result<Json<Response<Vec<WebLinkDto>>>, AppError> {
-    Ok(ok(
-        crate::actions::add_web_link(&s, &c.acting(), &key, b).await?
-    ))
+    Ok(ok(crate::actions::add_web_link(&s, &c.acting(), &key, b)
+        .await?
+        .web_links))
 }
 
 /// Removes one web link of the item by its id. An id the item does not have answers ok and changes nothing.
@@ -88,7 +89,8 @@ async fn remove_web_link(
         &key,
         id,
     )
-    .await?))
+    .await?
+    .web_links))
 }
 
 pub fn router() -> OpenApiRouter<AppState> {
