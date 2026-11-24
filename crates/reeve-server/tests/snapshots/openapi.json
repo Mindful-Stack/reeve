@@ -1575,6 +1575,16 @@
           "key": {
             "$ref": "#/components/schemas/Key"
           },
+          "links": {
+            "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+            "items": {
+              "$ref": "#/components/schemas/ItemLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "promise": {
             "oneOf": [
               {
@@ -2373,6 +2383,16 @@
           "key": {
             "$ref": "#/components/schemas/Key"
           },
+          "links": {
+            "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+            "items": {
+              "$ref": "#/components/schemas/ItemLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "owner": {
             "type": [
               "string",
@@ -2508,6 +2528,31 @@
         ],
         "type": "object"
       },
+      "ItemLinkDto": {
+        "description": "An item link as one of its two items reads it.",
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/LinkDirection"
+          },
+          "item": {
+            "$ref": "#/components/schemas/LinkedItemDto"
+          },
+          "label": {
+            "description": "Display text for this side (\"is followed by\"), from the name table.",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/LinkType"
+          }
+        },
+        "required": [
+          "type",
+          "direction",
+          "label",
+          "item"
+        ],
+        "type": "object"
+      },
       "ItemRefDto": {
         "description": "An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is.",
         "properties": {
@@ -2554,6 +2599,14 @@
         ],
         "type": "string"
       },
+      "LinkDirection": {
+        "description": "The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.\n`in`: it is the other one. `relates_to` has no direction and is always `out`.",
+        "enum": [
+          "out",
+          "in"
+        ],
+        "type": "string"
+      },
       "LinkGoal": {
         "description": "Items to link, each a key or external reference of any level.",
         "properties": {
@@ -2591,6 +2644,35 @@
           "repo",
           "path",
           "record_id"
+        ],
+        "type": "object"
+      },
+      "LinkType": {
+        "description": "The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back\n(R2); a name is added only by an observation on that record. Declared in display order: `follows`,\n`duplicates`, `relates_to`.",
+        "enum": [
+          "follows",
+          "duplicates",
+          "relates_to"
+        ],
+        "type": "string"
+      },
+      "LinkedItemDto": {
+        "description": "The item at the other end of an item link. No delivery state on purpose: a state beside \"follows\" would invite\nreading the link as a gate (kb/ADR-0031 R3).",
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ItemType"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "level",
+          "title"
         ],
         "type": "object"
       },
@@ -4963,6 +5045,16 @@
                   "key": {
                     "$ref": "#/components/schemas/Key"
                   },
+                  "links": {
+                    "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
                   "promise": {
                     "oneOf": [
                       {
@@ -5665,6 +5757,16 @@
                   },
                   "key": {
                     "$ref": "#/components/schemas/Key"
+                  },
+                  "links": {
+                    "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "owner": {
                     "type": [
@@ -7055,6 +7157,16 @@
                     },
                     "type": "array"
                   },
+                  "links": {
+                    "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+                    "items": {
+                      "$ref": "#/components/schemas/ItemLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
                   "owner": {
                     "type": [
                       "string",
@@ -7889,6 +8001,16 @@
                     "key": {
                       "$ref": "#/components/schemas/Key"
                     },
+                    "links": {
+                      "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+                      "items": {
+                        "$ref": "#/components/schemas/ItemLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "promise": {
                       "oneOf": [
                         {
@@ -8332,6 +8454,16 @@
                     },
                     "key": {
                       "$ref": "#/components/schemas/Key"
+                    },
+                    "links": {
+                      "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+                      "items": {
+                        "$ref": "#/components/schemas/ItemLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "owner": {
                       "type": [
@@ -9840,6 +9972,16 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "links": {
+            "description": "The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one\nitem; left out of every read that answers several items, where \"not loaded\" must not read as \"none\".",
+            "items": {
+              "$ref": "#/components/schemas/ItemLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "owner": {
             "type": [

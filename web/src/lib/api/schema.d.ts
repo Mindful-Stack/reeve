@@ -1772,6 +1772,11 @@ export interface components {
             external_ref?: string | null;
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             promise: null | components["schemas"]["EpicPromiseDto"];
             title: string;
             urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -2008,6 +2013,11 @@ export interface components {
             external_ref?: string | null;
             horizon: string;
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             /**
              * Format: float
@@ -2047,6 +2057,14 @@ export interface components {
             secret: string;
             token: components["schemas"]["TokenDto"];
         };
+        /** @description An item link as one of its two items reads it. */
+        ItemLinkDto: {
+            direction: components["schemas"]["LinkDirection"];
+            item: components["schemas"]["LinkedItemDto"];
+            /** @description Display text for this side ("is followed by"), from the name table. */
+            label: string;
+            type: components["schemas"]["LinkType"];
+        };
         /** @description An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is. */
         ItemRefDto: {
             item: components["schemas"]["ItemType"];
@@ -2060,6 +2078,12 @@ export interface components {
         KeyRef: string;
         /** @enum {string} */
         Kind: "story" | "bug" | "chore";
+        /**
+         * @description The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.
+         *     `in`: it is the other one. `relates_to` has no direction and is always `out`.
+         * @enum {string}
+         */
+        LinkDirection: "out" | "in";
         /** @description Items to link, each a key or external reference of any level. */
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
@@ -2069,6 +2093,22 @@ export interface components {
             pr_url?: string | null;
             record_id: string;
             repo: string;
+        };
+        /**
+         * @description The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back
+         *     (R2); a name is added only by an observation on that record. Declared in display order: `follows`,
+         *     `duplicates`, `relates_to`.
+         * @enum {string}
+         */
+        LinkType: "follows" | "duplicates" | "relates_to";
+        /**
+         * @description The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
+         *     reading the link as a gate (kb/ADR-0031 R3).
+         */
+        LinkedItemDto: {
+            key: components["schemas"]["Key"];
+            level: components["schemas"]["ItemType"];
+            title: string;
         };
         /** @description Mark (or renew) an item urgent; the reason is optional, at most 200 characters. */
         MarkUrgent: {
@@ -2757,6 +2797,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -2971,6 +3016,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -3416,6 +3466,11 @@ export interface components {
                 key: components["schemas"]["Key"];
                 kind: components["schemas"]["Kind"];
                 labels: string[];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 promise: null | components["schemas"]["StoryPromiseDto"];
                 /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
@@ -3664,6 +3719,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -3793,6 +3853,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -4270,6 +4335,11 @@ export interface components {
             key: components["schemas"]["Key"];
             kind: components["schemas"]["Kind"];
             labels: string[];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             promise: null | components["schemas"]["StoryPromiseDto"];
             /** @description Pull requests linked to this story (possibly none); informational, they never move it. */

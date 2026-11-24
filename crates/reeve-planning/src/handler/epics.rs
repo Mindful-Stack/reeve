@@ -182,7 +182,8 @@ impl Handlers {
         Ok(self.ports.epics.get_epic(key).await?)
     }
 
-    /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot.
+    /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot. Its item links are read on the same
+    /// snapshot (kb/ADR-0031); a list read never carries them.
     pub async fn epic_dto(&self, key: &Key, now: DateTime<Utc>) -> Result<EpicDto, HandlerError> {
         let mut tx = self
             .pool
@@ -197,12 +198,9 @@ impl Handlers {
                 .reads
                 .promise_facts_in(&mut tx, &[], std::slice::from_ref(key))
                 .await?;
-            Ok(epic_dto_of(
-                &e,
-                &urg,
-                promises.epics.remove(key).as_ref(),
-                &clock,
-            ))
+            let mut dto = epic_dto_of(&e, &urg, promises.epics.remove(key).as_ref(), &clock);
+            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            Ok(dto)
         }
         .await;
         end_read(tx, out).await

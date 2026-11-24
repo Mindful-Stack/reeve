@@ -675,7 +675,7 @@ async fn export_holds_every_item_created_before_it() {
     )
     .await;
     assert_eq!(e["initiatives"][0], ini["value"][0]);
-    let (_, story) = call(
+    let (_, mut story) = call(
         &h.app,
         Some(&h.admin_token),
         "GET",
@@ -683,6 +683,12 @@ async fn export_holds_every_item_created_before_it() {
         None,
     )
     .await;
+    // The one difference between the export's row and a read of one item, by design (kb/ADR-0031): only the
+    // read of one item carries its item links. None exist here.
+    assert_eq!(
+        story["value"].as_object_mut().unwrap().remove("links"),
+        Some(json!([]))
+    );
     assert_eq!(stories[0], story["value"]);
 }
 

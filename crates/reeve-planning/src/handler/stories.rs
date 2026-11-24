@@ -703,7 +703,8 @@ impl Handlers {
     }
 
     /// One story's DTO in its own read-only snapshot (the single-story routes): the row, its assembly and its urgency
-    /// all read there. NotFound when no story has the key.
+    /// all read there. NotFound when no story has the key. Its item links are read on the same snapshot (kb/ADR-0031); a
+    /// list read never carries them.
     pub async fn story_dto(&self, key: &Key, now: DateTime<Utc>) -> Result<StoryDto, HandlerError> {
         let mut tx = self
             .pool
@@ -717,10 +718,17 @@ impl Handlers {
                 .reads
                 .stories_by_keys(&mut tx, std::slice::from_ref(key))
                 .await?;
-            self.story_dtos_in(&mut tx, &stories, &urg, &clock).await
+            let mut dto = self
+                .story_dtos_in(&mut tx, &stories, &urg, &clock)
+                .await?
+                .pop()
+                .ok_or(HandlerError::NotFound)?;
+            // A read of one item is whole: its item links come along (kb/ADR-0031), from the same snapshot.
+            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            Ok(dto)
         }
         .await;
-        end_read(tx, out).await?.pop().ok_or(HandlerError::NotFound)
+        end_read(tx, out).await
     }
 
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in
@@ -798,7 +806,8 @@ impl Handlers {
 
     /// The story, its ancestors, open decisions, blockers, comments, attachments, readiness and the active sprint's goals
     /// it serves, all from one `REPEATABLE READ READ ONLY` snapshot, in a number of statements that does not depend on the number
-    /// of blockers or goals.
+    /// of blockers or goals. The story's item links are read on the same snapshot (kb/ADR-0031); a list read never
+    /// carries them.
     pub async fn story_context(
         &self,
         key: &Key,
@@ -884,7 +893,10 @@ impl Handlers {
                 .remove(e.key()),
             None => None,
         };
-        let story = dtos.next().ok_or(HandlerError::NotFound)?;
+        let mut story = dtos.next().ok_or(HandlerError::NotFound)?;
+        // Only the context's own story carries its item links; the blockers, the epic and the initiative come
+        // along as they are listed.
+        story.links = Some(self.item_link_dtos_in(tx, key).await?);
         let blockers = dtos.collect();
         let goals = self.goals_context_in(tx, &story.goals).await?;
         let attachments = self

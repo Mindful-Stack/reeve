@@ -1988,7 +1988,11 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
     tx.rollback().await.unwrap();
     let mut single = Vec::new();
     for s in &fresh {
-        single.push(h.story_dto(s.key(), Utc::now()).await.unwrap());
+        let mut dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
+        // The one difference between the two readers, by design (kb/ADR-0031): only a read of one item
+        // carries its item links. None exist here.
+        assert_eq!(dto.links.take(), Some(vec![]));
+        single.push(dto);
     }
     assert_eq!(batched, single);
     assert_eq!(
@@ -4090,7 +4094,10 @@ async fn list_initiatives_progress_matches_one_at_a_time() {
     assert_eq!(listed.len(), 3);
     for dto in &listed {
         let key = dto.key.clone();
-        assert_eq!(dto, &h.initiative_dto(&key, Utc::now()).await.unwrap());
+        let mut single = h.initiative_dto(&key, Utc::now()).await.unwrap();
+        // Only a read of one item carries its item links (kb/ADR-0031); none exist here.
+        assert_eq!(single.links.take(), Some(vec![]));
+        assert_eq!(dto, &single);
     }
     assert_eq!(listed.iter().filter(|d| d.progress.is_none()).count(), 2);
     assert_eq!(
@@ -10657,5 +10664,133 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
         naming("item_links").await,
         0,
         "computing readiness and moving a story send no statement that names item_links"
+    );
+}
+
+/// The reads of one item (story, epic, initiative, and the story of a context) always carry `links`, an empty
+/// list when there are none; every read of several items, and the items that come along in a context, leave it
+/// out, in Rust and in the JSON.
+#[tokio::test]
+async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
+    use reeve_protocol::LinkType::{Follows, RelatesTo};
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let c = ctx("dan@example.com", false);
+    let now = c.now;
+    let i = h
+        .create_initiative(&c, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let e = h
+        .create_epic(&c, "e", "E", Some(i.clone()), "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let mut s = Vec::new();
+    for n in ["a", "b", "lonely"] {
+        s.push(
+            h.create_story(
+                &c,
+                n,
+                n,
+                Kind::Story,
+                Some(e.clone()),
+                "",
+                vec![],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .key()
+            .clone(),
+        );
+    }
+    assert!(h.add_item_link(&c, &s[0], Follows, &s[1]).await.unwrap());
+    assert!(h.add_item_link(&c, &e, RelatesTo, &i).await.unwrap());
+    h.add_block(&c, &s[0], &s[1]).await.unwrap();
+
+    let shown = |links: &Option<Vec<reeve_protocol::ItemLinkDto>>| -> Option<Vec<String>> {
+        links.as_ref().map(|l| {
+            l.iter()
+                .map(|x| format!("{} {}", x.label, x.item.key))
+                .collect()
+        })
+    };
+    assert_eq!(
+        shown(&h.story_dto(&s[0], now).await.unwrap().links),
+        Some(vec![format!("follows {}", s[1])])
+    );
+    assert_eq!(
+        shown(&h.story_dto(&s[1], now).await.unwrap().links),
+        Some(vec![format!("is followed by {}", s[0])])
+    );
+    assert_eq!(
+        shown(&h.story_dto(&s[2], now).await.unwrap().links),
+        Some(vec![]),
+        "none is an empty list, not an absent one"
+    );
+    assert_eq!(
+        shown(&h.epic_dto(&e, now).await.unwrap().links),
+        Some(vec![format!("relates to {i}")])
+    );
+    assert_eq!(
+        shown(&h.initiative_dto(&i, now).await.unwrap().links),
+        Some(vec![format!("relates to {e}")])
+    );
+    let context = h.story_context(&s[0], now).await.unwrap();
+    assert_eq!(
+        shown(&context.story.links),
+        Some(vec![format!("follows {}", s[1])])
+    );
+    assert_eq!(
+        context.blockers.len(),
+        1,
+        "the control: a blocker comes along"
+    );
+    assert_eq!(context.blockers[0].links, None);
+    assert_eq!(context.epic.unwrap().links, None);
+    assert_eq!(context.initiative.unwrap().links, None);
+
+    let listed = h
+        .list_stories(
+            &StoryFilter::default(),
+            None,
+            None,
+            false,
+            DoneFilter::All,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        listed.len(),
+        3,
+        "the control: the list holds the linked stories"
+    );
+    assert!(listed.iter().all(|r| r.story.links.is_none()));
+    assert!(
+        serde_json::to_value(&listed[0]).unwrap()["story"]
+            .get("links")
+            .is_none(),
+        "left out of the JSON, not sent as null"
+    );
+    assert!(
+        h.epic_dtos(None, now)
+            .await
+            .unwrap()
+            .iter()
+            .all(|e| e.links.is_none())
+    );
+    assert!(
+        h.list_initiatives(now)
+            .await
+            .unwrap()
+            .iter()
+            .all(|i| i.links.is_none())
     );
 }
