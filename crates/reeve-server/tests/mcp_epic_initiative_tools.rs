@@ -380,6 +380,26 @@ async fn edit_epic_refuses_what_would_lose_or_overwrite_and_changes_nothing() {
             "{made} changed since you read it and is now at version {v}. Read it again with get_epic, check what changed, and send only the change the person asked for, with version {v}."
         )
     );
+    // A version ahead of the stored one is the same conflict, through the tool and through the route.
+    assert_eq!(
+        said(json!({"key": made, "version": v + 1, "title": "Ahead"})).await,
+        format!(
+            "{made} changed since you read it and is now at version {v}. Read it again with get_epic, check what changed, and send only the change the person asked for, with version {v}."
+        )
+    );
+    let (st, ahead) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "PATCH",
+        &format!("/api/v1/epics/{made}"),
+        Some(json!({"version": v + 1, "title": "Ahead"})),
+    )
+    .await;
+    assert_eq!(
+        (st, &ahead["code"], &ahead["current"]),
+        (409, &json!("conflict"), &json!(v)),
+        "{ahead}"
+    );
     assert_eq!(
         said(json!({"key": made, "version": v, "initiative": "TST-1", "detach_initiative": true}))
             .await,
@@ -687,6 +707,26 @@ async fn edit_initiative_refuses_what_would_lose_or_overwrite_and_changes_nothin
         format!(
             "{made} changed since you read it and is now at version 1. Read it again with get_initiative, check what changed, and send only the change the person asked for, with version 1."
         )
+    );
+    // A version ahead of the stored one is the same conflict, through the tool and through the route.
+    assert_eq!(
+        said(json!({"version": 2, "title": "Ahead"})).await,
+        format!(
+            "{made} changed since you read it and is now at version 1. Read it again with get_initiative, check what changed, and send only the change the person asked for, with version 1."
+        )
+    );
+    let (st, ahead) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "PATCH",
+        &format!("/api/v1/initiatives/{made}"),
+        Some(json!({"version": 2, "title": "Ahead"})),
+    )
+    .await;
+    assert_eq!(
+        (st, &ahead["code"], &ahead["current"]),
+        (409, &json!("conflict"), &json!(1)),
+        "{ahead}"
     );
     assert_eq!(
         said(json!({"owner": BOB, "clear_owner": true})).await,

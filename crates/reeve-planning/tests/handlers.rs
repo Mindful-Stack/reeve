@@ -11939,3 +11939,157 @@ async fn a_replayed_plan_reads_its_links_once_and_sends_no_insert_for_one_that_e
         "the web links are read once by the validation and once before the link phase"
     );
 }
+
+/// Waits until `edit` has answered or waits on a lock (the test's open transaction holds it).
+async fn answered_or_waiting<T>(pool: &sqlx::PgPool, edit: &tokio::task::JoinHandle<T>) {
+    for _ in 0..250 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if edit.is_finished() || waiting >= 1 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the edit neither answered nor waited on the lock");
+}
+
+/// An edit that names a version ahead of the stored one is a conflict carrying the stored version, like a stale one:
+/// the row it read is not the row its version names.
+#[tokio::test]
+async fn an_edit_at_a_version_ahead_of_the_stored_one_is_a_conflict() {
+    let (_db, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let entries = sink.0.lock().unwrap().len();
+    let title = || Some("Ahead".to_string());
+    assert!(matches!(
+        h.edit_initiative(&dan, i.key(), 2, title(), None, None, None, None, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert!(matches!(
+        h.edit_epic(&dan, e.key(), 2, title(), None, None, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert!(matches!(
+        h.edit_story(
+            &dan,
+            s.key(),
+            2,
+            title(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert_eq!(
+        h.ports.initiatives.get_initiative(i.key()).await.unwrap(),
+        i
+    );
+    assert_eq!(h.ports.epics.get_epic(e.key()).await.unwrap(), e);
+    assert_eq!(h.get_story(s.key()).await.unwrap(), s);
+    assert_eq!(sink.0.lock().unwrap().len(), entries, "no entry");
+}
+
+/// An unmarked item is at version 1. An edit names version 2 and reads version 1; before it writes, another
+/// transaction marks discovery complete, which makes version 2. The edit must not then write the unmarked row it
+/// read over the mark: it is refused at its read. The edit is held between its read and its update on the lock of
+/// the external reference it sets, which it takes after the read (`set_ref`); the test's transaction holds that
+/// lock and writes the mark. Goes red if an edit handler stops comparing the version it was given with the row it
+/// read: the conditional update alone lets the edit through once the mark has committed.
+#[tokio::test]
+async fn an_edit_ahead_of_its_read_never_undoes_a_concurrent_discovery_mark() {
+    let (_db, pool) = common::pg().await;
+    let (h, _) = mk(pool.clone());
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    for (table, key, reference) in [
+        ("initiatives", i.key().clone(), "JPD-1"),
+        ("epics", e.key().clone(), "JPD-2"),
+    ] {
+        let mut mark = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_import:' || $1))")
+            .bind(reference)
+            .execute(&mut *mark)
+            .await
+            .unwrap();
+        let edit = tokio::spawn({
+            let (h, dan, key) = (h.clone(), dan.clone(), key.clone());
+            async move {
+                let (title, r) = (Some("Ahead".to_string()), Some(reference.to_string()));
+                if table == "epics" {
+                    h.edit_epic(&dan, &key, 2, title, None, None, r)
+                        .await
+                        .map(|_| ())
+                } else {
+                    h.edit_initiative(&dan, &key, 2, title, None, None, None, None, r)
+                        .await
+                        .map(|_| ())
+                }
+            }
+        });
+        answered_or_waiting(&pool, &edit).await;
+        // The mark, as `mark_discovery` writes it; committing it lets the edit go on.
+        sqlx::query(&format!(
+            "UPDATE {table} SET discovery_at = now(), discovery_by = 'ann', version = version + 1 WHERE key = $1 AND version = 1"
+        ))
+        .bind(key.to_string())
+        .execute(&mut *mark)
+        .await
+        .unwrap();
+        mark.commit().await.unwrap();
+        let answer = edit.await.unwrap();
+        let (marked, title): (bool, String) = sqlx::query_as(&format!(
+            "SELECT discovery_at IS NOT NULL, title FROM {table} WHERE key = $1"
+        ))
+        .bind(key.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(marked, "{table}: the edit undid the discovery mark");
+        assert_ne!(title, "Ahead", "{table}: the edit was written");
+        assert!(
+            matches!(answer, Err(HandlerError::Conflict { current: 1 })),
+            "{table}: {answer:?}"
+        );
+    }
+}

@@ -200,6 +200,14 @@ impl Handlers {
     ) -> Result<Initiative, HandlerError> {
         let attachments = attachment_ids(attachments)?;
         let cur = self.ports.initiatives.get_initiative(key).await?;
+        // The version the caller read must be the row read here: the row written below is rebuilt from this read (the
+        // discovery mark included), and the conditional update only proves the row is at the caller's version when it
+        // is written, which a concurrent write can make true of a caller ahead of this read.
+        if cur.version() != version {
+            return Err(HandlerError::Conflict {
+                current: cur.version(),
+            });
+        }
         let new_horizon = horizon.as_deref().unwrap_or(cur.horizon());
         check_horizon_change(cur.horizon(), new_horizon, &self.settings.horizon_buckets)?;
         // Validated above, so the constructor sees the chosen horizon as its only bucket.

@@ -139,6 +139,14 @@ impl Handlers {
     ) -> Result<Epic, HandlerError> {
         let attachments = attachment_ids(attachments)?;
         let cur = self.ports.epics.get_epic(key).await?;
+        // The version the caller read must be the row read here: the row written below is rebuilt from this read (the
+        // discovery mark included), and the conditional update only proves the row is at the caller's version when it
+        // is written, which a concurrent write can make true of a caller ahead of this read.
+        if cur.version() != version {
+            return Err(HandlerError::Conflict {
+                current: cur.version(),
+            });
+        }
         let ini = initiative.unwrap_or(cur.initiative().cloned());
         if let Some(ik) = &ini {
             self.ports.initiatives.get_initiative(ik).await?;
