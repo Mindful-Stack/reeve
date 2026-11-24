@@ -10,6 +10,7 @@ mod git;
 pub mod glyphs;
 mod jira;
 mod promise;
+mod relations;
 mod render;
 pub mod tui;
 mod urgency;
