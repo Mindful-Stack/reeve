@@ -148,9 +148,13 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
                             json,
                             |left| format!("web link removed\n{}", web_links_text(left)),
                         ),
-                        // Removing one that does not exist succeeds and changes nothing.
-                        None => finish(Outcome::Ok(v.web_links), json, |_| {
-                            "no web link with that URL: nothing removed".to_string()
+                        // Removing one that does not exist succeeds and changes nothing. The item's web links
+                        // follow, as after a removal: the stored spelling of the one that was meant is among them.
+                        None => finish(Outcome::Ok(v.web_links), json, |still| {
+                            format!(
+                                "no web link with that URL: nothing removed\n{}",
+                                web_links_text(still)
+                            )
                         }),
                     }
                 }

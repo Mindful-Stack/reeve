@@ -5180,9 +5180,26 @@ fn link_add_and_rm_with_a_url_work_on_web_links() {
     );
     assert_eq!(server.join().unwrap().len(), 1);
     assert_eq!(out.status.code(), Some(0));
+    // The item's web links follow, as after a removal, so the person sees the stored spelling.
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "no web link with that URL: nothing removed\n"
+        "no web link with that URL: nothing removed\nweb links:\n  Scenario page  http://example.com/\n"
+    );
+    // On an item with none, the same line says so.
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-12/links",
+        200,
+        ok(serde_json::json!({"links": [], "web_links": []})),
+    )]);
+    let out = reeve_at(
+        &url,
+        &["link", "rm", "TST-12", "--url", "https://example.com/other"],
+    );
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "no web link with that URL: nothing removed\nno web links\n"
     );
     let (url, server) = serve(vec![("GET /api/v1/items/TST-12/links", 200, listing)]);
     let out = reeve_at(
