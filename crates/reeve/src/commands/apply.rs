@@ -9,7 +9,7 @@ use clap::Args;
 use reeve_protocol::*;
 use std::fmt::Write;
 
-/// Create a plan of items, required decisions and blockers from a YAML or JSON file, in one request.
+/// Create a plan of items, required decisions, blockers, item links and web links from a YAML or JSON file.
 ///
 /// A plan lists initiatives, epics, stories, required decisions and blockers. Items name each other by local `name`.
 /// A reference that is not a plan name is an existing item's key or external reference, looked up at the level its
