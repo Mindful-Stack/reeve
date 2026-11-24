@@ -1190,7 +1190,7 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 test('a table of two or three columns wraps on a phone instead of scrolling; only one of four or more keeps a readable width', async ({ page }) => {
 	const url = `https://example.com/${'a'.repeat(100)}`;
 	const three = `| Source | Link | Note |\n|---|---|---|\n| The design file for the meeting point flow | ${url} | Read it before the workshop on Thursday, and bring the notes from the last one |`;
-	const glossary = `| Term | Definition |\n|---|---|\n| Meeting point | The place the group is sent to, computed from where every member is and how each of them travels |\n| Member | Somebody who has joined the group and shares a position while the group is open |`;
+	const glossary = `| Term | Definition |\n|---|---|\n| Meeting point | The place the group is sent to, computed from where every member is and how each of them travels |\n| Member | Somebody who has joined the group and shares a position while the group is open |\n| \`${'reeve_server_actions_'.repeat(4)}\` | Inline code breaks anywhere, like a link |`;
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 		idempotency_key: crypto.randomUUID(),
 		title: `Table columns smoke ${crypto.randomUUID().slice(0, 6)}`,

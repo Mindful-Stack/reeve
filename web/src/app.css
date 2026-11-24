@@ -357,8 +357,9 @@ textarea[data-drop] {
 	/* The surrounding text breaks anywhere; in a cell that squeezes a column down to one letter per line. */
 	overflow-wrap: break-word;
 }
-/* A long URL would otherwise set the table's width: a cell breaks only between words, a link in it anywhere. */
-[data-table-scroll] :is(th, td) a {
+/* A long URL or identifier would otherwise set the table's width: a cell breaks only between words, a link or inline
+   code in it anywhere. */
+[data-table-scroll] :is(th, td) :is(a, code) {
 	overflow-wrap: anywhere;
 }
 [data-table-scroll] th {
