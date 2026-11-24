@@ -101,6 +101,7 @@ mod comments;
 mod decisions;
 mod epics;
 mod initiatives;
+mod item_links;
 mod keys;
 mod promise;
 mod pull_requests;
@@ -115,6 +116,7 @@ pub use self::{
     decisions::DecisionRepo,
     epics::EpicRepo,
     initiatives::InitiativeRepo,
+    item_links::ItemLinkRepo,
     keys::KeyRepo,
     promise::{PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, StoryPromiseRow},
     pull_requests::PullRequestRepo,
@@ -139,6 +141,7 @@ pub struct PlanningPorts {
     pub sprints: Arc<dyn SprintRepo>,
     pub urgency: Arc<dyn UrgencyRepo>,
     pub promises: Arc<dyn PromiseRepo>,
+    pub item_links: Arc<dyn ItemLinkRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

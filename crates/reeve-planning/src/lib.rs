@@ -12,6 +12,7 @@ pub use domain::{
         CheckOutcome, Closed, DecisionEdit, DecisionError, FieldChange, PrUrl, RecordRef,
         RequiredDecision,
     },
+    item_link::{ItemLink, ItemLinkError},
     items::{
         Criterion, DiscoveryMark, Epic, Initiative, ItemError, Move, MoveRefused, Moved, Story,
     },
@@ -32,10 +33,10 @@ pub use domain::{
 pub use handler::*;
 pub use ports::{
     ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
-    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, KeyRepo, PlanningPorts, PlanningReads,
-    PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, PullRequestRepo, RepoError,
-    SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryPromiseRow, StoryRepo, StoryText,
-    UrgencyRepo,
+    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, ItemLinkRepo, KeyRepo, PlanningPorts,
+    PlanningReads, PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, PullRequestRepo,
+    RepoError, SearchRow, SprintRepo, StoryCounts, StoryFilter, StoryPromiseRow, StoryRepo,
+    StoryText, UrgencyRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;
