@@ -95,7 +95,7 @@
 			<fieldset>
 				<legend id="scope-legend">What may it do?</legend>
 				<label><input type="radio" name="scope" value="read" bind:group={scope} /> Read: everything you can see in {instance}</label>
-				<label><input type="radio" name="scope" value="write" bind:group={scope} /> Read and change: also create, edit, comment on and move stories as you</label>
+				<label><input type="radio" name="scope" value="write" bind:group={scope} /> Read and change: also create and edit stories, epics and initiatives, comment, and move stories, as you</label>
 			</fieldset>
 			<ul>
 				<li>

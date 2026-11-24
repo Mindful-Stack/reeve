@@ -92,6 +92,14 @@ describe('the approval page', () => {
 		expect(button('Approve')!.disabled).toBe(false);
 	});
 
+	// Catches a page that promises less than a connection that may change can do (kb/ADR-0029 R4).
+	it('says what a connection that may change can do', async () => {
+		await shown();
+		expect(radio('write').closest('label')?.textContent?.trim()).toBe(
+			'Read and change: also create and edit stories, epics and initiatives, comment, and move stories, as you'
+		);
+	});
+
 	// Catches an approve that sends another scope than the one chosen, drops the approval value, or navigates
 	// somewhere other than the address the server answered.
 	it('Approve posts the value and the chosen scope, then navigates to the answered address', async () => {
