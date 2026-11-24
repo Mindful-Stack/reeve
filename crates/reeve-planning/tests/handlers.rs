@@ -11717,6 +11717,135 @@ async fn a_plan_reference_that_is_a_native_key_and_an_external_reference_names_e
     assert_eq!(decisions.len(), 1, "the decision is on the epic");
 }
 
+/// The scopes the other way round: `OLD-1` is the native key of a story (issued under an earlier prefix) and the
+/// external reference of an epic. A story's `epic` takes an epic, so it names the epic; a decision's `on` takes any
+/// item, native keys first, so it names the story. A re-apply answers the same decision on the same story and
+/// creates nothing. What it catches: one cache of resolved references shared by the typed and the untyped scope,
+/// which would hand the decision the epic the story's `epic` resolved first (or the epic the story), and on the
+/// re-apply move or duplicate the decision.
+#[tokio::test]
+async fn a_plan_decision_on_a_native_story_key_that_is_an_epic_external_reference_is_on_the_story()
+{
+    use reeve_protocol::ItemType;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let old = Handlers {
+        ports: make_planning_ports(pool.clone()),
+        activity: Arc::new(MemSink(Mutex::new(vec![]))),
+        pool: pool.clone(),
+        settings: Settings {
+            key_prefix: "OLD".into(),
+            ..settings()
+        },
+    };
+    let c = ctx("dan@example.com", false);
+    let old_story = old
+        .create_story(
+            &c,
+            "os",
+            "Old story",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let raw = old_story.to_string();
+    let epic = h
+        .create_epic(&c, "ie", "Imported epic", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    sqlx::query("UPDATE epics SET external_ref = $1 WHERE key = $2")
+        .bind(&raw)
+        .bind(epic.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            h.resolve_ref(&raw, ItemType::Epic).await.unwrap(),
+            h.resolve_any(&raw).await.unwrap()
+        ),
+        (epic.clone(), (ItemType::Story, old_story.clone())),
+        "the control: as an epic the reference is the imported epic, untyped it is the story"
+    );
+
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(serde_json::json!({
+            "id": "collision-3",
+            "stories": [{"name": "s", "title": "S", "epic": raw}],
+            "decisions": [{"name": "d", "on": raw, "title": "Pick", "decider": "dan@example.com"}]
+        }))
+        .unwrap()
+    };
+    let counts = || {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64, i64)>(
+                "SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM epics), \
+                 (SELECT count(*) FROM required_decisions)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let first = h.apply_plan(&c, plan()).await.unwrap();
+    let s = h.get_story(&first.items[0].key).await.unwrap();
+    assert_eq!(s.epic(), Some(&epic), "the story lands under the epic");
+    let on_story = h
+        .list_decisions(Some(&old_story), false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        on_story
+            .iter()
+            .map(|d| (d.id(), d.on_type()))
+            .collect::<Vec<_>>(),
+        vec![(first.decisions[0].id, ItemType::Story)],
+        "the decision is on the native story"
+    );
+    assert!(
+        h.list_decisions(Some(&epic), false, true)
+            .await
+            .unwrap()
+            .is_empty(),
+        "and none on the epic"
+    );
+
+    let before = counts().await;
+    let again = h.apply_plan(&c, plan()).await.unwrap();
+    assert_eq!(counts().await, before, "the re-apply creates nothing");
+    assert_eq!(
+        (again.items[0].created, again.decisions[0].created),
+        (false, false)
+    );
+    assert_eq!(
+        again.decisions[0].id, first.decisions[0].id,
+        "the same decision"
+    );
+    let on_story = h
+        .list_decisions(Some(&old_story), false, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        on_story
+            .iter()
+            .map(|d| (d.id(), d.on()))
+            .collect::<Vec<_>>(),
+        vec![(first.decisions[0].id, &old_story)],
+        "still on the native story"
+    );
+}
+
 /// A replay of a plan opens no write transaction for a link that is already there: the item links and web links
 /// of the plan's items are read once before the link phase, and an entry found there answers `created` false
 /// without an insert. Seen at the statement level: the first apply sends the inserts, the replay sends none and
