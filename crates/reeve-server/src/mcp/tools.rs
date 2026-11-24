@@ -2,6 +2,7 @@
 //! command and runs the action its API route runs (kb/ADR-0029 R1, kb/ADR-0005 R5); a tool outside the set of
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod add_comment;
+mod add_item_link;
 mod bound;
 mod create_epic;
 mod create_initiative;
@@ -18,6 +19,7 @@ mod list_epics;
 mod list_initiatives;
 mod list_stories;
 mod move_story;
+mod remove_item_link;
 mod search_items;
 
 use crate::{actions::Acting, error::AppError, state::AppState, text};
@@ -126,6 +128,8 @@ pub(crate) fn registry(key_prefix: &str, horizons: &[String]) -> Vec<Tool> {
         edit_epic::tool(key_prefix),
         create_initiative::tool(horizons),
         edit_initiative::tool(key_prefix, horizons),
+        add_item_link::tool(key_prefix),
+        remove_item_link::tool(key_prefix),
     ]
 }
 
@@ -278,6 +282,28 @@ fn not_found(e: AppError, what: &str, key: &str, key_prefix: &str) -> ToolError 
     }
 }
 
+/// The other end of an item link as the route takes it: `to` must be a key, and the message names the argument.
+fn link_end(to: &str, key_prefix: &str) -> Result<KeyRef, ToolError> {
+    key_ref("to", Some(to.to_string()), key_prefix)?.ok_or_else(|| {
+        ToolError::Internal(anyhow::anyhow!(
+            "key_ref answered none for a key that was given"
+        ))
+    })
+}
+
+/// What a write of an item link failed with: a missing item is told with both keys the caller sent, since either
+/// may be the missing one; anything else in `told`'s words.
+fn link_failed(e: AppError, key: &str, to: &str, key_prefix: &str) -> ToolError {
+    match e {
+        AppError::NotFound => ToolError::Told(format!(
+            "No item with key {:?}, or no item with key {:?}. Keys look like {key_prefix}-123.",
+            bound::echo(key),
+            bound::echo(to)
+        )),
+        other => told(other),
+    }
+}
+
 /// What a write to an item by version failed with: a stale version is told with the version to read (when the
 /// planner could give one) and what to do about it; a missing item as `not_found` tells it; anything else in
 /// `told`'s words. `what` is "story", "epic" or "initiative", and `reader` the tool that reads one.
@@ -420,7 +446,7 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 8] = [
+        const WRITE: [&str; 10] = [
             "create_story",
             "edit_story",
             "add_comment",
@@ -429,6 +455,8 @@ mod tests {
             "edit_epic",
             "create_initiative",
             "edit_initiative",
+            "add_item_link",
+            "remove_item_link",
         ];
         let tools = tools();
         let named = |read_only: bool| -> Vec<&str> {
@@ -748,10 +776,25 @@ mod tests {
     /// sentences a reviewer or the owner asked for by name. One row per sentence; the text is compared whole.
     #[test]
     fn a_description_says_what_only_it_can_tell_the_model() {
-        const SAID: [(&str, &str); 1] = [(
-            "edit_epic",
-            "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
-        )];
+        const SAID: [(&str, &str); 4] = [
+            (
+                "edit_epic",
+                "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
+            ),
+            (
+                "add_item_link",
+                "To say the reverse (\"A is followed by B\", \"A is duplicated by B\"), send B as `key` and A as `to`.",
+            ),
+            (
+                "add_item_link",
+                "`duplicates` only records that the two cover the same work: neither item is closed, dropped, moved or merged.",
+            ),
+            // kb/ADR-0031 R2, for the chat as an import path.
+            (
+                "add_item_link",
+                "Never record another tool's \"blocks\" or \"depends on\" as an item link, under any name: leave it out and tell the person that a blocker is added by a person, in the CLI or the web client.",
+            ),
+        ];
         let tools = tools();
         for (name, sentence) in SAID {
             let tool = tools.iter().find(|t| t.name == name).unwrap();
@@ -800,5 +843,32 @@ mod tests {
             described(&tools, "edit_initiative", "owner"),
             "A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`."
         );
+    }
+
+    /// kb/ADR-0031 R6: where both kinds are in view, a description says "item link" or "web link", never bare
+    /// "link". Every "link" in a link tool's description is part of one of the two terms (or of "linked", for the
+    /// items at the other end).
+    #[test]
+    fn a_link_tools_description_never_says_bare_link() {
+        for tool in tools() {
+            if !tool.name.contains("_link") {
+                continue;
+            }
+            // The field names `web_links` and `web_links_omitted` are names, not prose.
+            let rest = tool
+                .description
+                .replace("web_links", "")
+                .replace("item links", "")
+                .replace("item link", "")
+                .replace("web links", "")
+                .replace("web link", "")
+                .replace("linked", "");
+            assert!(
+                !rest.contains("link"),
+                "{}: {}",
+                tool.name,
+                tool.description
+            );
+        }
     }
 }
