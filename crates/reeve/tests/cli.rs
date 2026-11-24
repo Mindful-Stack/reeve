@@ -5627,3 +5627,126 @@ fn link_takes_either_a_name_and_another_item_or_a_url() {
         );
     }
 }
+
+/// Each `reeve template` command sends one request, to the route and with the body the API defines.
+#[test]
+fn template_commands_put_their_arguments_on_the_wire() {
+    let sent = |args: &[&str]| -> (String, serde_json::Value) {
+        let (line, body) = capture(args);
+        let body = if body.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&body).unwrap()
+        };
+        (line, body)
+    };
+    let to = |line: &str, start: &str| {
+        assert!(
+            line.starts_with(start),
+            "{line:?} does not start with {start:?}"
+        )
+    };
+
+    let (line, _) = sent(&["template", "ls"]);
+    to(&line, "GET /api/v1/brief-templates ");
+    let (line, _) = sent(&["template", "ls", "--level", "epic"]);
+    to(&line, "GET /api/v1/brief-templates?level=epic ");
+    let (line, _) = sent(&["template", "show", "7"]);
+    to(&line, "GET /api/v1/brief-templates/7 ");
+
+    let md = "# Scenario\n\n| Step | Who |\n|---|---|\n\nIt's `quoted` $(not run).\n";
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("scenario.md");
+    std::fs::write(&file, md).unwrap();
+    let (line, body) = sent(&[
+        "template",
+        "create",
+        "--level",
+        "initiative",
+        "--name",
+        "Scenario",
+        "--body-file",
+        file.to_str().unwrap(),
+    ]);
+    to(&line, "POST /api/v1/brief-templates ");
+    assert_eq!(
+        body,
+        serde_json::json!({"level": "initiative", "name": "Scenario", "body": md})
+    );
+
+    let (line, body) = sent(&[
+        "template",
+        "edit",
+        "7",
+        "--version",
+        "3",
+        "--name",
+        "User scenario",
+    ]);
+    to(&line, "PATCH /api/v1/brief-templates/7 ");
+    assert_eq!(
+        body,
+        serde_json::json!({"version": 3, "name": "User scenario"}),
+        "only what was given"
+    );
+    let (_, body) = sent(&["template", "edit", "7", "--version", "3", "--body", "new"]);
+    assert_eq!(body, serde_json::json!({"version": 3, "body": "new"}));
+
+    let (line, _) = sent(&["template", "rm", "7"]);
+    to(&line, "DELETE /api/v1/brief-templates/7 ");
+    let (line, _) = sent(&["template", "default", "7"]);
+    to(&line, "POST /api/v1/brief-templates/7/default ");
+    let (line, _) = sent(&["template", "default", "7", "--clear"]);
+    to(&line, "DELETE /api/v1/brief-templates/7/default ");
+}
+
+/// What `reeve template` refuses before it sends anything: the command exits 1 with clap's message. The server URL
+/// answers nothing, so a command that got as far as a request would fail with another message.
+#[test]
+fn template_commands_refuse_bad_arguments_before_any_request() {
+    let refused = |args: &[&str], says: &str| {
+        let cfg = tempfile::tempdir().unwrap();
+        let out = reeve_cmd()
+            .env("REEVE_URL", "http://127.0.0.1:9")
+            .env("REEVE_TOKEN", "reeve_test")
+            .env("REEVE_CONFIG_DIR", cfg.path())
+            .args(args)
+            .timeout(Duration::from_secs(30))
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert!(err.contains(says), "{args:?}: wanted {says:?} in {err}");
+    };
+    refused(
+        &[
+            "template", "create", "--level", "story", "--name", "S", "--body", "b",
+        ],
+        "neither initiative nor epic",
+    );
+    refused(
+        &["template", "ls", "--level", "stories"],
+        "neither initiative nor epic",
+    );
+    refused(
+        &["template", "create", "--level", "epic", "--name", "S"],
+        "--body",
+    );
+    refused(
+        &[
+            "template",
+            "create",
+            "--level",
+            "epic",
+            "--name",
+            "S",
+            "--body",
+            "b",
+            "--body-file",
+            "x.md",
+        ],
+        "cannot be used with",
+    );
+    refused(&["template", "edit", "7", "--name", "S"], "--version");
+    refused(&["template", "show", "scenario"], "invalid");
+}

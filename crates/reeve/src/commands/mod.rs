@@ -12,6 +12,7 @@ pub mod link;
 pub mod search;
 pub mod sprint;
 pub mod story;
+pub mod template;
 pub mod update;
 pub mod war_room;
 use crate::client::{Client, Outcome};
@@ -72,6 +73,10 @@ pub enum Cmd {
     /// URL to it (informational, never a gate).
     #[command(subcommand)]
     Link(link::Link),
+    /// Brief templates: the named Markdown texts a new initiative's or epic's brief can start from. Everyone
+    /// lists and reads them; admins create, edit, remove and mark the default.
+    #[command(subcommand)]
+    Template(template::Template),
     /// Comments on stories and decisions.
     #[command(subcommand)]
     Comment(comment::Comment),
@@ -118,6 +123,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Sprint(x) => sprint::run(&c, x, json).await,
                 Cmd::Goal(x) => goal::run(&c, x, json).await,
                 Cmd::Link(x) => link::run(&c, x, json).await,
+                Cmd::Template(x) => template::run(&c, x, json).await,
                 Cmd::Comment(x) => comment::run(&c, x, json).await,
                 Cmd::Attachment(x) => attachment::run(&c, x, json).await,
                 Cmd::Apply(x) => apply::run(&c, x, json).await,
