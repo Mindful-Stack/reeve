@@ -1,5 +1,5 @@
-//! `POST /plans` creates a plan of items, required decisions and blockers in one request: validated whole
-//! before anything is written, and idempotent per plan id.
+//! `POST /plans` creates a plan of items, required decisions, blockers, item links and web links in one
+//! request: validated whole before anything is written, and idempotent per plan id.
 mod common;
 use common::*;
 use serde_json::json;
