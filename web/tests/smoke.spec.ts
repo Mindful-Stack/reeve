@@ -1109,6 +1109,401 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 	});
 }
 
+// Six columns, one of them a word that cannot wrap: wider than a phone and wider than the drawer.
+const WIDE_TABLE = `| Step | User | Phone | Watch | System | Notes |\n|---:|---|---|:---:|---|---|\n${'| 1 | Opens the group | Shows the map with every member | Buzz | Computes the point | Unbrokenwordthatcannotwrapanywhere |\n'.repeat(3)}`;
+const WIDE_TABLE_NAME = 'Table: Step, User, Phone…';
+
+/** Every table wrapper under `scope` scrolls sideways and ends inside `box` (the drawer; the page when there is none),
+ *  and neither `box` nor the page is widened by it. */
+async function expectTablesScrollInside(page: Page, scope: string, count: number, box?: string): Promise<void> {
+	await expect(page.locator(`${scope} [data-table-scroll]`)).toHaveCount(count);
+	await expect(page.locator(`${scope} [data-table-scroll][tabindex="0"]`)).toHaveCount(count);
+	const m = await page.evaluate(
+		([scope, box]) => {
+			const outer = box ? document.querySelector(box)! : document.documentElement;
+			const right = box ? outer.getBoundingClientRect().right : window.innerWidth;
+			return {
+				page: document.documentElement.scrollWidth,
+				viewport: window.innerWidth,
+				outerScroll: outer.scrollWidth,
+				outerClient: outer.clientWidth,
+				right,
+				wraps: [...document.querySelectorAll(`${scope} [data-table-scroll]`)].map((w) => ({
+					scroll: w.scrollWidth,
+					client: w.clientWidth,
+					right: w.getBoundingClientRect().right
+				}))
+			};
+		},
+		[scope, box ?? null] as const
+	);
+	expect(m.page, 'the page does not widen').toBe(m.viewport);
+	expect(m.outerScroll, `${box ?? 'the page'} does not widen`).toBeLessThanOrEqual(m.outerClient);
+	for (const w of m.wraps) {
+		expect(w.client).toBeGreaterThan(0);
+		expect(w.scroll, 'the wrapper is what scrolls').toBeGreaterThan(w.client);
+		expect(w.right, 'the wrapper ends inside its container').toBeLessThanOrEqual(m.right);
+	}
+}
+
+/** The scroll shadows of a wrapper that scrolls, as far as computed style and scroll geometry show them: four
+ *  gradients, the two covers in the colour of the nearest surface behind the wrapper (the page, a drawer, a raised
+ *  panel) and attached to the content, the two shadows in the --table-shadow token and attached to the wrapper; and the
+ *  wrapper really scrolls from one end to the other, which is what moves a cover off its shadow.
+ *  What this cannot catch, short of comparing pixels: that the cover is painted over the shadow (the layer order), that
+ *  it hides the whole of it at a scroll end, how strong the shadow looks on a given surface, and whether a cell's own
+ *  background hides it. Those are looked at in screenshots, light and dark. */
+async function expectScrollShadows(wrap: Locator): Promise<{ shadow: string; surface: string }> {
+	const m = await wrap.evaluate(async (w) => {
+		const s = getComputedStyle(w);
+		// The nearest ancestor that paints a background is the surface the covers must match.
+		let surface = 'rgba(0, 0, 0, 0)';
+		for (let e = w.parentElement; e; e = e.parentElement) {
+			const bg = getComputedStyle(e).backgroundColor;
+			if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+				surface = bg;
+				break;
+			}
+		}
+		// What the shadow token computes to here, in the form a gradient serialises it.
+		const probe = document.createElement('i');
+		probe.style.backgroundImage = 'linear-gradient(var(--table-shadow), var(--table-shadow))';
+		w.append(probe);
+		// "linear-gradient(X, X)": the colour is half of what the brackets hold (a colour has commas of its own).
+		const pair = getComputedStyle(probe).backgroundImage.replace(/^linear-gradient\(|\)$/g, '');
+		const shadow = pair.slice(0, (pair.length - 2) / 2);
+		probe.remove();
+		const max = w.scrollWidth - w.clientWidth;
+		const at: number[] = [];
+		for (const left of [0, Math.round(max / 2), max]) {
+			w.scrollLeft = left;
+			await new Promise((r) => requestAnimationFrame(r));
+			at.push(w.scrollLeft);
+		}
+		w.scrollLeft = 0;
+		return { image: s.backgroundImage, attachment: s.backgroundAttachment, repeat: s.backgroundRepeat, surface, shadow, max, at };
+	});
+	// Colours hold commas of their own: split on the gradients, not on every comma.
+	const gradients = m.image.split(/,\s*(?=linear-gradient\()/);
+	expect(gradients).toHaveLength(4);
+	expect(m.attachment).toBe('local, local, scroll, scroll');
+	expect(m.repeat).toBe('no-repeat, no-repeat, no-repeat, no-repeat');
+	expect(m.surface, 'a surface paints behind the wrapper').not.toBe('rgba(0, 0, 0, 0)');
+	expect(gradients[0], 'the left cover is the surface behind').toBe(`linear-gradient(to right, ${m.surface} 35%, rgba(0, 0, 0, 0))`);
+	expect(gradients[1], 'the right cover is the surface behind').toBe(`linear-gradient(to left, ${m.surface} 35%, rgba(0, 0, 0, 0))`);
+	expect(m.shadow).not.toBe('');
+	expect(gradients[2]).toBe(`linear-gradient(to right, ${m.shadow}, rgba(0, 0, 0, 0))`);
+	expect(gradients[3]).toBe(`linear-gradient(to left, ${m.shadow}, rgba(0, 0, 0, 0))`);
+	// Start, middle and end: nothing behind at the start, the whole overflow behind at the end.
+	expect(m.max).toBeGreaterThan(0);
+	expect(m.at[0]).toBe(0);
+	expect(Math.abs(m.at[1] - m.max / 2)).toBeLessThanOrEqual(1);
+	expect(Math.abs(m.at[2] - m.max)).toBeLessThanOrEqual(1);
+	return { shadow: m.shadow, surface: m.surface };
+}
+
+/** The text of every element `selector` matches stays inside that element's parent: no line of it crosses the
+ *  parent's right edge (spilled, or cut by an ancestor that clips). */
+async function expectTextInside(page: Page, selector: string): Promise<void> {
+	await expect(page.locator(selector).first()).toBeVisible();
+	const over = await page.locator(selector).evaluateAll((all) =>
+		all.flatMap((el) => {
+			const range = document.createRange();
+			range.selectNodeContents(el);
+			const edge = el.parentElement!.getBoundingClientRect().right;
+			return [...range.getClientRects()].filter((r) => r.right > edge + 1).map((r) => `${el.className}: ${Math.round(r.right)} > ${Math.round(edge)}`);
+		})
+	);
+	expect(over).toEqual([]);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth), 'the page does not widen').toBe(await page.evaluate(() => window.innerWidth));
+}
+
+test('a wide table in a brief scrolls inside its wrapper on a phone, and only a wrapper that scrolls is a tab stop', async ({ page }) => {
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `${WIDE_TABLE}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wraps = page.locator('.brief [data-table-scroll]');
+	await expect(wraps).toHaveCount(2);
+	// The wide one is a named region the keyboard can reach and scroll; the one that fits is no stop.
+	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(1);
+	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	const m = await page.evaluate(() => {
+		const w = document.querySelector('.brief [data-table-scroll]')!;
+		return { page: document.documentElement.scrollWidth, viewport: window.innerWidth, scroll: w.scrollWidth, client: w.clientWidth };
+	});
+	expect(m.page).toBe(m.viewport);
+	expect(m.scroll).toBeGreaterThan(m.client);
+	// Once it scrolls anyway, the table keeps a width its text can be read at (up to 44rem) instead of one or two words
+	// a line; a table that fits stays as narrow as its content.
+	const tables = await wraps.locator('table').evaluateAll((all) => all.map((t) => ({ width: t.getBoundingClientRect().width, height: t.getBoundingClientRect().height })));
+	expect(tables[0].width).toBeGreaterThan(600);
+	expect(tables[0].width).toBeLessThanOrEqual(44 * 16 + 1);
+	expect(tables[0].height).toBeLessThan(400);
+	expect(tables[1].width).toBeLessThan(120);
+	// The cue that there is more to the side: two covers that travel with the table over two shadows that stay put.
+	// Light keeps the full line colour; dark fades it, where the full colour reads as a solid stripe.
+	await page.emulateMedia({ colorScheme: 'light' });
+	const light = await expectScrollShadows(wraps.nth(0));
+	expect(light.shadow).toMatch(/^rgb\(/);
+	await page.emulateMedia({ colorScheme: 'dark' });
+	const dark = await expectScrollShadows(wraps.nth(0));
+	expect(dark.surface).not.toBe(light.surface);
+	expect(dark.shadow, 'a translucent shadow in dark').toMatch(/(\/ 0\.\d+\)|rgba\(.*, 0\.\d+\))$/);
+	await page.emulateMedia({ colorScheme: null });
+	// With room for the table, its wrapper stops being a tab stop.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	// And both tables really fit there: a wrapper with a width, and nothing in it to scroll to.
+	for (const w of await wraps.evaluateAll((all) => all.map((e) => ({ width: e.getBoundingClientRect().width, scroll: e.scrollWidth, client: e.clientWidth })))) {
+		expect(w.width).toBeGreaterThan(0);
+		expect(w.scroll).toBeLessThanOrEqual(w.client);
+	}
+});
+
+test('a table of two or three columns wraps on a phone instead of scrolling; only one of four or more keeps a readable width', async ({ page }) => {
+	const url = `https://example.com/${'a'.repeat(100)}`;
+	const three = `| Source | Link | Note |\n|---|---|---|\n| The design file for the meeting point flow | ${url} | Read it before the workshop on Thursday, and bring the notes from the last one |`;
+	const glossary = `| Term | Definition |\n|---|---|\n| Meeting point | The place the group is sent to, computed from where every member is and how each of them travels |\n| Member | Somebody who has joined the group and shares a position while the group is open |\n| \`${'reeve_server_actions_'.repeat(4)}\` | Inline code breaks anywhere, like a link |`;
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table columns smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `${three}\n\ntext\n\n${glossary}\n\ntext\n\n${WIDE_TABLE}`
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wraps = page.locator('.brief [data-table-scroll]');
+	await expect(wraps).toHaveCount(3);
+	await expect(wraps.nth(2)).toHaveAttribute('tabindex', '0');
+	const m = await wraps.evaluateAll((all) => all.map((w) => ({ scroll: w.scrollWidth, client: w.clientWidth, table: w.firstElementChild!.getBoundingClientRect().width })));
+	// Three columns with a sentence and a long link, and a glossary: as wide as the page, wrapped, nothing to scroll to.
+	for (const w of m.slice(0, 2)) {
+		expect(w.client).toBeGreaterThan(0);
+		expect(w.scroll).toBeLessThanOrEqual(w.client);
+		expect(w.table).toBeLessThanOrEqual(w.client);
+	}
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	// Six columns would be a word or two a line at that width: it scrolls, at a width that can be read.
+	expect(m[2].scroll).toBeGreaterThan(m[2].client);
+	expect(m[2].table).toBeGreaterThan(600);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+});
+
+test('a wide table in a description or a comment scrolls inside its wrapper: the drawer, the pages and triage do not widen', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const comment = (key: string) => post(page, `/api/v1/items/${key}/comments`, { body: `See the steps:\n\n${WIDE_TABLE}`, idempotency_key: crypto.randomUUID() });
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title: `Table comment smoke ${suffix}`, horizon: 'Later' });
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke epic ${suffix}`,
+		initiative: ini.key,
+		brief: WIDE_TABLE
+	});
+	const story = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke story ${suffix}`,
+		kind: 'chore',
+		epic: epic.key,
+		criteria: [],
+		labels: [],
+		description: WIDE_TABLE
+	});
+	const untriaged = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke untriaged ${suffix}`,
+		kind: 'chore',
+		epic: null,
+		criteria: [],
+		labels: [],
+		description: WIDE_TABLE
+	});
+	const decision = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Table comment smoke decision ${suffix}`,
+		decider: 'smoke@example.com'
+	});
+	await post(page, `/api/v1/decisions/${decision.id}/comments`, { body: WIDE_TABLE, idempotency_key: crypto.randomUUID() });
+	for (const key of [ini.key, epic.key, story.key]) await comment(key);
+
+	const drawer = '[data-testid="story-drawer"]';
+	for (const width of [1440, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		// The story drawer: its description and a comment.
+		await page.goto(`/board?story=${story.key}`);
+		await expect(page.getByTestId('story-drawer').getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(2);
+		await expectTablesScrollInside(page, `${drawer} .brief`, 1, drawer);
+		await expectTablesScrollInside(page, `${drawer} .comment-body`, 1, drawer);
+		// In a comment the table keeps the comment's own, tighter, spacing between blocks.
+		expect(await page.locator(`${drawer} .comment-body [data-table-scroll]`).evaluate((w) => getComputedStyle(w).margin)).toBe('8px 0px 0px');
+		// The covers take the drawer's own surface.
+		await expectScrollShadows(page.locator(`${drawer} .brief [data-table-scroll]`));
+		// A decision's thread, in the decision drawer.
+		await page.goto(`/decisions?decision=${decision.id}`);
+		const decisionDrawer = '[data-testid="decision-drawer"]';
+		await expectTablesScrollInside(page, `${decisionDrawer} .comment-body`, 1, decisionDrawer);
+	}
+	// On a phone the pages themselves: a comment under an initiative; a brief, a comment and a decision's thread under
+	// an epic; triage.
+	await page.goto(`/initiatives/${ini.key}`);
+	await expectTablesScrollInside(page, '.comment-body', 1);
+	await page.goto(`/epics/${epic.key}`);
+	await expectTablesScrollInside(page, '.brief', 1);
+	await expectTablesScrollInside(page, '.comment-body', 1);
+	await page.getByRole('button', { name: 'Discussion' }).click();
+	await expectTablesScrollInside(page, '.decision-list .comment-body', 1);
+	// A decision's row is a raised panel: the covers are that panel's colour, not the page's.
+	const raised = await expectScrollShadows(page.locator('.decision-list .comment-body [data-table-scroll]'));
+	expect(raised.surface).not.toBe((await expectScrollShadows(page.locator('.brief [data-table-scroll]').first())).surface);
+	// A phone has no queue list to pick from: pick the item with room for the list, then narrow the page.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto('/triage');
+	await page.getByRole('option', { name: new RegExp(`^${untriaged.key}\\b`) }).click();
+	await expect(page.locator('.item .brief [data-table-scroll]')).toHaveCount(1);
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expectTablesScrollInside(page, '.item .brief', 1);
+});
+
+// A header that is one long identifier, beside a narrow column whose header is its widest text, and sentences enough to
+// make the table wider than a sheet of paper.
+const LONG_HEADER_TABLE = `| Step | ${'reeve_server_actions_stories_'.repeat(4)} | What it checks |\n|---:|---|---|\n${'| 1 | The move action refuses an override reason from a caller that came through MCP, whatever the tool sends | Only an interactive caller may override the readiness gate, and no tool carries a reason |\n'.repeat(2)}`;
+
+test('on paper a wide table fits the page and wraps, a small one keeps its width, and short header words stay whole', async ({ page }) => {
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table print smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `${WIDE_TABLE}\ntext\n\n${LONG_HEADER_TABLE}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wraps = page.locator('.brief [data-table-scroll]');
+	await expect(wraps).toHaveCount(3);
+	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
+	await expect(wraps.nth(1)).toHaveAttribute('tabindex', '0');
+	// A sheet of A4 at 96 dpi.
+	await page.setViewportSize({ width: 794, height: 1123 });
+	await page.emulateMedia({ media: 'print' });
+	// Nothing to scroll to, so no tab stop either.
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	const m = await wraps.evaluateAll((all) =>
+		all.map((w) => {
+			const s = getComputedStyle(w);
+			const lines = (cell: Element) => {
+				const range = document.createRange();
+				range.selectNodeContents(cell);
+				return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+			};
+			return {
+				overflow: s.overflowX,
+				image: s.backgroundImage,
+				wrap: w.getBoundingClientRect().width,
+				table: w.firstElementChild!.getBoundingClientRect().width,
+				// How many lines each header of ordinary words takes (the long identifier is the one that may break).
+				headers: [...w.querySelectorAll('th')].filter((th) => th.textContent!.length <= 20).map((th) => `${th.textContent}: ${lines(th)}`)
+			};
+		})
+	);
+	for (const w of m) {
+		expect(w.overflow).toBe('visible');
+		expect(w.image).toBe('none');
+		expect(w.table, 'the table ends inside the page').toBeLessThanOrEqual(w.wrap + 1);
+	}
+	// The table with the long header would be wider than the paper: it takes the whole width and no more.
+	expect(Math.abs(m[1].table - m[1].wrap)).toBeLessThanOrEqual(1);
+	// A small table is not stretched across the sheet.
+	expect(m[2].table).toBeLessThan(120);
+	expect(m[0].headers).toEqual(['Step: 1', 'User: 1', 'Phone: 1', 'Watch: 1', 'System: 1', 'Notes: 1']);
+	expect(m[1].headers).toEqual(['Step: 1', 'What it checks: 1']);
+	expect(m[2].headers).toEqual(['a: 1', 'b: 1']);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(794);
+});
+
+test('a long unbroken word beside a wide-table grid wraps inside its row: a decision, a comment, the triage heading', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const word = `Unbroken${'x'.repeat(112)}`;
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', { idempotency_key: crypto.randomUUID(), title: `Unbroken smoke epic ${suffix}` });
+	const open = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Unbroken smoke open ${suffix}`,
+		decider: 'smoke@example.com',
+		reversibility: 'two_way'
+	});
+	const closed = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Unbroken smoke closed ${suffix}`,
+		decider: 'smoke@example.com',
+		reversibility: 'two_way'
+	});
+	await post(page, `/api/v1/decisions/${open.id}/comments`, { body: word, idempotency_key: crypto.randomUUID() });
+	await post(page, `/api/v1/decisions/${closed.id}/close`, { kind: 'decided', reason: word });
+	await post(page, `/api/v1/items/${epic.key}/comments`, { body: word, idempotency_key: crypto.randomUUID() });
+	const untriaged = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `${word} ${suffix}`,
+		kind: 'chore',
+		epic: null,
+		criteria: [],
+		labels: []
+	});
+
+	// A phone has no queue list to pick from: pick the item with room for the list, then narrow the page.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto('/triage');
+	await page.getByRole('option', { name: new RegExp(`^${untriaged.key}\\b`) }).click();
+	await expect(page.locator('.item h2')).toContainText(word);
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expectTextInside(page, '.item h2');
+	await expectTextInside(page, '.item .meta');
+
+	await page.goto(`/epics/${epic.key}`);
+	// The item's own thread: the author line and the comment.
+	await expectTextInside(page, '.thread > li > .muted');
+	await expectTextInside(page, '.thread .comment-body p');
+	// The decisions, closed ones included: the outcome of the closed one, the thread of the open one.
+	await page.getByRole('button', { name: 'Show closed (1)' }).click();
+	await expect(page.locator('.decision-list .outcome')).toContainText(word);
+	await expectTextInside(page, '.decision-list .outcome');
+	await page.getByRole('button', { name: `Discussion of Unbroken smoke open ${suffix}` }).click();
+	await expect(page.locator('.decision-list .comment-body')).toContainText(word);
+	await expectTextInside(page, '.decision-list .thread > li > .muted');
+	await expectTextInside(page, '.decision-list .comment-body p');
+	// The lines no fixture here can make long (a record's path, an owner's address) break the same way.
+	for (const selector of ['.decision-list .outcome', '.decision-list .thread > li > .muted', '.thread > li > .muted']) {
+		expect(await page.locator(selector).first().evaluate((e) => getComputedStyle(e).overflowWrap), selector).toBe('anywhere');
+	}
+});
+
+test('a long link in a table cell wraps instead of setting the width of the table', async ({ page }) => {
+	const url = `https://example.com/${'a'.repeat(100)}`;
+	expect(url).toHaveLength(120);
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table link smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `| Source | Link | Note |\n|---|---|---|\n| The design file | ${url} | Read before the workshop |`
+	});
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wrap = page.locator('.brief [data-table-scroll]');
+	await expect(wrap.getByRole('link', { name: url })).toBeVisible();
+	const m = await wrap.evaluate((w) => ({ scroll: w.scrollWidth, client: w.clientWidth }));
+	expect(m.client).toBeGreaterThan(0);
+	expect(m.scroll).toBeLessThanOrEqual(m.client);
+	await expect(wrap).not.toHaveAttribute('tabindex');
+});
+
 // A 4×3 PNG, small enough to inline; every image assertion waits for it to really decode (a broken image is visible too).
 const PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADAQMAAACOOjyFAAAAA1BMVEUzZswgIiSpAAAAC0lEQVQI12NgAAEAAAYAAWb0yWwAAAAASUVORK5CYII=',

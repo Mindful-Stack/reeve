@@ -86,6 +86,43 @@ describe('renderMarkdown', () => {
 	});
 });
 
+describe('tables', () => {
+	const table = '| # | What | Priority |\n|---|:---|:---:|\n| 1 | See each other | High |\n| 2 | Regroup | |';
+
+	it('renders a pipe table with its header, rows and column alignment', () => {
+		const el = parse(table);
+		expect([...el.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['#', 'What', 'Priority']);
+		expect(el.querySelectorAll('tbody tr')).toHaveLength(2);
+		expect([...el.querySelectorAll('thead th')].map((th) => th.getAttribute('align'))).toEqual([null, 'left', 'center']);
+	});
+
+	it('puts each table in a wrapper that scrolls, so a wide table never widens the page', () => {
+		const el = parse(`before\n\n${table}\n\nafter`);
+		const wrap = el.querySelector('div[data-table-scroll]');
+		expect(wrap?.children).toHaveLength(1);
+		expect(wrap?.firstElementChild?.tagName).toBe('TABLE');
+		// Not a tab stop by itself: `rendered` (#lib/rendered.ts) makes it one only while it really scrolls.
+		expect(wrap?.hasAttribute('tabindex')).toBe(false);
+	});
+
+	it('marks the wrapper it made with an attribute no author can write', () => {
+		const el = parse(`<div data-table-scroll class="table-scroll">mine</div>\n\n<table class="table-scroll" data-table-scroll><tr><td>1</td></tr></table>`);
+		const marked = el.querySelectorAll('[data-table-scroll]');
+		expect(marked).toHaveLength(1);
+		expect(marked[0].tagName).toBe('DIV');
+		expect(marked[0].firstElementChild?.tagName).toBe('TABLE');
+	});
+
+	it('marks a header cell that holds a word too long to keep whole on paper, and no other cell', () => {
+		const twenty = 'x'.repeat(20);
+		const el = parse(
+			`| Step | Acceptance criteria | ${twenty} | see ${twenty}y here | ${'x'.repeat(19)} |\n|---|---|---|---|---|\n| ${twenty} | 2 | 3 | 4 | 5 |\n\n<table><tr><th data-long-word>Mine</th></tr></table>`
+		);
+		expect([...el.querySelectorAll('th')].map((th) => th.hasAttribute('data-long-word'))).toEqual([false, false, true, true, false, false]);
+		expect(el.querySelectorAll('td[data-long-word]')).toHaveLength(0);
+	});
+});
+
 describe('images', () => {
 	const id = '0f8b2c3e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
 	it('loads lazily and links an attachment image to its full size', () => {
