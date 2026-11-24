@@ -1180,6 +1180,11 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	await page.setViewportSize({ width: 1440, height: 800 });
 	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);
 	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	// And both tables really fit there: a wrapper with a width, and nothing in it to scroll to.
+	for (const w of await wraps.evaluateAll((all) => all.map((e) => ({ width: e.getBoundingClientRect().width, scroll: e.scrollWidth, client: e.clientWidth })))) {
+		expect(w.width).toBeGreaterThan(0);
+		expect(w.scroll).toBeLessThanOrEqual(w.client);
+	}
 });
 
 test('a wide table in a description or a comment scrolls inside its wrapper: the drawer, the pages and triage do not widen', async ({ page }) => {
