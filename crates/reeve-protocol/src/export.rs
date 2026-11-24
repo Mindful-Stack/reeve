@@ -27,12 +27,14 @@ pub struct ExportDto {
     /// (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
     #[serde(default)]
     pub attachments: Vec<AttachmentDto>,
-    /// Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`
-    /// key, then by name (follows, duplicates, relates_to). An export written before item links existed has no
-    /// such field.
+    /// Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the
+    /// text of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,
+    /// the text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are
+    /// therefore together. An export written before item links existed has no such field.
     #[serde(default)]
     pub item_links: Vec<ExportItemLinkDto>,
-    /// Every web link, ordered by the number of its item's key and, on one item, by when it was added.
+    /// Every web link, in one total order: the number of its item's key, the text of that key (which differs at
+    /// one number only between two prefixes) and, on one item, when it was added.
     #[serde(default)]
     pub web_links: Vec<ExportWebLinkDto>,
     pub activity: Vec<ActivityEntryDto>,

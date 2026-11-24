@@ -1944,9 +1944,10 @@ export interface components {
             exported_at: string;
             initiatives: components["schemas"]["InitiativeDto"][];
             /**
-             * @description Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`
-             *     key, then by name (follows, duplicates, relates_to). An export written before item links existed has no
-             *     such field.
+             * @description Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the
+             *     text of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,
+             *     the text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are
+             *     therefore together. An export written before item links existed has no such field.
              */
             item_links?: components["schemas"]["ExportItemLinkDto"][];
             key_prefix: string;
@@ -1958,7 +1959,10 @@ export interface components {
             sprints: components["schemas"]["SprintDto"][];
             stories: components["schemas"]["StoryDto"][];
             users: components["schemas"]["UserDto"][];
-            /** @description Every web link, ordered by the number of its item's key and, on one item, by when it was added. */
+            /**
+             * @description Every web link, in one total order: the number of its item's key, the text of that key (which differs at
+             *     one number only between two prefixes) and, on one item, when it was added.
+             */
             web_links?: components["schemas"]["ExportWebLinkDto"][];
         };
         /**
@@ -3104,9 +3108,10 @@ export interface components {
                 exported_at: string;
                 initiatives: components["schemas"]["InitiativeDto"][];
                 /**
-                 * @description Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`
-                 *     key, then by name (follows, duplicates, relates_to). An export written before item links existed has no
-                 *     such field.
+                 * @description Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the
+                 *     text of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,
+                 *     the text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are
+                 *     therefore together. An export written before item links existed has no such field.
                  */
                 item_links?: components["schemas"]["ExportItemLinkDto"][];
                 key_prefix: string;
@@ -3118,7 +3123,10 @@ export interface components {
                 sprints: components["schemas"]["SprintDto"][];
                 stories: components["schemas"]["StoryDto"][];
                 users: components["schemas"]["UserDto"][];
-                /** @description Every web link, ordered by the number of its item's key and, on one item, by when it was added. */
+                /**
+                 * @description Every web link, in one total order: the number of its item's key, the text of that key (which differs at
+                 *     one number only between two prefixes) and, on one item, when it was added.
+                 */
                 web_links?: components["schemas"]["ExportWebLinkDto"][];
             };
         } | {

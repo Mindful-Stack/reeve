@@ -1807,7 +1807,7 @@
             "type": "array"
           },
           "item_links": {
-            "description": "Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`\nkey, then by name (follows, duplicates, relates_to). An export written before item links existed has no\nsuch field.",
+            "description": "Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the\ntext of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,\nthe text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are\ntherefore together. An export written before item links existed has no such field.",
             "items": {
               "$ref": "#/components/schemas/ExportItemLinkDto"
             },
@@ -1836,7 +1836,7 @@
             "type": "array"
           },
           "web_links": {
-            "description": "Every web link, ordered by the number of its item's key and, on one item, by when it was added.",
+            "description": "Every web link, in one total order: the number of its item's key, the text of that key (which differs at\none number only between two prefixes) and, on one item, when it was added.",
             "items": {
               "$ref": "#/components/schemas/ExportWebLinkDto"
             },
@@ -5590,7 +5590,7 @@
                     "type": "array"
                   },
                   "item_links": {
-                    "description": "Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`\nkey, then by name (follows, duplicates, relates_to). An export written before item links existed has no\nsuch field.",
+                    "description": "Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the\ntext of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,\nthe text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are\ntherefore together. An export written before item links existed has no such field.",
                     "items": {
                       "$ref": "#/components/schemas/ExportItemLinkDto"
                     },
@@ -5619,7 +5619,7 @@
                     "type": "array"
                   },
                   "web_links": {
-                    "description": "Every web link, ordered by the number of its item's key and, on one item, by when it was added.",
+                    "description": "Every web link, in one total order: the number of its item's key, the text of that key (which differs at\none number only between two prefixes) and, on one item, when it was added.",
                     "items": {
                       "$ref": "#/components/schemas/ExportWebLinkDto"
                     },

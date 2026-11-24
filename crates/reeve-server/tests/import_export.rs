@@ -836,6 +836,27 @@ async fn export_lists_every_item_link_and_web_link() {
         .execute(&h.state.pool)
         .await
         .unwrap();
+    // Keys of other prefixes (an instance whose `key_prefix` changed keeps the keys it issued). The order is one
+    // total order: the `from` key's number, then its text, then the `to` key's number, then its text, then the
+    // name. So at `from` number 2, `A-2` comes before `B-2` although `B-2` has the lower destination number: the
+    // links of one item stay together. And from `TST-3`, `A-9` and `TST-9` (one number) go by their text, both
+    // before `TST-10`. Inserted in none of those orders.
+    sqlx::query(
+        "INSERT INTO item_links (from_key, to_key, link_type) VALUES \
+         ('B-2', 'Z-3', 'follows'), ('A-2', 'Z-10', 'follows'), ('A-2', 'B-10', 'follows'), \
+         ('TST-3', 'A-9', 'follows')",
+    )
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
+    // Web links likewise: the item's number, then its text, then the id. `B-3` is inserted before `A-3`.
+    sqlx::query(
+        "INSERT INTO web_links (item_key, title, url) VALUES \
+         ('B-3', 'Other B', 'https://example.com/b'), ('A-3', 'Other A', 'https://example.com/a')",
+    )
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
 
     let (st, b) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/export", None).await;
     assert_eq!(st, 200, "{b}");
@@ -845,7 +866,11 @@ async fn export_lists_every_item_link_and_web_link() {
         e["item_links"],
         json!([
             {"from": ini, "type": "relates_to", "to": fourth},
+            {"from": "A-2", "type": "follows", "to": "B-10"},
+            {"from": "A-2", "type": "follows", "to": "Z-10"},
+            {"from": "B-2", "type": "follows", "to": "Z-3"},
             {"from": epic, "type": "duplicates", "to": third},
+            {"from": third, "type": "follows", "to": "A-9"},
             {"from": third, "type": "follows", "to": ninth},
             {"from": third, "type": "duplicates", "to": ninth},
             {"from": third, "type": "relates_to", "to": ninth},
@@ -861,6 +886,8 @@ async fn export_lists_every_item_link_and_web_link() {
         e["web_links"],
         json!([
             {"item": ini, "title": "Roadmap", "url": "https://example.com/roadmap"},
+            {"item": "A-3", "title": "Other A", "url": "https://example.com/a"},
+            {"item": "B-3", "title": "Other B", "url": "https://example.com/b"},
             {"item": third, "title": "Scenario page", "url": "https://example.com/wiki/scenario"},
             {"item": third, "title": "Board", "url": "https://example.com/board"},
             {"item": ninth, "title": "Wiki", "url": "https://example.com/wiki"},

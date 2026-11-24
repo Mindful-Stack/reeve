@@ -129,9 +129,11 @@ impl Handlers {
     }
 
     /// Every item link there is, read on this transaction: the rows of the table, not the links of the items the
-    /// export lists. Ordered here, by the number of the `from` key, then of the `to` key, then by name in the name
-    /// table's order (follows, duplicates, relates_to), with the key text between two prefixes: the document must
-    /// not depend on the database's text order.
+    /// export lists. Ordered here, in one total order: the number of the `from` key, the text of the `from` key
+    /// (two keys of one number differ by their prefix), the number of the `to` key, the text of the `to` key, then
+    /// the name in the name table's order (follows, duplicates, relates_to). Each end is compared whole before the
+    /// next, so the links from one item are together whatever their destinations' numbers; the document must not
+    /// depend on the database's text order.
     pub async fn export_item_links(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -149,8 +151,9 @@ impl Handlers {
         Ok(links.iter().map(super::dto::export_item_link_dto).collect())
     }
 
-    /// Every web link there is, read on this transaction, ordered by the number of the item's key and, on one
-    /// item, by id (the order they were added in).
+    /// Every web link there is, read on this transaction, in one total order: the number of the item's key, the
+    /// text of that key (two keys of one number differ by their prefix) and, on one item, the id (the order they
+    /// were added in).
     pub async fn export_web_links(
         &self,
         tx: &mut Transaction<'_, Postgres>,
