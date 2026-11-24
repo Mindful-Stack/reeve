@@ -284,7 +284,7 @@ test('an item link added on one story shows on the other from its side, and remo
 	// It holds nothing back: the story's blockers are untouched, and the control the line points at is there, above it.
 	await expect(relations).toContainText('Nothing blocks this story.');
 	await expect(relations.getByRole('button', { name: '+ Add blocker' })).toBeVisible();
-	await expect(relations).toContainText('Item links are informational. Only a blocker holds a story back.');
+	await expect(relations).toContainText('Item links are informational and never hold a story back. Of the relations listed here, only a blocker can.');
 
 	// The other story reads the same link from its side.
 	await relations.getByRole('link', { name: new RegExp(earlier.key) }).click();

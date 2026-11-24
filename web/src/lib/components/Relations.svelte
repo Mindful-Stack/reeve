@@ -286,7 +286,7 @@
 	{/each}
 	{#if shownLinks.length === 0}<p class="muted empty">No item links yet. An item link says that this {level} follows, duplicates or relates to another item.</p>{/if}
 	<!-- Always shown, and plain text (no live region): it is not news, it is what the section is. -->
-	<p class="muted standing">{level === 'story' ? 'Item links are informational. Only a blocker holds a story back.' : 'Item links are informational. They never hold work back.'}</p>
+	<p class="muted standing">{level === 'story' ? 'Item links are informational and never hold a story back. Of the relations listed here, only a blocker can.' : 'Item links are informational. They never hold work back.'}</p>
 	{#if listError}<p class="error" role="alert">{listError}</p>{/if}
 	<!-- Always present, so a screen reader hears the line arrive; a live region inserted with its text is skipped. Only
 	     ever set in the story drawer (`followsNote`), where "+ Add blocker" is in the "blocked by" group above. -->

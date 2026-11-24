@@ -151,7 +151,7 @@ describe('Relations: what it lists', () => {
 
 	it('always says that item links are informational, in the words of its level, as plain text and not as a status region', () => {
 		const cases: [ItemType, string][] = [
-			['story', 'Item links are informational. Only a blocker holds a story back.'],
+			['story', 'Item links are informational and never hold a story back. Of the relations listed here, only a blocker can.'],
 			['epic', 'Item links are informational. They never hold work back.'],
 			['initiative', 'Item links are informational. They never hold work back.']
 		];
