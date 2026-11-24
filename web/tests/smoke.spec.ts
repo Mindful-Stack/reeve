@@ -1122,7 +1122,7 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	const wraps = page.locator('.brief [data-table-scroll]');
 	await expect(wraps).toHaveCount(2);
 	// The wide one is a named region the keyboard can reach and scroll; the one that fits is no stop.
-	await expect(page.getByRole('region', { name: 'Scrollable table' })).toHaveCount(1);
+	await expect(page.getByRole('region', { name: 'Table: Step, User, Phone…' })).toHaveCount(1);
 	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
 	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
 	const m = await page.evaluate(() => {
@@ -1133,7 +1133,7 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	expect(m.scroll).toBeGreaterThan(m.client);
 	// With room for the table, its wrapper stops being a tab stop.
 	await page.setViewportSize({ width: 1440, height: 800 });
-	await expect(page.getByRole('region', { name: 'Scrollable table' })).toHaveCount(0);
+	await expect(page.getByRole('region', { name: 'Table: Step, User, Phone…' })).toHaveCount(0);
 	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
 });
 

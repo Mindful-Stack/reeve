@@ -92,11 +92,32 @@ describe('rendered tables', () => {
 		widths(wide, 900, 320);
 		widths(narrow, 200, 320);
 		resized();
-		expect(stop(wide)).toEqual(['0', 'region', 'Scrollable table']);
+		expect(stop(wide)).toEqual(['0', 'region', 'Table: a, b']);
 		expect(stop(narrow)).toEqual([null, null, null]);
 		widths(wide, 900, 1200);
 		resized();
 		expect(stop(wide)).toEqual([null, null, null]);
+	});
+
+	it('names the region after its table: the caption, else the first header cells, else just "Table"', () => {
+		stubResize();
+		const box = mountBox(
+			[
+				'<table><caption> Budget\n per year </caption><tr><th>Year</th><th>Sum</th></tr></table>',
+				'| Step | User | Phone | Watch | System |\n|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 |',
+				'|  Step  | | *Phone* |\n|---|---|---|\n| 1 | 2 | 3 |',
+				'<table><tr><td>1</td><td>2</td></tr></table>'
+			].join('\n\n')
+		);
+		const wraps = [...box.querySelectorAll('[data-table-scroll]')];
+		for (const wrap of wraps) widths(wrap, 900, 320);
+		resized();
+		expect(wraps.map((w) => w.getAttribute('aria-label'))).toEqual([
+			'Budget per year',
+			'Table: Step, User, Phone…',
+			'Table: Step, Phone',
+			'Table'
+		]);
 	});
 
 	it('leaves a table alone whose author gave it the class of a wrapper', () => {
@@ -121,7 +142,7 @@ describe('rendered tables', () => {
 		// The check runs when the children change; give the observer its turn.
 		box.append(document.createElement('p'));
 		await new Promise((r) => setTimeout(r));
-		expect(stop(wrap)).toEqual(['0', 'region', 'Scrollable table']);
+		expect(stop(wrap)).toEqual(['0', 'region', 'Table: a, b']);
 	});
 
 	it('watches the container, each wrapper and each table, so a late image or font that widens a table is seen', () => {
