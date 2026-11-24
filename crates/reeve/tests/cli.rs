@@ -4567,15 +4567,6 @@ fn every_command_names_the_same_way_to_set_a_server_url() {
     }
 }
 
-/// A story as `GET /stories/{key}` answers it, with only the fields a client must be sent.
-fn story_json(key: &str) -> serde_json::Value {
-    serde_json::json!({
-        "key": key, "title": "T", "kind": "story", "epic": null, "description": "", "criteria": [],
-        "owner": null, "labels": [], "rank": 1, "blocked_by": [], "delivery": "todo", "resolution": null,
-        "external_ref": null, "version": 1, "prs": []
-    })
-}
-
 fn item_link_json(
     t: &str,
     direction: &str,
@@ -4693,7 +4684,9 @@ fn link_add_posts_the_forward_form() {
 }
 
 /// After a `follows` between two stories the text output says the link is informational and how to block
-/// instead, with the stories' native keys. Not between other levels, and never with `--json`.
+/// instead, with the stories' native keys. Both items come from the server's answers: the add's own (the item
+/// now followed) and one read of that item's links through `/items/{other}/links`, which resolves as the write
+/// did. Not between other levels, and never with `--json`.
 #[test]
 fn link_add_follows_between_two_stories_says_it_is_informational() {
     let linked = || {
@@ -4706,10 +4699,19 @@ fn link_add_follows_between_two_stories_says_it_is_informational() {
             "Billing account"
         )]))
     };
+    let followed_by = |level: &str| {
+        ok(serde_json::json!({"links": [item_link_json(
+            "follows",
+            "in",
+            "is followed by",
+            "TST-12",
+            level,
+            "Invoices"
+        )]}))
+    };
     let (url, server) = serve(vec![
         ("POST /api/v1/items/TST-12/links", 200, linked()),
-        ("GET /api/v1/stories/TST-12", 200, ok(story_json("TST-12"))),
-        ("GET /api/v1/stories/SCRUM-7", 200, ok(story_json("TST-7"))),
+        ("GET /api/v1/items/SCRUM-7/links", 200, followed_by("story")),
     ]);
     let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "SCRUM-7"]);
     server.join().unwrap();
@@ -4719,16 +4721,42 @@ fn link_add_follows_between_two_stories_says_it_is_informational() {
         "TST-12 follows SCRUM-7\nInformational: this does not hold TST-12 back. To hold it back: `reeve story block TST-12 --by TST-7`.\n"
     );
 
-    // The other item is not a story: no line, and the exit status is still the add's.
-    let not_found = serde_json::json!({"outcome":"error","code":"not_found","message":"not found"});
+    // The item that follows is not a story: no line, and the exit status is still the add's.
     let (url, server) = serve(vec![
         ("POST /api/v1/items/TST-12/links", 200, linked()),
-        ("GET /api/v1/stories/TST-12", 200, ok(story_json("TST-12"))),
-        ("GET /api/v1/stories/TST-7", 404, not_found),
+        ("GET /api/v1/items/TST-7/links", 200, followed_by("epic")),
     ]);
     let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
     server.join().unwrap();
     assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+
+    // The read fails: no line, and the exit status is still the add's.
+    let not_found = serde_json::json!({"outcome":"error","code":"not_found","message":"not found"});
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/TST-12/links", 200, linked()),
+        ("GET /api/v1/items/TST-7/links", 404, not_found),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+
+    // The item followed is not a story: the add's answer says so, and nothing is read after the write.
+    let to_an_epic = ok(serde_json::json!([item_link_json(
+        "follows", "out", "follows", "TST-7", "epic", "Billing"
+    )]));
+    let (url, stop, server) = record_requests(to_an_epic);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let arrived = server.join().unwrap();
+    assert_eq!(arrived.len(), 1, "the write and nothing else: {arrived:?}");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "TST-12 follows TST-7\n"
@@ -4759,8 +4787,8 @@ fn link_add_follows_between_two_stories_says_it_is_informational() {
     );
 }
 
-/// The informational line is optional text. When its lookups do not answer, the add's own result is printed after
-/// one short budget for both, not after the client's 30-second timeout, and the exit status is the add's.
+/// The informational line is optional text. When its lookup does not answer, the add's own result is printed after
+/// one short budget, not after the client's 30-second timeout, and the exit status is the add's.
 #[test]
 fn link_add_prints_its_result_when_the_lookups_for_the_informational_line_hang() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -4785,7 +4813,7 @@ fn link_add_prints_its_result_when_the_lookups_for_the_informational_line_hang()
             body.len()
         )
         .unwrap();
-        // The first lookup is read and then left unanswered for as long as the CLI runs.
+        // The lookup is read and then left unanswered for as long as the CLI runs.
         let held = accept(&listener);
         let (get, _) = read_request(&held);
         let _ = held_until.recv();
@@ -4801,7 +4829,7 @@ fn link_add_prints_its_result_when_the_lookups_for_the_informational_line_hang()
         "{post}"
     );
     assert!(
-        get.starts_with("GET /api/v1/stories/TST-12 "),
+        get.starts_with("GET /api/v1/items/TST-7/links "),
         "the control: the lookup was sent, and nothing answered it: {get}"
     );
     assert_eq!(out.status.code(), Some(0));
@@ -4811,7 +4839,65 @@ fn link_add_prints_its_result_when_the_lookups_for_the_informational_line_hang()
     );
     assert!(
         took < Duration::from_secs(15),
-        "the lookups share one budget of 3 seconds, far below the client's 30: {took:?}"
+        "the lookup has a budget of 3 seconds, far below the client's 30: {took:?}"
+    );
+}
+
+/// The informational line names the items the write linked, never another item that a typed lookup would find
+/// under the same reference. After a prefix change `OLD-1` is a native epic and story `GRA-20` has the external
+/// reference `OLD-1`: the write resolves `OLD-1` to the epic (native keys first, across levels), so the link is
+/// epic to story and no line is printed. `/stories/OLD-1` would answer story `GRA-20`; it is never asked (the
+/// fake fails the test on any request but these two).
+#[test]
+fn link_add_says_nothing_about_a_story_the_write_did_not_link() {
+    let linked = || {
+        ok(serde_json::json!([item_link_json(
+            "follows", "out", "follows", "GRA-30", "story", "Ledger"
+        )]))
+    };
+    // GRA-20, the story whose external reference is OLD-1, follows GRA-30 too: still not the item just linked.
+    let followers = || {
+        ok(serde_json::json!({"links": [
+            item_link_json("follows", "in", "is followed by", "OLD-1", "epic", "Billing"),
+            item_link_json("follows", "in", "is followed by", "GRA-20", "story", "Imported"),
+        ]}))
+    };
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/OLD-1/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "OLD-1", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "OLD-1 follows GRA-30\n",
+        "the link is epic to story: no line, and none about GRA-20"
+    );
+
+    // An external reference that names none of several candidates by key: nothing tells which one the write
+    // linked, so no line rather than a guess.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/JIRA-5/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "JIRA-5", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "JIRA-5 follows GRA-30\n"
+    );
+
+    // The control: the story named by its own key, among the same candidates, gets the line with native keys.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/GRA-20/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "GRA-20", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "GRA-20 follows GRA-30\nInformational: this does not hold GRA-20 back. To hold it back: `reeve story block GRA-20 --by GRA-30`.\n"
     );
 }
 
