@@ -334,3 +334,377 @@ async fn a_brief_template_is_created_edited_marked_and_removed() {
         "{text}"
     );
 }
+
+/// Creates an initiative or an epic as the admin with `fields` over a title and the idempotency key `idem`.
+async fn create(h: &Harness, level: &str, idem: &str, fields: Value) -> (u16, Value) {
+    let mut body = json!({"idempotency_key": idem, "title": format!("T {idem}")});
+    if level == "initiative" {
+        body["horizon"] = json!("Now");
+    }
+    body.as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    admin(h, "POST", &format!("/api/v1/{level}s"), Some(body)).await
+}
+
+/// The brief of the item such a create answers.
+async fn brief_of(h: &Harness, level: &str, idem: &str, fields: Value) -> String {
+    let (st, b) = create(h, level, idem, fields).await;
+    assert_eq!(st, 200, "{idem}: {b}");
+    b["value"]["brief"].as_str().unwrap().to_string()
+}
+
+async fn mark(h: &Harness, t: &Value) {
+    post(h, &format!("{}/default", one(t)), json!({})).await;
+}
+
+/// How many initiatives or epics there are.
+async fn items(h: &Harness, level: &str) -> usize {
+    api(h, &h.admin_token, &format!("/api/v1/{level}s"))
+        .await
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+#[tokio::test]
+async fn a_new_brief_starts_from_a_template_only_when_the_create_asks() {
+    let h = harness().await;
+    for (level, other) in [("initiative", "epic"), ("epic", "initiative")] {
+        let k = |n: &str| format!("{level}-{n}");
+        let ask = || json!({"default_template": true});
+        // No template at all: asking for the default gives an empty brief, not a refusal.
+        assert_eq!(brief_of(&h, level, &k("none"), ask()).await, "");
+        let scenario = template(&h, level, "Scenario", SCENARIO).await;
+        let debt = template(&h, level, "Tech debt", DEBT).await;
+        let elsewhere = format!("Only for {other}s");
+        template(&h, other, &elsewhere, "OTHER").await;
+        // Templates, but none marked: asking for the default still gives nothing.
+        assert_eq!(brief_of(&h, level, &k("unmarked"), ask()).await, "");
+
+        mark(&h, &scenario).await;
+        // The control for everything below: the default is live for a create that asks.
+        assert_eq!(brief_of(&h, level, &k("asked"), ask()).await, SCENARIO);
+        // A caller that says nothing gets what it got before templates existed, in each way of saying nothing.
+        for (n, fields) in [
+            ("absent", json!({})),
+            ("null", json!({"brief": null})),
+            ("empty", json!({"brief": ""})),
+            ("false", json!({"default_template": false})),
+        ] {
+            assert_eq!(brief_of(&h, level, &k(n), fields).await, "", "{level} {n}");
+        }
+        // Asked for, with "no brief" said in each way: the default. A blank brief counts as none given.
+        for (n, fields) in [
+            ("ask-null", json!({"brief": null, "default_template": true})),
+            ("ask-empty", json!({"brief": "", "default_template": true})),
+            (
+                "ask-blank",
+                json!({"brief": " \n", "default_template": true}),
+            ),
+        ] {
+            assert_eq!(
+                brief_of(&h, level, &k(n), fields).await,
+                SCENARIO,
+                "{level} {n}"
+            );
+        }
+        // A named template, compared as names are, with a blank brief beside it or none.
+        assert_eq!(
+            brief_of(&h, level, &k("named"), json!({"template": " tech DEBT"})).await,
+            DEBT
+        );
+        assert_eq!(
+            brief_of(
+                &h,
+                level,
+                &k("named-blank"),
+                json!({"template": "Tech debt", "brief": " "})
+            )
+            .await,
+            DEBT
+        );
+        // A brief the caller gives is the brief.
+        assert_eq!(
+            brief_of(&h, level, &k("mine"), json!({"brief": "Mine"})).await,
+            "Mine"
+        );
+
+        // What is refused, and that a refusal creates nothing.
+        let before = items(&h, level).await;
+        for (n, fields, says) in [
+            (
+                "both",
+                json!({"brief": "Mine", "template": "Scenario"}),
+                "not both".to_string(),
+            ),
+            (
+                "mine-default",
+                json!({"brief": "Mine", "default_template": true}),
+                "not both".to_string(),
+            ),
+            (
+                "name-default",
+                json!({"template": "Scenario", "default_template": true}),
+                "exclude each other".to_string(),
+            ),
+            (
+                "other-level",
+                json!({"template": elsewhere}),
+                format!("no {level} brief template is named"),
+            ),
+            (
+                "nobody",
+                json!({"template": "Nobody"}),
+                format!("no {level} brief template is named"),
+            ),
+        ] {
+            let (st, b) = create(&h, level, &k(n), fields).await;
+            assert_eq!(
+                (st, &b["code"]),
+                (400, &json!("validation")),
+                "{level} {n}: {b}"
+            );
+            assert!(
+                b["message"].as_str().unwrap().contains(&says),
+                "{level} {n}: {b}"
+            );
+        }
+        assert_eq!(
+            items(&h, level).await,
+            before,
+            "a refused create made nothing"
+        );
+
+        // A retry answers the item its key already has, whatever the default is now.
+        assert_eq!(brief_of(&h, level, &k("retry"), ask()).await, SCENARIO);
+        mark(&h, &debt).await;
+        assert_eq!(brief_of(&h, level, &k("retry"), ask()).await, SCENARIO);
+        assert_eq!(
+            brief_of(&h, level, &k("after"), ask()).await,
+            DEBT,
+            "the control: the default moved"
+        );
+    }
+}
+
+/// The one retry the rule does not carry: a create that names a template is looked up by that name before its
+/// idempotency key is. When the template was removed or renamed since the first attempt, the same request is
+/// refused; the same key without the name answers the item the first attempt made.
+#[tokio::test]
+async fn a_retry_that_names_a_template_gone_since_is_refused_and_recovers_without_the_name() {
+    let h = harness().await;
+    for (level, how) in [("initiative", "removed"), ("epic", "renamed")] {
+        let t = template(&h, level, "Scenario", SCENARIO).await;
+        let idem = format!("{level}-{how}");
+        let (st, first) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
+        assert_eq!(st, 200, "{first}");
+        let first = first["value"].clone();
+        assert_eq!(
+            first["brief"], SCENARIO,
+            "the control: the first attempt started from the template"
+        );
+
+        let (st, b) = if how == "removed" {
+            admin(&h, "DELETE", &one(&t), None).await
+        } else {
+            admin(
+                &h,
+                "PATCH",
+                &one(&t),
+                Some(json!({"version": 1, "name": "Story map"})),
+            )
+            .await
+        };
+        assert_eq!(st, 200, "{how}: {b}");
+        let before = items(&h, level).await;
+
+        // The same request again: refused, because the name is nobody's now. Nothing is made.
+        let (st, b) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
+        assert_eq!((st, &b["code"]), (400, &json!("validation")), "{how}: {b}");
+        assert!(
+            b["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("no {level} brief template is named")),
+            "{how}: {b}"
+        );
+        // The recovery: the same key without the name answers the first attempt's item, brief and version.
+        let (st, again) = create(&h, level, &idem, json!({})).await;
+        assert_eq!(st, 200, "{how}: {again}");
+        for field in ["key", "brief", "version"] {
+            assert_eq!(again["value"][field], first[field], "{how}: {field}");
+        }
+        assert_eq!(
+            items(&h, level).await,
+            before,
+            "{how}: neither the refusal nor the recovery made an item"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_brief_outlives_the_edit_and_the_removal_of_its_template() {
+    let h = harness().await;
+    let t = template(&h, "initiative", "Scenario", SCENARIO).await;
+    mark(&h, &t).await;
+    let (st, made) = create(
+        &h,
+        "initiative",
+        "from-default",
+        json!({"default_template": true}),
+    )
+    .await;
+    assert_eq!(st, 200, "{made}");
+    let ini = made["value"].clone();
+    assert_eq!(
+        ini["brief"], SCENARIO,
+        "the control: the brief came from the template"
+    );
+    assert!(
+        !ini.as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.contains("template")),
+        "the item names no template: {ini}"
+    );
+    let item = format!("/api/v1/initiatives/{}", key(&ini));
+
+    let (st, b) = admin(
+        &h,
+        "PATCH",
+        &one(&t),
+        Some(json!({"version": 1, "body": "# Rewritten\n"})),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(
+        api(&h, &h.admin_token, &item).await,
+        ini,
+        "editing the template changes no brief and no version"
+    );
+    let (st, b) = admin(&h, "DELETE", &one(&t), None).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(
+        api(&h, &h.admin_token, &item).await,
+        ini,
+        "removing it changes none either"
+    );
+
+    // The item's own log holds its creation and nothing about a template.
+    let log = api(
+        &h,
+        &h.admin_token,
+        &format!("/api/v1/activity?entity_key={}", key(&ini)),
+    )
+    .await;
+    let actions: Vec<&str> = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["created"], "{log}");
+    assert!(
+        !log.to_string().contains("Scenario\""),
+        "the entry names no template: {log}"
+    );
+}
+
+/// A template changes what the advisory finding `empty_brief` sees, and that is accepted (the spec's section 1):
+/// a brief that was started from a template and never filled in is not empty, so the finding no longer says that
+/// nobody wrote it.
+#[tokio::test]
+async fn a_brief_started_from_a_template_is_not_found_empty() {
+    let h = harness().await;
+    for level in ["initiative", "epic"] {
+        let t = template(&h, level, "Scenario", SCENARIO).await;
+        mark(&h, &t).await;
+        let findings = |made: &Value| format!("/api/v1/{level}s/{}/findings", key(&made["value"]));
+
+        let (st, bare) = create(&h, level, &format!("{level}-bare"), json!({})).await;
+        assert_eq!(st, 200, "{bare}");
+        assert_eq!(
+            api(&h, &h.admin_token, &findings(&bare)).await,
+            json!([{"finding": "empty_brief"}]),
+            "{level}: the control: a create that asks for no template is found empty"
+        );
+
+        let (st, started) = create(
+            &h,
+            level,
+            &format!("{level}-started"),
+            json!({"default_template": true}),
+        )
+        .await;
+        assert_eq!(st, 200, "{started}");
+        assert_eq!(started["value"]["brief"], SCENARIO);
+        assert_eq!(
+            api(&h, &h.admin_token, &findings(&started)).await,
+            json!([]),
+            "{level}: the template's text counts as a brief, although nobody has filled it in"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_plan_and_an_import_apply_no_template() {
+    let h = harness_with(|cfg| format!("{cfg}\n[import]\nenabled = true")).await;
+    for level in ["initiative", "epic"] {
+        let t = template(&h, level, "Default", "FROM THE DEFAULT").await;
+        mark(&h, &t).await;
+        // The control: the default is live for a create that asks.
+        assert_eq!(
+            brief_of(
+                &h,
+                level,
+                &format!("control-{level}"),
+                json!({"default_template": true})
+            )
+            .await,
+            "FROM THE DEFAULT"
+        );
+    }
+    post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "p",
+            "initiatives": [{"name": "i", "title": "Planned initiative", "horizon": "Now"}],
+            "epics": [{"name": "e", "title": "Planned epic", "initiative": "i"}]
+        }),
+    )
+    .await;
+    post(
+        &h,
+        "/api/v1/import/initiatives",
+        json!({"external_ref": "JPD-1", "title": "Imported initiative", "brief": null, "horizon": "Now",
+               "target_month": null, "owner": null, "discovery_complete": false}),
+    )
+    .await;
+    post(
+        &h,
+        "/api/v1/import/epics",
+        json!({"external_ref": "JPD-2", "title": "Imported epic", "initiative": null, "brief": null,
+               "discovery_complete": false}),
+    )
+    .await;
+    for (path, titles) in [
+        (
+            "/api/v1/initiatives",
+            ["Planned initiative", "Imported initiative"],
+        ),
+        ("/api/v1/epics", ["Planned epic", "Imported epic"]),
+    ] {
+        let list = api(&h, &h.admin_token, path).await;
+        for title in titles {
+            let item = list
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["title"] == title)
+                .unwrap_or_else(|| panic!("{title} was not created: {list}"));
+            assert_eq!(item["brief"], "", "{title} took a template");
+        }
+    }
+}

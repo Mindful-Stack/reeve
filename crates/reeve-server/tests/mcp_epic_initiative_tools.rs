@@ -1226,3 +1226,126 @@ async fn moving_an_epic_changes_what_its_stories_wait_on_and_overrides_nothing()
         "nothing was logged on the story"
     );
 }
+
+/// GRA-903. The create tools name no template: their adapters send neither `template` nor `default_template`, and
+/// their inputs have no such field. So a chat's create without a brief stays empty even when the level has a
+/// default template, a brief it gives is stored as given, and a repeat answers the item its key first made.
+#[tokio::test]
+async fn the_create_tools_never_start_a_brief_from_a_template() {
+    async fn brief(h: &Harness, level: &str, receipt: &Value) -> Value {
+        api(
+            h,
+            &h.admin_token,
+            &format!("/api/v1/{level}s/{}", key(receipt)),
+        )
+        .await["brief"]
+            .clone()
+    }
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    for (level, tool, horizon) in [
+        ("initiative", "create_initiative", Some("Now")),
+        ("epic", "create_epic", None),
+    ] {
+        // `fields` with what the level's create also needs.
+        let with = |mut fields: Value| -> Value {
+            if let Some(horizon) = horizon {
+                fields["horizon"] = json!(horizon);
+            }
+            fields
+        };
+        let table = format!("{level}s");
+        let made = post(
+            h,
+            "/api/v1/brief-templates",
+            json!({"level": level, "name": "Default", "body": "FROM THE DEFAULT"}),
+        )
+        .await;
+        post(
+            h,
+            &format!("/api/v1/brief-templates/{}/default", made["id"]),
+            json!({}),
+        )
+        .await;
+        // The control: the default is live, and the same action gives it to a route caller that asks.
+        let asked = post(
+            h,
+            &format!("/api/v1/{level}s"),
+            with(json!({"idempotency_key": format!("ctl-{level}"), "title": "Asked", "default_template": true})),
+        )
+        .await;
+        assert_eq!(asked["brief"], "FROM THE DEFAULT", "{level}: the control");
+
+        // An omitted brief stays empty.
+        let plain = answer(
+            h,
+            &dan,
+            tool,
+            with(json!({"idempotency_key": "t1", "title": "From chat"})),
+        )
+        .await;
+        assert_eq!(plain["created"], true, "{tool}: {plain}");
+        assert_eq!(
+            brief(h, level, &plain).await,
+            "",
+            "{tool}: an omitted brief stays empty"
+        );
+        // An explicit brief survives.
+        let mine = answer(
+            h,
+            &dan,
+            tool,
+            with(json!({"idempotency_key": "t2", "title": "From chat", "brief": "Mine"})),
+        )
+        .await;
+        assert_eq!(
+            brief(h, level, &mine).await,
+            "Mine",
+            "{tool}: a given brief is the brief"
+        );
+        // A replay preserves the original item: the same key with other words writes nothing.
+        let count = rows(h, &table).await;
+        let again = answer(
+            h,
+            &dan,
+            tool,
+            with(
+                json!({"idempotency_key": "t1", "title": "Other words", "brief": "Another brief"}),
+            ),
+        )
+        .await;
+        assert_eq!(
+            (&again["key"], &again["created"]),
+            (&plain["key"], &json!(false)),
+            "{tool}: {again}"
+        );
+        assert_eq!(
+            brief(h, level, &plain).await,
+            "",
+            "{tool}: the replay changed nothing"
+        );
+        assert_eq!(
+            rows(h, &table).await,
+            count,
+            "{tool}: the replay made nothing"
+        );
+        // The tool has no way to ask: its input refuses both fields, and a refused call makes nothing.
+        for field in [
+            json!({"default_template": true}),
+            json!({"template": "Default"}),
+        ] {
+            let mut arguments = with(json!({"idempotency_key": "t3", "title": "Asking"}));
+            arguments
+                .as_object_mut()
+                .unwrap()
+                .extend(field.as_object().unwrap().clone());
+            refusal(h, &dan, tool, arguments).await;
+        }
+        assert_eq!(
+            rows(h, &table).await,
+            count,
+            "{tool}: a refused call made nothing"
+        );
+    }
+}

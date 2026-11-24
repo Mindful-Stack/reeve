@@ -1749,12 +1749,24 @@ export interface components {
             attachments?: string[];
             brief?: string | null;
             /**
+             * @description Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+             *     empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+             *     template is applied: a create that names neither gets the brief it sent, or an empty one.
+             */
+            default_template?: boolean;
+            /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
              *     three types, and a later import of the same reference finds this item instead of creating another.
              */
             external_ref?: string | null;
             idempotency_key: string;
             initiative?: null | components["schemas"]["KeyRef"];
+            /**
+             * @description The name of an epic brief template to start the brief from (`GET /brief-templates?level=epic`),
+             *     compared as template names are. Refused together with a brief that is not blank, and together with
+             *     `default_template`.
+             */
+            template?: string | null;
             title: string;
         };
         /** @description Adds a goal to the draft, or to the active sprint with `active`. The owner defaults to the caller. */
@@ -1781,6 +1793,12 @@ export interface components {
             attachments?: string[];
             brief?: string | null;
             /**
+             * @description Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+             *     empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+             *     template is applied: a create that names neither gets the brief it sent, or an empty one.
+             */
+            default_template?: boolean;
+            /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
              *     three types, and a later import of the same reference finds this item instead of creating another.
              */
@@ -1789,6 +1807,12 @@ export interface components {
             idempotency_key: string;
             owner?: string | null;
             target_month?: string | null;
+            /**
+             * @description The name of an initiative brief template to start the brief from (`GET /brief-templates?level=initiative`),
+             *     compared as template names are. Refused together with a brief that is not blank, and together with
+             *     `default_template`.
+             */
+            template?: string | null;
             title: string;
         };
         CreateStory: {

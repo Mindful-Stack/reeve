@@ -885,6 +885,10 @@
               "null"
             ]
           },
+          "default_template": {
+            "description": "Start the brief from the level's default template, when an admin has marked one (none marked: the brief is\nempty). Refused together with a brief that is not blank, and together with `template`. Left out, no\ntemplate is applied: a create that names neither gets the brief it sent, or an empty one.",
+            "type": "boolean"
+          },
           "external_ref": {
             "description": "The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all\nthree types, and a later import of the same reference finds this item instead of creating another.",
             "type": [
@@ -903,6 +907,13 @@
               {
                 "$ref": "#/components/schemas/KeyRef"
               }
+            ]
+          },
+          "template": {
+            "description": "The name of an epic brief template to start the brief from (`GET /brief-templates?level=epic`),\ncompared as template names are. Refused together with a brief that is not blank, and together with\n`default_template`.",
+            "type": [
+              "string",
+              "null"
             ]
           },
           "title": {
@@ -974,6 +985,10 @@
               "null"
             ]
           },
+          "default_template": {
+            "description": "Start the brief from the level's default template, when an admin has marked one (none marked: the brief is\nempty). Refused together with a brief that is not blank, and together with `template`. Left out, no\ntemplate is applied: a create that names neither gets the brief it sent, or an empty one.",
+            "type": "boolean"
+          },
           "external_ref": {
             "description": "The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all\nthree types, and a later import of the same reference finds this item instead of creating another.",
             "type": [
@@ -994,6 +1009,13 @@
             ]
           },
           "target_month": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template": {
+            "description": "The name of an initiative brief template to start the brief from (`GET /brief-templates?level=initiative`),\ncompared as template names are. Refused together with a brief that is not blank, and together with\n`default_template`.",
             "type": [
               "string",
               "null"

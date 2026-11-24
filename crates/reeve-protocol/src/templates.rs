@@ -99,4 +99,39 @@ mod tests {
         let edit: EditBriefTemplate = serde_json::from_value(json!({"version": 3})).unwrap();
         assert_eq!((edit.version, edit.name, edit.body), (3, None, None));
     }
+
+    #[test]
+    fn a_create_asks_for_a_template_only_when_it_says_so() {
+        use crate::requests::{CreateEpic, CreateInitiative};
+        // A body as every client sent it before templates existed.
+        let plain: CreateInitiative = serde_json::from_value(json!({
+            "idempotency_key": "k", "title": "T", "brief": null, "horizon": "Now",
+            "target_month": null, "owner": null
+        }))
+        .unwrap();
+        assert_eq!(
+            (plain.template.as_deref(), plain.default_template),
+            (None, false)
+        );
+        let out = serde_json::to_value(&plain).unwrap();
+        assert!(
+            out.get("template").is_none() && out.get("default_template").is_none(),
+            "{out}"
+        );
+
+        let asked: CreateEpic = serde_json::from_value(json!({
+            "idempotency_key": "k", "title": "T", "initiative": null, "brief": null,
+            "template": "Scenario", "default_template": true
+        }))
+        .unwrap();
+        assert_eq!(
+            (asked.template.as_deref(), asked.default_template),
+            (Some("Scenario"), true)
+        );
+        let out = serde_json::to_value(&asked).unwrap();
+        assert_eq!(
+            (&out["template"], &out["default_template"]),
+            (&json!("Scenario"), &json!(true))
+        );
+    }
 }

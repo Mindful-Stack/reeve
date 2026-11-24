@@ -1,7 +1,8 @@
+use super::templates::starting_brief;
 use super::{Acting, Edited, allowed_owner, named_target_month};
 use crate::{error::AppError, state::AppState};
 use reeve_planning::Initiative;
-use reeve_protocol::{CreateInitiative, EditItem, InitiativeDto, ItemType};
+use reeve_protocol::{BriefTemplateLevel, CreateInitiative, EditItem, InitiativeDto, ItemType};
 
 /// `reeve initiative ls`: every initiative with its progress. Shared by `GET /api/v1/initiatives` and the MCP tool
 /// `list_initiatives`. The route takes no input.
@@ -28,7 +29,8 @@ pub(crate) async fn get_initiative(
 
 /// `reeve initiative create`. Shared by `POST /api/v1/initiatives` and the MCP tool `create_initiative`. `b` is
 /// what the route takes: its body. The owner must be an allowed user and the target month a month. Answers the
-/// initiative and whether this call created it.
+/// initiative and whether this call created it. The brief is the caller's, or starts from a brief template when
+/// the body asks for one (`templates::starting_brief`); nothing about the template is stored.
 pub(crate) async fn create_initiative(
     state: &AppState,
     who: &Acting<'_>,
@@ -37,13 +39,23 @@ pub(crate) async fn create_initiative(
     let idem = who.write_key(&b.idempotency_key)?;
     let owner = allowed_owner(who.policy, b.owner)?;
     let target_month = named_target_month(b.target_month)?;
+    // The brief the caller sent, or the template it asked for (`template`, `default_template`). A caller that asks
+    // for neither, an MCP tool among them, gets exactly what it sent.
+    let brief = starting_brief(
+        state,
+        BriefTemplateLevel::Initiative,
+        b.brief.as_deref(),
+        b.template.as_deref(),
+        b.default_template,
+    )
+    .await?;
     let (initiative, created) = state
         .handlers
         .create_initiative_reporting(
             &who.ctx,
             &idem,
             &b.title,
-            b.brief.as_deref().unwrap_or(""),
+            &brief,
             &b.horizon,
             target_month,
             owner,

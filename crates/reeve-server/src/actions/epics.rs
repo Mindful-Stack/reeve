@@ -1,7 +1,8 @@
+use super::templates::starting_brief;
 use super::{Acting, Edited, FilterRef, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
 use reeve_planning::{Epic, EpicMove};
-use reeve_protocol::{CreateEpic, EditItem, EpicDto, ItemType, KeyRef};
+use reeve_protocol::{BriefTemplateLevel, CreateEpic, EditItem, EpicDto, ItemType, KeyRef};
 use serde::Deserialize;
 
 /// The query of `GET /api/v1/epics`.
@@ -44,7 +45,8 @@ pub(crate) async fn get_epic(
 
 /// `reeve epic create`. Shared by `POST /api/v1/epics` and the MCP tool `create_epic`. `b` is what the route
 /// takes: its body. Answers the epic and whether this call created it (false: the idempotency key already had
-/// one, and nothing was written).
+/// one, and nothing was written). The brief is the caller's, or starts from a brief template when the body asks
+/// for one (`templates::starting_brief`); nothing about the template is stored.
 pub(crate) async fn create_epic(
     state: &AppState,
     who: &Acting<'_>,
@@ -54,6 +56,16 @@ pub(crate) async fn create_epic(
     let idem = who.write_key(&b.idempotency_key)?;
     let initiative =
         resolve_opt(&state.handlers, b.initiative.as_ref(), ItemType::Initiative).await?;
+    // The brief the caller sent, or the template it asked for (`template`, `default_template`). A caller that asks
+    // for neither, an MCP tool among them, gets exactly what it sent.
+    let brief = starting_brief(
+        state,
+        BriefTemplateLevel::Epic,
+        b.brief.as_deref(),
+        b.template.as_deref(),
+        b.default_template,
+    )
+    .await?;
     let (epic, created) = state
         .handlers
         .create_epic_reporting(
@@ -61,7 +73,7 @@ pub(crate) async fn create_epic(
             &idem,
             &b.title,
             initiative,
-            b.brief.as_deref().unwrap_or(""),
+            &brief,
             b.external_ref,
             &b.attachments,
         )
