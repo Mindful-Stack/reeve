@@ -1146,6 +1146,62 @@ async function expectTablesScrollInside(page: Page, scope: string, count: number
 	}
 }
 
+/** The scroll shadows of a wrapper that scrolls, as far as computed style and scroll geometry show them: four
+ *  gradients, the two covers in the colour of the nearest surface behind the wrapper (the page, a drawer, a raised
+ *  panel) and attached to the content, the two shadows in the --table-shadow token and attached to the wrapper; and the
+ *  wrapper really scrolls from one end to the other, which is what moves a cover off its shadow.
+ *  What this cannot catch, short of comparing pixels: that the cover is painted over the shadow (the layer order), that
+ *  it hides the whole of it at a scroll end, how strong the shadow looks on a given surface, and whether a cell's own
+ *  background hides it. Those are looked at in screenshots, light and dark. */
+async function expectScrollShadows(wrap: Locator): Promise<{ shadow: string; surface: string }> {
+	const m = await wrap.evaluate(async (w) => {
+		const s = getComputedStyle(w);
+		// The nearest ancestor that paints a background is the surface the covers must match.
+		let surface = 'rgba(0, 0, 0, 0)';
+		for (let e = w.parentElement; e; e = e.parentElement) {
+			const bg = getComputedStyle(e).backgroundColor;
+			if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+				surface = bg;
+				break;
+			}
+		}
+		// What the shadow token computes to here, in the form a gradient serialises it.
+		const probe = document.createElement('i');
+		probe.style.backgroundImage = 'linear-gradient(var(--table-shadow), var(--table-shadow))';
+		w.append(probe);
+		// "linear-gradient(X, X)": the colour is half of what the brackets hold (a colour has commas of its own).
+		const pair = getComputedStyle(probe).backgroundImage.replace(/^linear-gradient\(|\)$/g, '');
+		const shadow = pair.slice(0, (pair.length - 2) / 2);
+		probe.remove();
+		const max = w.scrollWidth - w.clientWidth;
+		const at: number[] = [];
+		for (const left of [0, Math.round(max / 2), max]) {
+			w.scrollLeft = left;
+			await new Promise((r) => requestAnimationFrame(r));
+			at.push(w.scrollLeft);
+		}
+		w.scrollLeft = 0;
+		return { image: s.backgroundImage, attachment: s.backgroundAttachment, repeat: s.backgroundRepeat, surface, shadow, max, at };
+	});
+	// Colours hold commas of their own: split on the gradients, not on every comma.
+	const gradients = m.image.split(/,\s*(?=linear-gradient\()/);
+	expect(gradients).toHaveLength(4);
+	expect(m.attachment).toBe('local, local, scroll, scroll');
+	expect(m.repeat).toBe('no-repeat, no-repeat, no-repeat, no-repeat');
+	expect(m.surface, 'a surface paints behind the wrapper').not.toBe('rgba(0, 0, 0, 0)');
+	expect(gradients[0], 'the left cover is the surface behind').toBe(`linear-gradient(to right, ${m.surface} 35%, rgba(0, 0, 0, 0))`);
+	expect(gradients[1], 'the right cover is the surface behind').toBe(`linear-gradient(to left, ${m.surface} 35%, rgba(0, 0, 0, 0))`);
+	expect(m.shadow).not.toBe('');
+	expect(gradients[2]).toBe(`linear-gradient(to right, ${m.shadow}, rgba(0, 0, 0, 0))`);
+	expect(gradients[3]).toBe(`linear-gradient(to left, ${m.shadow}, rgba(0, 0, 0, 0))`);
+	// Start, middle and end: nothing behind at the start, the whole overflow behind at the end.
+	expect(m.max).toBeGreaterThan(0);
+	expect(m.at[0]).toBe(0);
+	expect(Math.abs(m.at[1] - m.max / 2)).toBeLessThanOrEqual(1);
+	expect(Math.abs(m.at[2] - m.max)).toBeLessThanOrEqual(1);
+	return { shadow: m.shadow, surface: m.surface };
+}
+
 test('a wide table in a brief scrolls inside its wrapper on a phone, and only a wrapper that scrolls is a tab stop', async ({ page }) => {
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 		idempotency_key: crypto.randomUUID(),
@@ -1175,7 +1231,15 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	expect(tables[0].height).toBeLessThan(400);
 	expect(tables[1].width).toBeLessThan(120);
 	// The cue that there is more to the side: two covers that travel with the table over two shadows that stay put.
-	expect(await wraps.nth(0).evaluate((w) => getComputedStyle(w).backgroundAttachment)).toBe('local, local, scroll, scroll');
+	// Light keeps the full line colour; dark fades it, where the full colour reads as a solid stripe.
+	await page.emulateMedia({ colorScheme: 'light' });
+	const light = await expectScrollShadows(wraps.nth(0));
+	expect(light.shadow).toMatch(/^rgb\(/);
+	await page.emulateMedia({ colorScheme: 'dark' });
+	const dark = await expectScrollShadows(wraps.nth(0));
+	expect(dark.surface).not.toBe(light.surface);
+	expect(dark.shadow, 'a translucent shadow in dark').toMatch(/(\/ 0\.\d+\)|rgba\(.*, 0\.\d+\))$/);
+	await page.emulateMedia({ colorScheme: null });
 	// With room for the table, its wrapper stops being a tab stop.
 	await page.setViewportSize({ width: 1440, height: 800 });
 	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);

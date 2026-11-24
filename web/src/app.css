@@ -22,6 +22,7 @@
 	--pr-open: #286983;
 	--pr-merged: #765f93;
 	--mark: #f6e2c3;
+	--table-shadow: var(--line);
 	--scrim: rgb(25 23 36 / 0.28);
 	--shadow: 0 8px 28px rgb(25 23 36 / 0.14);
 	color-scheme: light;
@@ -48,6 +49,7 @@
 	--pr-open: #31748f;
 	--pr-merged: #c4a7e7;
 	--mark: #403d52;
+	--table-shadow: color-mix(in srgb, var(--line) 60%, transparent);
 	--scrim: rgb(0 0 0 / 0.5);
 	--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
 	color-scheme: dark;
@@ -75,6 +77,7 @@
 		--pr-open: #31748f;
 		--pr-merged: #c4a7e7;
 		--mark: #403d52;
+		--table-shadow: color-mix(in srgb, var(--line) 60%, transparent);
 		--scrim: rgb(0 0 0 / 0.5);
 		--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
 		color-scheme: dark;
@@ -328,12 +331,13 @@ textarea[data-drop] {
 	overflow-x: auto;
 	/* A shadow on each side that has more table to scroll to (an overlay scrollbar shows nothing until touched). The
 	   two shadows stay at the wrapper's edges; the two covers, in the colour of the surface behind, travel with the
-	   table and hide a shadow once that end is reached. A container on another surface sets --table-surface. */
+	   table and hide a shadow once that end is reached. A container on another surface sets --table-surface. The
+	   shadow is --table-shadow: the line colour, faded in dark, where the full colour reads as a solid stripe. */
 	background:
 		linear-gradient(to right, var(--table-surface, var(--background)) 35%, transparent) left / 2.25rem 100% no-repeat local,
 		linear-gradient(to left, var(--table-surface, var(--background)) 35%, transparent) right / 2.25rem 100% no-repeat local,
-		linear-gradient(to right, var(--line), transparent) left / 0.625rem 100% no-repeat scroll,
-		linear-gradient(to left, var(--line), transparent) right / 0.625rem 100% no-repeat scroll;
+		linear-gradient(to right, var(--table-shadow), transparent) left / 0.625rem 100% no-repeat scroll,
+		linear-gradient(to left, var(--table-shadow), transparent) right / 0.625rem 100% no-repeat scroll;
 }
 [data-table-scroll] table {
 	border-collapse: collapse;
