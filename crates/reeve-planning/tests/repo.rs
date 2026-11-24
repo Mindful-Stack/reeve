@@ -3569,7 +3569,7 @@ async fn web_links_are_one_per_url_on_an_item_and_listed_oldest_first() {
 
     let of_a = ports
         .web_links
-        .web_links_of_in(&mut tx, &[a.clone()])
+        .web_links_of_in(&mut tx, std::slice::from_ref(&a))
         .await
         .unwrap();
     assert_eq!(
