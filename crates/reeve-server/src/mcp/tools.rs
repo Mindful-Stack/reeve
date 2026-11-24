@@ -3,7 +3,9 @@
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod add_comment;
 mod bound;
+mod create_epic;
 mod create_story;
+mod edit_epic;
 mod edit_story;
 mod get_epic;
 mod get_initiative;
@@ -117,6 +119,8 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         edit_story::tool(key_prefix),
         add_comment::tool(key_prefix),
         move_story::tool(key_prefix),
+        create_epic::tool(key_prefix),
+        edit_epic::tool(key_prefix),
     ]
 }
 
@@ -199,6 +203,15 @@ pub(crate) fn bounded(mut message: String) -> String {
     message
 }
 
+/// Whether `text` ends with what `bound::cut` appends, `[cut: <n> more characters]`: a text a read tool
+/// (`get_story`, `get_epic`, `get_initiative`) shortened. Written back, it would replace the real text with the cut one.
+fn looks_cut(text: &str) -> bool {
+    text.trim_end()
+        .strip_suffix(" more characters]")
+        .and_then(|rest| rest.rsplit_once("[cut: "))
+        .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// How much of a refusal its list of reasons may take, the count of those left out included: the rest of
 /// `bound::MAX_OWN_TEXT` is room for the sentences around it (a key repeated with `text::echo` and a few lines).
 const MAX_REASONS: usize = bound::MAX_OWN_TEXT - 2_000;
@@ -260,11 +273,19 @@ fn not_found(e: AppError, what: &str, key: &str, key_prefix: &str) -> ToolError 
     }
 }
 
-/// What a write to a story by version failed with: a stale version is told with the version to read (when the
-/// planner could give one) and what to do about it; a missing story as `not_found` tells it; anything else in
-/// `told`'s words.
-fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
-    let advice = "Read it again with get_story, check what changed, and send only the change the person asked for";
+/// What a write to an item by version failed with: a stale version is told with the version to read (when the
+/// planner could give one) and what to do about it; a missing item as `not_found` tells it; anything else in
+/// `told`'s words. `what` is "story", "epic" or "initiative", and `reader` the tool that reads one.
+fn item_write_failed(
+    e: AppError,
+    what: &str,
+    reader: &str,
+    key: &str,
+    key_prefix: &str,
+) -> ToolError {
+    let advice = format!(
+        "Read it again with {reader}, check what changed, and send only the change the person asked for"
+    );
     match e {
         AppError::Conflict { current } if current >= 0 => ToolError::Told(format!(
             "{} changed since you read it and is now at version {current}. {advice}, with version {current}.",
@@ -275,8 +296,13 @@ fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
             "{} changed while this ran. {advice}.",
             bound::echo(key)
         )),
-        other => not_found(other, "story", key, key_prefix),
+        other => not_found(other, what, key, key_prefix),
     }
+}
+
+/// `item_write_failed` for a story.
+fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
+    item_write_failed(e, "story", "get_story", key, key_prefix)
 }
 
 /// What an action failed with, as the model reads it: everything the planner said (not found, a validation error, a
@@ -369,10 +395,10 @@ mod tests {
         assert_eq!(names(Write), vec![json!("reads"), json!("writes")]);
     }
 
-    /// kb/ADR-0029 R10: the tools are these thirteen and no others, and each is knowingly on one side of the scope
-    /// rule. A tool outside R10's set needs an observation on the record first.
+    /// kb/ADR-0029 R10 and the observation for GRA-901 on it: the tools are exactly these and no others, and each is
+    /// knowingly on one side of the scope rule. A tool outside this list needs an observation on the record first.
     #[test]
-    fn the_registry_is_the_nine_read_tools_and_the_four_write_tools() {
+    fn the_registry_is_exactly_the_read_tools_and_the_write_tools_the_record_names() {
         const READ: [&str; 9] = [
             "search_items",
             "list_stories",
@@ -384,7 +410,14 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 4] = ["create_story", "edit_story", "add_comment", "move_story"];
+        const WRITE: [&str; 6] = [
+            "create_story",
+            "edit_story",
+            "add_comment",
+            "move_story",
+            "create_epic",
+            "edit_epic",
+        ];
         let tools = registry("TST");
         let named = |read_only: bool| -> Vec<&str> {
             tools
@@ -669,6 +702,45 @@ mod tests {
             AppError::TooLarge("too large".into()),
         ] {
             assert_eq!(said(e), None);
+        }
+    }
+
+    #[test]
+    fn a_text_that_ends_with_the_cut_marker_is_recognised() {
+        let mut cut = "å".repeat(bound::MAX_OTHER_TEXT + 5);
+        bound::cut(&mut cut, bound::MAX_OTHER_TEXT);
+        assert!(
+            looks_cut(&cut),
+            "what `bound::cut` really appends: {}",
+            &cut[cut.len() - 30..]
+        );
+        assert!(looks_cut("text[cut: 1 more characters]  "));
+        for whole in [
+            "",
+            "a description",
+            "see [cut: 5 more characters] above",
+            "[cut: many more characters]",
+        ] {
+            assert!(!looks_cut(whole), "{whole}");
+        }
+    }
+
+    /// What a description must say because nothing else can: the server cannot ask the person, and these are the
+    /// sentences a reviewer or the owner asked for by name. One row per sentence; the text is compared whole.
+    #[test]
+    fn a_description_says_what_only_it_can_tell_the_model() {
+        const SAID: [(&str, &str); 1] = [(
+            "edit_epic",
+            "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that its stories now wait on other discovery and decisions.",
+        )];
+        let tools = registry("TST");
+        for (name, sentence) in SAID {
+            let tool = tools.iter().find(|t| t.name == name).unwrap();
+            assert!(
+                tool.description.contains(sentence),
+                "{name}: {}",
+                tool.description
+            );
         }
     }
 }

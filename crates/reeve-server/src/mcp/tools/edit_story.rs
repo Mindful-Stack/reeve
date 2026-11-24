@@ -66,15 +66,6 @@ fn merge_labels(current: Vec<String>, add: &[String], remove: &[String]) -> Vec<
     out
 }
 
-/// Whether `text` ends with what `bound::cut` appends, `[cut: <n> more characters]`: a text this server
-/// shortened when it was read. Written back, it would replace the real text with the cut one.
-fn looks_cut(text: &str) -> bool {
-    text.trim_end()
-        .strip_suffix(" more characters]")
-        .and_then(|rest| rest.rsplit_once("[cut: "))
-        .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-}
-
 fn run<'a>(
     state: &'a AppState,
     who: &'a Acting<'a>,
@@ -96,10 +87,15 @@ fn run<'a>(
                 "criteria cannot be emptied here: send every criterion the story should have.",
             );
         }
-        if input.description.as_deref().is_some_and(looks_cut) {
+        if input.description.as_deref().is_some_and(super::looks_cut) {
             return told(&format!("description {CUT}"));
         }
-        if input.criteria.iter().flatten().any(|text| looks_cut(text)) {
+        if input
+            .criteria
+            .iter()
+            .flatten()
+            .any(|text| super::looks_cut(text))
+        {
             return told(&format!("A criterion {CUT}"));
         }
         let merges = input.criteria.is_some()
@@ -228,25 +224,5 @@ mod tests {
             s(&["api", "old"])
         );
         assert_eq!(merge_labels(current.clone(), &[], &[]), current);
-    }
-
-    #[test]
-    fn a_text_that_ends_with_the_cut_marker_is_recognised() {
-        let mut cut = "å".repeat(bound::MAX_OTHER_TEXT + 5);
-        bound::cut(&mut cut, bound::MAX_OTHER_TEXT);
-        assert!(
-            looks_cut(&cut),
-            "what `bound::cut` really appends: {}",
-            &cut[cut.len() - 30..]
-        );
-        assert!(looks_cut("text[cut: 1 more characters]  "));
-        for whole in [
-            "",
-            "a description",
-            "see [cut: 5 more characters] above",
-            "[cut: many more characters]",
-        ] {
-            assert!(!looks_cut(whole), "{whole}");
-        }
     }
 }

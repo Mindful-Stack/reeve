@@ -475,6 +475,75 @@ pub struct MoveStoryInput {
     pub resolution: Option<Resolution>,
 }
 
+// `create_epic` (`reeve epic create`). The doc comment is the schema's root description. There is no external
+// reference, no attachment and nothing about discovery: a new epic's discovery is not complete, and only a person
+// marks it.
+/// A new epic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEpicInput {
+    /// A key you make up for this one create, 1 to 100 characters, for example `checkout-epic-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Send the same key again only to retry the same create: a repeat writes nothing and answers the epic the key already made.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// A short title, at most 200 characters.
+    pub title: String,
+    /// The initiative the epic belongs to: the initiative's key. Left out, the epic belongs to none.
+    pub initiative: Option<String>,
+    /// The brief, in Markdown: what this epic delivers.
+    pub brief: Option<String>,
+}
+
+// `edit_epic` (`reeve epic edit`). The doc comment is the schema's root description.
+/// A change to one epic: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditEpicInput {
+    /// The epic's key.
+    pub key: String,
+    /// The epic's `version` as you last read it (get_epic or list_epics). If the epic changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new brief, in Markdown, replacing the whole text: to change a part, send the brief exactly as get_epic gave it with only that part changed. Never send a text that ends with `[cut: N more characters]`.
+    pub brief: Option<String>,
+    /// Move the epic to this initiative: the initiative's key. Only when the person asked for the move: it changes what the epic's stories wait on. Not together with `detach_initiative`.
+    pub initiative: Option<String>,
+    /// True takes the epic out of its initiative. Only when the person asked for that: it changes what the epic's stories wait on. Not together with `initiative`.
+    #[serde(default)]
+    pub detach_initiative: bool,
+}
+
+/// What a tool that changes an epic answers: enough to see that the change happened and to make the next one (the
+/// key and the new version), and nothing whose size a person controls except the title, which the planner limits
+/// to 200 characters. Reading the epic whole is `get_epic`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EpicReceipt {
+    pub key: Key,
+    pub title: String,
+    pub initiative: Option<Key>,
+    pub version: i64,
+    /// `create_epic` only: whether this call created the epic. False: its idempotency key had already made this
+    /// epic, and nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<bool>,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl From<EpicDto> for EpicReceipt {
+    fn from(epic: EpicDto) -> Self {
+        Self {
+            key: epic.key,
+            title: epic.title,
+            initiative: epic.initiative,
+            version: epic.version,
+            created: None,
+            note: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,5 +794,61 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// A receipt's field names, pinned as literal JSON: `created` and `note` are sent only when set.
+    #[test]
+    fn an_epic_receipt_is_these_fields() {
+        let epic: EpicDto = serde_json::from_value(json!({
+            "key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "brief": "A long brief.",
+            "discovery_complete": {"at": "2026-11-01T10:00:00Z", "by": "dan@example.com"},
+            "external_ref": "JPD-7", "version": 3
+        }))
+        .unwrap();
+        let mut receipt = EpicReceipt::from(epic);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "version": 3})
+        );
+        receipt.created = Some(false);
+        receipt.note = Some("Nothing was written.".into());
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "version": 3,
+                   "created": false, "note": "Nothing was written."})
+        );
+    }
+
+    /// kb/ADR-0029 R12 and the owner's rule for GRA-901: the epic inputs have no way to an external reference,
+    /// an attachment or the discovery mark, and refuse each by name.
+    #[test]
+    fn the_epic_inputs_refuse_what_the_tools_withhold() {
+        let ok: CreateEpicInput =
+            serde_json::from_value(json!({"idempotency_key": "k1", "title": "Checkout"})).unwrap();
+        assert_eq!((ok.initiative, ok.brief), (None, None));
+        let edit: EditEpicInput =
+            serde_json::from_value(json!({"key": "TST-2", "version": 3})).unwrap();
+        assert!(!edit.detach_initiative);
+        for withheld in [
+            "external_ref",
+            "attachments",
+            "discovery_complete",
+            "complete",
+            "owner",
+            "rank",
+        ] {
+            let mut create = json!({"idempotency_key": "k1", "title": "Checkout"});
+            create[withheld] = json!(true);
+            let e = serde_json::from_value::<CreateEpicInput>(create)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "create: {e}");
+            let mut edit = json!({"key": "TST-2", "version": 3});
+            edit[withheld] = json!(true);
+            let e = serde_json::from_value::<EditEpicInput>(edit)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "edit: {e}");
+        }
     }
 }
