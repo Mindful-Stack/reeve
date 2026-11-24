@@ -50,7 +50,8 @@
 	/** What is listed: the host's lists. A write's answer is assigned over them and shows until the host passes its
 	 *  next read, which replaces it. An answer that arrives after the host passed a read is not assigned: that read is
 	 *  the newer one (a live reload, with what someone else added meanwhile), and it stays while the refetch that
-	 *  `onchanged` asks for runs, and if that refetch fails. */
+	 *  `onchanged` asks for runs, and if that refetch fails. An add then puts the one row it added on that read, so a
+	 *  confirmed addition is never hidden (by a read from before it, or by an equal read). */
 	let shownLinks = $derived(hostLinks);
 	let shownWeb = $derived(hostWeb);
 	const groups = $derived(groupLinks(shownLinks));
@@ -135,9 +136,10 @@
 		listError = null;
 		note = null;
 		const under = hostLinks;
+		const sent = linkType;
 		let answer: ItemLink[];
 		try {
-			answer = await unwrap(api.POST('/api/v1/items/{key}/links', { params: { path: { key: itemKey } }, body: { type: linkType, to: other.key } }));
+			answer = await unwrap(api.POST('/api/v1/items/{key}/links', { params: { path: { key: itemKey } }, body: { type: sent, to: other.key } }));
 		} catch (err) {
 			// The fields are enabled again before focus returns to one: a disabled field cannot take it.
 			busy = false;
@@ -148,7 +150,14 @@
 		}
 		busy = false;
 		if (hostLinks === under) shownLinks = answer;
-		note = followsNote(linkType, itemKey, level, other);
+		else {
+			// The host passed a newer list meanwhile (by identity, so possibly an equal one): it stays, with the one row
+			// this write added. No other row of the answer comes back: someone may have removed it since.
+			const mine = (l: ItemLink) => l.type === sent && l.item.key === other.key && (sent === 'relates_to' || l.direction === 'out');
+			const added = answer.find(mine);
+			if (added && !hostLinks.some(mine)) shownLinks = [...hostLinks, added];
+		}
+		note = followsNote(sent, itemKey, level, other);
 		await closeLink();
 		onchanged?.();
 	}
@@ -229,6 +238,13 @@
 		}
 		busy = false;
 		if (hostWeb === under) shownWeb = answer;
+		else {
+			// As for an item link: the newer list stays, with the one web link this write added. That one is known by the
+			// title sent and by an id the newer list does not have; the URL is not compared, the server stores it
+			// normalised.
+			const added = answer.find((w) => w.title === body.title && !hostWeb.some((x) => x.id === w.id));
+			if (added) shownWeb = [...hostWeb, added];
+		}
 		await closeWeb();
 		onchanged?.();
 	}

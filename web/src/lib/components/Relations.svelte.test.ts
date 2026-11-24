@@ -420,6 +420,63 @@ describe('Relations: item links', () => {
 		expect(form('Add item link')).toBeNull();
 	});
 
+	it('shows its own addition when the host passes an equal list while the add was out, and the reload brings nothing', async () => {
+		net.hits = [searchHit({ key: 'ABC-11' })];
+		const { props, changed } = render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		await pick('ABC-11', 'ABC-11');
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return [itemLink({ type: 'follows', direction: 'out', label: 'follows', item: to('ABC-11') })];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		// An unrelated live refresh: a new array with the same (empty) content.
+		props.links = [];
+		flushSync();
+		g.release();
+		// The host's refetch (`changed`) passes nothing here: it is as if it failed.
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(groups()).toEqual([['follows', ['/board?story=ABC-11']]]);
+		expect(form('Add item link')).toBeNull();
+	});
+
+	it('adds only its own row to a newer host list: another person\'s new row stays, and what they removed meanwhile is not brought back', async () => {
+		net.hits = [searchHit({ key: 'ABC-11' })];
+		const removed = itemLink({ type: 'duplicates', direction: 'out', label: 'duplicates', item: to('ABC-7') });
+		const theirs = itemLink({ type: 'follows', direction: 'out', label: 'follows', item: to('ABC-3', 'epic') });
+		const { props, changed } = render({ links: [removed] });
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		const select = f.querySelector('select')!;
+		select.value = 'relates_to';
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+		flushSync();
+		await pick('ABC-11', 'ABC-11');
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			// As the server wrote it: with the row another person removed meanwhile, and the relation worded from either
+			// side (a relates_to names the other item whatever its direction).
+			return [removed, itemLink({ type: 'relates_to', direction: 'in', label: 'relates to', item: to('ABC-11') })];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		expect(writes()[0].body).toEqual({ type: 'relates_to', to: 'ABC-11' });
+		props.links = [theirs];
+		flushSync();
+		g.release();
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(groups()).toEqual([
+			['follows', ['/epics/ABC-3']],
+			['relates to', ['/board?story=ABC-11']]
+		]);
+	});
+
 	it('disables Add again when something else is typed after a pick, and sends nothing for the item picked before', async () => {
 		net.hits = [searchHit({ key: 'ABC-11' })];
 		render();
@@ -692,6 +749,54 @@ describe('Relations: web links', () => {
 		flushSync();
 		expect(hrefs()).toEqual(['https://example.com/wiki/scenario', 'https://example.com/runbook']);
 		expect(form('Add web link')).toBeNull();
+	});
+
+	it('shows its own web link when the host passes an equal list while the add was out, and the reload brings nothing', async () => {
+		const { props, changed } = render();
+		const f = await openForm('Web links', '+ Add web link', 'Add web link');
+		const [title, url] = inputs(f);
+		fill(title, ' Scenario page ');
+		fill(url, 'HTTPS://Example.com/wiki/scenario');
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			// The URL as the server stores it, not as typed.
+			return [webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' })];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		props.webLinks = [];
+		flushSync();
+		g.release();
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(hrefs()).toEqual(['https://example.com/wiki/scenario']);
+		expect(form('Add web link')).toBeNull();
+	});
+
+	it('adds only its own web link to a newer host list: another person\'s new one stays, and what they removed meanwhile is not brought back', async () => {
+		const removed = webLink({ id: 2, title: 'Old page', url: 'https://example.com/old' });
+		const theirs = webLink({ id: 5, title: 'Runbook', url: 'https://example.com/runbook' });
+		const { props, changed } = render({ webLinks: [removed] });
+		const f = await openForm('Web links', '+ Add web link', 'Add web link');
+		const [title, url] = inputs(f);
+		fill(title, 'Scenario page');
+		fill(url, 'https://example.com/wiki/scenario');
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return [removed, webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' })];
+		};
+		submit(f);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		props.webLinks = [theirs];
+		flushSync();
+		g.release();
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(hrefs()).toEqual(['https://example.com/runbook', 'https://example.com/wiki/scenario']);
 	});
 
 	it('keeps the list the host passed while a web link removal was out: the late answer does not hide what someone else added', async () => {
