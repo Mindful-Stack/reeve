@@ -36,4 +36,10 @@ pub trait WebLinkRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         items: &[Key],
     ) -> Result<Vec<StoredWebLink>, RepoError>;
+    /// Every web link there is, in one statement and in no promised order: the export reads this on its
+    /// transaction and orders the rows itself. Joins no other table and takes no item list.
+    async fn all_web_links_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<StoredWebLink>, RepoError>;
 }

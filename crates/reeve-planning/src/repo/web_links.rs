@@ -56,4 +56,21 @@ impl WebLinkRepo for PgPlanningRepo {
             })
             .collect())
     }
+    async fn all_web_links_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<StoredWebLink>, RepoError> {
+        let rows: Vec<(i64, String, String, String)> =
+            sqlx::query_as("SELECT id, item_key, title, url FROM web_links")
+                .fetch_all(&mut **tx)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, item, title, url)| StoredWebLink {
+                id,
+                item: key(&item),
+                link: WebLink::from_persisted(title, url),
+            })
+            .collect())
+    }
 }

@@ -26,4 +26,10 @@ pub trait ItemLinkRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         items: &[Key],
     ) -> Result<Vec<ItemLink>, RepoError>;
+    /// Every item link there is, in one statement and in no promised order: the export reads this on its
+    /// transaction and orders the rows itself. Joins no other table and takes no item list.
+    async fn all_item_links_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<ItemLink>, RepoError>;
 }

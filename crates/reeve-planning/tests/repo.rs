@@ -4,8 +4,9 @@ use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, BlockerFact, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative,
     ItemLink, ItemType, PlanningPorts, Promisable, Promise, PromiseFacts, PromiseItem,
-    PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings, Story, StoryFilter,
-    StoryPromiseRow, StoryText, UrgentMark, WebLink, compute_readiness, make_planning_ports,
+    PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings, StoredWebLink, Story,
+    StoryFilter, StoryPromiseRow, StoryText, UrgentMark, WebLink, compute_readiness,
+    make_planning_ports,
 };
 use reeve_protocol::{
     CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason, Resolution,
@@ -3629,5 +3630,107 @@ async fn web_links_are_one_per_url_on_an_item_and_listed_oldest_first() {
         left.iter().map(|w| w.id).collect::<Vec<_>>(),
         vec![second, on_b]
     );
+    tx.rollback().await.unwrap();
+}
+
+/// The export's read of item links: every row, once, as stored, whatever items it names. No item list goes in, so
+/// a row is found although nothing here says which items exist.
+#[tokio::test]
+async fn all_item_links_in_answers_every_row_once_as_stored() {
+    use ItemLinkType::{Duplicates, Follows, RelatesTo};
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let link = |from: &str, t, to: &str| {
+        ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap()
+    };
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        ports
+            .item_links
+            .all_item_links_in(&mut tx)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the control: an empty table"
+    );
+    // Two links between one pair, both directions of a name, a `relates_to` named from its higher key, and a link
+    // between two keys of another prefix that share nothing with the rest.
+    let added = [
+        ("ABC-2", Follows, "ABC-1"),
+        ("ABC-1", Follows, "ABC-2"),
+        ("ABC-2", Duplicates, "ABC-1"),
+        ("ABC-9", RelatesTo, "ABC-10"),
+        ("OLD-4", Follows, "OLD-5"),
+    ];
+    for (from, t, to) in added {
+        assert!(
+            add_link(&ports, &mut tx, from, t, to).await,
+            "{from} {t:?} {to}"
+        );
+    }
+    let all = ports.item_links.all_item_links_in(&mut tx).await.unwrap();
+    assert_eq!(all.len(), added.len(), "every row, each once: {all:?}");
+    for (from, t, to) in added {
+        assert!(
+            all.contains(&link(from, t, to)),
+            "{from} {t:?} {to} in {all:?}"
+        );
+    }
+    let related = all.iter().find(|l| l.link_type() == RelatesTo).unwrap();
+    assert_eq!(
+        (related.from_key().to_string(), related.to_key().to_string()),
+        ("ABC-10".to_string(), "ABC-9".to_string()),
+        "a relates_to comes back as stored: the lower key in byte order first"
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The export's read of web links: every row with its item, id, title and URL, whatever item it is on.
+#[tokio::test]
+async fn all_web_links_in_answers_every_row_with_its_item() {
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let key = |s: &str| -> Key { s.parse().unwrap() };
+    let link = |title: &str, url: &str| WebLink::new(title, url).unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        ports
+            .web_links
+            .all_web_links_in(&mut tx)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the control: an empty table"
+    );
+    let added = [
+        (
+            "ABC-1",
+            "Scenario page",
+            "https://example.com/wiki/scenario",
+        ),
+        ("ABC-1", "Board", "https://example.com/board"),
+        (
+            "OLD-7",
+            "Scenario page",
+            "https://example.com/wiki/scenario",
+        ),
+    ];
+    let mut want = vec![];
+    for (item, title, url) in added {
+        let id = ports
+            .web_links
+            .add_web_link(&mut tx, &key(item), &link(title, url))
+            .await
+            .unwrap()
+            .expect("each of these is new on its item");
+        want.push(StoredWebLink {
+            id,
+            item: key(item),
+            link: link(title, url),
+        });
+    }
+    let mut all = ports.web_links.all_web_links_in(&mut tx).await.unwrap();
+    all.sort_by_key(|w| w.id);
+    assert_eq!(all, want, "every row, each once, with the item it is on");
     tx.rollback().await.unwrap();
 }
