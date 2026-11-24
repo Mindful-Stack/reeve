@@ -10,7 +10,7 @@ import type {
 	RequiredDecision,
 	Reversibility
 } from '#lib/api/types.ts';
-import { age, dayLabel, month, plural } from '#lib/format.ts';
+import { age, dayLabel, month, plural, sameEmail } from '#lib/format.ts';
 import { decisionHref } from '#lib/drawer.ts';
 import { itemRoute } from '#lib/urgency.ts';
 
@@ -43,11 +43,6 @@ export function decisionStatus(d: Pick<RequiredDecision, 'check' | 'record'>): s
 /** The first seven characters of a commit sha. */
 export function shortSha(commit: string): string {
 	return commit.slice(0, 7);
-}
-
-/** Emails compare case-insensitively and without surrounding whitespace. */
-export function sameEmail(a: string, b: string): boolean {
-	return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 export type DecisionFilter = { mine?: string; closed?: boolean };

@@ -2,8 +2,8 @@
 // display: the server decides readiness, lanes and ownership, and these lists arrive filtered by the server, so nothing
 // here filters a backlog (kb/ADR-0021 R1).
 import type { DecisionQueueEntry, Sprint, StoryWithReadiness } from '#lib/api/types.ts';
-import { daysBetween, localDate, sameEmail } from '#lib/decisions.ts';
-import { plural } from '#lib/format.ts';
+import { daysBetween, localDate } from '#lib/decisions.ts';
+import { plural, sameEmail } from '#lib/format.ts';
 import { ACTIVE } from '#lib/sprint.ts';
 
 /** My decisions in the queue's order: listed when in the this- or next-sprint lane (a nested decision by its row's

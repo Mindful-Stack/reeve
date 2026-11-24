@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { age, dateLabel, dayLabel, errorMessage, month, short } from './format.ts';
+import { age, dateLabel, dayLabel, errorMessage, month, sameEmail, short } from './format.ts';
 import words from './promise.fixture.json';
 
 const now = Date.parse('2026-10-26T12:00:00Z');
@@ -59,6 +59,13 @@ describe('dateLabel', () => {
 describe('short', () => {
 	it('takes the local part', () => expect(short('dan@example.com')).toBe('dan'));
 	it('leaves a non-address unchanged', () => expect(short('dan')).toBe('dan'));
+});
+
+describe('sameEmail', () => {
+	it('compares case-insensitively and without surrounding whitespace', () => {
+		expect(sameEmail('Ana@X.se', ' ana@x.se ')).toBe(true);
+		expect(sameEmail('a@b.se', 'c@b.se')).toBe(false);
+	});
 });
 
 describe('errorMessage', () => {

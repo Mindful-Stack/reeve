@@ -23,7 +23,6 @@ import {
 	nextStepText,
 	overdue,
 	recordMismatch,
-	sameEmail,
 	today
 } from '#lib/decisions.ts';
 
@@ -92,7 +91,6 @@ describe('filterDecisions', () => {
 		expect(ids({ closed: true })).toEqual([1, 2, 3, 4]);
 		expect(ids({ mine: 'ana@x.se' })).toEqual([1, 2]);
 		expect(ids({ mine: 'ANA@x.se', closed: true })).toEqual([1, 2, 4]);
-		expect(sameEmail('a@b.se', 'c@b.se')).toBe(false);
 	});
 });
 

@@ -2,7 +2,7 @@
 // ones), the text a draft's idempotency key follows, target-month validation, per-field diffs and the per-field merge
 // after a conflict.
 import type { CreateEpic, CreateInitiative, EditDecision, EditItem, Epic, Initiative, RequiredDecision, Reversibility } from '#lib/api/types.ts';
-import { sameEmail } from '#lib/decisions.ts';
+import { sameEmail } from '#lib/format.ts';
 
 /** `YYYY-MM` with a month 01–12: the shape `month()` in #lib/format.ts renders. */
 export function validMonth(s: string): boolean {
