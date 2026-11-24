@@ -7,6 +7,7 @@ mod epics;
 mod export;
 mod import;
 mod initiatives;
+mod item_links;
 mod moves;
 mod plans;
 mod promise;
@@ -100,6 +101,11 @@ impl From<RepoError> for HandlerError {
 }
 impl From<crate::domain::items::ItemError> for HandlerError {
     fn from(e: crate::domain::items::ItemError) -> Self {
+        Self::Validation(e.to_string())
+    }
+}
+impl From<crate::domain::item_link::ItemLinkError> for HandlerError {
+    fn from(e: crate::domain::item_link::ItemLinkError) -> Self {
         Self::Validation(e.to_string())
     }
 }

@@ -8,6 +8,7 @@ pub mod export;
 pub mod goal;
 pub mod import;
 pub mod initiative;
+pub mod link;
 pub mod search;
 pub mod sprint;
 pub mod story;
@@ -67,6 +68,9 @@ pub enum Cmd {
     /// Team goals in a sprint: add, edit, link work, record or suggest confidence.
     #[command(subcommand)]
     Goal(goal::Goal),
+    /// Item links: say that an item follows, duplicates or relates to another (informational, never a gate).
+    #[command(subcommand)]
+    Link(link::Link),
     /// Comments on stories and decisions.
     #[command(subcommand)]
     Comment(comment::Comment),
@@ -112,6 +116,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Decision(x) => decision::run(&c, x, json).await,
                 Cmd::Sprint(x) => sprint::run(&c, x, json).await,
                 Cmd::Goal(x) => goal::run(&c, x, json).await,
+                Cmd::Link(x) => link::run(&c, x, json).await,
                 Cmd::Comment(x) => comment::run(&c, x, json).await,
                 Cmd::Attachment(x) => attachment::run(&c, x, json).await,
                 Cmd::Apply(x) => apply::run(&c, x, json).await,

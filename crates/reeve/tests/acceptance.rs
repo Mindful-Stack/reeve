@@ -1620,6 +1620,129 @@ async fn flow() {
         "merged work blocks nobody"
     );
 
+    // Item links (GRA-877, kb/ADR-0031): informational, read from either end, shown by `show`, never a gate.
+    let text = |args: &[&str]| {
+        let out = reeve_cmd()
+            .env("REEVE_URL", &base)
+            .env("REEVE_CONFIG_DIR", cfg_dir.path())
+            .env("REEVE_TOKEN", &human)
+            .arg("--ascii")
+            .args(args)
+            .timeout(std::time::Duration::from_secs(60))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    // An automation token may link; the answer is the item's links.
+    let linked = ok(reeve(&bot)
+        .args(["link", "add", &theirs, "follows", &mine])
+        .output()
+        .unwrap());
+    assert_eq!(
+        linked["value"],
+        serde_json::json!([{"type": "follows", "direction": "out", "label": "follows",
+            "item": {"key": mine, "level": "story", "title": "Built on the foundation"}}]),
+        "{linked}"
+    );
+    // Adding it again changes nothing.
+    let again = ok(reeve(&human)
+        .args(["link", "add", &theirs, "follows", &mine])
+        .output()
+        .unwrap());
+    assert_eq!(again["value"], linked["value"]);
+    // The other item reads it with the reverse wording.
+    let seen = ok(reeve(&member).args(["link", "ls", &mine]).output().unwrap());
+    assert_eq!(
+        seen["value"]["links"],
+        serde_json::json!([{"type": "follows", "direction": "in", "label": "is followed by",
+            "item": {"key": theirs, "level": "story", "title": "Also built on it"}}]),
+        "{seen}"
+    );
+    // `story show`: the blocker first (its key and nothing after it; a story holds no more of it), then the item
+    // link. Foundation is in testing here, so it holds `theirs` back no longer (kb/ADR-0027 R5): the block lists
+    // it all the same and says nothing about readiness.
+    let shown = text(&["story", "show", &theirs]);
+    assert!(
+        shown.contains(&format!(
+            "relations:\n  blocked by  [S] {base_key}\n  follows     [S] {mine} Built on the foundation"
+        )),
+        "{shown}"
+    );
+    // `story context` knows the blocker: its title, state and owner, and the line ends there.
+    let context = text(&["story", "context", &theirs]);
+    assert!(
+        context.contains(&format!(
+            "  blocked by  [S] {base_key} Foundation (testing, dan@example.com)\n"
+        )),
+        "{context}"
+    );
+    assert!(
+        context.contains(&format!("  follows     [S] {mine} Built on the foundation")),
+        "{context}"
+    );
+    let as_json = ok(reeve(&human)
+        .args(["story", "context", &theirs])
+        .output()
+        .unwrap());
+    assert_eq!(
+        as_json["value"]["story"]["links"], linked["value"],
+        "story context --json carries the field"
+    );
+    // An epic links to a story, and `epic show` prints it.
+    ok(reeve(&human)
+        .args(["link", "add", &o_epic_key, "relates-to", &base_key])
+        .output()
+        .unwrap());
+    let epic_shown = text(&["epic", "show", &o_epic_key]);
+    assert!(
+        epic_shown.contains(&format!(
+            "relations:\n  relates to  [S] {base_key} Foundation"
+        )),
+        "{epic_shown}"
+    );
+    // `follows` between two stories says it is informational and how to block instead.
+    assert_eq!(
+        text(&["link", "add", &mine, "follows", &base_key]),
+        format!(
+            "{mine} follows {base_key}\nInformational: this does not hold {mine} back. To hold it back: `reeve story block {mine} --by {base_key}`.\n"
+        )
+    );
+    // A blocking word is a usage error with the pointer, and nothing is written.
+    let refused = reeve(&human)
+        .args(["link", "add", &mine, "blocks", &base_key])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("blocking is not an item link: use `reeve story block <KEY> --by <OTHER>`"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    // Removing: the forward form; the link the other story showed as "is followed by" is gone, and removing again
+    // is fine.
+    let removed = ok(reeve(&human)
+        .args(["link", "rm", &theirs, "follows", &mine])
+        .output()
+        .unwrap());
+    assert_eq!(removed["value"], serde_json::json!([]), "{removed}");
+    ok(reeve(&human)
+        .args(["link", "rm", &theirs, "follows", &mine])
+        .output()
+        .unwrap());
+    let left = ok(reeve(&human).args(["link", "ls", &mine]).output().unwrap());
+    assert_eq!(
+        left["value"]["links"],
+        serde_json::json!([{"type": "follows", "direction": "out", "label": "follows",
+            "item": {"key": base_key, "level": "story", "title": "Foundation"}}]),
+        "{left}"
+    );
+
     // Connections (GRA-669): one made as `reeve-server mcp-token-issue` makes it, listed and revoked by the CLI.
     let floor = reeve_identity::AccessPolicy::floor_only(&identity);
     let developer = reeve_identity::issue_mcp_token(
@@ -1680,5 +1803,139 @@ async fn flow() {
         reeve_identity::authenticate_mcp(&*tokens, &floor, &developer.secret, chrono::Utc::now())
             .await
             .is_err()
+    );
+}
+
+/// The informational line of `reeve link add` against a real server after a prefix change (GRA-877): `OLD-1` is
+/// a native epic, issued under the earlier prefix, and a story has the external reference `OLD-1`. The write
+/// resolves `OLD-1` to the epic (native keys first, across levels), so the line, which is only for a link
+/// between two stories, is not printed and names no story the write did not link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn link_add_names_only_the_items_it_linked_after_a_prefix_change() {
+    let pg = reeve_testdb::database(&reeve_server::composed_migrator()).await;
+    let pool = pg.pool.clone();
+    let config = |prefix: &str| -> reeve_server::ServerConfig {
+        toml::from_str(&format!(
+            "database_url = \"{}\"\nkey_prefix = \"{prefix}\"\nallowed_domains = [\"example.com\"]\nadmins = [\"dan@example.com\"]\n",
+            pg.url
+        ))
+        .unwrap()
+    };
+    let activity = reeve_activity::make_activity_store(pool.clone());
+    let ident_log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = activity.clone();
+    let token = reeve_identity::issue_token(
+        &pool,
+        &*reeve_identity::make_token_store(pool.clone()),
+        &*ident_log,
+        &reeve_identity::AccessPolicy::floor_only(&config("OLD").identity()),
+        "test",
+        reeve_protocol::Via::Interactive,
+        "dan@example.com",
+        reeve_protocol::TokenKind::Interactive,
+        "t",
+        None,
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap()
+    .secret;
+    // One server per prefix on the same database: the first issues `OLD-1`, the second every later key.
+    let mut bases = vec![];
+    for prefix in ["OLD", "GRA"] {
+        let state = reeve_server::build_state(config(prefix), pool.clone())
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        bases.push(format!("http://{}", listener.local_addr().unwrap()));
+        tokio::spawn(async move {
+            axum::serve(listener, reeve_server::app(state))
+                .await
+                .unwrap();
+        });
+    }
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let run = |base: &str, args: &[&str]| -> String {
+        let out = reeve_cmd()
+            .env("REEVE_URL", base)
+            .env("REEVE_CONFIG_DIR", cfg_dir.path())
+            .env("REEVE_TOKEN", &token)
+            .timeout(std::time::Duration::from_secs(60))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let created = |base: &str, args: &[&str]| -> String {
+        let v: serde_json::Value =
+            serde_json::from_str(&run(base, &[&["--json"], args].concat())).unwrap();
+        v["value"]["key"].as_str().unwrap().to_string()
+    };
+    let (old, new) = (bases[0].as_str(), bases[1].as_str());
+    let epic = created(
+        old,
+        &[
+            "epic",
+            "create",
+            "--idempotency-key",
+            "e",
+            "--title",
+            "Billing",
+        ],
+    );
+    assert_eq!(epic, "OLD-1", "the control: a native key of the old prefix");
+    let imported = created(
+        new,
+        &[
+            "story",
+            "create",
+            "--idempotency-key",
+            "a",
+            "--title",
+            "Imported",
+            "--external-ref",
+            "OLD-1",
+        ],
+    );
+    let ledger = created(
+        new,
+        &[
+            "story",
+            "create",
+            "--idempotency-key",
+            "b",
+            "--title",
+            "Ledger",
+        ],
+    );
+    assert!(imported.starts_with("GRA-") && ledger.starts_with("GRA-"));
+    // The control: the typed story lookup does find the other story under `OLD-1`.
+    let shown: serde_json::Value =
+        serde_json::from_str(&run(new, &["--json", "story", "show", "OLD-1"])).unwrap();
+    assert_eq!(shown["value"]["key"], imported.as_str(), "{shown}");
+
+    assert_eq!(
+        run(new, &["link", "add", "OLD-1", "follows", &ledger]),
+        format!("OLD-1 follows {ledger}\n"),
+        "the epic was linked: no line, and none naming {imported}"
+    );
+    let listed: serde_json::Value =
+        serde_json::from_str(&run(new, &["--json", "link", "ls", &ledger])).unwrap();
+    assert_eq!(
+        listed["value"]["links"],
+        serde_json::json!([{"type": "follows", "direction": "in", "label": "is followed by",
+            "item": {"key": "OLD-1", "level": "epic", "title": "Billing"}}]),
+        "the control: the write linked the epic"
+    );
+    // The control: between the two stories the line is printed, with their native keys.
+    assert_eq!(
+        run(new, &["link", "add", &imported, "follows", &ledger]),
+        format!(
+            "{imported} follows {ledger}\nInformational: this does not hold {imported} back. To hold it back: `reeve story block {imported} --by {ledger}`.\n"
+        )
     );
 }

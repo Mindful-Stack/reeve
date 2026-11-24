@@ -251,7 +251,8 @@ impl Handlers {
         Ok(self.ports.initiatives.get_initiative(key).await?)
     }
 
-    /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot.
+    /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot. Its item links
+    /// are read on the same snapshot (kb/ADR-0031); a list read never carries them.
     pub async fn initiative_dto(
         &self,
         key: &Key,
@@ -263,7 +264,9 @@ impl Handlers {
             .await?;
         let out = async {
             let urg = self.urgency_in(&mut tx, now).await?;
-            self.initiative_dto_in(&mut tx, key, &urg).await
+            let mut dto = self.initiative_dto_in(&mut tx, key, &urg).await?;
+            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            Ok(dto)
         }
         .await;
         end_read(tx, out).await

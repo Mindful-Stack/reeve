@@ -32,6 +32,10 @@ pub struct InitiativeDto {
     #[serde(default)]
     #[schema(required = true)]
     pub urgent_sources: Vec<ItemRefDto>,
+    /// The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+    /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::links::ItemLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -56,6 +60,10 @@ pub struct EpicDto {
     #[serde(default)]
     #[schema(required = true)]
     pub promise: Option<EpicPromiseDto>,
+    /// The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+    /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::links::ItemLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -101,6 +109,10 @@ pub struct StoryDto {
     #[serde(default)]
     #[schema(required = true)]
     pub promise: Option<StoryPromiseDto>,
+    /// The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+    /// item; left out of every read that answers several items, where "not loaded" must not read as "none".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::links::ItemLinkDto>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

@@ -791,6 +791,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{key}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The item's item links, each read from this item's side. `key` is a key or an external reference of an
+         *     initiative, an epic or a story.
+         */
+        get: operations["list_item_links"];
+        put?: never;
+        /**
+         * Says that the item in the path follows, duplicates or relates to `to`. Informational: it holds no work back
+         *     (a story is held back with `POST /stories/{key}/blocks`). Adding a link that exists answers ok and changes
+         *     nothing. Answers the item's links.
+         */
+        post: operations["add_item_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/links/{type}/{to}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes "`key` <type> `to`", the forward form: a link an item shows as "is followed by X" is removed by naming
+         *     X first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and
+         *     changes nothing. Answers the item's links.
+         */
+        delete: operations["remove_item_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1334,6 +1380,15 @@ export interface components {
             idempotency_key?: string | null;
         };
         /**
+         * @description `POST /items/{key}/links`: the item in the path follows, duplicates or relates to `to`. Always the forward
+         *     form; there is no way to write the reverse wording. Any other field is refused rather than ignored.
+         */
+        AddItemLink: {
+            /** @description A key or an external reference of an item of any level. */
+            to: components["schemas"]["KeyRef"];
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
          *     historical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.
          */
@@ -1772,6 +1827,11 @@ export interface components {
             external_ref?: string | null;
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             promise: null | components["schemas"]["EpicPromiseDto"];
             title: string;
             urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -2008,6 +2068,11 @@ export interface components {
             external_ref?: string | null;
             horizon: string;
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             /**
              * Format: float
@@ -2047,6 +2112,27 @@ export interface components {
             secret: string;
             token: components["schemas"]["TokenDto"];
         };
+        /**
+         * @description The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.
+         *     `in`: it is the other one. `relates_to` has no direction and is always `out`.
+         * @enum {string}
+         */
+        ItemLinkDirection: "out" | "in";
+        /** @description An item link as one of its two items reads it. */
+        ItemLinkDto: {
+            direction: components["schemas"]["ItemLinkDirection"];
+            item: components["schemas"]["LinkedItemDto"];
+            /** @description Display text for this side ("is followed by"), from the name table. */
+            label: string;
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back
+         *     (R2); a name is added only by an observation on that record. Declared in display order: `follows`,
+         *     `duplicates`, `relates_to`.
+         * @enum {string}
+         */
+        ItemLinkType: "follows" | "duplicates" | "relates_to";
         /** @description An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is. */
         ItemRefDto: {
             item: components["schemas"]["ItemType"];
@@ -2064,11 +2150,27 @@ export interface components {
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
         };
+        /**
+         * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
+         *     the item's web links when they exist (GRA-878).
+         */
+        LinkListingDto: {
+            links: components["schemas"]["ItemLinkDto"][];
+        };
         LinkRecord: {
             path: string;
             pr_url?: string | null;
             record_id: string;
             repo: string;
+        };
+        /**
+         * @description The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
+         *     reading the link as a gate (kb/ADR-0031 R3).
+         */
+        LinkedItemDto: {
+            key: components["schemas"]["Key"];
+            level: components["schemas"]["ItemType"];
+            title: string;
         };
         /** @description Mark (or renew) an item urgent; the reason is optional, at most 200 characters. */
         MarkUrgent: {
@@ -2757,6 +2859,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -2971,6 +3078,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -3053,6 +3165,38 @@ export interface components {
             value: {
                 secret: string;
                 token: components["schemas"]["TokenDto"];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_LinkListingDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /**
+             * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
+             *     the item's web links when they exist (GRA-878).
+             */
+            value: {
+                links: components["schemas"]["ItemLinkDto"][];
             };
         } | {
             /** @enum {string} */
@@ -3416,6 +3560,11 @@ export interface components {
                 key: components["schemas"]["Key"];
                 kind: components["schemas"]["Kind"];
                 labels: string[];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 promise: null | components["schemas"]["StoryPromiseDto"];
                 /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
@@ -3664,6 +3813,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -3793,6 +3947,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -3806,6 +3965,38 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_ItemLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                direction: components["schemas"]["ItemLinkDirection"];
+                item: components["schemas"]["LinkedItemDto"];
+                /** @description Display text for this side ("is followed by"), from the name table. */
+                label: string;
+                type: components["schemas"]["ItemLinkType"];
             }[];
         } | {
             /** @enum {string} */
@@ -4270,6 +4461,11 @@ export interface components {
             key: components["schemas"]["Key"];
             kind: components["schemas"]["Kind"];
             labels: string[];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             promise: null | components["schemas"]["StoryPromiseDto"];
             /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
@@ -8564,6 +8760,210 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_CommentDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    list_item_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_LinkListingDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddItemLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                type: components["schemas"]["ItemLinkType"];
+                to: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
                 };
             };
             /** @description validation error */

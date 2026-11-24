@@ -1,14 +1,14 @@
 //! `get_initiative`: `reeve initiative show <KEY>` as a tool. Read-only.
 use super::{
     Tool, ToolError,
-    bound::{MAX_OWN_TEXT, cut},
+    bound::{MAX_OWN_TEXT, bound_links, cut, emptied, sent_bytes},
 };
 use crate::{
     actions::{self, Acting},
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::GetInitiativeInput;
+use reeve_protocol::{GetInitiativeInput, GetInitiativeResult, InitiativeDto};
 use serde_json::{Value, json};
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
@@ -21,7 +21,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "get_initiative",
         title: "Read an initiative",
         description: format!(
-            "Read one initiative by key (for example {key_prefix}-12): its title, brief, horizon, target month, owner, progress (the share of its stories completed, of those not dropped: 0 to 1, or null when nothing counts yet), whether its discovery is complete, whether it is urgent, and its version. Use it when the person asks what an initiative is for or how far along it is. Its epics are not included: list them with list_epics and `initiative`. {} Read-only. {}",
+            "Read one initiative by key (for example {key_prefix}-12): its title, brief, horizon, target month, owner, progress (the share of its stories completed, of those not dropped: 0 to 1, or null when nothing counts yet), whether its discovery is complete, whether it is urgent, and its version. Use it when the person asks what an initiative is for or how far along it is. Its item links to other items are in `links`, each read from this initiative's side with its wording in `label` (informational, they hold nothing back); at most 50 are sent, fewer when the initiative itself is large, and `links_omitted` is the number left out. Its epics are not included: list them with list_epics and `initiative`. {} Read-only. {}",
             super::CUT_TEXT,
             super::PEOPLES_TEXT
         ),
@@ -38,11 +38,75 @@ fn run<'a>(
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
         let input: GetInitiativeInput = super::arguments(args)?;
-        let mut initiative = actions::get_initiative(state, who, &input.key)
+        let initiative = actions::get_initiative(state, who, &input.key)
             .await
             .map_err(|e| super::not_found(e, "initiative", &input.key, &state.config.key_prefix))?;
-        // The initiative is the item asked for: its brief is its own text.
-        cut(&mut initiative.brief, MAX_OWN_TEXT);
-        super::sent(initiative)
+        super::sent(bounded(initiative))
     })
+}
+
+/// The initiative as the tool answers it. The initiative is the item asked for, so its brief is its own text, cut
+/// at `MAX_OWN_TEXT`. In a function of its own, like `get_story`'s, so the bound is tested on an initiative built
+/// in memory.
+fn bounded(mut initiative: InitiativeDto) -> GetInitiativeResult {
+    cut(&mut initiative.brief, MAX_OWN_TEXT);
+    // Last: the answer with no link sent and all of them counted (its baseline), then the rows fitted into what
+    // that leaves of one answer.
+    let mut links = initiative.links.take();
+    let (no_links, all_links) = emptied(&links);
+    initiative.links = no_links;
+    let mut result = GetInitiativeResult {
+        initiative,
+        links_omitted: all_links,
+    };
+    result.links_omitted = bound_links(&mut links, sent_bytes(&result));
+    result.initiative.links = links;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The property of Task 9 for `get_initiative`: for any stored initiative the answer is within the limit of one
+    /// answer. A brief of the maximum length it is sent at, in four-byte characters (40 000 bytes), and 200 item
+    /// links whose titles JSON escapes sixfold. `progress` is a third: `to_value` widens it, and the answer is
+    /// measured as it is sent.
+    #[test]
+    fn an_initiative_at_its_longest_with_200_item_links_fits_one_answer() {
+        let escaped = "\u{1}".repeat(200);
+        let links: Vec<Value> = (2..=201)
+            .map(|n| {
+                json!({"type": "relates_to", "direction": "out", "label": "relates to",
+                       "item": {"key": format!("TST-{n}"), "level": "story", "title": escaped}})
+            })
+            .collect();
+        let initiative: InitiativeDto = serde_json::from_value(json!({
+            "key": "TST-1", "title": "An initiative", "brief": "𝄞".repeat(MAX_OWN_TEXT), "horizon": "Now",
+            "target_month": null, "owner": null, "discovery_complete": null, "progress": 0.33333334,
+            "external_ref": null, "version": 1, "links": links
+        }))
+        .unwrap();
+        let limit = crate::mcp::tools::MAX_SENT;
+        let sent = bounded(initiative);
+        assert_eq!(
+            sent.initiative.brief.len(),
+            4 * MAX_OWN_TEXT,
+            "the control: the brief is whole, 40 000 bytes"
+        );
+        let kept = sent.initiative.links.as_ref().unwrap();
+        assert!(!kept.is_empty() && kept.len() < 50, "{} sent", kept.len());
+        assert_eq!(
+            kept.len() + sent.links_omitted,
+            200,
+            "every link is either sent or counted"
+        );
+        assert_eq!(kept[0].item.key.to_string(), "TST-2", "the first are kept");
+        let bytes = serde_json::to_value(&sent).unwrap().to_string().len();
+        assert!(bytes <= limit, "{bytes} bytes");
+        assert!(
+            bytes > limit - 2_000,
+            "and the room is used, to within one link: {bytes} bytes"
+        );
+    }
 }

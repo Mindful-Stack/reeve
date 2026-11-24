@@ -34,6 +34,14 @@ pub struct SearchRow {
     pub external_ref: Option<String>,
 }
 
+/// The level and title of one item: what an item link shows of the item at its other end
+/// (`PlanningReads::item_heads_in`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemHead {
+    pub level: ItemType,
+    pub title: String,
+}
+
 /// What the story list keeps; every set field narrows it. `StoryRepo::list_stories` reads every field except `goal`,
 /// `urgent` and `promised`, which the handler applies after the read (on values computed in the same snapshot,
 /// kb/ADR-0021 R4).
@@ -101,6 +109,7 @@ mod comments;
 mod decisions;
 mod epics;
 mod initiatives;
+mod item_links;
 mod keys;
 mod promise;
 mod pull_requests;
@@ -115,6 +124,7 @@ pub use self::{
     decisions::DecisionRepo,
     epics::EpicRepo,
     initiatives::InitiativeRepo,
+    item_links::ItemLinkRepo,
     keys::KeyRepo,
     promise::{PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow, StoryPromiseRow},
     pull_requests::PullRequestRepo,
@@ -139,6 +149,7 @@ pub struct PlanningPorts {
     pub sprints: Arc<dyn SprintRepo>,
     pub urgency: Arc<dyn UrgencyRepo>,
     pub promises: Arc<dyn PromiseRepo>,
+    pub item_links: Arc<dyn ItemLinkRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

@@ -3,13 +3,13 @@ use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
     ActivityRecord, ActivitySink, BlockerFact, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative,
-    ItemType, Promisable, Promise, PromiseFacts, PromiseItem, PromiseTarget, PromisedStoryRow,
-    RepoError, RequiredDecision, Settings, Story, StoryFilter, StoryPromiseRow, StoryText,
-    UrgentMark, compute_readiness, make_planning_ports,
+    ItemLink, ItemType, PlanningPorts, Promisable, Promise, PromiseFacts, PromiseItem,
+    PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings, Story, StoryFilter,
+    StoryPromiseRow, StoryText, UrgentMark, compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
-    CheckResult, ClosureKind, DeliveryState, Key, Kind, Reason, Resolution, Reversibility,
-    SprintState, TokenKind, Via,
+    CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason, Resolution,
+    Reversibility, SprintState, TokenKind, Via,
 };
 use std::sync::Arc;
 
@@ -3317,4 +3317,200 @@ async fn done_none_excludes_done_and_keeps_started() {
     )
     .await;
     assert_eq!(in_epic, vec![todo.key().clone()]);
+}
+
+async fn add_link(
+    ports: &PlanningPorts,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    from: &str,
+    t: ItemLinkType,
+    to: &str,
+) -> bool {
+    let link = ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap();
+    ports.item_links.add_item_link(tx, &link).await.unwrap()
+}
+
+async fn remove_link(
+    ports: &PlanningPorts,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    from: &str,
+    t: ItemLinkType,
+    to: &str,
+) -> bool {
+    let link = ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap();
+    ports.item_links.remove_item_link(tx, &link).await.unwrap()
+}
+
+/// kb/ADR-0031 R4: an item link is stored once. Add, add again, remove, remove again; `relates_to` named from
+/// either end is one row and removable from either end; opposite directions and several names between one pair
+/// are rows of their own; the read finds a link by its `from` and by its `to`. The table has no foreign key, so
+/// no item row is needed here.
+#[tokio::test]
+async fn item_links_are_stored_once_and_read_from_either_end() {
+    use ItemLinkType::{Duplicates, Follows, RelatesTo};
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let link = |from: &str, t, to: &str| {
+        ItemLink::new(from.parse().unwrap(), t, to.parse().unwrap()).unwrap()
+    };
+    let key = |s: &str| -> Key { s.parse().unwrap() };
+    let mut tx = pool.begin().await.unwrap();
+
+    assert!(
+        add_link(&ports, &mut tx, "ABC-2", Follows, "ABC-1").await,
+        "the first add writes"
+    );
+    assert!(
+        !add_link(&ports, &mut tx, "ABC-2", Follows, "ABC-1").await,
+        "the second writes nothing"
+    );
+    assert!(
+        add_link(&ports, &mut tx, "ABC-1", Follows, "ABC-2").await,
+        "the opposite direction is its own link"
+    );
+    assert!(
+        add_link(&ports, &mut tx, "ABC-2", Duplicates, "ABC-1").await,
+        "another name is its own link"
+    );
+    assert!(add_link(&ports, &mut tx, "ABC-2", RelatesTo, "ABC-1").await);
+    assert!(
+        !add_link(&ports, &mut tx, "ABC-1", RelatesTo, "ABC-2").await,
+        "relates_to from the other end is the same row"
+    );
+    // The domain's order and the table's check agree where byte order and key-number order differ.
+    assert!(add_link(&ports, &mut tx, "ABC-9", RelatesTo, "ABC-10").await);
+    assert!(add_link(&ports, &mut tx, "ABC-3", Follows, "ABC-8").await);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM item_links")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(rows, 6);
+
+    let of_one = ports
+        .item_links
+        .item_links_of_in(&mut tx, &[key("ABC-1")])
+        .await
+        .unwrap();
+    assert_eq!(
+        of_one,
+        vec![
+            link("ABC-1", Follows, "ABC-2"),
+            link("ABC-1", RelatesTo, "ABC-2"),
+            link("ABC-2", Duplicates, "ABC-1"),
+            link("ABC-2", Follows, "ABC-1"),
+        ],
+        "found as from and as to, ordered by from key, to key, name"
+    );
+    let by_to = ports
+        .item_links
+        .item_links_of_in(&mut tx, &[key("ABC-8")])
+        .await
+        .unwrap();
+    assert_eq!(
+        by_to,
+        vec![link("ABC-3", Follows, "ABC-8")],
+        "read by its to key"
+    );
+    let by_from = ports
+        .item_links
+        .item_links_of_in(&mut tx, &[key("ABC-3")])
+        .await
+        .unwrap();
+    assert_eq!(by_from, by_to, "read by its from key");
+    let several = ports
+        .item_links
+        .item_links_of_in(&mut tx, &[key("ABC-8"), key("ABC-10")])
+        .await
+        .unwrap();
+    assert_eq!(several.len(), 2, "several keys in one read");
+    assert!(
+        ports
+            .item_links
+            .item_links_of_in(&mut tx, &[key("ABC-7")])
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(
+        remove_link(&ports, &mut tx, "ABC-1", RelatesTo, "ABC-2").await,
+        "removed from the end it was not added from"
+    );
+    assert!(
+        !remove_link(&ports, &mut tx, "ABC-2", RelatesTo, "ABC-1").await,
+        "removing again deletes nothing"
+    );
+    assert!(remove_link(&ports, &mut tx, "ABC-2", Follows, "ABC-1").await);
+    let left = ports
+        .item_links
+        .item_links_of_in(&mut tx, &[key("ABC-1")])
+        .await
+        .unwrap();
+    assert_eq!(
+        left,
+        vec![
+            link("ABC-1", Follows, "ABC-2"),
+            link("ABC-2", Duplicates, "ABC-1")
+        ],
+        "the opposite direction and the other name are untouched"
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The table's own checks hold when a writer bypasses the domain: no self link, a closed set of names, and
+/// `relates_to` only with the lower key (byte order) first.
+#[tokio::test]
+async fn the_item_links_table_refuses_what_the_domain_refuses() {
+    let (_c, pool) = common::pg().await;
+    let insert = |from: &'static str, to: &'static str, t: &'static str| {
+        sqlx::query("INSERT INTO item_links (from_key, to_key, link_type) VALUES ($1, $2, $3)")
+            .bind(from)
+            .bind(to)
+            .bind(t)
+            .execute(&pool)
+    };
+    // The control: a well-formed row of each kind is accepted, so the refusals below are the checks' doing.
+    assert!(insert("ABC-2", "ABC-1", "follows").await.is_ok());
+    assert!(insert("ABC-10", "ABC-9", "relates_to").await.is_ok());
+    assert!(insert("NEW-9", "OLD-9", "relates_to").await.is_ok());
+    // Every name of the protocol's table, in its wire spelling, is one the table's check accepts: a name added to
+    // `ItemLinkType` without a migration that widens the check fails here.
+    for t in ItemLinkType::ALL {
+        assert!(insert("ABC-20", "ABC-21", t.wire()).await.is_ok(), "{t:?}");
+    }
+    // The table's order check and the protocol's `directed` column say the same thing for every name: an
+    // undirected name is refused with the higher key first, a directed one is accepted in both orders. A name
+    // whose `directed` changes, or a new one, without a migration that changes the check fails here.
+    assert!("ABC-30".as_bytes() < "ABC-31".as_bytes(), "the control");
+    for t in ItemLinkType::ALL {
+        let lower_first = insert("ABC-30", "ABC-31", t.wire()).await;
+        let higher_first = insert("ABC-31", "ABC-30", t.wire()).await;
+        assert!(lower_first.is_ok(), "{t:?}, the lower key first");
+        assert_eq!(
+            higher_first.is_ok(),
+            t.directed(),
+            "{t:?}: the higher key first is accepted exactly when the name is directed"
+        );
+    }
+
+    assert!(
+        insert("ABC-1", "ABC-1", "follows").await.is_err(),
+        "a self link"
+    );
+    assert!(
+        insert("ABC-1", "ABC-2", "blocks").await.is_err(),
+        "a name outside the set"
+    );
+    assert!(
+        insert("ABC-2", "ABC-1", "relates_to").await.is_err(),
+        "relates_to with the higher key first"
+    );
+    assert!(
+        insert("ABC-9", "ABC-10", "relates_to").await.is_err(),
+        "byte order, not key-number order"
+    );
+    assert!(
+        insert("ABC-2", "ABC-1", "follows").await.is_err(),
+        "the same link twice"
+    );
 }

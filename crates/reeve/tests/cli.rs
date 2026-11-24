@@ -2597,6 +2597,7 @@ fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::Sto
         urgent_mark: None,
         urgent_sources: sources,
         promise: None,
+        links: None,
     }
 }
 
@@ -2644,6 +2645,7 @@ fn initiative_ls_marks_an_urgent_initiative_with_a_bang_and_no_urgent_line() {
             key: "ABC-40".parse().unwrap(),
             item: reeve_protocol::ItemType::Epic,
         }],
+        links: None,
     };
     let (url, server) = serve(vec![(
         "GET /api/v1/initiatives",
@@ -2676,6 +2678,7 @@ fn epic_show_prints_the_urgent_line_after_the_first_line() {
             item: reeve_protocol::ItemType::Initiative,
         }],
         promise: None,
+        links: None,
     };
     let (url, server) = serve(vec![
         (
@@ -2836,6 +2839,7 @@ fn epic_urgent_with_a_blank_reason_posts_null() {
             item: reeve_protocol::ItemType::Epic,
         }],
         promise: None,
+        links: None,
     };
     let (url, server) = serve(vec![(
         "POST /api/v1/epics/ABC-40/urgent",
@@ -3747,6 +3751,7 @@ fn promised_epic(past: bool) -> serde_json::Value {
             },
             past,
         }),
+        links: None,
     })
     .unwrap()
 }
@@ -4560,4 +4565,497 @@ fn every_command_names_the_same_way_to_set_a_server_url() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+}
+
+fn item_link_json(
+    t: &str,
+    direction: &str,
+    label: &str,
+    key: &str,
+    level: &str,
+    title: &str,
+) -> serde_json::Value {
+    serde_json::json!({"type": t, "direction": direction, "label": label,
+                       "item": {"key": key, "level": level, "title": title}})
+}
+
+/// A fake that expects nothing and refuses nothing: it answers every request that arrives with `answer` (status
+/// 200) and records its request line, until `stop` is set and no connection is waiting. The test then asserts on
+/// what arrived. `serve` cannot show that a request was not made: its thread panics on an unexpected request and
+/// on a missing one alike.
+fn record_requests(
+    answer: serde_json::Value,
+) -> (
+    String,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::thread::JoinHandle<Vec<String>>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    listener.set_nonblocking(true).unwrap();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let handle = std::thread::spawn(move || {
+        let body = answer.to_string();
+        let mut lines = vec![];
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    let (line, _) = read_request(&stream);
+                    lines.push(line);
+                    let mut w = stream;
+                    // The client may be gone already; what it asked for is recorded either way.
+                    let _ = write!(
+                        w,
+                        "HTTP/1.1 200 X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                }
+                // `stop` is read only when no connection is waiting, so a request that arrived before it was
+                // set is never missed.
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if stopped.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(e) => panic!("accept failed: {e}"),
+            }
+        }
+        lines
+    });
+    (url, stop, handle)
+}
+
+/// `link add` posts the forward form with the wire spelling of the name and both keys as given (an external
+/// reference passes through); `--json` prints the envelope and sends nothing more.
+#[test]
+fn link_add_posts_the_forward_form() {
+    let answer = ok(serde_json::json!([item_link_json(
+        "relates_to",
+        "out",
+        "relates to",
+        "TST-7",
+        "epic",
+        "Billing"
+    )]));
+    let (url, server) = serve(vec![(
+        "POST /api/v1/items/TST-12/links",
+        200,
+        answer.clone(),
+    )]);
+    let out = reeve_at(
+        &url,
+        &["--json", "link", "add", "TST-12", "relates-to", "SCRUM-7"],
+    );
+    let bodies = server.join().unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&bodies[0]).unwrap(),
+        serde_json::json!({"type": "relates_to", "to": "SCRUM-7"})
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        answer,
+        "the envelope, and only it"
+    );
+
+    // Text mode, a name other than follows: one line.
+    let (url, server) = serve(vec![("POST /api/v1/items/TST-12/links", 200, answer)]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "relates-to", "SCRUM-7"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 relates to SCRUM-7\n"
+    );
+
+    // A refusal by the server keeps its exit status: forbidden is 2.
+    let (url, server) = serve(vec![("POST /api/v1/items/TST-12/links", 403, forbidden())]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "",
+        "no line for a write that did not happen"
+    );
+}
+
+/// After a `follows` between two stories the text output says the link is informational and how to block
+/// instead, with the stories' native keys, when both were named by those keys. Both items come from the server's
+/// answers: the add's own (the item now followed) and one read of that item's links through `/items/{other}/links`,
+/// which resolves as the write did. Not between other levels, and never with `--json`.
+#[test]
+fn link_add_follows_between_two_stories_says_it_is_informational() {
+    let linked = || {
+        ok(serde_json::json!([item_link_json(
+            "follows",
+            "out",
+            "follows",
+            "TST-7",
+            "story",
+            "Billing account"
+        )]))
+    };
+    let followed_by = |level: &str| {
+        ok(serde_json::json!({"links": [item_link_json(
+            "follows",
+            "in",
+            "is followed by",
+            "TST-12",
+            level,
+            "Invoices"
+        )]}))
+    };
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/TST-12/links", 200, linked()),
+        ("GET /api/v1/items/TST-7/links", 200, followed_by("story")),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\nInformational: this does not hold TST-12 back. To hold it back: `reeve story block TST-12 --by TST-7`.\n"
+    );
+
+    // The item followed named through its external reference: its key in the answer is not the name given, so it
+    // is not identified, nothing is read after the write, and there is no line (accepted: the line is optional, a
+    // guess is not).
+    let (url, server) = serve(vec![("POST /api/v1/items/TST-12/links", 200, linked())]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "SCRUM-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows SCRUM-7\n"
+    );
+
+    // The item that follows is not a story: no line, and the exit status is still the add's.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/TST-12/links", 200, linked()),
+        ("GET /api/v1/items/TST-7/links", 200, followed_by("epic")),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+
+    // The read fails: no line, and the exit status is still the add's.
+    let not_found = serde_json::json!({"outcome":"error","code":"not_found","message":"not found"});
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/TST-12/links", 200, linked()),
+        ("GET /api/v1/items/TST-7/links", 404, not_found),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+
+    // The item followed is not a story: the add's answer says so, and nothing is read after the write.
+    let to_an_epic = ok(serde_json::json!([item_link_json(
+        "follows", "out", "follows", "TST-7", "epic", "Billing"
+    )]));
+    let (url, stop, server) = record_requests(to_an_epic);
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let arrived = server.join().unwrap();
+    assert_eq!(arrived.len(), 1, "the write and nothing else: {arrived:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+
+    // --json: the envelope only, and no read after the write. The fake records every request it accepts, whatever
+    // its path, and the CLI has exited before `stop` is set: exactly one request arrived, and it was the POST.
+    let (url, stop, server) = record_requests(linked());
+    let out = reeve_at(
+        &url,
+        &["--json", "link", "add", "TST-12", "follows", "TST-7"],
+    );
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let arrived = server.join().unwrap();
+    assert_eq!(
+        arrived.len(),
+        1,
+        "--json sends the write and nothing else: {arrived:?}"
+    );
+    assert!(
+        arrived[0].starts_with("POST /api/v1/items/TST-12/links "),
+        "{arrived:?}"
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        linked()
+    );
+}
+
+/// The informational line is optional text. When its lookup does not answer, the add's own result is printed after
+/// one short budget, not after the client's 30-second timeout, and the exit status is the add's.
+#[test]
+fn link_add_prints_its_result_when_the_lookups_for_the_informational_line_hang() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (release, held_until) = std::sync::mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let stream = accept(&listener);
+        let (post, _) = read_request(&stream);
+        let body = ok(serde_json::json!([item_link_json(
+            "follows",
+            "out",
+            "follows",
+            "TST-7",
+            "story",
+            "Billing account"
+        )]))
+        .to_string();
+        let mut w = stream;
+        write!(
+            w,
+            "HTTP/1.1 200 X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        // The lookup is read and then left unanswered for as long as the CLI runs.
+        let held = accept(&listener);
+        let (get, _) = read_request(&held);
+        let _ = held_until.recv();
+        (post, get)
+    });
+    let started = Instant::now();
+    let out = reeve_at(&url, &["link", "add", "TST-12", "follows", "TST-7"]);
+    let took = started.elapsed();
+    drop(release);
+    let (post, get) = server.join().unwrap();
+    assert!(
+        post.starts_with("POST /api/v1/items/TST-12/links "),
+        "{post}"
+    );
+    assert!(
+        get.starts_with("GET /api/v1/items/TST-7/links "),
+        "the control: the lookup was sent, and nothing answered it: {get}"
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "TST-12 follows TST-7\n"
+    );
+    assert!(
+        took < Duration::from_secs(15),
+        "the lookup has a budget of 3 seconds, far below the client's 30: {took:?}"
+    );
+}
+
+/// The informational line names the items the write linked, never another item that a typed lookup would find
+/// under the same reference. After a prefix change `OLD-1` is a native epic and story `GRA-20` has the external
+/// reference `OLD-1`: the write resolves `OLD-1` to the epic (native keys first, across levels), so the link is
+/// epic to story and no line is printed. `/stories/OLD-1` would answer story `GRA-20`; it is never asked (the
+/// fake fails the test on any request but these two).
+#[test]
+fn link_add_says_nothing_about_a_story_the_write_did_not_link() {
+    let linked = || {
+        ok(serde_json::json!([item_link_json(
+            "follows", "out", "follows", "GRA-30", "story", "Ledger"
+        )]))
+    };
+    // GRA-20, the story whose external reference is OLD-1, follows GRA-30 too: still not the item just linked.
+    let followers = || {
+        ok(serde_json::json!({"links": [
+            item_link_json("follows", "in", "is followed by", "OLD-1", "epic", "Billing"),
+            item_link_json("follows", "in", "is followed by", "GRA-20", "story", "Imported"),
+        ]}))
+    };
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/OLD-1/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "OLD-1", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "OLD-1 follows GRA-30\n",
+        "the link is epic to story: no line, and none about GRA-20"
+    );
+
+    // An external reference that names none of several candidates by key: nothing tells which one the write
+    // linked, so no line rather than a guess.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/JIRA-5/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "JIRA-5", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "JIRA-5 follows GRA-30\n"
+    );
+
+    // The follower the write linked is gone from the read (another caller removed `OLD-1 follows GRA-30` between
+    // the POST and the GET), and one unrelated story follower remains: no line, never one naming that story.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/OLD-1/links", 200, linked()),
+        (
+            "GET /api/v1/items/GRA-30/links",
+            200,
+            ok(serde_json::json!({"links": [item_link_json(
+                "follows",
+                "in",
+                "is followed by",
+                "GRA-20",
+                "story",
+                "Imported"
+            )]})),
+        ),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "OLD-1", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "OLD-1 follows GRA-30\n",
+        "the follower is not identified: no line, and none about GRA-20"
+    );
+
+    // The control: the story named by its own key, among the same candidates, gets the line with native keys.
+    let (url, server) = serve(vec![
+        ("POST /api/v1/items/GRA-20/links", 200, linked()),
+        ("GET /api/v1/items/GRA-30/links", 200, followers()),
+    ]);
+    let out = reeve_at(&url, &["link", "add", "GRA-20", "follows", "GRA-30"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "GRA-20 follows GRA-30\nInformational: this does not hold GRA-20 back. To hold it back: `reeve story block GRA-20 --by GRA-30`.\n"
+    );
+}
+
+/// The help of `link add` and `link rm` restates the names by hand (clap's value name and the argument's line),
+/// so this holds them to the protocol's name table: every command-line spelling, in the table's order, as the
+/// value name and in the argument's own line. A name added to the table fails here until the help says it.
+#[test]
+fn link_add_and_rm_help_list_every_name_of_the_table() {
+    let names = reeve_protocol::ItemLinkType::ALL.map(reeve_protocol::ItemLinkType::cli);
+    let value_name = format!("<{}>", names.join("|"));
+    let (last, first) = names.split_last().unwrap();
+    let sentence = format!("{} or {last}", first.join(", "));
+    for sub in ["add", "rm"] {
+        let out = reeve_at("http://127.0.0.1:9", &["link", sub, "--help"]);
+        assert_eq!(out.status.code(), Some(0));
+        let help = String::from_utf8_lossy(&out.stdout);
+        let usage = help
+            .lines()
+            .find(|l| l.starts_with("Usage:"))
+            .unwrap_or_else(|| panic!("link {sub}: no usage line: {help}"));
+        assert!(usage.contains(&value_name), "link {sub}: {usage}");
+        let argument = help
+            .lines()
+            .skip_while(|l| !l.trim_start().starts_with(&value_name))
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            argument.contains(&sentence),
+            "link {sub}: the argument's line says {sentence:?}: {help}"
+        );
+    }
+}
+
+/// A blocking word is refused before anything is sent, with the pointer to `story block`; a usage error exits 1.
+#[test]
+fn link_add_refuses_a_blocking_word_with_a_pointer_to_story_block() {
+    for word in [
+        "blocks",
+        "blocked-by",
+        "blocked_by",
+        "depends-on",
+        "depends_on",
+    ] {
+        // Port 9 (discard) is never served: a CLI that sent the request would fail with a connection error instead.
+        let out = reeve_at(
+            "http://127.0.0.1:9",
+            &["link", "add", "TST-12", word, "TST-7"],
+        );
+        assert_eq!(out.status.code(), Some(1), "{word}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(
+                "blocking is not an item link: use `reeve story block <KEY> --by <OTHER>`"
+            ),
+            "{word}: {err}"
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{word}");
+    }
+    let out = reeve_at(
+        "http://127.0.0.1:9",
+        &["link", "rm", "TST-12", "relates_to", "TST-7"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(
+            "`relates_to` is not an item link name: use follows, duplicates or relates-to"
+        )
+    );
+}
+
+/// `link rm` is a DELETE with the wire spelling of the name in the path and no body; `link ls` is a GET.
+#[test]
+fn link_rm_deletes_the_forward_form_and_link_ls_lists() {
+    let (url, server) = serve(vec![(
+        "DELETE /api/v1/items/TST-12/links/relates_to/SCRUM-7",
+        200,
+        ok(serde_json::json!([])),
+    )]);
+    let out = reeve_at(&url, &["link", "rm", "TST-12", "relates-to", "SCRUM-7"]);
+    assert_eq!(server.join().unwrap(), vec![String::new()], "no body");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "removed: TST-12 relates to SCRUM-7\n"
+    );
+
+    let listing = ok(serde_json::json!({"links": [
+        item_link_json("follows", "out", "follows", "TST-5", "story", "Billing account"),
+        item_link_json("follows", "in", "is followed by", "TST-12", "story", "Dunning"),
+        item_link_json("relates_to", "out", "relates to", "TST-2", "epic", "Reminder emails"),
+    ]}));
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-7/links",
+        200,
+        listing.clone(),
+    )]);
+    let out = reeve_at(&url, &["--ascii", "link", "ls", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "relations:\n  follows         [S] TST-5 Billing account\n  is followed by  [S] TST-12 Dunning\n  relates to      [E] TST-2 Reminder emails\n"
+    );
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-7/links",
+        200,
+        listing.clone(),
+    )]);
+    let out = reeve_at(&url, &["--json", "link", "ls", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        listing
+    );
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-7/links",
+        200,
+        ok(serde_json::json!({"links": []})),
+    )]);
+    let out = reeve_at(&url, &["link", "ls", "TST-7"]);
+    server.join().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "no item links\n");
 }

@@ -17,6 +17,7 @@ mod comments;
 mod decisions;
 mod epics;
 mod initiatives;
+mod links;
 mod search;
 mod sprints;
 mod stories;
@@ -29,6 +30,7 @@ pub(crate) use decisions::{
 };
 pub(crate) use epics::{EpicQuery, get_epic, list_epics};
 pub(crate) use initiatives::{get_initiative, list_initiatives};
+pub(crate) use links::{add_item_link, list_item_links, remove_item_link};
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Via};
 pub(crate) use search::{SearchQuery, search};

@@ -20,14 +20,37 @@ pub struct StoryContextInput {
     pub key: String,
 }
 
-/// What `get_story` answers: the API's story context with its comments bounded to the most recent ones and its
-/// long text (the description, each comment's body) cut.
+/// What `get_story` answers: the API's story context with its comments bounded to the most recent ones, its long
+/// text (the description, each comment's body) cut and the story's item links bounded.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StoryContextResult {
     #[serde(flatten)]
     pub context: StoryContextDto,
     /// How many older comments were left out; 0 when every comment is sent.
     pub comments_omitted: usize,
+    /// How many of the story's item links were left out (at most the first 50 are sent, fewer when the answer has
+    /// no room for them); 0 when all are.
+    pub links_omitted: usize,
+}
+
+/// What `get_epic` answers: the API's epic with its brief cut and its item links bounded.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GetEpicResult {
+    #[serde(flatten)]
+    pub epic: EpicDto,
+    /// How many of the epic's item links were left out (at most the first 50 are sent, fewer when the answer has
+    /// no room for them); 0 when all are.
+    pub links_omitted: usize,
+}
+
+/// What `get_initiative` answers: the API's initiative with its brief cut and its item links bounded.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GetInitiativeResult {
+    #[serde(flatten)]
+    pub initiative: InitiativeDto,
+    /// How many of the initiative's item links were left out (at most the first 50 are sent, fewer when the answer
+    /// has no room for them); 0 when all are.
+    pub links_omitted: usize,
 }
 
 /// `search_items`: find items by text (`reeve search <text>`).

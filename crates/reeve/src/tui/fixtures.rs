@@ -43,6 +43,7 @@ pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness 
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
         },
         readiness: Readiness {
             ready: true,
@@ -171,6 +172,7 @@ pub fn epic(k: &str, title: &str) -> reeve_protocol::EpicDto {
         urgent_mark: None,
         urgent_sources: vec![],
         promise: None,
+        links: None,
     }
 }
 
