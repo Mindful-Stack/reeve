@@ -1041,6 +1041,9 @@
 	.body {
 		display: grid;
 		grid-column: 1 / -1;
+		/* It spans the row's tracks (or is a flex item in a narrow list) and must not widen them: see .thread. */
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
 		gap: 0.5rem;
 		padding: 4px 0;
 	}
@@ -1063,10 +1066,13 @@
 	}
 	.discussion-panel {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
 	}
 	.thread {
 		display: grid;
+		/* A column no wider than the thread: a comment's wide table scrolls in its own wrapper instead of widening it. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.4rem;
 		margin: 0;
 		padding: 0;

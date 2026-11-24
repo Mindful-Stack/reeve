@@ -95,6 +95,8 @@
 <style>
 	.thread {
 		display: grid;
+		/* A column no wider than the thread: a comment's wide table scrolls in its own wrapper instead of widening it. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
 		margin: 0 0 0.5rem;
 		padding: 0;

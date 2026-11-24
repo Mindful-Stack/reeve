@@ -1109,20 +1109,56 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 	});
 }
 
+// Six columns, one of them a word that cannot wrap: wider than a phone and wider than the drawer.
+const WIDE_TABLE = `| Step | User | Phone | Watch | System | Notes |\n|---:|---|---|:---:|---|---|\n${'| 1 | Opens the group | Shows the map with every member | Buzz | Computes the point | Unbrokenwordthatcannotwrapanywhere |\n'.repeat(3)}`;
+const WIDE_TABLE_NAME = 'Table: Step, User, Phone…';
+
+/** Every table wrapper under `scope` scrolls sideways and ends inside `box` (the drawer; the page when there is none),
+ *  and neither `box` nor the page is widened by it. */
+async function expectTablesScrollInside(page: Page, scope: string, count: number, box?: string): Promise<void> {
+	await expect(page.locator(`${scope} [data-table-scroll]`)).toHaveCount(count);
+	await expect(page.locator(`${scope} [data-table-scroll][tabindex="0"]`)).toHaveCount(count);
+	const m = await page.evaluate(
+		([scope, box]) => {
+			const outer = box ? document.querySelector(box)! : document.documentElement;
+			const right = box ? outer.getBoundingClientRect().right : window.innerWidth;
+			return {
+				page: document.documentElement.scrollWidth,
+				viewport: window.innerWidth,
+				outerScroll: outer.scrollWidth,
+				outerClient: outer.clientWidth,
+				right,
+				wraps: [...document.querySelectorAll(`${scope} [data-table-scroll]`)].map((w) => ({
+					scroll: w.scrollWidth,
+					client: w.clientWidth,
+					right: w.getBoundingClientRect().right
+				}))
+			};
+		},
+		[scope, box ?? null] as const
+	);
+	expect(m.page, 'the page does not widen').toBe(m.viewport);
+	expect(m.outerScroll, `${box ?? 'the page'} does not widen`).toBeLessThanOrEqual(m.outerClient);
+	for (const w of m.wraps) {
+		expect(w.client).toBeGreaterThan(0);
+		expect(w.scroll, 'the wrapper is what scrolls').toBeGreaterThan(w.client);
+		expect(w.right, 'the wrapper ends inside its container').toBeLessThanOrEqual(m.right);
+	}
+}
+
 test('a wide table in a brief scrolls inside its wrapper on a phone, and only a wrapper that scrolls is a tab stop', async ({ page }) => {
-	const wide = `| Step | User | Phone | Watch | System | Notes |\n|---:|---|---|:---:|---|---|\n${'| 1 | Opens the group | Shows the map with every member | Buzz | Computes the point | Unbrokenwordthatcannotwrapanywhere |\n'.repeat(3)}`;
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 		idempotency_key: crypto.randomUUID(),
 		title: `Table smoke ${crypto.randomUUID().slice(0, 6)}`,
 		horizon: 'Later',
-		brief: `${wide}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
+		brief: `${WIDE_TABLE}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
 	});
 	await page.setViewportSize({ width: 360, height: 800 });
 	await page.goto(`/initiatives/${ini.key}`);
 	const wraps = page.locator('.brief [data-table-scroll]');
 	await expect(wraps).toHaveCount(2);
 	// The wide one is a named region the keyboard can reach and scroll; the one that fits is no stop.
-	await expect(page.getByRole('region', { name: 'Table: Step, User, Phone…' })).toHaveCount(1);
+	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(1);
 	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
 	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
 	const m = await page.evaluate(() => {
@@ -1133,8 +1169,76 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	expect(m.scroll).toBeGreaterThan(m.client);
 	// With room for the table, its wrapper stops being a tab stop.
 	await page.setViewportSize({ width: 1440, height: 800 });
-	await expect(page.getByRole('region', { name: 'Table: Step, User, Phone…' })).toHaveCount(0);
+	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);
 	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+});
+
+test('a wide table in a description or a comment scrolls inside its wrapper: the drawer, the pages and triage do not widen', async ({ page }) => {
+	const suffix = crypto.randomUUID().slice(0, 6);
+	const comment = (key: string) => post(page, `/api/v1/items/${key}/comments`, { body: `See the steps:\n\n${WIDE_TABLE}`, idempotency_key: crypto.randomUUID() });
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', { idempotency_key: crypto.randomUUID(), title: `Table comment smoke ${suffix}`, horizon: 'Later' });
+	const epic = await post<{ key: string }>(page, '/api/v1/epics', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke epic ${suffix}`,
+		initiative: ini.key,
+		brief: WIDE_TABLE
+	});
+	const story = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke story ${suffix}`,
+		kind: 'chore',
+		epic: epic.key,
+		criteria: [],
+		labels: [],
+		description: WIDE_TABLE
+	});
+	const untriaged = await post<{ key: string }>(page, '/api/v1/stories', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table comment smoke untriaged ${suffix}`,
+		kind: 'chore',
+		epic: null,
+		criteria: [],
+		labels: [],
+		description: WIDE_TABLE
+	});
+	const decision = await post<{ id: number }>(page, '/api/v1/decisions', {
+		idempotency_key: crypto.randomUUID(),
+		on: epic.key,
+		title: `Table comment smoke decision ${suffix}`,
+		decider: 'smoke@example.com'
+	});
+	await post(page, `/api/v1/decisions/${decision.id}/comments`, { body: WIDE_TABLE, idempotency_key: crypto.randomUUID() });
+	for (const key of [ini.key, epic.key, story.key]) await comment(key);
+
+	const drawer = '[data-testid="story-drawer"]';
+	for (const width of [1440, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		// The story drawer: its description and a comment.
+		await page.goto(`/board?story=${story.key}`);
+		await expect(page.getByTestId('story-drawer').getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(2);
+		await expectTablesScrollInside(page, `${drawer} .brief`, 1, drawer);
+		await expectTablesScrollInside(page, `${drawer} .comment-body`, 1, drawer);
+		// A decision's thread, in the decision drawer.
+		await page.goto(`/decisions?decision=${decision.id}`);
+		const decisionDrawer = '[data-testid="decision-drawer"]';
+		await expectTablesScrollInside(page, `${decisionDrawer} .comment-body`, 1, decisionDrawer);
+	}
+	// On a phone the pages themselves: a comment under an initiative; a brief, a comment and a decision's thread under
+	// an epic; triage.
+	await page.goto(`/initiatives/${ini.key}`);
+	await expectTablesScrollInside(page, '.comment-body', 1);
+	await page.goto(`/epics/${epic.key}`);
+	await expectTablesScrollInside(page, '.brief', 1);
+	await expectTablesScrollInside(page, '.comment-body', 1);
+	await page.getByRole('button', { name: 'Discussion' }).click();
+	await expectTablesScrollInside(page, '.decision-list .comment-body', 1);
+	// A phone has no queue list to pick from: pick the item with room for the list, then narrow the page.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await page.goto('/triage');
+	await page.getByRole('option', { name: new RegExp(`^${untriaged.key}\\b`) }).click();
+	await expect(page.locator('.item .brief [data-table-scroll]')).toHaveCount(1);
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expectTablesScrollInside(page, '.item .brief', 1);
 });
 
 // A 4×3 PNG, small enough to inline; every image assertion waits for it to really decode (a broken image is visible too).
