@@ -1826,6 +1826,8 @@ fn apply_help_shows_the_direction_of_follows_and_where_blocking_goes() {
         "`{from: step-2, type: follows, to: step-1}` means step-2 comes after step-1",
         "`web_links` is a list of `{on, title, url}`",
         "A plan holds at most 500 item links and 500 web links",
+        "put the rest in another plan that names the items by key (a name is local to one plan id)",
+        "any level (native keys first) under `links`, `web_links` and a decision's `on`",
         "to hold a story back, list it under `blocks` as `{story, blocked_by}`",
         "puts a blocking relation under `blocks` or leaves it out, never under `links`",
     ] {

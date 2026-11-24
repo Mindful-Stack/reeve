@@ -11,15 +11,18 @@ use std::fmt::Write;
 
 /// Create a plan of items, required decisions and blockers from a YAML or JSON file, in one request.
 ///
-/// A plan lists initiatives, epics, stories, required decisions and blockers. Items name each other by local `name`;
-/// any other reference is an existing key. The server validates the whole plan before writing, and applying the same
-/// plan `id` again creates nothing. Writes commit one by one; if one fails, apply the same `id` again once the cause
-/// is corrected.
+/// A plan lists initiatives, epics, stories, required decisions and blockers. Items name each other by local `name`.
+/// A reference that is not a plan name is an existing item's key or external reference, looked up at the level its
+/// place takes: a story under `blocks`, an epic under `epic`, an initiative under `initiative`, any level (native keys
+/// first) under `links`, `web_links` and a decision's `on`; so one spelling can name different items in different
+/// places. The server validates the whole plan before writing, and applying the same plan `id` again creates nothing.
+/// Writes commit one by one; if one fails, apply the same `id` again once the cause is corrected.
 ///
 /// A plan may also relate its items: `links` is a list of `{from, type, to}` between items of any level, with type
 /// follows, duplicates or relates_to, and `web_links` is a list of `{on, title, url}`. `from` is the item that
 /// follows: `{from: step-2, type: follows, to: step-1}` means step-2 comes after step-1. A plan holds at most 500
-/// item links and 500 web links; split a larger one into several plans.
+/// item links and 500 web links; put the rest in another plan that names the items by key (a name is local to one
+/// plan id).
 ///
 /// Item links are informational: to hold a story back, list it under `blocks` as `{story, blocked_by}`. A plan
 /// written from another tool's data puts a blocking relation under `blocks` or leaves it out, never under `links`

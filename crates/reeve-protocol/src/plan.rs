@@ -9,13 +9,15 @@ pub const MAX_PLAN_ITEM_LINKS: usize = 500;
 /// The most web links one plan may hold (`ApplyPlan::web_links`); one more fails the validation.
 pub const MAX_PLAN_WEB_LINKS: usize = 500;
 
-/// A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.
-/// Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
-/// or external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)
-/// again creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,
-/// item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
-/// atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its
-/// level across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
+/// A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links. Items
+/// refer to each other by their local `name`. A reference that is not a plan name is an existing item's key or external
+/// reference, looked up at the level its place takes: a story under `blocks`, an epic under `epic`, an initiative under
+/// `initiative`, any level (native keys first) under `links`, `web_links` and a decision's `on`; so one spelling can
+/// name different items in different places. The plan is validated whole before anything is written. Applying the same
+/// plan (`id`) again creates nothing: items and required decisions are keyed by the plan id and their name, while
+/// blockers, item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
+/// atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its level
+/// across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyPlan {
@@ -62,7 +64,7 @@ pub struct PlanInitiative {
 pub struct PlanEpic {
     pub name: String,
     pub title: String,
-    /// A plan initiative's name, or an existing initiative's key.
+    /// A plan initiative's name, or an existing initiative's key or external reference.
     #[serde(default)]
     pub initiative: Option<String>,
     #[serde(default)]
@@ -79,7 +81,7 @@ pub struct PlanStory {
     /// story when absent.
     #[serde(default)]
     pub kind: Option<Kind>,
-    /// A plan epic's name, or an existing epic's key.
+    /// A plan epic's name, or an existing epic's key or external reference.
     #[serde(default)]
     pub epic: Option<String>,
     #[serde(default)]
@@ -101,7 +103,7 @@ pub struct PlanStory {
 #[serde(deny_unknown_fields)]
 pub struct PlanDecision {
     pub name: String,
-    /// A plan item's name, or an existing item's key.
+    /// A plan item's name, or an existing item's key or external reference (native keys first).
     pub on: String,
     pub title: String,
     pub decider: String,
@@ -112,7 +114,7 @@ pub struct PlanDecision {
     pub reversibility: Option<Reversibility>,
 }
 
-/// `blocked_by` blocks `story`; each is a plan story's name or an existing story's key.
+/// `blocked_by` blocks `story`; each is a plan story's name or an existing story's key or external reference.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlanBlock {

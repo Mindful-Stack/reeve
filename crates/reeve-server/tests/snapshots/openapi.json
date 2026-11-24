@@ -246,7 +246,7 @@
       },
       "ApplyPlan": {
         "additionalProperties": false,
-        "description": "A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.\nItems refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key\nor external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)\nagain creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,\nitem links and web links are idempotent by their content. Each write commits on its own, so a plan is not\natomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its\nlevel across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.",
+        "description": "A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links. Items\nrefer to each other by their local `name`. A reference that is not a plan name is an existing item's key or external\nreference, looked up at the level its place takes: a story under `blocks`, an epic under `epic`, an initiative under\n`initiative`, any level (native keys first) under `links`, `web_links` and a decision's `on`; so one spelling can\nname different items in different places. The plan is validated whole before anything is written. Applying the same\nplan (`id`) again creates nothing: items and required decisions are keyed by the plan id and their name, while\nblockers, item links and web links are idempotent by their content. Each write commits on its own, so a plan is not\natomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its level\nacross applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.",
         "properties": {
           "blocks": {
             "items": {
@@ -3240,7 +3240,7 @@
       },
       "PlanBlock": {
         "additionalProperties": false,
-        "description": "`blocked_by` blocks `story`; each is a plan story's name or an existing story's key.",
+        "description": "`blocked_by` blocks `story`; each is a plan story's name or an existing story's key or external reference.",
         "properties": {
           "blocked_by": {
             "type": "string"
@@ -3272,7 +3272,7 @@
             "type": "string"
           },
           "on": {
-            "description": "A plan item's name, or an existing item's key.",
+            "description": "A plan item's name, or an existing item's key or external reference (native keys first).",
             "type": "string"
           },
           "reversibility": {
@@ -3314,7 +3314,7 @@
             ]
           },
           "initiative": {
-            "description": "A plan initiative's name, or an existing initiative's key.",
+            "description": "A plan initiative's name, or an existing initiative's key or external reference.",
             "type": [
               "string",
               "null"
@@ -3425,7 +3425,7 @@
             ]
           },
           "epic": {
-            "description": "A plan epic's name, or an existing epic's key.",
+            "description": "A plan epic's name, or an existing epic's key or external reference.",
             "type": [
               "string",
               "null"

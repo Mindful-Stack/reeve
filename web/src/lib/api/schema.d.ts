@@ -1470,13 +1470,15 @@ export interface components {
             value: string;
         };
         /**
-         * @description A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.
-         *     Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
-         *     or external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)
-         *     again creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,
-         *     item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
-         *     atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its
-         *     level across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
+         * @description A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links. Items
+         *     refer to each other by their local `name`. A reference that is not a plan name is an existing item's key or external
+         *     reference, looked up at the level its place takes: a story under `blocks`, an epic under `epic`, an initiative under
+         *     `initiative`, any level (native keys first) under `links`, `web_links` and a decision's `on`; so one spelling can
+         *     name different items in different places. The plan is validated whole before anything is written. Applying the same
+         *     plan (`id`) again creates nothing: items and required decisions are keyed by the plan id and their name, while
+         *     blockers, item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
+         *     atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its level
+         *     across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
          */
         ApplyPlan: {
             blocks?: components["schemas"]["PlanBlock"][];
@@ -2405,7 +2407,7 @@ export interface components {
              */
             web_links: components["schemas"]["PlannedWebLink"][];
         };
-        /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key. */
+        /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key or external reference. */
         PlanBlock: {
             blocked_by: string;
             story: string;
@@ -2415,7 +2417,7 @@ export interface components {
             /** Format: date */
             due?: string | null;
             name: string;
-            /** @description A plan item's name, or an existing item's key. */
+            /** @description A plan item's name, or an existing item's key or external reference (native keys first). */
             on: string;
             reversibility?: null | components["schemas"]["Reversibility"];
             title: string;
@@ -2423,7 +2425,7 @@ export interface components {
         PlanEpic: {
             brief?: string | null;
             external_ref?: string | null;
-            /** @description A plan initiative's name, or an existing initiative's key. */
+            /** @description A plan initiative's name, or an existing initiative's key or external reference. */
             initiative?: string | null;
             name: string;
             title: string;
@@ -2451,7 +2453,7 @@ export interface components {
             criteria?: string[];
             delivery?: null | components["schemas"]["DeliveryState"];
             description?: string | null;
-            /** @description A plan epic's name, or an existing epic's key. */
+            /** @description A plan epic's name, or an existing epic's key or external reference. */
             epic?: string | null;
             external_ref?: string | null;
             kind?: null | components["schemas"]["Kind"];
