@@ -16,6 +16,7 @@ pub mod events;
 pub mod export;
 pub mod import;
 pub mod initiatives;
+pub mod links;
 pub mod plans;
 pub mod search;
 pub mod sprints;
@@ -116,6 +117,7 @@ async fn health(State(s): State<AppState>) -> (StatusCode, Json<serde_json::Valu
 fn api_router(mcp_enabled: bool) -> OpenApiRouter<AppState> {
     let v1: OpenApiRouter<AppState> = OpenApiRouter::new()
         .merge(initiatives::router())
+        .merge(links::router())
         .merge(epics::router())
         .merge(stories::router())
         .merge(decisions::router())

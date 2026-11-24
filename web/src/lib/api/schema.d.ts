@@ -791,6 +791,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{key}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The item's item links, each read from this item's side. `key` is a key or an external reference of an
+         *     initiative, an epic or a story.
+         */
+        get: operations["list_item_links"];
+        put?: never;
+        /**
+         * Says that the item in the path follows, duplicates or relates to `to`. Informational: it holds no work back
+         *     (a story is held back with `POST /stories/{key}/blocks`). Adding a link that exists answers ok and changes
+         *     nothing. Answers the item's links.
+         */
+        post: operations["add_item_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/links/{type}/{to}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes "`key` <type> `to`", the forward form: a link an item shows as "is followed by X" is removed by naming
+         *     X first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and
+         *     changes nothing. Answers the item's links.
+         */
+        delete: operations["remove_item_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1332,6 +1378,15 @@ export interface components {
             body: string;
             /** @description Caller-chosen key that makes a retried comment safe: a repeat returns the thread with the first comment only. */
             idempotency_key?: string | null;
+        };
+        /**
+         * @description `POST /items/{key}/links`: the item in the path follows, duplicates or relates to `to`. Always the forward
+         *     form; there is no way to write the reverse wording. Any other field is refused rather than ignored.
+         */
+        AddItemLink: {
+            /** @description A key or an external reference of an item of any level. */
+            to: components["schemas"]["KeyRef"];
+            type: components["schemas"]["LinkType"];
         };
         /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
@@ -2087,6 +2142,13 @@ export interface components {
         /** @description Items to link, each a key or external reference of any level. */
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
+        };
+        /**
+         * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
+         *     the item's web links when they exist (GRA-878).
+         */
+        LinkListingDto: {
+            links: components["schemas"]["ItemLinkDto"][];
         };
         LinkRecord: {
             path: string;
@@ -3126,6 +3188,38 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_LinkListingDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /**
+             * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
+             *     the item's web links when they exist (GRA-878).
+             */
+            value: {
+                links: components["schemas"]["ItemLinkDto"][];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_Me: {
             /** @enum {string} */
             outcome: "ok";
@@ -3871,6 +3965,38 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_ItemLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                direction: components["schemas"]["LinkDirection"];
+                item: components["schemas"]["LinkedItemDto"];
+                /** @description Display text for this side ("is followed by"), from the name table. */
+                label: string;
+                type: components["schemas"]["LinkType"];
             }[];
         } | {
             /** @enum {string} */
@@ -8634,6 +8760,210 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_CommentDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    list_item_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_LinkListingDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddItemLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                type: components["schemas"]["LinkType"];
+                to: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
                 };
             };
             /** @description validation error */

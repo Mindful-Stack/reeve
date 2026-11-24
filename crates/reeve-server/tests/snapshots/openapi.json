@@ -150,6 +150,24 @@
         ],
         "type": "object"
       },
+      "AddItemLink": {
+        "additionalProperties": false,
+        "description": "`POST /items/{key}/links`: the item in the path follows, duplicates or relates to `to`. Always the forward\nform; there is no way to write the reverse wording. Any other field is refused rather than ignored.",
+        "properties": {
+          "to": {
+            "$ref": "#/components/schemas/KeyRef",
+            "description": "A key or an external reference of an item of any level."
+          },
+          "type": {
+            "$ref": "#/components/schemas/LinkType"
+          }
+        },
+        "required": [
+          "type",
+          "to"
+        ],
+        "type": "object"
+      },
       "AffectedStoryDto": {
         "description": "A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is\nhistorical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.",
         "properties": {
@@ -2619,6 +2637,21 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "LinkListingDto": {
+        "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+        "properties": {
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/ItemLinkDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "links"
         ],
         "type": "object"
       },
@@ -6098,6 +6131,97 @@
           }
         ]
       },
+      "Response_LinkListingDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+                "properties": {
+                  "links": {
+                    "items": {
+                      "$ref": "#/components/schemas/ItemLinkDto"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "links"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_Me": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -8519,6 +8643,110 @@
                     "version",
                     "urgent_mark",
                     "urgent_sources"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Response_Vec_ItemLinkDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "description": "An item link as one of its two items reads it.",
+                  "properties": {
+                    "direction": {
+                      "$ref": "#/components/schemas/LinkDirection"
+                    },
+                    "item": {
+                      "$ref": "#/components/schemas/LinkedItemDto"
+                    },
+                    "label": {
+                      "description": "Display text for this side (\"is followed by\"), from the name table.",
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/LinkType"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "direction",
+                    "label",
+                    "item"
                   ],
                   "type": "object"
                 },
@@ -15723,6 +15951,279 @@
             "bearer": []
           }
         ]
+      }
+    },
+    "/api/v1/items/{key}/links": {
+      "get": {
+        "operationId": "list_item_links",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_LinkListingDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The item's item links, each read from this item's side. `key` is a key or an external reference of an\ninitiative, an epic or a story."
+      },
+      "post": {
+        "operationId": "add_item_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddItemLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_ItemLinkDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Says that the item in the path follows, duplicates or relates to `to`. Informational: it holds no work back\n(a story is held back with `POST /stories/{key}/blocks`). Adding a link that exists answers ok and changes\nnothing. Answers the item's links."
+      }
+    },
+    "/api/v1/items/{key}/links/{type}/{to}": {
+      "delete": {
+        "operationId": "remove_item_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "type",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LinkType"
+            }
+          },
+          {
+            "in": "path",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Vec_ItemLinkDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "unauthenticated"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "version conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Response_Empty"
+                }
+              }
+            },
+            "description": "refused with reasons"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Removes \"`key` <type> `to`\", the forward form: a link an item shows as \"is followed by X\" is removed by naming\nX first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and\nchanges nothing. Answers the item's links."
       }
     },
     "/api/v1/me": {

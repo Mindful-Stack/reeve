@@ -279,14 +279,14 @@ async fn seed(h: &Harness) -> Seeded {
     .execute(&h.state.pool)
     .await
     .unwrap();
-    // An item link (migration 1013, kb/ADR-0031), written with SQL: the route that writes one comes in a later
-    // change, and the round trip compares rows, whoever wrote them.
-    sqlx::query("INSERT INTO item_links (from_key, to_key, link_type) VALUES ($1, $2, 'follows')")
-        .bind(&todo)
-        .bind(&active)
-        .execute(&h.state.pool)
-        .await
-        .unwrap();
+    // An item link (migration 1013, kb/ADR-0031) with its two activity entries.
+    post(
+        app,
+        t,
+        &format!("/api/v1/items/{todo}/links"),
+        json!({"type":"follows","to":active}),
+    )
+    .await;
     Seeded { todo, active }
 }
 
