@@ -96,8 +96,23 @@ function itemLinkWords(action: string, payload: unknown): string {
 	return type === undefined || from == null || to == null ? `${verb} item link` : `${verb} item link: ${from} ${linkTypeText(type)} ${to}`;
 }
 
+/** An `edited` entry's words when the edit moved an epic to another initiative or out of one: the payload names
+ *  every changed field (`fields`, which then holds "initiative") and the key it left and joined (`from.initiative`,
+ *  `to.initiative`, null for none). Null for every other edit, a retitle or a new brief included, which reads as
+ *  "edited". */
+function epicMoveWords(payload: unknown): string | null {
+	const fields = payloadField(payload, 'fields');
+	if (!Array.isArray(fields) || !fields.includes('initiative')) return null;
+	const from = nonEmpty(payloadField(payloadField(payload, 'from'), 'initiative'));
+	const to = nonEmpty(payloadField(payloadField(payload, 'to'), 'initiative'));
+	if (from != null && to != null) return `edited and moved from initiative ${from} to ${to}`;
+	if (to != null) return `edited and moved to initiative ${to}`;
+	return from == null ? null : `edited and taken out of initiative ${from}`;
+}
+
 /** An activity entry's action in its own words: an attachment's names its file, a promise's its date and recipient, an
- *  item link's its two items and its name, a web link's its title and, once removed, its URL (from the payload); null
+ *  item link's its two items and its name, a web link's its title and, once removed, its URL, an epic's edit that moved
+ *  it its two initiatives (from the payload); null
  *  for every other action, which reads as `plainAction`. The one place an action is worded. `key` names the item in a
  *  promise's words, where the note is not already about one item (`freshNote`). */
 export function actionLabel(action: string, payload: unknown, key?: string): string | null {
@@ -116,6 +131,7 @@ export function actionLabel(action: string, payload: unknown, key?: string): str
 		const url = nonEmpty(payloadField(payload, 'url'));
 		return `removed web link${named}${url == null ? '' : ` (${url})`}`;
 	}
+	if (action === 'edited') return epicMoveWords(payload);
 	return null;
 }
 
