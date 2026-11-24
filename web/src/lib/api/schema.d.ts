@@ -799,7 +799,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The item's item links, each read from this item's side. `key` is a key or an external reference of an
+         * The item's item links, each read from this item's side, and its web links, oldest first. `key` is a key or an external reference of an
          *     initiative, an epic or a story.
          */
         get: operations["list_item_links"];
@@ -832,6 +832,47 @@ export interface paths {
          *     changes nothing. Answers the item's links.
          */
         delete: operations["remove_item_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attaches a titled URL to the item: a title of 1 to 200 characters, and an `http` or `https` URL, stored as the
+         *     URL parser writes it. Adding a URL the item already has with the same title answers ok and changes nothing;
+         *     with another title it is a validation error (remove it first). Answers the item's web links, oldest first.
+         */
+        post: operations["add_web_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes one web link of the item by its id. An id the item does not have answers ok and changes nothing.
+         *     Answers the item's web links.
+         */
+        delete: operations["remove_web_link"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1387,6 +1428,14 @@ export interface components {
             /** @description A key or an external reference of an item of any level. */
             to: components["schemas"]["KeyRef"];
             type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming; the URL is `http` or `https`
+         *     and at most 1 000 characters as stored. Any other field is refused rather than ignored.
+         */
+        AddWebLink: {
+            title: string;
+            url: string;
         };
         /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
@@ -4283,6 +4332,38 @@ export interface components {
                 item: components["schemas"]["ItemRefDto"];
                 mark: components["schemas"]["UrgentMarkDto"];
                 title: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_WebLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: int64 */
+                id: number;
+                title: string;
+                /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+                url: string;
             }[];
         } | {
             /** @enum {string} */
@@ -9019,6 +9100,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddWebLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
                 };
             };
             /** @description validation error */

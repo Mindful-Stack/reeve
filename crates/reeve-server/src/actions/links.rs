@@ -1,11 +1,13 @@
-//! Item links of one item (kb/ADR-0031): what `reeve link ls | add | rm` do. No MCP tool calls these yet
+//! Item links and web links of one item (kb/ADR-0031): what `reeve link ls | add | rm` do. No MCP tool calls these yet
 //! (kb/ADR-0029 R10: a tool is added only by an observation on that record); when one is, it calls these same
 //! actions.
 use super::Acting;
 use crate::{error::AppError, state::AppState};
-use reeve_protocol::{AddItemLink, ItemLinkDto, ItemLinkType, LinkListingDto};
+use reeve_protocol::{
+    AddItemLink, AddWebLink, ItemLinkDto, ItemLinkType, LinkListingDto, WebLinkDto,
+};
 
-/// `reeve link ls <KEY>`: the item links of one item of any level. Behind `GET /api/v1/items/{key}/links`. `key`
+/// `reeve link ls <KEY>`: the item links and the web links of one item of any level. Behind `GET /api/v1/items/{key}/links`. `key`
 /// is what the route takes: its path parameter, a key or an external reference.
 pub(crate) async fn list_item_links(
     state: &AppState,
@@ -60,4 +62,35 @@ pub(crate) async fn remove_item_link(
         .remove_item_link(&who.ctx, &from, link_type, &to)
         .await?;
     Ok(state.handlers.item_links_of(&from).await?)
+}
+
+/// `reeve link add <KEY> --url <URL> --title <TITLE>`: attaches a titled URL to the item. Behind
+/// `POST /api/v1/items/{key}/web-links`. Answers the item's web links after the write (`Handlers::web_links_of`:
+/// web links only, not the listing); the same URL with the same title changes nothing, and with another title it
+/// is refused.
+pub(crate) async fn add_web_link(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+    b: AddWebLink,
+) -> Result<Vec<WebLinkDto>, AppError> {
+    let (_, key) = state.handlers.resolve_any(key).await?;
+    state
+        .handlers
+        .add_web_link(&who.ctx, &key, &b.title, &b.url)
+        .await?;
+    Ok(state.handlers.web_links_of(&key).await?)
+}
+
+/// `reeve link rm <KEY> --url <URL>` (the CLI finds the id by the URL): removes one web link of the item by id.
+/// Behind `DELETE /api/v1/items/{key}/web-links/{id}`. Removing one that does not exist changes nothing.
+pub(crate) async fn remove_web_link(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+    id: i64,
+) -> Result<Vec<WebLinkDto>, AppError> {
+    let (_, key) = state.handlers.resolve_any(key).await?;
+    state.handlers.remove_web_link(&who.ctx, &key, id).await?;
+    Ok(state.handlers.web_links_of(&key).await?)
 }

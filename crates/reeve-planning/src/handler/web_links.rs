@@ -137,6 +137,18 @@ impl Handlers {
         Ok(true)
     }
 
+    /// One item's web links, oldest first, and nothing else, from one read-only snapshot. NotFound when no item has
+    /// the key. The answer of a write that changed a web link (the POST and the DELETE): it loads no item link.
+    pub async fn web_links_of(&self, key: &Key) -> Result<Vec<WebLinkDto>, HandlerError> {
+        self.item_type_of(key).await?;
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.web_link_dtos_in(&mut tx, key).await;
+        end_read(tx, out).await
+    }
+
     /// The web links of one item on the caller's transaction, oldest first. One statement.
     pub(crate) async fn web_link_dtos_in(
         &self,
