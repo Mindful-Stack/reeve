@@ -11,19 +11,20 @@ use reeve_planning::EpicMove;
 use reeve_protocol::{EditEpicInput, EditItem, EpicReceipt};
 use serde_json::{Value, json};
 
-/// The receipt's note when the edit moved the epic (decision A): where it was moved from and to, and what its
-/// stories now wait on. Built from the move the edit wrote, as the action answers it. None for a move that names
+/// The receipt's note when the edit moved the epic (decision A): where it was moved from and to, and whose
+/// discovery mark and required decisions its stories' readiness depends on. It does not say they are held: the
+/// initiative joined may hold nothing back. Built from the move the edit wrote, as the action answers it. None for a move that names
 /// neither initiative, which no edit writes.
 fn moved_note(moved: &EpicMove) -> Option<String> {
     match (&moved.from, &moved.to) {
         (Some(from), Some(to)) => Some(format!(
-            "Moved from {from} to {to}: its stories now wait on {to}'s discovery mark and required decisions."
+            "Moved from {from} to {to}: whether its stories are ready now depends on {to}'s discovery mark and required decisions, no longer on {from}'s."
         )),
         (None, Some(to)) => Some(format!(
-            "Moved to {to}: its stories now wait on {to}'s discovery mark and required decisions."
+            "Moved to {to}: whether its stories are ready now also depends on {to}'s discovery mark and required decisions."
         )),
         (Some(from), None) => Some(format!(
-            "Taken out of {from}: its stories no longer wait on {from}'s discovery mark and required decisions."
+            "Taken out of {from}: whether its stories are ready no longer depends on {from}'s discovery mark and required decisions."
         )),
         (None, None) => None,
     }
@@ -37,7 +38,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "edit_epic",
         title: "Edit an epic",
         description: format!(
-            "Change one epic's title, brief or initiative. Only the fields you send are changed; what a field held before is replaced. {} Read the epic first (get_epic) and send its `version`: if someone changed the epic since, the edit is refused and you are told the current version. get_epic shortens a long brief and ends it with `[cut: N more characters]`. Such a brief cannot be edited here: never send it back; leave it out and tell the person to edit it in the CLI or the web client. Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that its stories now wait on other discovery and decisions. This tool cannot mark an epic's discovery complete or reopen it: a person does that, in the CLI or the web client. Answers a receipt: the epic's key, title, initiative and new version, and a `note` when the epic moved.",
+            "Change one epic's title, brief or initiative. Only the fields you send are changed; what a field held before is replaced. {} Read the epic first (get_epic) and send its `version`: if someone changed the epic since, the edit is refused and you are told the current version. get_epic shortens a long brief and ends it with `[cut: N more characters]`. Such a brief cannot be edited here: never send it back; leave it out and tell the person to edit it in the CLI or the web client. Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed. This tool cannot mark an epic's discovery complete or reopen it: a person does that, in the CLI or the web client. Answers a receipt: the epic's key, title, initiative and new version, and a `note` when the epic moved.",
             super::WRITE_TEXT
         ),
         input_schema,

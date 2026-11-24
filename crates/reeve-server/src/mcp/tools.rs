@@ -750,7 +750,7 @@ mod tests {
     fn a_description_says_what_only_it_can_tell_the_model() {
         const SAID: [(&str, &str); 1] = [(
             "edit_epic",
-            "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that its stories now wait on other discovery and decisions.",
+            "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
         )];
         let tools = tools();
         for (name, sentence) in SAID {
