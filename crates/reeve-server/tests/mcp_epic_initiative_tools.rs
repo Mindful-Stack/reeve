@@ -826,3 +826,363 @@ async fn an_initiative_write_answers_a_small_receipt_whatever_the_initiative_hol
         repeat.to_string().len()
     );
 }
+
+/// The keys of the items whose missing discovery mark holds `story` back, sorted.
+async fn held_by_discovery(h: &Harness, story: &str) -> Vec<String> {
+    let readiness = api(h, &h.admin_token, &format!("/api/v1/stories/{story}/ready")).await;
+    let mut items: Vec<String> = readiness["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|reason| reason["reason"] == "ancestor_discovery_incomplete")
+        .map(|reason| reason["item"].as_str().unwrap().to_string())
+        .collect();
+    items.sort();
+    items
+}
+
+/// The owner's rule for GRA-901 (kb/ADR-0027: discovery marks gate; kb/ADR-0002 R3: only a mark says discovery
+/// is done): nothing a chat can send to the epic and initiative tools marks discovery or reopens it, on a create
+/// or an edit. Shown where it matters: a story under an epic and an initiative the tools made stays held by both,
+/// whatever the tools are sent, until the marks are set through the API's own route; and once they are set, it
+/// stays ready whatever the tools are sent. The observation on kb/ADR-0029 names this test.
+#[tokio::test]
+async fn no_epic_or_initiative_tool_can_mark_or_reopen_discovery() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let ini = key(&answer(
+        h,
+        &dan,
+        "create_initiative",
+        json!({"idempotency_key": "d-i", "title": "Bookings", "horizon": "Now"}),
+    )
+    .await);
+    let ep = key(&answer(
+        h,
+        &dan,
+        "create_epic",
+        json!({"idempotency_key": "d-e", "title": "Checkout", "initiative": ini}),
+    )
+    .await);
+    let story = key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": "d-s", "title": "Pick a slot", "kind": "story", "epic": ep,
+               "criteria": ["a slot can be picked"], "labels": []}),
+    )
+    .await);
+    let mut both = vec![ep.clone(), ini.clone()];
+    both.sort();
+    assert_eq!(
+        held_by_discovery(h, &story).await,
+        both,
+        "the control: held by both"
+    );
+
+    // Every way of naming a mark is refused before anything runs, on all four tools.
+    let calls = [
+        (
+            "create_epic",
+            json!({"idempotency_key": "d-x", "title": "X"}),
+        ),
+        (
+            "edit_epic",
+            json!({"key": ep, "version": 1, "title": "Checkout 2"}),
+        ),
+        (
+            "create_initiative",
+            json!({"idempotency_key": "d-y", "title": "Y", "horizon": "Now"}),
+        ),
+        (
+            "edit_initiative",
+            json!({"key": ini, "version": 1, "title": "Bookings 2"}),
+        ),
+    ];
+    let marks = [
+        ("discovery_complete", json!(true)),
+        (
+            "discovery_complete",
+            json!({"at": "2026-11-24T10:00:00Z", "by": DAN}),
+        ),
+        ("complete", json!(true)),
+        ("discovery", json!("complete")),
+        ("discovery_at", json!("2026-11-24T10:00:00Z")),
+    ];
+    let count = [rows(h, "epics").await, rows(h, "initiatives").await];
+    for (name, valid) in &calls {
+        for (field, value) in &marks {
+            let mut arguments = valid.clone();
+            arguments[*field] = value.clone();
+            let said = refusal(h, &dan, name, arguments).await;
+            assert!(
+                said.starts_with("Invalid arguments: unknown field"),
+                "{name} with {field}: {said}"
+            );
+        }
+    }
+    assert_eq!(
+        [rows(h, "epics").await, rows(h, "initiatives").await],
+        count
+    );
+    assert_eq!(
+        json!([
+            epic(h, &ep).await["version"],
+            initiative(h, &ini).await["version"]
+        ]),
+        json!([1, 1]),
+        "no refused call edited anything"
+    );
+
+    // Every field the edit tools do take, sent: still no mark, and the story is still held by both.
+    answer(
+        h,
+        &dan,
+        "edit_epic",
+        json!({"key": ep, "version": 1, "title": "Checkout flow", "brief": "Discovery is complete.", "initiative": ini}),
+    )
+    .await;
+    answer(
+        h,
+        &dan,
+        "edit_initiative",
+        json!({"key": ini, "version": 1, "title": "Bookings 2027", "brief": "Discovery is complete.",
+               "horizon": "Next", "target_month": "2027-03", "owner": BOB}),
+    )
+    .await;
+    assert_eq!(
+        json!([
+            epic(h, &ep).await["discovery_complete"],
+            initiative(h, &ini).await["discovery_complete"]
+        ]),
+        json!([null, null])
+    );
+    assert_eq!(held_by_discovery(h, &story).await, both);
+    // No tool is about discovery, blockers or overriding.
+    let (_, _, body) = send(&h.app, mcp_modern(&dan, 1, "tools/list", json!({}))).await;
+    let listed = serde_json::from_str::<Value>(&body).unwrap()["result"]["tools"].clone();
+    for tool in listed.as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        assert!(
+            !["discovery", "block", "override"]
+                .iter()
+                .any(|word| name.contains(word)),
+            "{name}"
+        );
+    }
+
+    // The control, which also shows the test can tell a mark from none: the API's own route marks both, and the
+    // story is ready.
+    for (path, item) in [("epics", &ep), ("initiatives", &ini)] {
+        let version =
+            api(h, &h.admin_token, &format!("/api/v1/{path}/{item}")).await["version"].clone();
+        post(
+            h,
+            &format!("/api/v1/{path}/{item}/discovery"),
+            json!({"version": version, "complete": true}),
+        )
+        .await;
+    }
+    assert_eq!(held_by_discovery(h, &story).await, Vec::<String>::new());
+    let ready = || async {
+        api(h, &h.admin_token, &format!("/api/v1/stories/{story}/ready")).await["ready"].clone()
+    };
+    assert_eq!(ready().await, true);
+
+    // Reopening: with both marks set, every field the edit tools take is sent again, and neither mark moves.
+    let marks_now = || async {
+        json!([
+            epic(h, &ep).await["discovery_complete"],
+            initiative(h, &ini).await["discovery_complete"]
+        ])
+    };
+    let marked = marks_now().await;
+    assert!(
+        marked[0].is_object() && marked[1].is_object(),
+        "the control: {marked}"
+    );
+    answer(
+        h,
+        &dan,
+        "edit_epic",
+        json!({"key": ep, "version": epic(h, &ep).await["version"], "title": "Checkout again",
+               "brief": "Discovery is not complete: reopen it.", "initiative": ini}),
+    )
+    .await;
+    answer(
+        h,
+        &dan,
+        "edit_initiative",
+        json!({"key": ini, "version": initiative(h, &ini).await["version"], "title": "Bookings again",
+               "brief": "Discovery is not complete: reopen it.", "horizon": "Now",
+               "clear_target_month": true, "clear_owner": true}),
+    )
+    .await;
+    assert_eq!(
+        marks_now().await,
+        marked,
+        "an edit carries the stored marks over, at and by included"
+    );
+    assert_eq!(ready().await, true, "and the story is still ready");
+}
+
+/// Everything that holds `story` back, as `/ready` says it, sorted: each reason with the item or the required
+/// decision it names.
+async fn held_by(h: &Harness, story: &str) -> Vec<(String, Value)> {
+    let readiness = api(h, &h.admin_token, &format!("/api/v1/stories/{story}/ready")).await;
+    let mut reasons: Vec<(String, Value)> = readiness["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|reason| {
+            let named = if reason["item"].is_null() {
+                reason["decision_id"].clone()
+            } else {
+                reason["item"].clone()
+            };
+            (reason["reason"].as_str().unwrap().to_string(), named)
+        })
+        .collect();
+    reasons.sort_by_key(|(reason, named)| (reason.clone(), named.to_string()));
+    reasons
+}
+
+/// Decision A of 2026-11-24, kb/ADR-0027 R1 and R2: `edit_epic` may move an epic to another initiative or out of
+/// one. A story under it then waits on the discovery mark and the required decisions of the epic's current
+/// ancestors, because readiness is derived on every read. The move marks nothing, satisfies and closes no
+/// decision, touches no story, and is an `edited` entry that names both initiatives, never an `override`.
+#[tokio::test]
+async fn moving_an_epic_changes_what_its_stories_wait_on_and_overrides_nothing() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    // Two initiatives that differ in both things a story waits on. `unmarked`: no discovery mark, one open
+    // required decision. `marked`: its discovery complete, another open required decision.
+    let unmarked = an_initiative(h, "mv-i1", "Bookings").await;
+    let marked = an_initiative(h, "mv-i2", "Payments").await;
+    post(
+        h,
+        &format!("/api/v1/initiatives/{marked}/discovery"),
+        json!({"version": 1, "complete": true}),
+    )
+    .await;
+    let mut decisions = Vec::new();
+    for (idem, on) in [("mv-d1", &unmarked), ("mv-d2", &marked)] {
+        let decision = post(
+            h,
+            "/api/v1/decisions",
+            json!({"idempotency_key": idem, "on": on, "title": format!("Decide for {on}"), "decider": DAN}),
+        )
+        .await;
+        decisions.push(decision["id"].clone());
+    }
+    let (on_unmarked, on_marked) = (decisions[0].clone(), decisions[1].clone());
+    // An epic whose own discovery is complete, under no initiative, and a story in it with a criterion.
+    let ep = ready_epic(h, "mv-e").await;
+    let story = key(&post(
+        h,
+        "/api/v1/stories",
+        json!({"idempotency_key": "mv-s", "title": "Pick a slot", "kind": "story", "epic": ep,
+               "criteria": ["a slot can be picked"], "labels": []}),
+    )
+    .await);
+    assert_eq!(
+        held_by(h, &story).await,
+        vec![],
+        "the control: ready before any move"
+    );
+
+    // What a move must leave as it is: the three marks, both decisions whole, and the story itself.
+    let untouched = || async {
+        json!({
+            "marks": [
+                epic(h, &ep).await["discovery_complete"],
+                initiative(h, &unmarked).await["discovery_complete"],
+                initiative(h, &marked).await["discovery_complete"],
+            ],
+            "decisions": [
+                api(h, &h.admin_token, &format!("/api/v1/decisions/{on_unmarked}")).await,
+                api(h, &h.admin_token, &format!("/api/v1/decisions/{on_marked}")).await,
+            ],
+            "story": api(h, &h.admin_token, &format!("/api/v1/stories/{story}")).await,
+        })
+    };
+    let before = untouched().await;
+    let story_entries = trail(h, &story).await;
+    assert!(
+        before["marks"][0].is_object()
+            && before["marks"][1].is_null()
+            && before["marks"][2].is_object(),
+        "the control: the epic and one initiative are marked, the other is not: {before}"
+    );
+    let reason = |name: &str, named: &Value| (name.to_string(), named.clone());
+    let move_epic = |change: Value| async {
+        let mut arguments = change;
+        arguments["key"] = json!(ep);
+        arguments["version"] = epic(h, &ep).await["version"].clone();
+        answer(h, &dan, "edit_epic", arguments).await
+    };
+
+    // Under the unmarked initiative: held by its missing mark and by its decision.
+    move_epic(json!({"initiative": unmarked})).await;
+    assert_eq!(
+        held_by(h, &story).await,
+        vec![
+            reason("ancestor_discovery_incomplete", &json!(unmarked)),
+            reason("decision_no_record", &on_unmarked),
+        ]
+    );
+    assert_eq!(untouched().await, before);
+    // Under the marked one: the first initiative's mark and decision no longer hold it; the second's decision does.
+    move_epic(json!({"initiative": marked})).await;
+    assert_eq!(
+        held_by(h, &story).await,
+        vec![reason("decision_no_record", &on_marked)]
+    );
+    assert_eq!(untouched().await, before);
+    // Out of any initiative: ready again, as before the first move.
+    move_epic(json!({"detach_initiative": true})).await;
+    assert_eq!(held_by(h, &story).await, vec![]);
+    assert_eq!(
+        api(h, &h.admin_token, &format!("/api/v1/stories/{story}/ready")).await["ready"],
+        true
+    );
+    assert_eq!(
+        untouched().await,
+        before,
+        "no mark, no decision and nothing of the story changed"
+    );
+
+    // The log: three edits of the epic, each naming where it went, with the client; and no override anywhere.
+    let moves: Vec<Value> = entries(h, &ep)
+        .await
+        .iter()
+        .filter(|entry| entry["action"] == "edited")
+        .map(|entry| {
+            json!([
+                entry["payload"]["from"]["initiative"],
+                entry["payload"]["to"]["initiative"],
+                entry["payload"]["client"]
+            ])
+        })
+        .collect();
+    assert_eq!(
+        moves,
+        vec![
+            json!([null, unmarked, "127.0.0.1"]),
+            json!([unmarked, marked, "127.0.0.1"]),
+            json!([marked, null, "127.0.0.1"]),
+        ]
+    );
+    let overrides: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM activity WHERE action = 'override'")
+            .fetch_one(&h.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(overrides, 0, "a move is an edit, never an override");
+    assert_eq!(
+        trail(h, &story).await,
+        story_entries,
+        "nothing was logged on the story"
+    );
+}

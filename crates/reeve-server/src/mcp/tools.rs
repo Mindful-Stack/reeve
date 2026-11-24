@@ -442,8 +442,9 @@ mod tests {
         assert_eq!(named(false), WRITE);
     }
 
-    /// kb/ADR-0029 R10 and R12: no tool's input has a way to override the gate, to rank, to set an external
-    /// reference or to attach, and every tool's input refuses what it does not list.
+    /// kb/ADR-0029 R10 and R12, and the owner's rule of 2026-11-24: no tool's input has a way to override the
+    /// gate, to rank, to set an external reference, to attach, to mark discovery or to add or remove a blocker,
+    /// and every tool's input refuses what it does not list.
     #[test]
     fn no_tool_takes_an_override_reason_or_another_withheld_field() {
         for tool in tools() {
@@ -457,6 +458,12 @@ mod tests {
                 "rank",
                 "external_ref",
                 "attachments",
+                "discovery_complete",
+                "discovery",
+                "complete",
+                "blocked_by",
+                "blocker",
+                "blocks",
             ] {
                 assert!(
                     properties.is_none_or(|p| !p.contains_key(withheld)),
