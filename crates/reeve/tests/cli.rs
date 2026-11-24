@@ -5069,6 +5069,37 @@ fn link_rm_deletes_the_forward_form_and_link_ls_lists() {
     );
 }
 
+/// A control character in a stored web link is escaped in text output, so a title cannot drive the reader's
+/// terminal; `--json` carries it as the server sent it.
+#[test]
+fn link_ls_escapes_control_characters_in_text_and_keeps_them_in_json() {
+    let listing = ok(serde_json::json!({"links": [], "web_links": [
+        {"id": 4, "title": "Report\u{1b}[2J\u{1b}[Hfake output", "url": "http://example.com/"}
+    ]}));
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-12/links",
+        200,
+        listing.clone(),
+    )]);
+    let out = reeve_at(&url, &["link", "ls", "TST-12"]);
+    server.join().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "web links:\n  Report\\u{1b}[2J\\u{1b}[Hfake output  http://example.com/\n"
+    );
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-12/links",
+        200,
+        listing.clone(),
+    )]);
+    let out = reeve_at(&url, &["--json", "link", "ls", "TST-12"]);
+    server.join().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        listing
+    );
+}
+
 /// `link add --url --title` posts the two fields as given (the server trims and stores the URL's parsed form) and
 /// prints the item's web links; `link rm --url` reads the listing, finds the web link whose stored URL the typed
 /// one names, and deletes it by id.

@@ -3,6 +3,7 @@
 //! `link ls`.
 use crate::glyphs::{Level, mark};
 use reeve_protocol::*;
+use std::borrow::Cow;
 use std::fmt::Write;
 
 /// Clap's parser for an item link name. Blocking is not an item link (kb/ADR-0031 R2), so the words people try
@@ -94,17 +95,43 @@ pub fn listing(v: &LinkListingDto) -> String {
     }
 }
 
-/// The `web links:` block: one line per web link, title then URL, oldest first as the server sent them. None when
-/// there are none.
+/// The `web links:` block: one line per web link, title then URL, oldest first as the server sent them, each with
+/// its control characters escaped (`for_terminal`). None when there are none. Every text form of a web link is
+/// this block: `link ls`, `show`, `story context` and the answers of `link add --url` and `link rm --url`.
 pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
     if links.is_empty() {
         return None;
     }
     let mut out = String::from("web links:");
     for l in links {
-        let _ = write!(out, "\n  {}  {}", l.title, l.url);
+        let _ = write!(
+            out,
+            "\n  {}  {}",
+            for_terminal(&l.title),
+            for_terminal(&l.url)
+        );
     }
     Some(out)
+}
+
+/// A web link's title or URL as text output prints it: every control character (Unicode category Cc: ESC, NUL, a
+/// line break, a tab and the rest) written as its Rust escape (`\u{1b}`, `\n`), so stored text cannot drive the
+/// reader's terminal or pass for another line of output. The server refuses such a title and its URL parser
+/// leaves none in a URL; this is the output's own guard, for a row stored before that refusal or by another
+/// server. `--json` does not come through here and stays lossless.
+pub fn for_terminal(s: &str) -> Cow<'_, str> {
+    if !s.chars().any(char::is_control) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// Whether a URL as a person typed it names a stored web link. The stored form is the server's URL parser's
@@ -139,6 +166,32 @@ mod tests {
                 "web links:\n  Scenario page  https://example.com/wiki/scenario\n  Board  http://example.com/board"
             )
         );
+    }
+
+    /// A title or a URL from a server that stored a control character (a row older than the server's refusal, or
+    /// another server) is printed with it escaped: the terminal shows the text and runs none of it.
+    #[test]
+    fn a_control_character_in_a_web_link_is_printed_escaped() {
+        assert_eq!(
+            web_links(&[web(
+                1,
+                "Report\u{1b}[2J\u{1b}[Hfake\noutput\ttab\0\u{9b}K\u{7f}",
+                "http://example.com/a\u{1b}]0;x\u{7}\r"
+            )])
+            .as_deref(),
+            Some(
+                "web links:\n  Report\\u{1b}[2J\\u{1b}[Hfake\\noutput\\ttab\\u{0}\\u{9b}K\\u{7f}  http://example.com/a\\u{1b}]0;x\\u{7}\\r"
+            )
+        );
+        // Text without one is printed as it is, whatever its script, and is not copied to be so.
+        for plain in [
+            "Scenario page",
+            "Scenariosida för ärenden",
+            "シナリオ 🚀",
+            "a\\nb",
+        ] {
+            assert!(matches!(for_terminal(plain), Cow::Borrowed(s) if s == plain));
+        }
     }
 
     #[test]
