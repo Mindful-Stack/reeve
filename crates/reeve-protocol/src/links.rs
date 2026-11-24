@@ -43,6 +43,10 @@ struct Name {
     out: &'static str,
     /// Read from the `to` item.
     inward: &'static str,
+    /// Whether the link has a direction: `from` and `to` are different roles. Stated here, never derived from the
+    /// wording: it decides how a link is stored (an undirected one once, lower key first), and the wording may
+    /// change without that changing.
+    directed: bool,
 }
 
 /// The one table of names, in `LinkType`'s declaration order: `LinkType::name` indexes it, and a test holds the
@@ -54,6 +58,7 @@ const NAMES: [Name; 3] = [
         cli: "follows",
         out: "follows",
         inward: "is followed by",
+        directed: true,
     },
     Name {
         link_type: LinkType::Duplicates,
@@ -61,6 +66,7 @@ const NAMES: [Name; 3] = [
         cli: "duplicates",
         out: "duplicates",
         inward: "is duplicated by",
+        directed: true,
     },
     Name {
         link_type: LinkType::RelatesTo,
@@ -68,6 +74,7 @@ const NAMES: [Name; 3] = [
         cli: "relates-to",
         out: "relates to",
         inward: "relates to",
+        directed: false,
     },
 ];
 
@@ -99,9 +106,11 @@ impl LinkType {
     pub fn from_cli(s: &str) -> Option<Self> {
         NAMES.iter().find(|n| n.cli == s).map(|n| n.link_type)
     }
-    /// Whether the two ends read differently. `relates_to` does not: it is stored once, whichever end named it.
+    /// Whether the link has a direction, from the name table's own column. `relates_to` has none: it is stored
+    /// once, whichever end named it, and the table's check holds the same rule (a test in `reeve-planning` holds
+    /// the two in step).
     pub fn directed(self) -> bool {
-        self.name().out != self.name().inward
+        self.name().directed
     }
 }
 

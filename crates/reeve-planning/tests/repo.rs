@@ -3478,6 +3478,20 @@ async fn the_item_links_table_refuses_what_the_domain_refuses() {
     for t in LinkType::ALL {
         assert!(insert("ABC-20", "ABC-21", t.wire()).await.is_ok(), "{t:?}");
     }
+    // The table's order check and the protocol's `directed` column say the same thing for every name: an
+    // undirected name is refused with the higher key first, a directed one is accepted in both orders. A name
+    // whose `directed` changes, or a new one, without a migration that changes the check fails here.
+    assert!("ABC-30".as_bytes() < "ABC-31".as_bytes(), "the control");
+    for t in LinkType::ALL {
+        let lower_first = insert("ABC-30", "ABC-31", t.wire()).await;
+        let higher_first = insert("ABC-31", "ABC-30", t.wire()).await;
+        assert!(lower_first.is_ok(), "{t:?}, the lower key first");
+        assert_eq!(
+            higher_first.is_ok(),
+            t.directed(),
+            "{t:?}: the higher key first is accepted exactly when the name is directed"
+        );
+    }
 
     assert!(
         insert("ABC-1", "ABC-1", "follows").await.is_err(),
