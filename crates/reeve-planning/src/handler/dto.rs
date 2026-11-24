@@ -7,7 +7,7 @@ use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
-use crate::ports::ItemHead;
+use crate::ports::{ItemHead, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
@@ -16,7 +16,7 @@ use reeve_protocol::{
     InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue,
     PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
     RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto,
-    StoryDto, StoryPromiseDto,
+    StoryDto, StoryPromiseDto, WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -561,5 +561,13 @@ pub(crate) fn item_link_dto(
             level: head.level,
             title: head.title.clone(),
         },
+    }
+}
+
+pub(crate) fn web_link_dto(w: &StoredWebLink) -> WebLinkDto {
+    WebLinkDto {
+        id: w.id,
+        title: w.link.title().to_owned(),
+        url: w.link.url().to_owned(),
     }
 }

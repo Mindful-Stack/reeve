@@ -203,8 +203,8 @@ impl Handlers {
         end_read(tx, out).await
     }
 
-    /// Everything `reeve link ls` shows for one item, from one read-only snapshot: its item links as it reads
-    /// them (and, when they exist, its web links, GRA-878). NotFound when no item has the key.
+    /// Everything `reeve link ls` shows for one item, from one read-only snapshot: its item links and its web
+    /// links as it reads them. NotFound when no item has the key.
     pub async fn link_listing(&self, key: &Key) -> Result<LinkListingDto, HandlerError> {
         self.item_type_of(key).await?;
         let mut tx = self
@@ -214,6 +214,7 @@ impl Handlers {
         let out = async {
             Ok(LinkListingDto {
                 links: self.item_link_dtos_in(&mut tx, key).await?,
+                web_links: self.web_link_dtos_in(&mut tx, key).await?,
             })
         }
         .await;

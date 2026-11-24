@@ -2150,12 +2150,14 @@ export interface components {
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
         };
-        /**
-         * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
-         *     the item's web links when they exist (GRA-878).
-         */
+        /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
         LinkListingDto: {
             links: components["schemas"]["ItemLinkDto"][];
+            /**
+             * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+             *     none.
+             */
+            web_links: components["schemas"]["WebLinkDto"][];
         };
         LinkRecord: {
             path: string;
@@ -3191,12 +3193,14 @@ export interface components {
         Response_LinkListingDto: {
             /** @enum {string} */
             outcome: "ok";
-            /**
-             * @description `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
-             *     the item's web links when they exist (GRA-878).
-             */
+            /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
             value: {
                 links: components["schemas"]["ItemLinkDto"][];
+                /**
+                 * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+                 *     none.
+                 */
+                web_links: components["schemas"]["WebLinkDto"][];
             };
         } | {
             /** @enum {string} */
@@ -4581,6 +4585,17 @@ export interface components {
         /** @description The war-room rows the caller saw; bulk clear and renew act on exactly these. */
         WarRoomItems: {
             items: components["schemas"]["ItemRefDto"][];
+        };
+        /**
+         * @description A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come
+         *     oldest first.
+         */
+        WebLinkDto: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+            url: string;
         };
     };
     responses: never;

@@ -2650,17 +2650,25 @@
         "type": "object"
       },
       "LinkListingDto": {
-        "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+        "description": "`GET /items/{key}/links`: what `reeve link ls` shows.",
         "properties": {
           "links": {
             "items": {
               "$ref": "#/components/schemas/ItemLinkDto"
             },
             "type": "array"
+          },
+          "web_links": {
+            "description": "The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as\nnone.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "links"
+          "links",
+          "web_links"
         ],
         "type": "object"
       },
@@ -6143,17 +6151,25 @@
                 "type": "string"
               },
               "value": {
-                "description": "`GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains\nthe item's web links when they exist (GRA-878).",
+                "description": "`GET /items/{key}/links`: what `reeve link ls` shows.",
                 "properties": {
                   "links": {
                     "items": {
                       "$ref": "#/components/schemas/ItemLinkDto"
                     },
                     "type": "array"
+                  },
+                  "web_links": {
+                    "description": "The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as\nnone.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": "array"
                   }
                 },
                 "required": [
-                  "links"
+                  "links",
+                  "web_links"
                 ],
                 "type": "object"
               }
@@ -10630,6 +10646,28 @@
         },
         "required": [
           "items"
+        ],
+        "type": "object"
+      },
+      "WebLinkDto": {
+        "description": "A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come\noldest first.",
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "description": "As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "url"
         ],
         "type": "object"
       }

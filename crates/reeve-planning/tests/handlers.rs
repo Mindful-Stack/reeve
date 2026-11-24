@@ -10867,3 +10867,317 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
             .all(|i| i.links.is_none())
     );
 }
+
+/// kb/ADR-0031 R5, R7. A web link is on one item, one per URL (compared as stored), listed oldest first, logged
+/// on its item on each change and never for a no-op, and removed by its id on that item only.
+#[tokio::test]
+async fn web_links_are_one_per_url_logged_on_their_item_and_removed_by_id() {
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let bot = ctx("bot@example.com", true);
+    let e = h
+        .create_epic(&dan, "e", "Invoices", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "Template",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let entries = |action: &str| -> Vec<(String, String, serde_json::Value)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == action)
+            .map(|r| {
+                (
+                    r.entity_type.to_string(),
+                    r.entity_key.clone(),
+                    r.payload.clone(),
+                )
+            })
+            .collect()
+    };
+    let web = |k: &Key| {
+        let (h, k) = (h.clone(), k.clone());
+        async move { h.link_listing(&k).await.unwrap().web_links }
+    };
+    let scenario = "https://example.com/wiki/scenario";
+
+    // Added by an automation caller, stored trimmed and in the parser's form.
+    assert!(
+        h.add_web_link(
+            &bot,
+            &e,
+            "  Scenario page ",
+            "HTTPS://Example.com/wiki/scenario"
+        )
+        .await
+        .unwrap()
+    );
+    let listed = web(&e).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].title.as_str(), listed[0].url.as_str()),
+        ("Scenario page", scenario)
+    );
+    let id = listed[0].id;
+    let added = json!({"id": id, "title": "Scenario page", "url": scenario});
+    assert_eq!(
+        entries("web_link_added"),
+        vec![("epic".to_string(), e.to_string(), added.clone())]
+    );
+
+    // The same URL in another spelling, same title: already there.
+    assert!(
+        !h.add_web_link(
+            &bot,
+            &e,
+            "Scenario page",
+            "https://EXAMPLE.com/wiki/scenario"
+        )
+        .await
+        .unwrap()
+    );
+    // The same URL with another title is not an edit: remove it first.
+    assert!(matches!(
+        h.add_web_link(&bot, &e, "Scenario", scenario).await,
+        Err(HandlerError::Validation(m))
+            if m == "this item already has a web link to that URL, titled \"Scenario page\": remove it first, then add it with the new title"
+    ));
+    assert_eq!(entries("web_link_added").len(), 1, "neither wrote an entry");
+    assert_eq!(web(&e).await, listed, "and neither changed the list");
+
+    // The same URL on another item, and a second one on the epic, which lists after the first.
+    assert!(
+        h.add_web_link(&dan, &s, "Scenario page", scenario)
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&dan, &e, "Board", "http://example.com/board")
+            .await
+            .unwrap()
+    );
+    let titles = |links: &[reeve_protocol::WebLinkDto]| -> Vec<String> {
+        links.iter().map(|w| w.title.clone()).collect()
+    };
+    assert_eq!(titles(&web(&e).await), vec!["Scenario page", "Board"]);
+    assert_eq!(entries("web_link_added")[1].0, "story");
+
+    // Removed by id, on its own item only.
+    assert!(
+        !h.remove_web_link(&bot, &s, id).await.unwrap(),
+        "the epic's id on the story"
+    );
+    assert!(h.remove_web_link(&bot, &e, id).await.unwrap());
+    assert!(
+        !h.remove_web_link(&bot, &e, id).await.unwrap(),
+        "already gone"
+    );
+    assert_eq!(
+        entries("web_link_removed"),
+        vec![("epic".to_string(), e.to_string(), added)],
+        "the entry keeps what was removed"
+    );
+    assert_eq!(titles(&web(&e).await), vec!["Board"]);
+    assert_eq!(
+        web(&s).await.len(),
+        1,
+        "the story's own web link is untouched"
+    );
+
+    // Refusals write nothing: no entry, and no row. A URL with a user name or a password is among them, so a
+    // credential typed into one reaches neither the table nor the activity log.
+    let before = sink.0.lock().unwrap().len();
+    let stored = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM web_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let rows = stored().await;
+    assert_eq!(
+        rows, 2,
+        "the control: the epic's Board and the story's Scenario page are stored"
+    );
+    for (title, url) in [
+        ("", "https://example.com/"),
+        ("ok", "ftp://example.com/x"),
+        ("ok", "javascript:alert(1)"),
+        ("ok", "example.com/wiki"),
+        ("ok", "https://mia:secret@example.com/wiki"),
+        ("ok", "https://mia@example.com/wiki"),
+    ] {
+        assert!(
+            matches!(
+                h.add_web_link(&bot, &e, title, url).await,
+                Err(HandlerError::Validation(_))
+            ),
+            "{title:?} {url:?}"
+        );
+    }
+    let ghost: Key = "ABC-999".parse().unwrap();
+    assert!(matches!(
+        h.add_web_link(&bot, &ghost, "ok", "https://example.com/")
+            .await,
+        Err(HandlerError::NotFound)
+    ));
+    assert!(matches!(
+        h.remove_web_link(&bot, &ghost, id).await,
+        Err(HandlerError::NotFound)
+    ));
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        before,
+        "no entry for a refusal"
+    );
+    assert_eq!(stored().await, rows, "and no row");
+    assert!(
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| !r.payload.to_string().contains("secret")),
+        "nothing of the refused URL is in the log"
+    );
+}
+
+/// What plan apply (GRA-879) relies on when it calls `add_web_link_in` and `remove_web_link_in` inside the plan's
+/// transaction: they write on the caller's transaction only, so nothing of them is left when it is not committed.
+/// As for item links (Task 3), the caller is the public form and what stops it short of the commit is the sink
+/// refusing the entry, by which time the `_in` form has written the row.
+#[tokio::test]
+async fn a_web_link_written_in_a_transaction_that_is_rolled_back_leaves_no_row_and_no_entry() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_table_sink(pool.clone()).await;
+    let c = ctx("dan@example.com", false);
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "s",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    // (rows of web_links, entries with this action), as another connection sees them: what was committed.
+    let left = |action: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM web_links")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            (rows, entries_committed(&pool, action).await)
+        }
+    };
+
+    sink.refuse(Some(&s));
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        left("web_link_added").await,
+        (0, 0),
+        "no row and no entry of the add is left"
+    );
+    // The control: the same call, not refused, leaves the row and its entry.
+    sink.refuse(None);
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .unwrap()
+    );
+    assert_eq!(left("web_link_added").await, (1, 1), "the control");
+
+    let id = h.link_listing(&s).await.unwrap().web_links[0].id;
+    sink.refuse(Some(&s));
+    assert!(h.remove_web_link(&c, &s, id).await.is_err());
+    assert_eq!(
+        left("web_link_removed").await,
+        (1, 0),
+        "the web link is still there and no entry says otherwise"
+    );
+    sink.refuse(None);
+    assert!(h.remove_web_link(&c, &s, id).await.unwrap());
+    assert_eq!(left("web_link_removed").await, (0, 1), "the control");
+}
+
+/// kb/ADR-0010 R5: a web link and its entry commit together.
+#[tokio::test]
+async fn a_web_link_and_its_entry_commit_together() {
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk_probe(
+        pool.clone(),
+        "SELECT (SELECT title FROM web_links WHERE item_key = $1 LIMIT 1)",
+    );
+    let c = ctx("dan@example.com", false);
+    let s = h
+        .create_story(
+            &c,
+            "s",
+            "s",
+            Kind::Chore,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    assert!(
+        h.add_web_link(&c, &s, "Page", "https://example.com/")
+            .await
+            .unwrap()
+    );
+    let added = sink.entries("web_link_added");
+    assert_eq!(added.len(), 1);
+    assert_eq!(
+        added[0].1.as_deref(),
+        Some("Page"),
+        "written before its entry"
+    );
+    assert_eq!(added[0].2, None, "not committed before its entry");
+    let id = h.link_listing(&s).await.unwrap().web_links[0].id;
+    assert!(h.remove_web_link(&c, &s, id).await.unwrap());
+    let removed = sink.entries("web_link_removed");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].1, None, "deleted before its entry");
+    assert_eq!(
+        removed[0].2.as_deref(),
+        Some("Page"),
+        "the delete is not committed yet"
+    );
+}

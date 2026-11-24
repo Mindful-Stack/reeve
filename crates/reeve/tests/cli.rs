@@ -5027,7 +5027,7 @@ fn link_rm_deletes_the_forward_form_and_link_ls_lists() {
         item_link_json("follows", "out", "follows", "TST-5", "story", "Billing account"),
         item_link_json("follows", "in", "is followed by", "TST-12", "story", "Dunning"),
         item_link_json("relates_to", "out", "relates to", "TST-2", "epic", "Reminder emails"),
-    ]}));
+    ], "web_links": []}));
     let (url, server) = serve(vec![(
         "GET /api/v1/items/TST-7/links",
         200,

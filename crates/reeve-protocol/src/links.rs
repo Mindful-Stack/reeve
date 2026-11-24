@@ -168,11 +168,15 @@ pub struct AddWebLink {
     pub url: String,
 }
 
-/// `GET /items/{key}/links`: what `reeve link ls` shows. Named for the listing, not for item links alone: it gains
-/// the item's web links when they exist (GRA-878).
+/// `GET /items/{key}/links`: what `reeve link ls` shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LinkListingDto {
     pub links: Vec<ItemLinkDto>,
+    /// The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+    /// none.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub web_links: Vec<WebLinkDto>,
 }
 
 #[cfg(test)]

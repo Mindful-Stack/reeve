@@ -17,6 +17,7 @@ mod similar;
 mod sprints;
 mod stories;
 mod urgent;
+mod web_links;
 use crate::ports::*;
 use attachments::attachment_ids;
 pub use attachments::{MAX_CLAIM, MAX_UNCLAIMED_BYTES};
@@ -106,6 +107,11 @@ impl From<crate::domain::items::ItemError> for HandlerError {
 }
 impl From<crate::domain::item_link::ItemLinkError> for HandlerError {
     fn from(e: crate::domain::item_link::ItemLinkError) -> Self {
+        Self::Validation(e.to_string())
+    }
+}
+impl From<crate::domain::web_link::WebLinkError> for HandlerError {
+    fn from(e: crate::domain::web_link::WebLinkError) -> Self {
         Self::Validation(e.to_string())
     }
 }
