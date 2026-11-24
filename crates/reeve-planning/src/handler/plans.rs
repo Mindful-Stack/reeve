@@ -13,18 +13,20 @@
 //! all: an activity entry takes the activity log's lock until its transaction ends, so nothing may be inserted
 //! after it in the same transaction. Both are idempotent by their content, so a second apply answers each as
 //! existing, and finishes a plan whose earlier apply stopped at a link, once whatever made that link fail is
-//! corrected (a web link retitled meanwhile is then reported by the check).
+//! corrected. The links the plan's items have already are read once before the link phase, and one found there
+//! is answered without a transaction (`apply_plan_links`).
 use super::import::check_item_ref;
 use super::item_links::ResolvedItemLink;
 use super::*;
 use crate::domain::item_link::{ItemLink, ItemLinkError};
 use crate::domain::items::*;
 use crate::domain::web_link::{WebLink, WebLinkError};
+use crate::ports::StoredWebLink;
 use reeve_protocol::{
     ApplyPlan, DeliveryState, Kind, PlanApplied, PlanLink, PlanWebLink, PlannedBlock,
     PlannedDecision, PlannedItem, PlannedLink, PlannedWebLink,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What a plan reference names: an item the plan creates, or one that exists.
 #[derive(Debug, Clone)]
@@ -262,15 +264,18 @@ impl Handlers {
         })
     }
 
-    /// The plan's item links and web links, written after its items exist, each in a transaction of its own (begin,
-    /// the `_in` form, commit), as the plan's blockers commit one by one: a link's row and its entries commit
-    /// together or not at all. Never one transaction for all of them: an entry takes the activity log's lock until
-    /// its transaction ends, and a transaction that went on to insert the next link while holding it could deadlock
-    /// with a caller adding that same link. A link that fails leaves the earlier ones in; applying the same plan id
-    /// again finishes, once whatever made the link fail is corrected (a web link retitled meanwhile is then
-    /// reported by the check). The ends are the plan's own (the level from the validation, the key from the item
-    /// just created or the existing one), so nothing is looked up here. An item link or a web link that is already
-    /// there answers `created` false and writes nothing.
+    /// The plan's item links and web links, written after its items exist. The item links and web links the
+    /// plan's items have today are read once first (`plan_links_today`); an entry found there is already stored and
+    /// answers `created` false with no transaction at all, so a replay of a large plan costs two reads and not a
+    /// transaction per entry. An entry not found there is written in a transaction of its own (begin, the `_in`
+    /// form, commit), as the plan's blockers commit one by one: a link's row and its entries commit together or
+    /// not at all. The `_in` form is idempotent itself, so an entry someone else wrote after the read, or one the
+    /// plan lists twice, still answers `created` false and writes nothing. Never one transaction for all of them:
+    /// an entry takes the activity log's lock until its transaction ends, and a transaction that went on to
+    /// insert the next link while holding it could deadlock with a caller adding that same link. A link that
+    /// fails leaves the earlier ones in; applying the same plan id again finishes, once whatever made the link
+    /// fail is corrected. The ends are the plan's own (the level from the validation, the key from the item just
+    /// created or the existing one), so no item is looked up here.
     async fn apply_plan_links(
         &self,
         c: &Ctx,
@@ -278,35 +283,60 @@ impl Handlers {
         refs: &Refs,
         keys: &HashMap<String, Key>,
     ) -> Result<(Vec<PlannedLink>, Vec<PlannedWebLink>), HandlerError> {
-        let mut links = Vec::with_capacity(p.links.len());
+        // The ends as the plan named them; `ResolvedItemLink` keeps each level with its key when a `relates_to`
+        // is stored with the lower key first.
+        let mut wanted_links = Vec::with_capacity(p.links.len());
         for l in &p.links {
-            // The ends as the plan named them; `ResolvedItemLink` keeps each level with its key when a
-            // `relates_to` is stored with the lower key first.
-            let link = ResolvedItemLink::new(
+            wanted_links.push(ResolvedItemLink::new(
                 refs.end(keys, &l.from, None),
                 l.link_type,
                 refs.end(keys, &l.to, None),
-            )?;
-            let mut tx = self.pool.begin().await?;
-            let created = self.add_item_link_in(&mut tx, c, &link).await?;
-            tx.commit().await?;
+            )?);
+        }
+        let mut wanted_web = Vec::with_capacity(p.web_links.len());
+        for w in &p.web_links {
+            let (level, on) = refs.end(keys, &w.on, None);
+            wanted_web.push((level, on, WebLink::new(&w.title, &w.url)?));
+        }
+        let (stored_links, stored_web) = self.plan_links_today(&wanted_links, &wanted_web).await?;
+
+        let mut links = Vec::with_capacity(wanted_links.len());
+        for link in &wanted_links {
+            let created = if stored_links.contains(link.link()) {
+                false
+            } else {
+                let mut tx = self.pool.begin().await?;
+                let created = self.add_item_link_in(&mut tx, c, link).await?;
+                tx.commit().await?;
+                created
+            };
             let [(from_level, from), (to_level, to)] = link.ends();
             links.push(PlannedLink {
                 from: from.clone(),
                 from_level,
-                link_type: l.link_type,
+                link_type: link.link().link_type(),
                 to: to.clone(),
                 to_level,
                 created,
             });
         }
-        let mut web_links = Vec::with_capacity(p.web_links.len());
-        for w in &p.web_links {
-            let (level, on) = refs.end(keys, &w.on, None);
-            let link = WebLink::new(&w.title, &w.url)?;
-            let mut tx = self.pool.begin().await?;
-            let created = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
-            tx.commit().await?;
+        let mut web_links = Vec::with_capacity(wanted_web.len());
+        for (level, on, link) in wanted_web {
+            // The item's web links as read; `is_new_among` says whether this one is among them (false). Anything
+            // else, a refusal included, is the `_in` form's to answer on what is stored by then.
+            let on_the_item = stored_web.get(&on).map(Vec::as_slice).unwrap_or_default();
+            let stored = matches!(
+                link.is_new_among(on_the_item.iter().map(|s| &s.link)),
+                Ok(false)
+            );
+            let created = if stored {
+                false
+            } else {
+                let mut tx = self.pool.begin().await?;
+                let created = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
+                tx.commit().await?;
+                created
+            };
             web_links.push(PlannedWebLink {
                 on,
                 level,
@@ -316,6 +346,62 @@ impl Handlers {
             });
         }
         Ok((links, web_links))
+    }
+
+    /// The item links and the web links that the items named by the plan's links have today, in one read-only
+    /// snapshot and one statement each, through the ports' reads (the ones a listing uses): every item link with
+    /// one of those items at either end, and every web link by its item. Empty lists send nothing.
+    async fn plan_links_today(
+        &self,
+        links: &[ResolvedItemLink],
+        web: &[(ItemType, Key, WebLink)],
+    ) -> Result<(HashSet<ItemLink>, HashMap<Key, Vec<StoredWebLink>>), HandlerError> {
+        // One end of each item link is enough: the read answers every link with a listed item at either end.
+        let link_items: Vec<Key> = links
+            .iter()
+            .map(|l| l.link().from_key().clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let web_items: Vec<Key> = web
+            .iter()
+            .map(|(_, on, _)| on.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        if link_items.is_empty() && web_items.is_empty() {
+            return Ok((HashSet::new(), HashMap::new()));
+        }
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let read = async {
+            let stored_links = if link_items.is_empty() {
+                vec![]
+            } else {
+                self.ports
+                    .item_links
+                    .item_links_of_in(&mut tx, &link_items)
+                    .await?
+            };
+            let stored_web = if web_items.is_empty() {
+                vec![]
+            } else {
+                self.ports
+                    .web_links
+                    .web_links_of_in(&mut tx, &web_items)
+                    .await?
+            };
+            Ok::<_, HandlerError>((stored_links, stored_web))
+        }
+        .await;
+        let (stored_links, stored_web) = end_read(tx, read).await?;
+        let mut by_item: HashMap<Key, Vec<StoredWebLink>> = HashMap::new();
+        for w in stored_web {
+            by_item.entry(w.item.clone()).or_default().push(w);
+        }
+        Ok((stored_links.into_iter().collect(), by_item))
     }
 
     /// Every problem in the plan, all at once (an agent fixes the file in one pass), before anything is written. Returns
@@ -355,7 +441,7 @@ impl Handlers {
             }
         }
         self.check_name_levels(p, &refs, &mut errors).await?;
-        let mut decision_names = std::collections::HashSet::new();
+        let mut decision_names = HashSet::new();
         for d in &p.decisions {
             if refs.planned.contains_key(&d.name) || !decision_names.insert(&d.name) {
                 errors.push(format!(

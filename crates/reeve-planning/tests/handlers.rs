@@ -11716,3 +11716,97 @@ async fn a_plan_reference_that_is_a_native_key_and_an_external_reference_names_e
         .unwrap();
     assert_eq!(decisions.len(), 1, "the decision is on the epic");
 }
+
+/// A replay of a plan opens no write transaction for a link that is already there: the item links and web links
+/// of the plan's items are read once before the link phase, and an entry found there answers `created` false
+/// without an insert. Seen at the statement level: the first apply sends the inserts, the replay sends none and
+/// reads the item links once, however many the plan lists.
+#[tokio::test]
+async fn a_replayed_plan_reads_its_links_once_and_sends_no_insert_for_one_that_exists() {
+    let (_c, pool) = common::pg_counted().await;
+    let (h, _sink) = mk_table_sink(pool.clone()).await;
+    let dan = ctx("dan@example.com", false);
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(serde_json::json!({
+            "id": "replay",
+            "epics": [{"name": "e", "title": "E"}],
+            "stories": [
+                {"name": "a", "title": "A", "epic": "e"},
+                {"name": "b", "title": "B", "epic": "e"},
+                {"name": "c", "title": "C", "epic": "e"}
+            ],
+            "links": [
+                {"from": "b", "type": "follows", "to": "a"},
+                {"from": "c", "type": "follows", "to": "b"},
+                {"from": "c", "type": "relates_to", "to": "a"},
+                {"from": "e", "type": "duplicates", "to": "c"}
+            ],
+            "web_links": [
+                {"on": "a", "title": "Page", "url": "https://example.com/a"},
+                {"on": "a", "title": "Notes", "url": "https://example.com/notes"},
+                {"on": "e", "title": "Page", "url": "https://example.com/a"}
+            ]
+        }))
+        .unwrap()
+    };
+    // How many times the statements whose text holds `text` were sent, in the block last measured.
+    let calls = |text: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT coalesce(sum(calls), 0)::bigint FROM pg_stat_statements \
+                 WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+                 AND query ILIKE '%' || $1 || '%'",
+            )
+            .bind(text)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    common::statements(&pool, || async {
+        let first = h.apply_plan(&dan, plan()).await.unwrap();
+        assert!(first.links.iter().all(|l| l.created));
+        assert!(first.web_links.iter().all(|w| w.created));
+    })
+    .await;
+    assert_eq!(
+        (
+            calls("INSERT INTO item_links").await,
+            calls("INSERT INTO web_links").await
+        ),
+        (4, 3),
+        "the control: the first apply sends one insert per link, and the view shows them"
+    );
+
+    common::statements(&pool, || async {
+        let again = h.apply_plan(&dan, plan()).await.unwrap();
+        assert_eq!(
+            (again.links.len(), again.web_links.len()),
+            (4, 3),
+            "every entry is answered"
+        );
+        assert!(again.links.iter().all(|l| !l.created));
+        assert!(again.web_links.iter().all(|w| !w.created));
+    })
+    .await;
+    assert_eq!(
+        (
+            calls("INSERT INTO item_links").await,
+            calls("INSERT INTO web_links").await
+        ),
+        (0, 0),
+        "the replay sends no insert"
+    );
+    assert_eq!(
+        calls("FROM item_links").await,
+        1,
+        "the item links of the plan's items are read once"
+    );
+    assert_eq!(
+        calls("FROM web_links").await,
+        2,
+        "the web links are read once by the validation and once before the link phase"
+    );
+}
