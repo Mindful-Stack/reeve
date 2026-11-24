@@ -149,7 +149,7 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   decision holds.
 - 2026-11-24 (GRA-901, GRA-902, https://github.com/Mindful-Stack/reeve/pull/79): R10's set grows by eight tools, named here as R10
   requires. Four come with this pull request: `create_epic`, `edit_epic`, `create_initiative` and `edit_initiative`.
-  Four come with the pull request after it (GRA-902) and do not exist until it merges: `add_item_link`,
+  Four come with the pull request for GRA-902, which follows this one, and exist only from its merge: `add_item_link`,
   `remove_item_link`, `add_web_link` and `remove_web_link`. Each mirrors one CLI command and runs the action its API
   route runs (R1): `reeve epic create`, `reeve epic edit`, `reeve initiative create`, `reeve initiative edit`,
   `reeve link add` and `reeve link rm` for an item link, and `reeve link add --url` and `reeve link rm --url` for a
@@ -161,10 +161,10 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   (`no_epic_or_initiative_tool_can_mark_or_reopen_discovery`), adds or removes a blocker
   (`the_link_tools_gate_nothing_and_no_tool_touches_a_blocker`, which comes with the four link tools) or carries an
   override reason (`no_tool_takes_an_override_reason_or_another_withheld_field`, which from this pull request on also
-  refuses an input that names a discovery mark or a blocker; `move_story_never_overrides_the_gate`). We decided that
-  the four link tools' descriptions say an item link is informational and holds nothing back (kb/ADR-0031 R2, R3).
+  refuses an input that names a discovery mark or a blocker; `move_story_never_overrides_the_gate`).
   Not in the set, and needing an observation of their own under R10: promises, urgent marks, and writing a required
-  decision, a sprint or a goal.
+  decision, a sprint or a goal. We decided that the descriptions of `add_item_link` and `remove_item_link` say
+  that an item link is informational and holds nothing back (kb/ADR-0031 R2, R3).
   We decided that `edit_epic` keeps what `reeve epic edit` can do: move an epic to another initiative or out of one.
   That changes whose discovery mark and required decisions its stories wait on, as `edit_story` already can by
   putting a story in another epic. It is an edit, not an override: readiness is derived (kb/ADR-0027 R1), no tool
@@ -174,12 +174,13 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   pull request's tools without a new approval: `write` is R7's scope for everything that changes, the approval page
   named fewer things when it was approved (until this pull request "create, edit, comment on and move stories"),
   and R5 ends every such connection within 30 days of its approval.
-  Text in the planner can now steer a model into creating an epic or an initiative, replacing a title or a brief (an
-  `edited` entry keeps no earlier text) or moving an epic, and, once GRA-902 merges, into adding or removing an item
-  link or a web link, a URL of that text's choosing included, under the person's name; the client's confirmation and
-  the limit on changes remain the only checks. Briefs are text a chat model can now write as well as read, and web
-  link titles and URLs will be once GRA-902 merges; the operator's privacy statement must cover each
-  (`deploy/README.md`). No trigger fired; the decision holds.
+  With this pull request's four tools, text in the planner can steer a model into creating an epic or an
+  initiative, replacing a title or a brief (an `edited` entry keeps no earlier text) or moving an epic; with
+  GRA-902's four, into adding or removing an item link or a web link, a URL of that text's choosing included. Each
+  is done under the person's name; the client's confirmation and the limit on changes remain the only checks.
+  Briefs become text a chat model can write as well as read with this pull request, and web link titles and URLs
+  with GRA-902's; the operator's privacy statement must cover each (`deploy/README.md`). No trigger fired; the
+  decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)
