@@ -131,6 +131,22 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   it as an observation and drop registration") no longer matches what is built: registration now serves apps
   other than the two clients. If that trigger fires, or if no app we operate an instance for has needed
   registration by 2027-05-15, the record should be replaced rather than observed again. No trigger has fired.
+- 2026-11-23 (reeve#61): kb/ADR-0020, which this record depends on and whose CLI downloads the Context counts
+  among the routes that answer without a caller, is superseded by kb/ADR-0030. The successor keeps what this record
+  relies on: the CLI downloads are still served without sign-in, ignore any token or cookie, and allow no further
+  unauthenticated route; read kb/ADR-0020 in the Context and See also as kb/ADR-0030. No trigger fired; the
+  decision holds.
+- 2026-11-24 (kb/ADR-0031, GRA-877, https://github.com/Mindful-Stack/reeve/pull/73): the read tools `get_story`,
+  `get_epic` and `get_initiative` now show the item's item links, bounded by the adapter, with omitted counts
+  (`links_omitted`). No tool was added and no input changed, so R10's set stands; item links are written through
+  the API and the CLI only until an observation here names a tool for it. Linked items' titles are more text a chat
+  model reads from the planner. No trigger fired; the decision holds.
+- 2026-11-24 (kb/ADR-0031, GRA-878, https://github.com/Mindful-Stack/reeve/pull/74): the read tools `get_story`,
+  `get_epic` and `get_initiative` now also show the item's web links, bounded by the adapter, with omitted counts
+  (`web_links_omitted`); a web link is sent whole or not at all, and a URL is never cut. Their titles and URLs are
+  free text written by people that a chat model now reads, which the tool descriptions say and the operator's
+  privacy statement must cover (`deploy/README.md`). No tool was added, so R10's set stands. No trigger fired; the
+  decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)

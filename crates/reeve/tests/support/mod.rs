@@ -96,6 +96,8 @@ pub struct Script {
     live_tx: UnboundedSender<String>,
     live_rx: Mutex<Option<UnboundedReceiver<String>>>,
     pub seen: Mutex<Seen>,
+    /// The `X-Reeve-Cli` value every answer carries, when set.
+    pub cli: Mutex<Option<String>>,
 }
 
 pub fn me(kind: TokenKind) -> Me {
@@ -119,6 +121,7 @@ impl Script {
             live_tx,
             live_rx: Mutex::new(Some(live_rx)),
             seen: Mutex::new(Seen::default()),
+            cli: Mutex::new(None),
         })
     }
     pub fn seen<R>(&self, f: impl FnOnce(&Seen) -> R) -> R {
@@ -215,6 +218,8 @@ pub fn story(
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         },
         readiness: Readiness {
             ready: true,
@@ -410,6 +415,14 @@ async fn events(State(s): State<Arc<Script>>, headers: HeaderMap) -> Response {
     }
 }
 
+/// Adds `X-Reeve-Cli` to every answer when the script offers a build.
+async fn add_cli(State(s): State<Arc<Script>>, mut res: Response) -> Response {
+    if let Some(v) = s.cli.lock().unwrap().clone() {
+        res.headers_mut().insert("x-reeve-cli", v.parse().unwrap());
+    }
+    res
+}
+
 /// Serves the script on a free loopback port; returns the base url.
 pub async fn serve(s: Arc<Script>) -> String {
     let me = s.me.clone();
@@ -435,6 +448,10 @@ pub async fn serve(s: Arc<Script>) -> String {
         .route("/api/v1/stories/{key}/move", post(mv))
         .route("/api/v1/stories/{key}/urgent", post(urgent).delete(urgent))
         .route("/api/v1/events", get(events))
+        .layer(axum::middleware::map_response_with_state(
+            s.clone(),
+            add_cli,
+        ))
         .with_state(s);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -467,6 +484,7 @@ pub fn quick() -> Options {
         connect_timeout: Duration::from_secs(1),
         idle_timeout: Duration::from_secs(30),
         backoff: vec![Duration::from_millis(50)],
+        no_proxy: true,
     }
 }
 
@@ -486,6 +504,7 @@ pub fn tui(url: &str, token: &str, me: Option<Me>, options: Options) -> Tui {
         token: token.into(),
         me,
         reeve_token_set: false,
+        update_note: false,
         color: false,
         options,
     };

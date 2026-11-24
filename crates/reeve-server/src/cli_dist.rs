@@ -1,0 +1,813 @@
+//! CLI distribution (kb/ADR-0030): the bundle the image carries in `REEVE_CLI_DIR` (default `/srv/cli`), loaded once
+//! at startup, served at `/cli/{name}` (`routes/cli_dist.rs`) without sign-in, and the `X-Reeve-Cli` header on every
+//! response. File serving in the composition root, not a context (kb/ADR-0010 R1). The wire contract (the header
+//! name, the bundle's file names, the CLI-version format) is `reeve_protocol`'s.
+use crate::config::ServerConfig;
+use axum::{
+    http::{HeaderName, HeaderValue, header},
+    response::Response,
+};
+use reeve_protocol::{
+    CLI_BINARIES, CLI_INSTALL_PS1, CLI_INSTALL_SH, CLI_SUMS_FILE, CLI_VERSION_FILE,
+    CLI_VERSION_HEADER, is_cli_version,
+};
+use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// `reeve_protocol::CLI_VERSION_HEADER` as a header name (lower case, so `from_static` accepts it).
+pub const CLI_HEADER: HeaderName = HeaderName::from_static(CLI_VERSION_HEADER);
+/// What the server replaces, once, in each install script: the quoted URL, quotes included.
+pub const URL_PLACEHOLDER: &str = "'@REEVE_URL@'";
+/// The most `VERSION` or `SHA256SUMS` may hold; a bundle's are well under 1 KiB. Checked before either is read.
+pub const TEXT_FILE_LIMIT: u64 = 64 * 1024;
+const INSTALL_SH: &str = include_str!("../../../deploy/cli/install.sh");
+const INSTALL_PS1: &str = include_str!("../../../deploy/cli/install.ps1");
+
+/// Distribution, on: a loaded, valid bundle, the install scripts rendered for the configured `public_url`, and the
+/// header value every response carries.
+pub struct CliDist {
+    version: String,
+    header: HeaderValue,
+    version_file: String,
+    sums: String,
+    dir: PathBuf,
+    install_sh: String,
+    install_ps1: String,
+}
+
+/// Why distribution is off, as the one startup line says it (kb/ADR-0030 R4).
+#[derive(Debug, PartialEq)]
+pub enum Off {
+    /// No `public_url` configured: the loopback default would point a remote installer at its own machine.
+    NoPublicUrl,
+    /// No `VERSION` in the directory: an image built without the bundle.
+    NoBundle(String),
+    /// A bundle that does not check out (a `VERSION` that exists but cannot be looked at included), or a configured
+    /// `public_url` the scripts cannot carry: a bundle was meant to be served and is not, so the startup line is a
+    /// warning.
+    Broken(String),
+}
+
+impl Off {
+    /// Whether the startup line is a warning rather than `info`.
+    pub fn is_fault(&self) -> bool {
+        matches!(self, Off::Broken(_))
+    }
+}
+
+impl std::fmt::Display for Off {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Off::NoPublicUrl => f.write_str("no public_url configured"),
+            Off::NoBundle(why) => write!(f, "{why}; see deploy/README.md, \"CLI distribution\""),
+            Off::Broken(why) => f.write_str(why),
+        }
+    }
+}
+
+/// What one name under `/cli/` serves.
+#[derive(Debug, PartialEq)]
+pub enum Entry<'a> {
+    Text(&'a str),
+    File(PathBuf),
+}
+
+impl CliDist {
+    /// The bundle in `dir`, or why distribution is off. `public_url` is the configured URL
+    /// (`ServerConfig::configured_public_url`): `None` turns distribution off, and so does a host the install scripts
+    /// could not carry safely. Reads and hashes every binary: call it off the async runtime (`startup` does).
+    pub fn load(dir: &Path, public_url: Option<&url::Url>) -> Result<Self, Off> {
+        let url = public_url.ok_or(Off::NoPublicUrl)?;
+        let version_path = dir.join(CLI_VERSION_FILE);
+        // Only a missing VERSION means no bundle was given; any other error looking at it (EACCES on a mounted
+        // directory, ENOTDIR, an I/O error) is a bundle meant to be served that cannot be.
+        match std::fs::symlink_metadata(&version_path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Off::NoBundle(format!(
+                    "no bundle in {} ({CLI_VERSION_FILE}: {e})",
+                    dir.display()
+                )));
+            }
+            Err(e) => {
+                return Err(Off::Broken(format!(
+                    "{CLI_VERSION_FILE} in {} cannot be read ({e})",
+                    dir.display()
+                )));
+            }
+        }
+        check_host(url).map_err(Off::Broken)?;
+        let version_file = read_text(&version_path)
+            .map_err(|e| Off::Broken(format!("{CLI_VERSION_FILE} unreadable ({e})")))?;
+        let version = version_file.strip_suffix('\n').unwrap_or(&version_file);
+        if !is_cli_version(version) {
+            return Err(Off::Broken(format!(
+                "{CLI_VERSION_FILE} is not a CLI version"
+            )));
+        }
+        let sums = check_bundle(dir, version).map_err(Off::Broken)?;
+        Ok(Self {
+            header: HeaderValue::from_str(version).expect("hex is a valid header value"),
+            version: version.to_owned(),
+            version_file: format!("{version}\n"),
+            sums,
+            dir: dir.to_owned(),
+            install_sh: render_install_sh(url),
+            install_ps1: render_install_ps1(url),
+        })
+    }
+
+    /// The build the server offers as people see it: the first seven characters of the CLI version.
+    pub fn build(&self) -> &str {
+        &self.version[..7]
+    }
+    /// What `name` serves: `VERSION`, `SHA256SUMS`, one of `CLI_BINARIES`, or an install script; `None` otherwise.
+    pub fn entry(&self, name: &str) -> Option<Entry<'_>> {
+        match name {
+            CLI_VERSION_FILE => Some(Entry::Text(&self.version_file)),
+            CLI_SUMS_FILE => Some(Entry::Text(&self.sums)),
+            CLI_INSTALL_SH => Some(Entry::Text(&self.install_sh)),
+            CLI_INSTALL_PS1 => Some(Entry::Text(&self.install_ps1)),
+            // Joined from the constant, never from the request: only the bundle's own paths are ever opened.
+            _ => CLI_BINARIES
+                .into_iter()
+                .find(|n| *n == name)
+                .map(|n| Entry::File(self.dir.join(n))),
+        }
+    }
+}
+
+/// The bundle's `SHA256SUMS`, once it lists exactly `CLI_BINARIES` and each is a regular, non-empty file matching its
+/// line and carrying `version` (a stamped build).
+fn check_bundle(dir: &Path, version: &str) -> Result<String, String> {
+    let sums = read_text(&dir.join(CLI_SUMS_FILE))
+        .map_err(|e| format!("{CLI_SUMS_FILE} unreadable ({e})"))?;
+    // `lines()` would silently accept CRLF; a bundle CI built has LF only, and the CLI checks the lines as served.
+    if sums.contains('\r') {
+        return Err(format!(
+            "{CLI_SUMS_FILE} has a carriage return (CRLF line endings)"
+        ));
+    }
+    let mut listed: Vec<(&str, &str)> = Vec::new();
+    for line in sums.lines() {
+        let (hash, name) = line
+            .split_once("  ")
+            .ok_or_else(|| format!("{CLI_SUMS_FILE}: malformed line {line:?}"))?;
+        if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(format!("{CLI_SUMS_FILE}: malformed line {line:?}"));
+        }
+        if !CLI_BINARIES.contains(&name) {
+            return Err(format!("{CLI_SUMS_FILE} lists an unknown file {name:?}"));
+        }
+        if listed.iter().any(|(_, n)| *n == name) {
+            return Err(format!("{CLI_SUMS_FILE} lists {name} twice"));
+        }
+        listed.push((hash, name));
+    }
+    if let Some(missing) = CLI_BINARIES
+        .into_iter()
+        .find(|n| !listed.iter().any(|(_, l)| l == n))
+    {
+        return Err(format!("{CLI_SUMS_FILE} does not list {missing}"));
+    }
+    for (hash, name) in listed {
+        let path = dir.join(name);
+        // symlink_metadata: a symlink is not a regular file, and the image's COPY makes regular files.
+        let meta =
+            std::fs::symlink_metadata(&path).map_err(|e| format!("{name} is missing ({e})"))?;
+        if !meta.is_file() {
+            return Err(format!("{name} is not a regular file"));
+        }
+        if meta.len() == 0 {
+            return Err(format!("{name} is empty"));
+        }
+        let (actual, stamped) = hash_and_find(&path, version.as_bytes())
+            .map_err(|e| format!("{name} unreadable ({e})"))?;
+        if actual != hash {
+            return Err(format!("{name} does not match its {CLI_SUMS_FILE} line"));
+        }
+        // A stamped build carries its CLI version in its bytes (`option_env!`): one that does not would offer a
+        // build it is not, and `reeve update` would replace it forever (kb/ADR-0030 R1).
+        if !stamped {
+            return Err(format!(
+                "{name} does not carry the build {CLI_VERSION_FILE} names"
+            ));
+        }
+    }
+    Ok(sums)
+}
+
+/// A host the scripts can carry: a DNS name of letters, digits, hyphens and dots (the `url` crate has already
+/// lower-cased it and turned an international name into its `xn--` form), or an IP literal. The value in the scripts is
+/// quoted, but the scripts also print the URL unquoted in the rerun commands people paste into a shell, so anything
+/// else (an underscore, a percent-encoded byte in an opaque host) turns distribution off.
+fn check_host(url: &url::Url) -> Result<(), String> {
+    match url.host() {
+        Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) => Ok(()),
+        Some(url::Host::Domain(d))
+            if !d.is_empty()
+                && d.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.') =>
+        {
+            Ok(())
+        }
+        Some(url::Host::Domain(d)) => Err(format!(
+            "the public_url host {d:?} is not letters, digits, hyphens and dots, or an IP address"
+        )),
+        None => Err("the public_url has no host".into()),
+    }
+}
+
+/// A bundle text file: a regular file (not a symlink) of at most `TEXT_FILE_LIMIT` bytes, checked before it is read.
+fn read_text(path: &Path) -> Result<String, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a regular file".into());
+    }
+    if meta.len() > TEXT_FILE_LIMIT {
+        return Err(format!("larger than {TEXT_FILE_LIMIT} bytes"));
+    }
+    let mut text = String::new();
+    // The limit holds even if the file grew between the check and the read.
+    std::fs::File::open(path)
+        .and_then(|f| f.take(TEXT_FILE_LIMIT + 1).read_to_string(&mut text))
+        .map_err(|e| e.to_string())?;
+    if text.len() as u64 > TEXT_FILE_LIMIT {
+        return Err(format!("larger than {TEXT_FILE_LIMIT} bytes"));
+    }
+    Ok(text)
+}
+
+/// The file's SHA-256 in lowercase hex, and whether `needle` (non-empty) occurs in it; one pass, read in chunks (a
+/// binary is tens of megabytes). The last `needle.len() - 1` bytes of each chunk are kept, so a match across a chunk
+/// boundary is found.
+fn hash_and_find(path: &Path, needle: &[u8]) -> std::io::Result<(String, bool)> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let keep = needle.len().saturating_sub(1);
+    let mut window: Vec<u8> = Vec::with_capacity(keep + 64 * 1024);
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut found = false;
+    loop {
+        let n = match file.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        hasher.update(&chunk[..n]);
+        if !found {
+            window.extend_from_slice(&chunk[..n]);
+            found = window.windows(needle.len()).any(|w| w == needle);
+            let drop = window.len().saturating_sub(keep);
+            window.drain(..drop);
+        }
+    }
+    Ok((hex::encode(hasher.finalize()), found))
+}
+
+/// The configured public URL as the scripts carry it: its origin (scheme, host, a port that is not the scheme's
+/// default), as `ServerConfig::public_origin` writes it, without a trailing `/`.
+fn origin(url: &url::Url) -> String {
+    url.origin().ascii_serialization()
+}
+
+/// POSIX sh: inside single quotes nothing expands; a `'` is closed, escaped and reopened.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// PowerShell: inside single quotes nothing expands; a quote is doubled. PowerShell takes U+2018–U+201B as single
+/// quotes too, so each of those is doubled as well.
+fn ps_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}'..='\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+/// `install.sh` with the public URL quoted for POSIX sh.
+pub(crate) fn render_install_sh(url: &url::Url) -> String {
+    INSTALL_SH.replacen(URL_PLACEHOLDER, &sh_quote(&origin(url)), 1)
+}
+/// `install.ps1` with the public URL quoted for PowerShell.
+pub(crate) fn render_install_ps1(url: &url::Url) -> String {
+    INSTALL_PS1.replacen(URL_PLACEHOLDER, &ps_quote(&origin(url)), 1)
+}
+
+/// The one startup line, either way (kb/ADR-0030 R4: the log says why it is off).
+pub fn status_line(r: &Result<CliDist, Off>) -> String {
+    match r {
+        Ok(c) => format!("cli distribution: on, offering build {}", c.build()),
+        Err(why) => format!("cli distribution: off ({why})"),
+    }
+}
+
+/// `REEVE_CLI_DIR` when set and non-empty, else `/srv/cli` (where the published image puts the bundle).
+pub fn cli_dir(env: Option<std::ffi::OsString>) -> PathBuf {
+    env.filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/srv/cli"))
+}
+
+/// At startup (`main.rs`'s `serve`, before it listens): load and hash the bundle in `dir` on a blocking thread, log one
+/// line (a warning when a bundle was meant to be served and is broken), keep it only when distribution is on.
+pub async fn startup(config: &ServerConfig, dir: PathBuf) -> Option<Arc<CliDist>> {
+    let url = config.configured_public_url();
+    let r = tokio::task::spawn_blocking(move || CliDist::load(&dir, url.as_ref()))
+        .await
+        .unwrap_or_else(|e| Err(Off::Broken(format!("loading the bundle failed ({e})"))));
+    if r.as_ref().err().is_some_and(Off::is_fault) {
+        tracing::warn!("{}", status_line(&r));
+    } else {
+        tracing::info!("{}", status_line(&r));
+    }
+    r.ok().map(Arc::new)
+}
+
+/// The headers every `/cli/` answer carries, success or failure (kb/ADR-0030 R3): those of every served file
+/// (`assets::hardened`: `nosniff`, `no-referrer`) and `Cache-Control: no-cache`.
+pub fn cli_headers(res: Response) -> Response {
+    let mut res = crate::assets::hardened(res);
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    res
+}
+
+/// `router` offering the build: `X-Reeve-Cli` on every response while distribution is on (`cli` is `Some`), and
+/// unchanged while it is off. The header value is built once here; the layer sets a header only and never reads or
+/// wraps the body, so streamed responses (the event stream, the binaries) pass through untouched.
+pub fn offer_header(router: axum::Router, cli: Option<&CliDist>) -> axum::Router {
+    let Some(cli) = cli else { return router };
+    let value = cli.header.clone();
+    router.layer(axum::middleware::map_response(move |mut res: Response| {
+        let value = value.clone();
+        async move {
+            res.headers_mut().insert(CLI_HEADER, value);
+            res
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VERSION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    /// A valid bundle: every file of `CLI_BINARIES` with distinct contents carrying the version (as a stamped build
+    /// does), their real checksums, the version.
+    fn bundle(dir: &Path) {
+        let mut sums = String::new();
+        for name in CLI_BINARIES {
+            let bytes = format!("binary {name} {VERSION}");
+            std::fs::write(dir.join(name), &bytes).unwrap();
+            sums.push_str(&format!(
+                "{}  {name}\n",
+                hex::encode(Sha256::digest(&bytes))
+            ));
+        }
+        std::fs::write(dir.join(CLI_SUMS_FILE), sums).unwrap();
+        std::fs::write(dir.join(CLI_VERSION_FILE), format!("{VERSION}\n")).unwrap();
+    }
+
+    fn url() -> url::Url {
+        url::Url::parse("https://reeve.example.com").unwrap()
+    }
+
+    fn edit_sums(d: &Path, f: impl Fn(&str) -> String) {
+        let s = std::fs::read_to_string(d.join(CLI_SUMS_FILE)).unwrap();
+        std::fs::write(d.join(CLI_SUMS_FILE), f(&s)).unwrap();
+    }
+
+    /// `name` in `d` replaced by a symlink to a copy of itself elsewhere in `d`: same contents, not a regular file.
+    #[cfg(unix)]
+    fn symlink_in_place(d: &Path, name: &str) {
+        let real = d.join(format!("{name}.real"));
+        std::fs::rename(d.join(name), &real).unwrap();
+        std::os::unix::fs::symlink(&real, d.join(name)).unwrap();
+    }
+
+    /// The stamp is found wherever it sits, across a read boundary too, and the hash is the file's. Distinguishes a
+    /// search per chunk only (the straddling case) and one that keeps too little of the previous chunk.
+    #[test]
+    fn the_stamp_is_found_across_chunks() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("bin");
+        let chunk = 64 * 1024;
+        for at in [
+            0,
+            1,
+            chunk - 39,
+            chunk - 20,
+            chunk - 1,
+            chunk,
+            3 * chunk + 7,
+        ] {
+            let mut bytes = vec![b'x'; 4 * chunk];
+            bytes[at..at + VERSION.len()].copy_from_slice(VERSION.as_bytes());
+            std::fs::write(&p, &bytes).unwrap();
+            let (hash, found) = hash_and_find(&p, VERSION.as_bytes()).unwrap();
+            assert!(found, "at {at}");
+            assert_eq!(hash, hex::encode(Sha256::digest(&bytes)), "at {at}");
+        }
+        std::fs::write(&p, vec![b'x'; 2 * chunk]).unwrap();
+        assert!(!hash_and_find(&p, VERSION.as_bytes()).unwrap().1);
+        // All but the last byte of the stamp at the very end: not a match.
+        let mut bytes = vec![b'x'; chunk];
+        bytes.extend_from_slice(&VERSION.as_bytes()[..39]);
+        std::fs::write(&p, &bytes).unwrap();
+        assert!(!hash_and_find(&p, VERSION.as_bytes()).unwrap().1);
+    }
+
+    #[test]
+    fn a_valid_bundle_loads() {
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        let c = CliDist::load(d.path(), Some(&url())).unwrap();
+        assert_eq!(c.header.to_str().unwrap(), VERSION);
+        assert_eq!(c.build(), "0123456");
+        assert_eq!(
+            status_line(&Ok(c)),
+            "cli distribution: on, offering build 0123456"
+        );
+    }
+
+    /// Every reason distribution is off, each from a valid bundle with exactly one thing broken, and the startup line
+    /// that names it (kb/ADR-0030 R4). Distinguishes a lenient loader, and a line that drops the reason.
+    #[test]
+    fn each_reason_for_off_is_named() {
+        type Break = fn(&Path);
+        let mut cases: Vec<(&str, Break, &str)> = vec![
+            (
+                "no VERSION",
+                |d| std::fs::remove_file(d.join(CLI_VERSION_FILE)).unwrap(),
+                "no bundle in",
+            ),
+            (
+                "upper-case VERSION",
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), VERSION.to_uppercase()).unwrap(),
+                "VERSION is not a CLI version",
+            ),
+            (
+                "short VERSION",
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), &VERSION[..39]).unwrap(),
+                "VERSION is not a CLI version",
+            ),
+            (
+                "two newlines",
+                |d| std::fs::write(d.join(CLI_VERSION_FILE), format!("{VERSION}\n\n")).unwrap(),
+                "VERSION is not a CLI version",
+            ),
+            (
+                "VERSION is a directory",
+                |d| {
+                    std::fs::remove_file(d.join(CLI_VERSION_FILE)).unwrap();
+                    std::fs::create_dir(d.join(CLI_VERSION_FILE)).unwrap()
+                },
+                "not a regular file",
+            ),
+            (
+                "VERSION over the limit",
+                |d| {
+                    let big = "0".repeat(TEXT_FILE_LIMIT as usize + 1);
+                    std::fs::write(d.join(CLI_VERSION_FILE), big).unwrap()
+                },
+                "larger than 65536 bytes",
+            ),
+            (
+                "no SHA256SUMS",
+                |d| std::fs::remove_file(d.join(CLI_SUMS_FILE)).unwrap(),
+                "SHA256SUMS unreadable",
+            ),
+            (
+                "SHA256SUMS over the limit",
+                |d| {
+                    edit_sums(d, |s| {
+                        format!("{s}{}", "\n".repeat(TEXT_FILE_LIMIT as usize))
+                    })
+                },
+                "SHA256SUMS unreadable (larger than 65536 bytes)",
+            ),
+            (
+                "CRLF line endings",
+                |d| edit_sums(d, |s| s.replace('\n', "\r\n")),
+                "carriage return",
+            ),
+            (
+                "a name missing",
+                |d| {
+                    edit_sums(d, |s| {
+                        let n = s.lines().count();
+                        s.lines().take(n - 1).map(|l| format!("{l}\n")).collect()
+                    })
+                },
+                "does not list",
+            ),
+            (
+                "an unknown name",
+                |d| edit_sums(d, |s| format!("{s}{}  extra\n", "0".repeat(64))),
+                "unknown file \"extra\"",
+            ),
+            (
+                "a name twice",
+                |d| {
+                    edit_sums(d, |s| {
+                        let first = s.lines().next().unwrap().to_string();
+                        format!("{s}{first}\n")
+                    })
+                },
+                "twice",
+            ),
+            (
+                "one space",
+                |d| edit_sums(d, |s| s.replacen("  ", " ", 1)),
+                "malformed",
+            ),
+            (
+                "a listed file missing",
+                |d| std::fs::remove_file(d.join(CLI_BINARIES[0])).unwrap(),
+                "is missing",
+            ),
+            (
+                "a listed name is a directory",
+                |d| {
+                    std::fs::remove_file(d.join(CLI_BINARIES[0])).unwrap();
+                    std::fs::create_dir(d.join(CLI_BINARIES[0])).unwrap()
+                },
+                "is not a regular file",
+            ),
+            (
+                "a binary changed after its checksum",
+                |d| std::fs::write(d.join(CLI_BINARIES[2]), "binary tampered").unwrap(),
+                "reeve-macos-aarch64 does not match its SHA256SUMS line",
+            ),
+            (
+                "an unstamped binary, listed with its real checksum",
+                |d| {
+                    let unstamped = format!("binary {}", CLI_BINARIES[3]);
+                    std::fs::write(d.join(CLI_BINARIES[3]), &unstamped).unwrap();
+                    let sum = hex::encode(Sha256::digest(&unstamped));
+                    edit_sums(d, |s| {
+                        s.lines()
+                            .map(|l| match l.split_once("  ") {
+                                Some((_, n)) if n == CLI_BINARIES[3] => format!("{sum}  {n}\n"),
+                                _ => format!("{l}\n"),
+                            })
+                            .collect()
+                    })
+                },
+                "reeve-macos-x86_64 does not carry the build VERSION names",
+            ),
+            (
+                "an empty binary, listed with its real checksum",
+                |d| {
+                    std::fs::write(d.join(CLI_BINARIES[1]), "").unwrap();
+                    let empty = hex::encode(Sha256::digest(b""));
+                    edit_sums(d, |s| {
+                        s.lines()
+                            .map(|l| match l.split_once("  ") {
+                                Some((_, n)) if n == CLI_BINARIES[1] => format!("{empty}  {n}\n"),
+                                _ => format!("{l}\n"),
+                            })
+                            .collect()
+                    })
+                },
+                "reeve-linux-aarch64 is empty",
+            ),
+        ];
+        #[cfg(unix)]
+        cases.extend([
+            (
+                "a symlinked binary",
+                (|d| symlink_in_place(d, CLI_BINARIES[0])) as Break,
+                "reeve-linux-x86_64 is not a regular file",
+            ),
+            (
+                "a symlinked VERSION",
+                |d| symlink_in_place(d, CLI_VERSION_FILE),
+                "VERSION unreadable (not a regular file)",
+            ),
+            (
+                "a symlinked SHA256SUMS",
+                |d| symlink_in_place(d, CLI_SUMS_FILE),
+                "SHA256SUMS unreadable (not a regular file)",
+            ),
+        ]);
+        for (what, brk, want) in cases {
+            let d = tempfile::tempdir().unwrap();
+            bundle(d.path());
+            brk(d.path());
+            let r = CliDist::load(d.path(), Some(&url()));
+            let why = r
+                .as_ref()
+                .err()
+                .unwrap_or_else(|| panic!("{what}: loaded"))
+                .to_string();
+            assert!(why.contains(want), "{what}: {why}");
+            assert_eq!(
+                status_line(&r),
+                format!("cli distribution: off ({why})"),
+                "{what}"
+            );
+        }
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        let r = CliDist::load(d.path(), None);
+        assert_eq!(r.as_ref().err(), Some(&Off::NoPublicUrl));
+        assert_eq!(
+            status_line(&r),
+            "cli distribution: off (no public_url configured)"
+        );
+    }
+
+    /// Only a host of letters, digits, hyphens and dots, or an IP literal, turns distribution on; the `url` crate's
+    /// normalisation (lower case, `xn--`) comes first, so an international name is accepted in its ASCII form.
+    #[test]
+    fn the_public_url_host_must_be_ldh_or_an_ip() {
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        for ok in [
+            "https://reeve.example.com",
+            "https://Reeve-1.Example.COM:8443/base/",
+            "https://bücher.example/",
+            "http://127.0.0.1:7474",
+            "http://[::1]:7474",
+        ] {
+            let u = url::Url::parse(ok).unwrap();
+            assert!(CliDist::load(d.path(), Some(&u)).is_ok(), "{ok}");
+        }
+        for bad in [
+            "https://under_score.example.com",
+            "https://a%27b.example.com",
+        ] {
+            let u = url::Url::parse(bad).unwrap();
+            let why = CliDist::load(d.path(), Some(&u))
+                .err()
+                .unwrap_or_else(|| panic!("{bad}: loaded"))
+                .to_string();
+            assert!(
+                why.contains("is not letters, digits, hyphens and dots"),
+                "{bad}: {why}"
+            );
+        }
+    }
+
+    /// `warn` only when a bundle was meant to be served (a `VERSION` exists, a public URL is configured) and failed;
+    /// `info` when there is no bundle and when there is no URL. The no-bundle line points at the deployment guide.
+    #[test]
+    fn a_broken_bundle_is_a_warning() {
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        let u = url();
+        let no_url = CliDist::load(d.path(), None).err().unwrap();
+        assert!(!no_url.is_fault());
+        let bad_host = url::Url::parse("https://under_score.example.com").unwrap();
+        assert!(
+            CliDist::load(d.path(), Some(&bad_host))
+                .err()
+                .unwrap()
+                .is_fault()
+        );
+        std::fs::write(d.path().join(CLI_BINARIES[0]), "tampered").unwrap();
+        assert!(CliDist::load(d.path(), Some(&u)).err().unwrap().is_fault());
+        let empty = tempfile::tempdir().unwrap();
+        let none = CliDist::load(empty.path(), Some(&u)).err().unwrap();
+        assert!(!none.is_fault());
+        assert!(
+            none.to_string()
+                .ends_with("; see deploy/README.md, \"CLI distribution\""),
+            "{none}"
+        );
+        // Without a bundle, a host the scripts cannot carry is not reported: there is nothing to serve either way.
+        assert!(
+            !CliDist::load(empty.path(), Some(&bad_host))
+                .err()
+                .unwrap()
+                .is_fault()
+        );
+    }
+
+    /// Only a `VERSION` that does not exist means "no bundle" (`info`); any other failure to look at it (here a
+    /// bundle directory that is a regular file, `ENOTDIR`; on a host also `EACCES` or an I/O error) is a broken
+    /// bundle, a warning that names the error.
+    #[test]
+    fn only_a_missing_version_means_no_bundle() {
+        let d = tempfile::tempdir().unwrap();
+        let file = d.path().join("cli");
+        std::fs::write(&file, "not a directory").unwrap();
+        let off = CliDist::load(&file, Some(&url())).err().unwrap();
+        assert!(off.is_fault(), "{off}");
+        assert!(off.to_string().contains(CLI_VERSION_FILE), "{off}");
+        let missing = CliDist::load(&d.path().join("absent"), Some(&url()))
+            .err()
+            .unwrap();
+        assert!(!missing.is_fault(), "{missing}");
+    }
+
+    /// The bundle's names and the two scripts, nothing else; a binary resolves to its own constant name in the bundle
+    /// directory, never to anything built from the request.
+    #[test]
+    fn only_the_bundle_names_and_scripts_resolve() {
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        std::fs::write(d.path().join("extra"), "x").unwrap();
+        let c = CliDist::load(d.path(), Some(&url())).unwrap();
+        assert_eq!(
+            c.entry("VERSION"),
+            Some(Entry::Text(&format!("{VERSION}\n")))
+        );
+        assert_eq!(
+            c.entry("SHA256SUMS"),
+            Some(Entry::Text(
+                &std::fs::read_to_string(d.path().join(CLI_SUMS_FILE)).unwrap()
+            ))
+        );
+        for name in CLI_BINARIES {
+            assert_eq!(
+                c.entry(name),
+                Some(Entry::File(d.path().join(name))),
+                "{name}"
+            );
+        }
+        assert!(
+            matches!(c.entry("install.sh"), Some(Entry::Text(t)) if t.contains("REEVE_URL='https://reeve.example.com'"))
+        );
+        assert!(
+            matches!(c.entry("install.ps1"), Some(Entry::Text(t)) if t.contains("$ReeveUrl = 'https://reeve.example.com'"))
+        );
+        for bad in [
+            "",
+            "extra",
+            "reeve",
+            "../VERSION",
+            "./VERSION",
+            "VERSION/",
+            "VERSION.bak",
+            "install.SH",
+            "Version",
+        ] {
+            assert_eq!(c.entry(bad), None, "{bad:?}");
+        }
+    }
+
+    /// Each template holds the placeholder exactly once, so rendering replaces the whole quoted value with the public
+    /// URL's origin (lower case, no default port, no trailing slash); a quote and a dollar survive each language's
+    /// quoting; PowerShell's four typographic single quotes are doubled like `'`.
+    #[test]
+    fn the_scripts_are_rendered_and_quoted() {
+        assert_eq!(INSTALL_SH.matches(URL_PLACEHOLDER).count(), 1);
+        assert_eq!(INSTALL_PS1.matches(URL_PLACEHOLDER).count(), 1);
+        // The scripts carry the origin: the configuration refuses a path, and none would survive here.
+        let url = url::Url::parse("https://Reeve.Example.COM:443/base/").unwrap();
+        assert_eq!(origin(&url), "https://reeve.example.com");
+        assert!(render_install_sh(&url).contains("\nREEVE_URL='https://reeve.example.com'\n"));
+        assert!(render_install_ps1(&url).contains("$ReeveUrl = 'https://reeve.example.com'\n"));
+        // Each language's quoting keeps a quote and a dollar literal (the sh line runs in a real `sh`).
+        let tricky = "https://reeve.example.com/it's/$HOME";
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "REEVE_URL={}\nprintf %s \"$REEVE_URL\"",
+                sh_quote(tricky)
+            ))
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), tricky);
+        assert_eq!(ps_quote(tricky), "'https://reeve.example.com/it''s/$HOME'");
+        assert_eq!(
+            ps_quote("a'b\u{2018}c\u{2019}d\u{201A}e\u{201B}f\u{201C}g"),
+            "'a''b\u{2018}\u{2018}c\u{2019}\u{2019}d\u{201A}\u{201A}e\u{201B}\u{201B}f\u{201C}g'"
+        );
+        assert_eq!(sh_quote("a'b"), r"'a'\''b'");
+        let d = tempfile::tempdir().unwrap();
+        bundle(d.path());
+        let c = CliDist::load(
+            d.path(),
+            Some(&url::Url::parse("http://127.0.0.1:7474/").unwrap()),
+        )
+        .unwrap();
+        assert!(
+            matches!(c.entry("install.sh"), Some(Entry::Text(t)) if t.contains("REEVE_URL='http://127.0.0.1:7474'\n"))
+        );
+    }
+
+    #[test]
+    fn the_directory_defaults_to_srv_cli() {
+        assert_eq!(cli_dir(None), PathBuf::from("/srv/cli"));
+        assert_eq!(cli_dir(Some("".into())), PathBuf::from("/srv/cli"));
+        assert_eq!(
+            cli_dir(Some("/opt/reeve-cli".into())),
+            PathBuf::from("/opt/reeve-cli")
+        );
+    }
+}

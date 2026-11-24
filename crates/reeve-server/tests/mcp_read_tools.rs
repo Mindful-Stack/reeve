@@ -17,6 +17,13 @@ async fn mcp_token(h: &Harness, email: &str) -> String {
     issue_mcp_token(h, email).await.secret
 }
 
+/// What a read tool adds to the API's item when nothing was left out (the plan's Tasks 9 and 18).
+fn none_omitted(mut item: Value) -> Value {
+    item["links_omitted"] = json!(0);
+    item["web_links_omitted"] = json!(0);
+    item
+}
+
 /// What `seed` made.
 struct Seed {
     /// Discovery not complete, so the stories under it are not ready.
@@ -195,7 +202,7 @@ async fn get_epic_answers_the_route_s_epic_with_a_long_brief_cut() {
     assert!(want["discovery_complete"].is_object());
     assert_eq!(
         answer(&h, &bob, "get_epic", json!({"key": s.epic})).await,
-        want
+        none_omitted(want.clone())
     );
 
     // A brief over the limit: the API answers it whole, the tool cuts it and says by how much. Two-byte
@@ -216,7 +223,7 @@ async fn get_epic_answers_the_route_s_epic_with_a_long_brief_cut() {
     want["brief"] = json!(format!("{}[cut: 3 more characters]", "å".repeat(10_000)));
     assert_eq!(
         answer(&h, &bob, "get_epic", json!({"key": long})).await,
-        want
+        none_omitted(want.clone())
     );
 
     // An unknown key, and a key that is a story's, are told in a tool caller's words.
@@ -247,7 +254,7 @@ async fn get_initiative_answers_the_route_s_initiative_with_a_long_brief_cut() {
     assert_eq!(want["progress"], 0.0, "{want}");
     assert_eq!(
         answer(&h, &bob, "get_initiative", json!({"key": s.initiative})).await,
-        want
+        none_omitted(want.clone())
     );
 
     let brief = "é".repeat(10_002);
@@ -266,7 +273,7 @@ async fn get_initiative_answers_the_route_s_initiative_with_a_long_brief_cut() {
     want["brief"] = json!(format!("{}[cut: 2 more characters]", "é".repeat(10_000)));
     assert_eq!(
         answer(&h, &bob, "get_initiative", json!({"key": long})).await,
-        want
+        none_omitted(want.clone())
     );
 
     assert_eq!(
@@ -939,5 +946,86 @@ async fn get_sprint_reads_the_current_sprint_as_the_cli_picks_it() {
     assert_eq!(
         refusal(&h, &dan, "get_sprint", json!({"id": 999_999})).await,
         "No sprint with id 999999."
+    );
+}
+
+/// `get_story`, `get_epic` and `get_initiative` show the item's item links and web links as the API's read of one
+/// item does, with the number left out of each beside them (GRA-877, GRA-878).
+#[tokio::test]
+async fn the_read_tools_show_an_item_s_links() {
+    let h = mcp_harness().await;
+    let s = seed(&h).await;
+    let bob = mcp_token(&h, BOB).await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/links", s.bobs),
+        json!({"type": "follows", "to": s.dans}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/links", s.epic),
+        json!({"type": "relates_to", "to": s.initiative}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/web-links", s.bobs),
+        json!({"title": "Scenario page", "url": "https://example.com/wiki/scenario"}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{}/web-links", s.epic),
+        json!({"title": "Epic notes", "url": "https://example.com/wiki/epic"}),
+    )
+    .await;
+
+    let context = api(
+        &h,
+        &h.victim_token,
+        &format!("/api/v1/stories/{}/context", s.bobs),
+    )
+    .await;
+    assert_eq!(
+        context["story"]["links"],
+        json!([{"type": "follows", "direction": "out", "label": "follows",
+                "item": {"key": s.dans, "level": "story", "title": "Confirm by email"}}]),
+        "the control: the API's context carries the link"
+    );
+    let told = answer(&h, &bob, "get_story", json!({"key": s.bobs})).await;
+    assert_eq!(told["story"]["links"], context["story"]["links"]);
+    assert_eq!(told["links_omitted"], 0);
+    assert_eq!(
+        context["story"]["web_links"][0]["title"], "Scenario page",
+        "the control"
+    );
+    assert_eq!(told["story"]["web_links"], context["story"]["web_links"]);
+    assert_eq!(told["web_links_omitted"], 0);
+
+    let epic = api(&h, &h.victim_token, &format!("/api/v1/epics/{}", s.epic)).await;
+    assert_eq!(epic["links"][0]["label"], "relates to", "the control");
+    assert_eq!(
+        epic["web_links"][0]["url"], "https://example.com/wiki/epic",
+        "the control"
+    );
+    assert_eq!(
+        answer(&h, &bob, "get_epic", json!({"key": s.epic})).await,
+        none_omitted(epic)
+    );
+    let initiative = api(
+        &h,
+        &h.victim_token,
+        &format!("/api/v1/initiatives/{}", s.initiative),
+    )
+    .await;
+    assert_eq!(
+        initiative["links"][0]["item"]["key"],
+        json!(s.epic),
+        "the control"
+    );
+    assert_eq!(
+        answer(&h, &bob, "get_initiative", json!({"key": s.initiative})).await,
+        none_omitted(initiative)
     );
 }

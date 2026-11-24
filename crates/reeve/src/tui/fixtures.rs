@@ -43,6 +43,8 @@ pub fn story(k: &str, state: DeliveryState, version: i64) -> StoryWithReadiness 
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         },
         readiness: Readiness {
             ready: true,
@@ -171,6 +173,8 @@ pub fn epic(k: &str, title: &str) -> reeve_protocol::EpicDto {
         urgent_mark: None,
         urgent_sources: vec![],
         promise: None,
+        links: None,
+        web_links: None,
     }
 }
 
@@ -242,6 +246,7 @@ impl Sim {
                 url: "https://reeve.example.com".into(),
                 me,
                 reeve_token_set: false,
+                update_note: false,
                 width: 140,
                 height: 40,
                 color: false,

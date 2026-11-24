@@ -15,13 +15,16 @@ import type {
 	GoalGates,
 	Initiative,
 	InstanceConfig,
+	ItemLink,
 	Me,
 	Reason,
 	RequiredDecision,
+	SearchHit,
 	Sprint,
 	SprintView,
 	Story,
-	StoryWithReadiness
+	StoryWithReadiness,
+	WebLink
 } from '#lib/api/types.ts';
 
 /** A todo story with no epic, owner, criteria or blockers. */
@@ -313,4 +316,25 @@ export function connection(over: Partial<Connection> = {}): Connection {
 		revoked_reason: null,
 		...over
 	};
+}
+
+/** An item link as the item that follows reads it: "follows ABC-11", a story. */
+export function itemLink(over: Partial<ItemLink> = {}): ItemLink {
+	return {
+		type: 'follows',
+		direction: 'out',
+		label: 'follows',
+		item: { key: 'ABC-11', level: 'story', title: 'title of ABC-11' },
+		...over
+	};
+}
+
+export function webLink(over: Partial<WebLink> = {}): WebLink {
+	return { id: 1, title: 'Scenario page', url: 'https://example.com/wiki/scenario', ...over };
+}
+
+/** A `GET /search` hit: a story matched by its title, not named exactly. */
+export function searchHit(over: Partial<SearchHit> = {}): SearchHit {
+	const key = over.key ?? 'ABC-11';
+	return { key, item: 'story', kind: 'story', title: `title of ${key}`, matched: ['title'], exact: false, ...over };
 }

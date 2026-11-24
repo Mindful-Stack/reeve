@@ -933,6 +933,8 @@ async fn get_story_answers_what_the_api_answers_in_both_revisions() {
     let mut want = api_context(&h, &key).await;
     assert_eq!(want["comments"].as_array().unwrap().len(), 2, "the control");
     want["comments_omitted"] = json!(0);
+    want["links_omitted"] = json!(0);
+    want["web_links_omitted"] = json!(0);
 
     let (status, answer) = call_get_story(&h, &t, json!({"key": key})).await;
     assert_eq!(status, 200, "{answer}");

@@ -123,7 +123,7 @@ fn content_type(mime: &mime_guess::Mime) -> String {
 
 /// Every served file and page: the browser never sniffs a type other than the one sent (`nosniff`), and following a link
 /// out of the client sends no `Referer` (`no-referrer`), so a board or item URL never leaks to a linked site.
-fn hardened(mut res: Response) -> Response {
+pub(crate) fn hardened(mut res: Response) -> Response {
     let h = res.headers_mut();
     h.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     h.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
@@ -145,6 +145,11 @@ pub async fn serve(State(s): State<AppState>, method: Method, uri: Uri) -> Respo
         )
     {
         return AppError::NotFound.into_response();
+    }
+    // The CLI downloads are never pages; these paths do not match `/cli/{name}` (kb/ADR-0030 R3).
+    let cli = reeve_protocol::CLI_PATH.trim_start_matches('/');
+    if trimmed == cli.trim_end_matches('/') || path.starts_with(cli) {
+        return crate::cli_dist::cli_headers(AppError::NotFound.into_response());
     }
     let read = method == Method::GET || method == Method::HEAD;
     // Traversal is refused before the filesystem is touched (hyper does not normalise `..`); rust-embed checks this

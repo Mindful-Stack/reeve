@@ -45,6 +45,7 @@ base64.workspace = true
 reqwest.workspace = true
 uuid.workspace = true
 bytes.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 tower.workspace = true

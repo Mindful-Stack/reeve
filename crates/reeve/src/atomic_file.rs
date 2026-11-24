@@ -25,7 +25,7 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()>
 /// The temporary files tried before giving up: `<path>.tmp`, then `<path>.<pid>.<n>.tmp`.
 const TEMPORARY_ATTEMPTS: u32 = 16;
 
-fn create_temporary(path: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
+pub(crate) fn create_temporary(path: &Path) -> std::io::Result<(PathBuf, std::fs::File)> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]

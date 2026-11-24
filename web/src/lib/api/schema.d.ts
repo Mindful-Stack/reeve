@@ -791,6 +791,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{key}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The item's item links, each read from this item's side, and its web links, oldest first. `key` is a key or an external reference of an
+         *     initiative, an epic or a story.
+         */
+        get: operations["list_item_links"];
+        put?: never;
+        /**
+         * Says that the item in the path follows, duplicates or relates to `to`. Informational: it holds no work back
+         *     (a story is held back with `POST /stories/{key}/blocks`). Adding a link that exists answers ok and changes
+         *     nothing. Answers the item's links.
+         */
+        post: operations["add_item_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/links/{type}/{to}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes "`key` <type> `to`", the forward form: a link an item shows as "is followed by X" is removed by naming
+         *     X first. For `relates_to` either order names the same link. Removing a link that does not exist answers ok and
+         *     changes nothing. Answers the item's links.
+         */
+        delete: operations["remove_item_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control
+         *     character, and an `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has
+         *     with the same title answers ok and changes nothing; with another title it is a validation error (remove it
+         *     first). Answers the item's web links, oldest first.
+         */
+        post: operations["add_web_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{key}/web-links/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Removes one web link of the item by its id. An id the item does not have answers ok and changes nothing.
+         *     Answers the item's web links.
+         */
+        delete: operations["remove_web_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -816,7 +904,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validated whole before anything is written; applying the same plan id again creates nothing. */
+        /**
+         * A plan of items, required decisions, blockers, item links and web links. Validated whole before anything is
+         *     written. Items and required decisions are keyed by plan id and name; blockers, item links and web links are
+         *     idempotent by content; so applying the same plan id again creates nothing. Each write commits on its own: a
+         *     failed apply is finished by applying the same id again once the cause is corrected.
+         */
         post: operations["apply"];
         delete?: never;
         options?: never;
@@ -1334,6 +1427,24 @@ export interface components {
             idempotency_key?: string | null;
         };
         /**
+         * @description `POST /items/{key}/links`: the item in the path follows, duplicates or relates to `to`. Always the forward
+         *     form; there is no way to write the reverse wording. Any other field is refused rather than ignored.
+         */
+        AddItemLink: {
+            /** @description A key or an external reference of an item of any level. */
+            to: components["schemas"]["KeyRef"];
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line, with no tab or
+         *     other control character; the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused
+         *     rather than ignored.
+         */
+        AddWebLink: {
+            title: string;
+            url: string;
+        };
+        /**
          * @description A story a decision affects: held by it (todo, in `blocks`) or started despite it (in `under_way`). The type name is
          *     historical (it was `BlockedStoryDto` and held only `key` and `title`); it is JSON-compatible with that shape.
          */
@@ -1359,10 +1470,15 @@ export interface components {
             value: string;
         };
         /**
-         * @description Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
-         *     or external reference. The whole plan is validated before anything is written, and applying the same plan (`id`)
-         *     again creates nothing: every write is keyed `plan:<id>:<name>`. Unknown fields are refused, so a typo is an error,
-         *     not a silently dropped field.
+         * @description A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links. Items
+         *     refer to each other by their local `name`. A reference that is not a plan name is an existing item's key or external
+         *     reference, looked up at the level its place takes: a story under `blocks`, an epic under `epic`, an initiative under
+         *     `initiative`, any level (native keys first) under `links`, `web_links` and a decision's `on`; so one spelling can
+         *     name different items in different places. The plan is validated whole before anything is written. Applying the same
+         *     plan (`id`) again creates nothing: items and required decisions are keyed by the plan id and their name, while
+         *     blockers, item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
+         *     atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its level
+         *     across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
          */
         ApplyPlan: {
             blocks?: components["schemas"]["PlanBlock"][];
@@ -1371,7 +1487,17 @@ export interface components {
             /** @description Names this plan: the same id and names are the same items on a second apply. */
             id: string;
             initiatives?: components["schemas"]["PlanInitiative"][];
+            /**
+             * @description Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`
+             *     does that. At most 500 in one plan; more is a validation error.
+             */
+            links?: components["schemas"]["PlanLink"][];
             stories?: components["schemas"]["PlanStory"][];
+            /**
+             * @description Web links (kb/ADR-0031): titled URLs on items of any level. At most 500 in one plan; more is a validation
+             *     error.
+             */
+            web_links?: components["schemas"]["PlanWebLink"][];
         };
         ApproveConnection: {
             approval: string;
@@ -1772,6 +1898,11 @@ export interface components {
             external_ref?: string | null;
             initiative?: null | components["schemas"]["Key"];
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             promise: null | components["schemas"]["EpicPromiseDto"];
             title: string;
             urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -1779,6 +1910,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
         EpicPromiseCleared: {
@@ -1800,7 +1936,8 @@ export interface components {
         ErrorCode: "not_found" | "conflict" | "forbidden" | "unauthenticated" | "validation" | "internal" | "rate_limited";
         /**
          * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
-         *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.
+         *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
+         *     and web links by their item's key.
          *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
          */
         ExportDto: {
@@ -1816,6 +1953,13 @@ export interface components {
             /** Format: date-time */
             exported_at: string;
             initiatives: components["schemas"]["InitiativeDto"][];
+            /**
+             * @description Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the
+             *     text of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,
+             *     the text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are
+             *     therefore together. An export written before item links existed has no such field.
+             */
+            item_links?: components["schemas"]["ExportItemLinkDto"][];
             key_prefix: string;
             /**
              * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
@@ -1825,6 +1969,29 @@ export interface components {
             sprints: components["schemas"]["SprintDto"][];
             stories: components["schemas"]["StoryDto"][];
             users: components["schemas"]["UserDto"][];
+            /**
+             * @description Every web link, in one total order: the number of its item's key, the text of that key (which differs at
+             *     one number only between two prefixes) and, on one item, when it was added.
+             */
+            web_links?: components["schemas"]["ExportWebLinkDto"][];
+        };
+        /**
+         * @description An item link in the export: `from` follows, duplicates or relates to `to`. A `relates_to` has the lower key
+         *     (byte order) in `from`, whichever end it was added from.
+         */
+        ExportItemLinkDto: {
+            from: components["schemas"]["Key"];
+            to: components["schemas"]["Key"];
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description A web link in the export: a title and a URL on one item. Who added it and when is in the exported activity
+         *     (`web_link_added`).
+         */
+        ExportWebLinkDto: {
+            item: components["schemas"]["Key"];
+            title: string;
+            url: string;
         };
         /**
          * @description Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
@@ -2008,6 +2175,11 @@ export interface components {
             external_ref?: string | null;
             horizon: string;
             key: components["schemas"]["Key"];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             /**
              * Format: float
@@ -2021,6 +2193,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client. */
         InstanceConfigDto: {
@@ -2047,6 +2224,27 @@ export interface components {
             secret: string;
             token: components["schemas"]["TokenDto"];
         };
+        /**
+         * @description The side an item link is read from. `out`: the item shown is the one that follows, duplicates or relates.
+         *     `in`: it is the other one. `relates_to` has no direction and is always `out`.
+         * @enum {string}
+         */
+        ItemLinkDirection: "out" | "in";
+        /** @description An item link as one of its two items reads it. */
+        ItemLinkDto: {
+            direction: components["schemas"]["ItemLinkDirection"];
+            item: components["schemas"]["LinkedItemDto"];
+            /** @description Display text for this side ("is followed by"), from the name table. */
+            label: string;
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description The name of an item link (kb/ADR-0031 R1), stored and sent as the forward word. None of them holds work back
+         *     (R2); a name is added only by an observation on that record. Declared in display order: `follows`,
+         *     `duplicates`, `relates_to`.
+         * @enum {string}
+         */
+        ItemLinkType: "follows" | "duplicates" | "relates_to";
         /** @description An item named with its type: keys share one sequence (kb/ADR-0002 R5), so a key alone does not say what it is. */
         ItemRefDto: {
             item: components["schemas"]["ItemType"];
@@ -2064,11 +2262,29 @@ export interface components {
         LinkGoal: {
             items: components["schemas"]["KeyRef"][];
         };
+        /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
+        LinkListingDto: {
+            links: components["schemas"]["ItemLinkDto"][];
+            /**
+             * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+             *     none.
+             */
+            web_links: components["schemas"]["WebLinkDto"][];
+        };
         LinkRecord: {
             path: string;
             pr_url?: string | null;
             record_id: string;
             repo: string;
+        };
+        /**
+         * @description The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
+         *     reading the link as a gate (kb/ADR-0031 R3).
+         */
+        LinkedItemDto: {
+            key: components["schemas"]["Key"];
+            level: components["schemas"]["ItemType"];
+            title: string;
         };
         /** @description Mark (or renew) an item urgent; the reason is optional, at most 200 characters. */
         MarkUrgent: {
@@ -2174,14 +2390,24 @@ export interface components {
         };
         /**
          * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-         *     this plan had made it, and every blocker edge with `created` false when it was already there.
+         *     this plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.
          */
         PlanApplied: {
             blocks: components["schemas"]["PlannedBlock"][];
             decisions: components["schemas"]["PlannedDecision"][];
             items: components["schemas"]["PlannedItem"][];
+            /**
+             * @description One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+             *     server) reads as none.
+             */
+            links: components["schemas"]["PlannedLink"][];
+            /**
+             * @description One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+             *     server) reads as none.
+             */
+            web_links: components["schemas"]["PlannedWebLink"][];
         };
-        /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key. */
+        /** @description `blocked_by` blocks `story`; each is a plan story's name or an existing story's key or external reference. */
         PlanBlock: {
             blocked_by: string;
             story: string;
@@ -2191,7 +2417,7 @@ export interface components {
             /** Format: date */
             due?: string | null;
             name: string;
-            /** @description A plan item's name, or an existing item's key. */
+            /** @description A plan item's name, or an existing item's key or external reference (native keys first). */
             on: string;
             reversibility?: null | components["schemas"]["Reversibility"];
             title: string;
@@ -2199,7 +2425,7 @@ export interface components {
         PlanEpic: {
             brief?: string | null;
             external_ref?: string | null;
-            /** @description A plan initiative's name, or an existing initiative's key. */
+            /** @description A plan initiative's name, or an existing initiative's key or external reference. */
             initiative?: string | null;
             name: string;
             title: string;
@@ -2213,17 +2439,36 @@ export interface components {
             target_month?: string | null;
             title: string;
         };
+        /**
+         * @description `from` follows, duplicates or relates to `to`: always the forward form. Each end is a plan item's name (an
+         *     initiative, an epic or a story) or an existing item's key or external reference. `type` is written as on the
+         *     wire (`relates_to`).
+         */
+        PlanLink: {
+            from: string;
+            to: string;
+            type: components["schemas"]["ItemLinkType"];
+        };
         PlanStory: {
             criteria?: string[];
             delivery?: null | components["schemas"]["DeliveryState"];
             description?: string | null;
-            /** @description A plan epic's name, or an existing epic's key. */
+            /** @description A plan epic's name, or an existing epic's key or external reference. */
             epic?: string | null;
             external_ref?: string | null;
             kind?: null | components["schemas"]["Kind"];
             labels?: string[];
             name: string;
             title: string;
+        };
+        /**
+         * @description A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title
+         *     and the URL are under the rule of `AddWebLink`.
+         */
+        PlanWebLink: {
+            on: string;
+            title: string;
+            url: string;
         };
         PlannedBlock: {
             blocked_by: components["schemas"]["Key"];
@@ -2241,6 +2486,32 @@ export interface components {
             item: components["schemas"]["ItemType"];
             key: components["schemas"]["Key"];
             name: string;
+        };
+        /**
+         * @description An item link the plan asked for, as stored: a `relates_to` has the lower key in `from`, whichever end the plan
+         *     named first. `created` is false when the link was already there.
+         */
+        PlannedLink: {
+            created: boolean;
+            from: components["schemas"]["Key"];
+            from_level: components["schemas"]["ItemType"];
+            to: components["schemas"]["Key"];
+            to_level: components["schemas"]["ItemType"];
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description A web link the plan asked for, as stored: its `id` on the item (how one is removed), the title trimmed and the
+         *     URL in the URL parser's form. `created` is false when the item already had that URL under that title; the `id`
+         *     is then the one it had.
+         */
+        PlannedWebLink: {
+            created: boolean;
+            /** Format: int64 */
+            id: number;
+            level: components["schemas"]["ItemType"];
+            on: components["schemas"]["Key"];
+            title: string;
+            url: string;
         };
         /**
          * @description A pull request's state as GitHub last reported it; a cache, never a driver of delivery.
@@ -2757,6 +3028,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -2764,6 +3040,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -2822,7 +3103,8 @@ export interface components {
             outcome: "ok";
             /**
              * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
-             *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.
+             *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
+             *     and web links by their item's key.
              *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
              */
             value: {
@@ -2838,6 +3120,13 @@ export interface components {
                 /** Format: date-time */
                 exported_at: string;
                 initiatives: components["schemas"]["InitiativeDto"][];
+                /**
+                 * @description Every item link (kb/ADR-0031), once, as stored, in one total order: the number of its `from` key, the
+                 *     text of its `from` key (which differs at one number only between two prefixes), the number of its `to` key,
+                 *     the text of its `to` key, then the name (follows, duplicates, relates_to). The links from one item are
+                 *     therefore together. An export written before item links existed has no such field.
+                 */
+                item_links?: components["schemas"]["ExportItemLinkDto"][];
                 key_prefix: string;
                 /**
                  * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
@@ -2847,6 +3136,11 @@ export interface components {
                 sprints: components["schemas"]["SprintDto"][];
                 stories: components["schemas"]["StoryDto"][];
                 users: components["schemas"]["UserDto"][];
+                /**
+                 * @description Every web link, in one total order: the number of its item's key, the text of that key (which differs at
+                 *     one number only between two prefixes) and, on one item, when it was added.
+                 */
+                web_links?: components["schemas"]["ExportWebLinkDto"][];
             };
         } | {
             /** @enum {string} */
@@ -2971,6 +3265,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -2984,6 +3283,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3076,6 +3380,40 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_LinkListingDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description `GET /items/{key}/links`: what `reeve link ls` shows. */
+            value: {
+                links: components["schemas"]["ItemLinkDto"][];
+                /**
+                 * @description The item's web links, oldest first. Servers always send it; JSON without it (an older server) reads as
+                 *     none.
+                 */
+                web_links: components["schemas"]["WebLinkDto"][];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_Me: {
             /** @enum {string} */
             outcome: "ok";
@@ -3112,12 +3450,22 @@ export interface components {
             outcome: "ok";
             /**
              * @description What the plan came to: every item and decision by its local name, with `created` false when an earlier apply of
-             *     this plan had made it, and every blocker edge with `created` false when it was already there.
+             *     this plan had made it, and every blocker edge, item link and web link with `created` false when it was already there.
              */
             value: {
                 blocks: components["schemas"]["PlannedBlock"][];
                 decisions: components["schemas"]["PlannedDecision"][];
                 items: components["schemas"]["PlannedItem"][];
+                /**
+                 * @description One entry per `links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+                 *     server) reads as none.
+                 */
+                links: components["schemas"]["PlannedLink"][];
+                /**
+                 * @description One entry per `web_links` entry of the plan, in its order. Servers always send it; JSON without it (an older
+                 *     server) reads as none.
+                 */
+                web_links: components["schemas"]["PlannedWebLink"][];
             };
         } | {
             /** @enum {string} */
@@ -3416,6 +3764,11 @@ export interface components {
                 key: components["schemas"]["Key"];
                 kind: components["schemas"]["Kind"];
                 labels: string[];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 promise: null | components["schemas"]["StoryPromiseDto"];
                 /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
@@ -3429,6 +3782,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3664,6 +4022,11 @@ export interface components {
                 external_ref?: string | null;
                 initiative?: null | components["schemas"]["Key"];
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 promise: null | components["schemas"]["EpicPromiseDto"];
                 title: string;
                 urgent_mark: null | components["schemas"]["UrgentMarkDto"];
@@ -3671,6 +4034,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             }[];
         } | {
             /** @enum {string} */
@@ -3793,6 +4161,11 @@ export interface components {
                 external_ref?: string | null;
                 horizon: string;
                 key: components["schemas"]["Key"];
+                /**
+                 * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+                 *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+                 */
+                links?: components["schemas"]["ItemLinkDto"][] | null;
                 owner?: string | null;
                 /**
                  * Format: float
@@ -3806,6 +4179,43 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_ItemLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                direction: components["schemas"]["ItemLinkDirection"];
+                item: components["schemas"]["LinkedItemDto"];
+                /** @description Display text for this side ("is followed by"), from the name table. */
+                label: string;
+                type: components["schemas"]["ItemLinkType"];
             }[];
         } | {
             /** @enum {string} */
@@ -4075,6 +4485,38 @@ export interface components {
             /** @enum {string} */
             outcome: "error";
         };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_WebLinkDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** Format: int64 */
+                id: number;
+                title: string;
+                /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+                url: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
         /**
          * @description How hard a required decision is to undo (kb/ADR-0013 R1). Unset (`None`) behaves as two-way.
          * @enum {string}
@@ -4270,6 +4712,11 @@ export interface components {
             key: components["schemas"]["Key"];
             kind: components["schemas"]["Kind"];
             labels: string[];
+            /**
+             * @description The item links of this item, read from its side (kb/ADR-0031). Present, possibly empty, on a read of one
+             *     item; left out of every read that answers several items, where "not loaded" must not read as "none".
+             */
+            links?: components["schemas"]["ItemLinkDto"][] | null;
             owner?: string | null;
             promise: null | components["schemas"]["StoryPromiseDto"];
             /** @description Pull requests linked to this story (possibly none); informational, they never move it. */
@@ -4283,6 +4730,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /**
          * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.
@@ -4385,6 +4837,17 @@ export interface components {
         /** @description The war-room rows the caller saw; bulk clear and renew act on exactly these. */
         WarRoomItems: {
             items: components["schemas"]["ItemRefDto"][];
+        };
+        /**
+         * @description A web link (kb/ADR-0031 R5): a titled URL on one item. `id` names it for removal; an item's web links come
+         *     oldest first.
+         */
+        WebLinkDto: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            /** @description As stored: the URL parser's serialisation of what was sent (`HTTP://Example.com` is `http://example.com/`). */
+            url: string;
         };
     };
     responses: never;
@@ -8564,6 +9027,347 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Response_Vec_CommentDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    list_item_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_LinkListingDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddItemLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_item_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                type: components["schemas"]["ItemLinkType"];
+                to: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_ItemLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    add_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddWebLink"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_web_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_WebLinkDto"];
                 };
             };
             /** @description validation error */

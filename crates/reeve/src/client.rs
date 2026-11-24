@@ -122,11 +122,21 @@ impl Client {
     }
     /// A client whose every request has this total timeout.
     pub fn with_timeout(base: String, token: String, timeout: std::time::Duration) -> Self {
+        Self::with_proxy(base, token, timeout, true)
+    }
+    /// `with_timeout`, optionally ignoring the proxy environment (`use_proxy` false), for in-process tests.
+    pub(crate) fn with_proxy(
+        base: String,
+        token: String,
+        timeout: std::time::Duration,
+        use_proxy: bool,
+    ) -> Self {
+        let mut b = reqwest::Client::builder().timeout(timeout);
+        if !use_proxy {
+            b = b.no_proxy();
+        }
         Self {
-            http: reqwest::Client::builder()
-                .timeout(timeout)
-                .build()
-                .expect("http client"),
+            http: b.build().expect("http client"),
             base,
             token,
         }
@@ -180,6 +190,8 @@ impl Client {
         let res = req.send().await?;
         let status = res.status().as_u16();
         let headers = res.headers().clone();
+        // The build the server offers (kb/ADR-0030), from any answer that names one: `cli_version` holds the one store.
+        crate::cli_version::observe(&headers);
         Ok((status, headers, res.bytes().await?.to_vec()))
     }
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<Outcome<T>> {

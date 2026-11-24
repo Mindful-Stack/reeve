@@ -1,20 +1,23 @@
 //! Every domain-to-wire conversion for planning: the domain never names a DTO (the isolation lint enforces it).
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
+use crate::domain::item_link::ItemLink;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
+use crate::ports::{ItemHead, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
     DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
-    EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto,
-    InitiativeDto, Key, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
+    EpicDto, EpicPromiseDto, EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto,
+    GoalGatesDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType,
+    Key, LinkedItemDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
     PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -36,6 +39,8 @@ impl From<&Initiative> for InitiativeDto {
             version: i.version(),
             urgent_mark: None,
             urgent_sources: vec![],
+            links: None,
+            web_links: None,
         }
     }
 }
@@ -55,6 +60,8 @@ impl From<&Epic> for EpicDto {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         }
     }
 }
@@ -88,6 +95,8 @@ impl From<&Story> for StoryDto {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         }
     }
 }
@@ -536,5 +545,51 @@ impl From<reeve_protocol::SetPromise> for promise::Request {
             shortcut: b.shortcut.map(Into::into),
             to: b.to,
         }
+    }
+}
+
+/// An item link as one of its ends reads it: the side, the wording for that side from the protocol's name table,
+/// and the item at the other end.
+pub(crate) fn item_link_dto(
+    link_type: ItemLinkType,
+    direction: ItemLinkDirection,
+    other: &Key,
+    head: &ItemHead,
+) -> ItemLinkDto {
+    ItemLinkDto {
+        link_type,
+        direction,
+        label: link_type.label(direction).to_string(),
+        item: LinkedItemDto {
+            key: other.clone(),
+            level: head.level,
+            title: head.title.clone(),
+        },
+    }
+}
+
+pub(crate) fn web_link_dto(w: &StoredWebLink) -> WebLinkDto {
+    WebLinkDto {
+        id: w.id,
+        title: w.link.title().to_owned(),
+        url: w.link.url().to_owned(),
+    }
+}
+
+/// An item link as the export lists it: once, with its ends as stored.
+pub(crate) fn export_item_link_dto(l: &ItemLink) -> ExportItemLinkDto {
+    ExportItemLinkDto {
+        from: l.from_key().clone(),
+        link_type: l.link_type(),
+        to: l.to_key().clone(),
+    }
+}
+
+/// A web link as the export lists it: its item, title and URL.
+pub(crate) fn export_web_link_dto(w: &StoredWebLink) -> ExportWebLinkDto {
+    ExportWebLinkDto {
+        item: w.item.clone(),
+        title: w.link.title().to_owned(),
+        url: w.link.url().to_owned(),
     }
 }

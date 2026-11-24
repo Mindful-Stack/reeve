@@ -129,6 +129,7 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 Outcome::Ok(me) => Outcome::Ok(serde_json::json!({
                     "url": url, "token_from_env": via_env,
                     "email": me.email, "role": me.role, "token_kind": me.token_kind,
+                    "cli": {"current": crate::cli_version::current(), "server": crate::cli_version::offered()},
                 })),
                 Outcome::Refused {
                     reasons,
@@ -152,13 +153,21 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 },
             };
             Ok(finish(out, json, |v| {
+                let build = |x: &serde_json::Value, none: &str| {
+                    x.as_str().map_or_else(
+                        || none.to_string(),
+                        |s| format!("build {}", crate::cli_version::short(s)),
+                    )
+                };
                 format!(
-                    "{} (token from {})\n{} role={} token_kind={}",
+                    "{} (token from {})\n{} role={} token_kind={}\ncli: {} (server offers: {})",
                     v["url"].as_str().unwrap_or_default(),
                     if via_env { "REEVE_TOKEN" } else { "config" },
                     v["email"].as_str().unwrap_or_default(),
                     v["role"].as_str().unwrap_or_default(),
-                    v["token_kind"].as_str().unwrap_or_default()
+                    v["token_kind"].as_str().unwrap_or_default(),
+                    build(&v["cli"]["current"], "dev build"),
+                    build(&v["cli"]["server"], "none"),
                 )
             }))
         }
@@ -216,7 +225,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
     let url = url
         .or_else(|| crate::config::env_nonempty("REEVE_URL"))
         .or(crate::config::load().url)
-        .ok_or_else(|| anyhow::anyhow!("no server url: pass --url https://reeve.example.com"))?;
+        .ok_or_else(|| anyhow::anyhow!(crate::config::NO_SERVER_URL))?;
     let url = url.trim_end_matches('/').to_string();
     if crate::config::env_nonempty("REEVE_TOKEN").is_some() {
         // REEVE_TOKEN wins over the stored token (kb/ADR-0015 R7), so the login would otherwise look like it did nothing.
@@ -290,15 +299,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
 
 /// Best effort: the address is already on stderr, so a missing opener is not an error.
 fn open_browser(page: &str) {
-    let opener = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    let _ = std::process::Command::new(opener)
-        .arg(page)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    if let Ok(mut c) = crate::browser::command(page) {
+        let _ = c.spawn();
+    }
 }

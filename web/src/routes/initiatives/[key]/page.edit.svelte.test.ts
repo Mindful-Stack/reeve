@@ -1314,3 +1314,21 @@ describe('initiative page: urgent mark', () => {
 	});
 
 });
+
+describe('initiative page: relations', () => {
+	it('lists the item links and web links its read carries, under headings of the page\'s level, with no blocked-by group', async () => {
+		net.ini = {
+			...net.ini,
+			links: [{ type: 'follows', direction: 'in', label: 'is followed by', item: { key: 'ABC-7', level: 'epic', title: 'Dunning' } }],
+			web_links: [{ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' }]
+		};
+		await open();
+		const section = (name: string) => [...document.body.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === name);
+		expect([...section('Relations')!.querySelectorAll('.label')].map((l) => l.textContent)).toEqual(['is followed by']);
+		expect(section('Relations')!.querySelector('a[href="/epics/ABC-7"]')?.textContent).toContain('Dunning');
+		expect(section('Relations')!.querySelector('button[aria-label="Remove item link: is followed by ABC-7"]')).not.toBeNull();
+		expect(section('Web links')!.querySelector('a[href="https://example.com/wiki/scenario"]')?.textContent).toContain('Scenario page');
+		const order = [...document.body.querySelectorAll('.page > section')].map((s) => s.querySelector('h2')?.textContent?.trim().split(' ')[0]);
+		expect(order.slice(order.indexOf('Brief'), order.indexOf('Epics') + 1)).toEqual(['Brief', 'Relations', 'Web', 'Epics']);
+	});
+});

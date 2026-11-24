@@ -85,6 +85,30 @@ describe('actionLabel', () => {
 		expect(actionLabel(action, payload)).toBe(plain);
 		expect(actionLabel(action, payload, 'ABC-12')).toBe(keyed);
 	});
+	it('names both items and the name between them for an item link entry, as stored', async () => {
+		const { actionLabel } = await import('./format.ts');
+		const payload = { type: 'follows', from: 'ABC-12', to: 'ABC-7' };
+		expect(actionLabel('item_link_added', payload)).toBe('added item link: ABC-12 follows ABC-7');
+		expect(actionLabel('item_link_removed', payload)).toBe('removed item link: ABC-12 follows ABC-7');
+		expect(actionLabel('item_link_added', { type: 'relates_to', from: 'ABC-3', to: 'ABC-9' })).toBe('added item link: ABC-3 relates to ABC-9');
+		// The entry is on both items, so the words are the same whichever item the note is about.
+		expect(actionLabel('item_link_added', payload, 'ABC-7')).toBe('added item link: ABC-12 follows ABC-7');
+		// A field missing, or a name this client does not know (it has no wording for it): the words without the link.
+		for (const short of [null, {}, { type: 'follows', from: 'ABC-12' }, { type: 7, from: 'ABC-12', to: 'ABC-7' }, { type: 'blocks', from: 'ABC-12', to: 'ABC-7' }]) {
+			expect(actionLabel('item_link_added', short)).toBe('added item link');
+			expect(actionLabel('item_link_removed', short)).toBe('removed item link');
+		}
+	});
+	it('names the title of a web link entry, and the URL too once the web link is removed', async () => {
+		const { actionLabel } = await import('./format.ts');
+		const payload = { id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' };
+		expect(actionLabel('web_link_added', payload)).toBe('added web link Scenario page');
+		// Removed, it is listed nowhere any more: the entry is the one place left that says where it pointed.
+		expect(actionLabel('web_link_removed', payload)).toBe('removed web link Scenario page (https://example.com/wiki/scenario)');
+		expect(actionLabel('web_link_removed', { title: 'Scenario page' })).toBe('removed web link Scenario page');
+		expect(actionLabel('web_link_added', null)).toBe('added web link');
+		expect(actionLabel('web_link_removed', { title: '' })).toBe('removed web link');
+	});
 	it('has no words for any other action, which reads as plainAction', async () => {
 		const { actionLabel, plainAction } = await import('./format.ts');
 		for (const a of ['moved', 'goal_linked', 'override']) expect(actionLabel(a, null, 'ABC-12')).toBeNull();
@@ -98,6 +122,7 @@ describe('entryAction', () => {
 		expect(entryAction('moved', { from: 'todo', to: 'in_progress', client: 'claude.ai' })).toBe('moved via claude.ai');
 		expect(entryAction('goal_linked', { client: 'chatgpt.com' })).toBe('goal linked via chatgpt.com');
 		expect(entryAction('attachment_added', { filename: 'shot.png', client: 'claude.ai' })).toBe('added attachment shot.png via claude.ai');
+		expect(entryAction('web_link_added', { title: 'Scenario page', client: 'claude.ai' })).toBe('added web link Scenario page via claude.ai');
 	});
 	it('reads as before without a client', async () => {
 		const { entryAction } = await import('./format.ts');

@@ -1,3 +1,8 @@
+# The CLI bundle the server serves under /cli/ (kb/ADR-0030). release.yml replaces this empty stage with the published
+# bundle (`--build-context cli=docker-image://ghcr.io/mindful-stack/reeve-cli@<digest>`) and checks the image's
+# /srv/cli/VERSION before pushing it; any other build keeps it empty, and the image serves no CLI.
+FROM scratch AS cli
+
 # The client is built by Node in its own stage; the runtime image has no Node (kb/ADR-0006 R1).
 FROM node:22-bookworm-slim AS web
 WORKDIR /src
@@ -43,6 +48,7 @@ FROM debian:bookworm-slim
 # household inside this container; age for an operator's encrypted off-host backups and their restore rehearsal, run
 # as one-off containers of this image. The server itself runs none of them.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client age && rm -rf /var/lib/apt/lists/*
+COPY --from=cli / /srv/cli/
 COPY --from=build /out/reeve-server /usr/local/bin/
 COPY --from=build /out/reeve /usr/local/bin/
 COPY deploy/decision-check.sh /usr/local/bin/reeve-decision-check

@@ -1,6 +1,7 @@
 //! Short text renderers; `--json` bypasses all of these.
 use crate::glyphs::{Level, mark};
 use crate::promise;
+use crate::relations::{BlockerLine, relations, web_links};
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -114,11 +115,41 @@ fn epic_chip(e: &EpicDto) -> String {
         .unwrap_or_default()
 }
 
-/// `story` for `story show` and `story context`: with the urgent lines, then the promise line, after the first line.
+/// `text`, then `block` on the lines after it when there is one.
+fn with_block(text: String, block: Option<String>) -> String {
+    match block {
+        Some(block) => format!("{text}\n{block}"),
+        None => text,
+    }
+}
+
+/// `story` for `story show`: with the urgent lines, then the promise line, after the first line, and the
+/// relations block and the web links block last. A blocker is printed by its key and nothing else: a `StoryDto` holds no more of it, and
+/// whether it holds the story back is the readiness reasons' to say, not this block's.
 pub fn story_show(s: &StoryDto, now: DateTime<Utc>) -> String {
+    story_with_relations(s, &[], now)
+}
+
+/// `story_show` for `story context`, which has the blocker stories: a blocker found in `blockers` is printed with
+/// its title, state and owner.
+pub fn story_with_relations(s: &StoryDto, blockers: &[StoryDto], now: DateTime<Utc>) -> String {
     let mut lines = urgent_lines(s.urgent_mark.as_ref(), &s.urgent_sources, &s.key, now);
     lines.extend(s.promise.as_ref().map(promise::line_text));
-    with_urgency(story(s), lines)
+    let blocked_by: Vec<BlockerLine<'_>> = s
+        .blocked_by
+        .iter()
+        .map(|key| BlockerLine {
+            key,
+            detail: blockers.iter().find(|b| b.key == *key),
+        })
+        .collect();
+    with_block(
+        with_block(
+            with_urgency(story(s), lines),
+            relations(&blocked_by, s.links.as_deref().unwrap_or(&[])),
+        ),
+        web_links(s.web_links.as_deref().unwrap_or(&[])),
+    )
 }
 
 /// A recipient as the answer names it: ` · to <recipient>`, or nothing.
@@ -197,19 +228,33 @@ pub fn epic_promise_answer(e: &EpicDto) -> String {
     }
 }
 
-/// `initiative` for `initiative show`: with the urgent lines after the first line.
+/// `initiative` for `initiative show`: with the urgent lines after the first line, and the relations block
+/// and the web links block last.
 pub fn initiative_show(i: &InitiativeDto, now: DateTime<Utc>) -> String {
-    with_urgency(
-        initiative(i),
-        urgent_lines(i.urgent_mark.as_ref(), &i.urgent_sources, &i.key, now),
+    with_block(
+        with_block(
+            with_urgency(
+                initiative(i),
+                urgent_lines(i.urgent_mark.as_ref(), &i.urgent_sources, &i.key, now),
+            ),
+            relations(&[], i.links.as_deref().unwrap_or(&[])),
+        ),
+        web_links(i.web_links.as_deref().unwrap_or(&[])),
     )
 }
 
-/// `epic` for `epic show`: with the urgent lines, then the promise line, after the first line.
+/// `epic` for `epic show`: with the urgent lines, then the promise line, after the first line, and the relations
+/// block and the web links block last.
 pub fn epic_show(e: &EpicDto, now: DateTime<Utc>) -> String {
     let mut lines = urgent_lines(e.urgent_mark.as_ref(), &e.urgent_sources, &e.key, now);
     lines.extend(e.promise.as_ref().map(promise::epic_line_text));
-    with_urgency(epic(e), lines)
+    with_block(
+        with_block(
+            with_urgency(epic(e), lines),
+            relations(&[], e.links.as_deref().unwrap_or(&[])),
+        ),
+        web_links(e.web_links.as_deref().unwrap_or(&[])),
+    )
 }
 
 /// The answer to marking an item urgent: its mark line (`!` after the key once the server counts it urgent), then
@@ -585,7 +630,11 @@ pub fn comment(c: &CommentDto) -> String {
 /// can open the file; the story's urgent lines follow its title line.
 pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
     let mut o = String::new();
-    let _ = writeln!(o, "# Story\n\n{}\n", story_show(&c.story, now));
+    let _ = writeln!(
+        o,
+        "# Story\n\n{}\n",
+        story_with_relations(&c.story, &c.blockers, now)
+    );
     if !c.story.description.is_empty() {
         let _ = writeln!(o, "{}\n", c.story.description);
     }
@@ -1107,6 +1156,8 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         }
     }
 
@@ -1151,6 +1202,8 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         };
         let out = epic(&e);
         assert!(
@@ -1225,6 +1278,8 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         };
         assert!(epic(&e).contains(" from: SCRUM-480"), "{}", epic(&e));
         let i = InitiativeDto {
@@ -1240,6 +1295,8 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            links: None,
+            web_links: None,
         };
         assert!(
             initiative(&i).contains(" from: JPD-30"),
@@ -1293,6 +1350,8 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         }
     }
 
@@ -1310,6 +1369,8 @@ mod tests {
             version: 1,
             urgent_mark: None,
             urgent_sources: vec![],
+            links: None,
+            web_links: None,
         }
     }
 
@@ -1803,5 +1864,189 @@ mod tests {
         let draft = sprint_view(&view(SprintState::Draft, vec![]), None);
         assert!(!draft.contains(MEMBERSHIP_RULE), "{draft}");
         assert!(draft.contains("Bookings work"), "{draft}");
+    }
+
+    fn item_link(
+        t: ItemLinkType,
+        direction: ItemLinkDirection,
+        key: &str,
+        level: ItemType,
+        title: &str,
+    ) -> ItemLinkDto {
+        ItemLinkDto {
+            link_type: t,
+            direction,
+            label: t.label(direction).to_string(),
+            item: LinkedItemDto {
+                key: key.parse().unwrap(),
+                level,
+                title: title.into(),
+            },
+        }
+    }
+
+    /// The block as the spec draws it: blockers first, labels padded to the longest shown, each key with its
+    /// glyph. `story show` has only the blocker's key, and prints nothing after it (no claim that the blocker
+    /// holds the story back: this block does not know); with no blockers and no links there is no block at all.
+    #[test]
+    fn show_prints_blockers_then_item_links_and_nothing_when_there_are_none() {
+        use ItemLinkDirection::{In, Out};
+        let links = vec![
+            item_link(
+                ItemLinkType::Follows,
+                Out,
+                "ABC-25",
+                ItemType::Story,
+                "Billing account",
+            ),
+            item_link(
+                ItemLinkType::Follows,
+                In,
+                "ABC-31",
+                ItemType::Story,
+                "Dunning",
+            ),
+            item_link(
+                ItemLinkType::RelatesTo,
+                Out,
+                "ABC-40",
+                ItemType::Epic,
+                "Reminder emails",
+            ),
+        ];
+        let s = StoryDto {
+            blocked_by: vec!["ABC-28".parse().unwrap()],
+            links: Some(links.clone()),
+            ..dto(vec![])
+        };
+        let out = story_show(&s, now());
+        assert_eq!(
+            out,
+            format!(
+                "{}\nrelations:\n  blocked by      ● ABC-28\n  follows         ● ABC-25 Billing account\n  is followed by  ● ABC-31 Dunning\n  relates to      ■ ABC-40 Reminder emails",
+                story(&s)
+            )
+        );
+        // Nothing to show: exactly the text from before this block existed.
+        for links in [None, Some(vec![])] {
+            let plain = StoryDto {
+                links,
+                ..dto(vec![])
+            };
+            assert_eq!(story_show(&plain, now()), story(&plain));
+        }
+        // An epic and an initiative have no blockers; the width follows the labels shown.
+        let e = EpicDto {
+            links: Some(vec![links[2].clone()]),
+            ..epic_dto()
+        };
+        assert_eq!(
+            epic_show(&e, now()),
+            format!(
+                "{}\nrelations:\n  relates to  ■ ABC-40 Reminder emails",
+                epic(&e)
+            )
+        );
+        let i = InitiativeDto {
+            links: Some(vec![links[0].clone()]),
+            ..initiative_dto()
+        };
+        assert_eq!(
+            initiative_show(&i, now()),
+            format!(
+                "{}\nrelations:\n  follows  ● ABC-25 Billing account",
+                initiative(&i)
+            )
+        );
+    }
+
+    /// `story context` has the blocker stories, so its blocker line says what the blocker is doing and whose it is,
+    /// and stops there: the line ends after the owner, with no word on whether the blocker holds the story back.
+    #[test]
+    fn context_prints_the_blocker_with_its_title_state_and_owner() {
+        let blocker = StoryDto {
+            key: "ABC-28".parse().unwrap(),
+            title: "Invoice template".into(),
+            delivery: DeliveryState::InReview,
+            owner: Some("mia@example.com".into()),
+            ..dto(vec![])
+        };
+        let unowned = StoryDto {
+            key: "ABC-29".parse().unwrap(),
+            title: "Numbering".into(),
+            kind: Kind::Bug,
+            ..dto(vec![])
+        };
+        let c = StoryContextDto {
+            story: StoryDto {
+                blocked_by: vec![blocker.key.clone(), unowned.key.clone()],
+                links: Some(vec![item_link(
+                    ItemLinkType::Duplicates,
+                    ItemLinkDirection::In,
+                    "ABC-50",
+                    ItemType::Story,
+                    "Old invoice",
+                )]),
+                ..dto(vec![])
+            },
+            epic: None,
+            initiative: None,
+            required_decisions: vec![],
+            blockers: vec![blocker, unowned],
+            comments: vec![],
+            readiness: ready(),
+            goals: vec![],
+            attachments: vec![],
+        };
+        let out = context_markdown(&c, now());
+        assert!(
+            out.contains(
+                "relations:\n  blocked by        ● ABC-28 Invoice template (in review, mia@example.com)\n  blocked by        ▲ ABC-29 Numbering (todo, no owner)\n  is duplicated by  ● ABC-50 Old invoice\n"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("\n## Blockers\n\n- ● ABC-28 [in-review] Invoice template"),
+            "the existing section stays: {out}"
+        );
+    }
+
+    /// The web links block comes after the relations block, on all three levels and in the context, and is
+    /// absent when there are none.
+    #[test]
+    fn show_prints_web_links_after_the_relations() {
+        let page = WebLinkDto {
+            id: 1,
+            title: "Scenario page".into(),
+            url: "https://example.com/wiki/scenario".into(),
+        };
+        let block = "web links:\n  Scenario page  https://example.com/wiki/scenario";
+        let s = StoryDto {
+            blocked_by: vec!["ABC-28".parse().unwrap()],
+            web_links: Some(vec![page.clone()]),
+            ..dto(vec![])
+        };
+        assert_eq!(
+            story_show(&s, now()),
+            format!("{}\nrelations:\n  blocked by  ● ABC-28\n{block}", story(&s))
+        );
+        let e = EpicDto {
+            web_links: Some(vec![page.clone()]),
+            ..epic_dto()
+        };
+        assert_eq!(epic_show(&e, now()), format!("{}\n{block}", epic(&e)));
+        let i = InitiativeDto {
+            web_links: Some(vec![page]),
+            ..initiative_dto()
+        };
+        assert_eq!(
+            initiative_show(&i, now()),
+            format!("{}\n{block}", initiative(&i))
+        );
+        let plain = StoryDto {
+            web_links: Some(vec![]),
+            ..dto(vec![])
+        };
+        assert_eq!(story_show(&plain, now()), story(&plain));
     }
 }

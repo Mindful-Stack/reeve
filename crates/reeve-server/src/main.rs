@@ -209,8 +209,15 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Migrate => {}
         Cmd::Serve => {
             let bind = config.bind.clone();
-            let state = build_state(config, pool).await?;
+            let mut state = build_state(config, pool).await?;
             tracing::info!("{}", mcp_startup_line(&state));
+            // The CLI bundle (kb/ADR-0030): REEVE_CLI_DIR, default /srv/cli, where the published image puts it. Only
+            // here: build_state and the test harnesses never read the environment for it.
+            state.cli_dist = cli_dist::startup(
+                &state.config,
+                cli_dist::cli_dir(std::env::var_os("REEVE_CLI_DIR")),
+            )
+            .await;
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             tracing::info!(%bind, "reeve-server listening");
             axum::serve(listener, app(state)).await?;

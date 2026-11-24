@@ -64,6 +64,12 @@ one that refuses the dispatch. This repository's run logs are public, so they sh
 a repository's name; check delivery in your own repository's Actions tab. The dispatch is best effort: a release
 that fails to reach you is not retried, so keep a daily check of your own as a fallback.
 
+Not every commit on `main` gets an image. While one release run builds a new CLI version, GitHub keeps only one more
+run for that version waiting and cancels any earlier waiting one, and which run it keeps depends on when each reached
+the queue, not on commit order, so the newest commit's run can be the one cancelled. A cancelled run shows as
+"cancelled" in the Actions tab and publishes nothing. Maintainers re-run it by hand (**Re-run all jobs**): it waits
+for the lock, finds the bundle already published, and publishes that commit's image and its notification.
+
 **Running the App (maintainers and forks).** The `notify` job reads two repository secrets: `RELEASE_APP_ID` (the
 App's ID or client ID) and `RELEASE_APP_PRIVATE_KEY` (a private key generated in the App's settings, the whole PEM
 file). With neither set it does nothing, which is how a fork starts. For a fork with subscribers of its own, create a
@@ -90,7 +96,7 @@ Browser sign-in uses Google as the OpenID Connect provider. Without an `[oidc]` 
 
 ### Reverse proxy
 
-The proxy must forward `/auth/*`, `/api/*`, `/webhooks/*` (the GitHub webhook, when configured) and `/` (the web client, every other path) to the server, over HTTPS. Session cookies are `Secure` whenever `public_url` is https, so a browser never sends them over plain HTTP: terminate TLS at the proxy and keep `public_url` on https.
+The proxy must forward `/auth/*`, `/api/*`, `/cli/*` (the CLI downloads, see [CLI distribution](#cli-distribution)), `/webhooks/*` (the GitHub webhook, when configured) and `/` (the web client, every other path) to the server, over HTTPS. Session cookies are `Secure` whenever `public_url` is https, so a browser never sends them over plain HTTP: terminate TLS at the proxy and keep `public_url` on https.
 
 The web client keeps one server-sent-events stream open per tab (`/api/v1/events`). The proxy must not buffer it, and its read timeout must be above 15 s (the server sends a keep-alive every 15 s). Serve HTTP/2 to browsers: over HTTP/1.1 a browser allows only six connections per host, and every open tab holds one. For nginx:
 
@@ -276,6 +282,7 @@ Once the endpoint is on, what people read in Reeve can leave the instance throug
 - What a person reads through a connected app is sent to that app's provider (for example Anthropic for Claude, OpenAI for ChatGPT), under the person's own account with that provider and that provider's terms.
 - Each approval and each revocation of a connection is an entry in the activity log, which every signed-in person can read, naming the app by its client id; an approval also holds the app's host and the name the app gave itself. Each change made through an app is recorded as the person's, with the app it was made through (the host of its client id, or, for an app that registered itself, the host of its redirect address); the activity feed shows it as "via <client>".
 - A connection (the person, the app with its host and name, what it may do, when it was approved and when and why it ended) and the hashes of its tokens are stored while the connection lasts. An ended connection stays listed for thirty days. Its rows are deleted the next time the same person connects an app, once it has been ended for more than thirty days; until then they remain in the database and in backups. Activity entries are kept as the rest of the activity log is.
+- A person can attach web links to an initiative, an epic or a story: a title and a web address, both free text, which can name a person or point at a page about one. Everyone signed in can read them, and so can an app a person connected, when that person reads the item through it. Each add and each removal is an entry in the activity log that holds the title and the address, and the entry stays after the web link is removed. An address with a user name or a password in its user-information part (`https://name:password@host/`) is refused. Anything else in an address is stored, a token or another secret in its path, its query or its fragment (the part after `#`) included, and so is any text in a title: it is kept by the activity entries after the web link is removed, and it is sent to the apps a person connected. The title is stored trimmed and the address in its normalised form (the host in lower case, a default port dropped, characters that need it percent-encoded). This part adds no column that holds an email address. The export an admin takes (`reeve export`, and the one `scripts/backup.sh` publishes beside each dump) lists every web link with its title and address.
 
 Set `[mcp] privacy_url` to the statement's https address: the approval page links it beside the choice a person makes. Unset, the page shows no link.
 
@@ -299,6 +306,121 @@ In this order:
 4. Restart the server. One person connects an app and reads a story through it; the activity log shows the approval, naming the app by its client id (with its host and name), and the connection is listed under "Connected apps" on the Tokens page. The person also adds a comment through the app (with a connection that may read and change) and checks that its entry in the activity feed names the app ("via <client>").
 
 To turn it off again, set `enabled = false` and restart: `/mcp`, the two documents, `/oauth/authorize`, `/oauth/token`, `/oauth/register` and the approval page's API routes answer 404 (signing in to Reeve itself is unaffected). That ends no connection: each stays listed and works again if the endpoint is turned back on before it ends. To end every one, run `reeve-server --config <reeve.toml> connections-revoke-all` while the server is stopped (`docker compose run --rm --no-deps server connections-revoke-all` on the reference stack); each is logged as a `connection_revoked` entry with reason `restored`, the only reason the command writes.
+
+## CLI distribution
+
+Every published image carries the `reeve` CLI built for its release (kb/ADR-0030): the binaries for every supported
+target, `SHA256SUMS` and `VERSION` (the CLI version) in `/srv/cli`. Once `public_url` is configured, the server
+serves them, and two install scripts rendered with that URL, at `/cli/` without sign-in:
+
+    curl -q --proto '=https' --tlsv1.2 -fsS https://<host>/cli/install.sh | sh     # Linux, macOS
+
+    # Windows (PowerShell): TLS 1.2 first, which Windows PowerShell 5.1 may not enable by default
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://<host>/cli/install.ps1 | iex
+
+At start-up the server logs one line: `cli distribution: on, offering build 1a2b3c4` (the build is the first seven
+characters of the CLI version), or `cli distribution: off (<reason>)` for one of four reasons:
+
+- no `public_url` configured (the loopback default would point a remote installer at its own machine);
+- no bundle: an image you built yourself carries none unless built with the bundle (below; the line points here);
+- a `public_url` host that is not letters, digits, hyphens and dots, or an IP address (an underscore, say): the
+  scripts print the URL unquoted in the rerun commands people paste into a shell (logged as a warning);
+- a bundle that does not check out (logged as a warning, naming the defect).
+
+While it is on, every response carries `X-Reeve-Cli: <CLI version>` (all 40 characters), and the CLI tells people
+and agents to run `reeve update` when its own build differs. `REEVE_CLI_DIR` points the server at another directory
+(local testing).
+
+To check that it is on (`<host>` your `public_url`'s host):
+
+    docker compose logs server | grep 'cli distribution'                # on, offering build <7 characters>
+    curl -fsS https://<host>/cli/VERSION                                 # 40 hexadecimal characters
+    curl -sI https://<host>/health | grep -i '^x-reeve-cli:'             # the same 40 characters
+    for i in $(seq 50); do curl -s -o /dev/null -w '%{http_code}\n' https://<host>/cli/VERSION; done | sort | uniq -c
+                                                                         # some 429s once the limit below is in place
+
+The last check spends this address's burst, which refills at one request every two seconds: for up to about 80
+seconds after it, an install or `reeve update` from the same address (anyone behind the same NAT included) can get a
+429. Run it from an address nobody installs from, or wait a minute and a half afterwards.
+
+The routes are public, so rate-limit them per client IP at the proxy. An install is four requests (the script,
+`VERSION`, `SHA256SUMS`, the binary) and so is `reeve update` (`VERSION`, `SHA256SUMS`, the binary, `VERSION` again);
+running it again after a failure repeats them. For nginx, 30 a minute per IP with a burst of 40 served at once,
+answering 429 over the limit (nginx's default is 503,
+[`limit_req_status`](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html#limit_req_status)):
+
+    # in the http block
+    limit_req_zone $binary_remote_addr zone=reeve_cli:10m rate=30r/m;
+
+    # in the server block, before the general proxy location
+    location ^~ /cli/ {
+        limit_req zone=reeve_cli burst=40 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:7474;
+    }
+
+Size the burst at about four times the people and agents that install or update at once from one address (an office
+behind one NAT, a CI runner pool): 40 lets ten through together. The burst admits one larger spike per address; it
+does not raise what an address can download over time, which the rate (one request every two seconds) still caps. Set
+it too low and the cost is real: a `reeve update` that gets a 429 fails, and an agent that was told to update stops
+trying for the rest of its session (kb/ADR-0030 R8), running the old build until someone updates it. `nodelay` serves
+the burst at once rather than spacing it out, so no client waits on the proxy; nginx 1.15.7 and later can instead
+serve the first few at once and delay the rest (`burst=40 delay=10`), which is kinder to bandwidth but makes a large
+office's updates slow rather than refused.
+
+Behind a CDN, `$binary_remote_addr` is the CDN's address unless your real-IP settings restore the client's; keep them.
+A per-IP limit caps neither total bandwidth nor what people behind one shared address can download together.
+
+An image you build yourself serves no CLI unless you give the build the bundle, and the reference stack builds its
+own image (`docker compose up -d --build`). The bundle is published as `ghcr.io/mindful-stack/reeve-cli:<CLI
+version>`, where the CLI version is what `scripts/cli-version.sh` prints for your commit (a full clone is needed).
+`docker-compose.yml` alone builds without it, as it always has; `docker-compose.cli.yml` adds it to the build as the
+`cli` context, named by `REEVE_CLI_BUNDLE` (`build.additional_contexts`, which needs Compose 2.17 or later according
+to its documentation; checked here with Compose 5.6.1). Build this way:
+
+    v=$(scripts/cli-version.sh) && REEVE_CLI_BUNDLE=$v docker compose -f docker-compose.yml -f docker-compose.cli.yml up -d --build
+
+The `&&` stops when the CLI version cannot be computed (a shallow clone, say), and compose refuses to start when
+`REEVE_CLI_BUNDLE` is unset or empty, so neither builds an image without its bundle by accident. Use this command for
+**every** build, upgrades included: a plain `docker compose up -d --build` builds an image without a bundle, which
+turns distribution off (the log says `cli distribution: off (no bundle …)` at `info`, and responses lose
+`X-Reeve-Cli`, so no CLI is told to update). Do not pin `REEVE_CLI_BUNDLE` in `.env` either: the value changes
+whenever the CLI does, and a stale one builds the previous CLI version's bundle into the image, which the server then
+offers. Keep the variable to this one command rather than exporting it. Naming files with `-f` stops compose from
+reading `docker-compose.override.yml` by itself: if you have one (the decision check's keys, below), add
+`-f docker-compose.override.yml` after the other two.
+
+or, with plain Docker:
+
+    docker build --build-context "cli=docker-image://ghcr.io/mindful-stack/reeve-cli:$(scripts/cli-version.sh)" .
+
+The alternative is to run the published image (`image: ghcr.io/mindful-stack/reeve:<sha>` in place of `build:`),
+which carries its bundle already. A commit whose CLI version was never published (a fork's own CLI change) has no
+bundle; build without it.
+
+That pull works without signing in only while the `reeve-cli` package is public. The first release that publishes
+it creates the package with the organization's default visibility, which may be private: a maintainer then sets it
+to public once, in the package's settings (Danger Zone, Change visibility). If the release workflow's token may not
+create the package at all, `.github/workflows/cli.yml`'s header gives the one-off manual way to create it and grant
+this repository write access.
+
+An instance older than this feature has no `/cli/` routes: `curl … | sh` against it fails, and `reeve update` says
+the server does not distribute the CLI. Upgrade the instance first.
+
+**Turning it on for an existing instance**, in order:
+
+1. Configure `public_url` (already set with `[oidc]`; a token-only instance may have none, and stays off).
+2. Add the `reeve_cli` zone and the `location ^~ /cli/` block above to the proxy, check it (`nginx -t`) and reload it
+   (`systemctl reload nginx`, or `nginx -s reload`). Without them `/cli/` still works, through the general location,
+   with no rate limit: working is not the same as done.
+3. On the reference stack, which builds its own image, build with the bundle (the `docker-compose.cli.yml` command
+   above, on every build from now on), or run the published image.
+4. Restart, and run the checks above: the log line says `on`, `/cli/VERSION` and `X-Reeve-Cli` name the same CLI
+   version.
+5. Tell everyone to run the install line once. A `reeve` built with `cargo install` (or `cargo build`) is unstamped:
+   it never shows the update notice, so it never learns that the server offers a different build. The first install
+   is the one step that cannot happen by itself; after it, `reeve update` keeps each CLI on the build the server
+   offers.
 
 ## GitHub webhook
 
@@ -497,6 +619,13 @@ backups are gone. An image uploaded and never saved with any text is kept for at
 next upload after that.
 
 ### Releases and rollback
+
+Migration 1014 adds the `web_links` table (kb/ADR-0031). As for 1013, a rollback past this release restores the
+pre-release backup (see "Restore after an incident"), and every web link added since that backup is lost.
+
+Migration 1013 adds the `item_links` table (kb/ADR-0031). The server refuses to start on a database that has a
+migration it does not know (the same strict `VersionMissing`), so a rollback past this release restores the
+pre-release backup (see "Restore after an incident"), and every item link added since that backup is lost.
 
 Migration 1012 adds the promise columns to the epic and story tables (kb/ADR-0025). The same strict `VersionMissing`
 applies: the 0.4.0 image refuses to start on a database that 1012 has been applied to, so a rollback past this release

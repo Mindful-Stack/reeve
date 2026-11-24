@@ -112,7 +112,7 @@ async fn flow() {
     let dan = Api {
         base: base.clone(),
         token: human.clone(),
-        http: reqwest::Client::new(),
+        http: reqwest::Client::builder().no_proxy().build().unwrap(),
     };
 
     let s1 = dan.own(&dan.story("mine").await, "dan@example.com").await;
@@ -130,7 +130,10 @@ async fn flow() {
         &base,
         &human,
         Some(dan.me().await),
-        reeve::tui::Options::default(),
+        reeve::tui::Options {
+            no_proxy: true,
+            ..Default::default()
+        },
     );
     let k = |v: &Value| v["key"].as_str().unwrap().to_string();
 
@@ -289,13 +292,16 @@ async fn automation_is_read_only(base: &str, bot: &str, dan: &Api, key: &str) {
     let bot_api = Api {
         base: base.into(),
         token: bot.into(),
-        http: reqwest::Client::new(),
+        http: reqwest::Client::builder().no_proxy().build().unwrap(),
     };
     let mut t = tui(
         base,
         bot,
         Some(bot_api.me().await),
-        reeve::tui::Options::default(),
+        reeve::tui::Options {
+            no_proxy: true,
+            ..Default::default()
+        },
     );
     t.until("the automation header", WAIT, |d| {
         d.screen()

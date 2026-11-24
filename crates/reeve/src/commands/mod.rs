@@ -8,9 +8,11 @@ pub mod export;
 pub mod goal;
 pub mod import;
 pub mod initiative;
+pub mod link;
 pub mod search;
 pub mod sprint;
 pub mod story;
+pub mod update;
 pub mod war_room;
 use crate::client::{Client, Outcome};
 use crate::glyphs::Level;
@@ -66,13 +68,17 @@ pub enum Cmd {
     /// Team goals in a sprint: add, edit, link work, record or suggest confidence.
     #[command(subcommand)]
     Goal(goal::Goal),
+    /// Item links and web links: say that an item follows, duplicates or relates to another, or attach a titled
+    /// URL to it (informational, never a gate).
+    #[command(subcommand)]
+    Link(link::Link),
     /// Comments on stories and decisions.
     #[command(subcommand)]
     Comment(comment::Comment),
     /// Attachments (screenshots) on initiatives, epics and stories: download one to a file.
     #[command(subcommand)]
     Attachment(attachment::Attachment),
-    /// Create a plan of items, required decisions and blockers from a YAML or JSON file, in one request.
+    // No doc comment here: one on the variant would replace the `Apply` struct's, which is this command's help.
     Apply(apply::Apply),
     /// Find items by text in their title, brief, description or Jira reference.
     Search(search::Search),
@@ -86,6 +92,9 @@ pub enum Cmd {
     WarRoom(war_room::WarRoom),
     /// The terminal board for your own work (uses your `reeve auth login`, never REEVE_TOKEN).
     Tui,
+    /// Replace this executable with the build the server offers (older or newer), verified by SHA-256. Run it between
+    /// commands.
+    Update(update::Update),
 }
 
 pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
@@ -97,6 +106,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
             Ok(1)
         }
         Cmd::Tui => Ok(crate::tui::main().await),
+        Cmd::Update(u) => update::run(u, json).await,
         other => {
             let r = crate::config::resolve()?;
             let c = Client::new(r.url, r.token);
@@ -107,6 +117,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Decision(x) => decision::run(&c, x, json).await,
                 Cmd::Sprint(x) => sprint::run(&c, x, json).await,
                 Cmd::Goal(x) => goal::run(&c, x, json).await,
+                Cmd::Link(x) => link::run(&c, x, json).await,
                 Cmd::Comment(x) => comment::run(&c, x, json).await,
                 Cmd::Attachment(x) => attachment::run(&c, x, json).await,
                 Cmd::Apply(x) => apply::run(&c, x, json).await,
@@ -114,7 +125,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
                 Cmd::Export(x) => export::run(&c, x, json).await,
                 Cmd::Import(x) => import::run(&c, x, json).await,
                 Cmd::WarRoom(x) => war_room::run(&c, x, json).await,
-                Cmd::Auth(_) | Cmd::Tui => unreachable!(),
+                Cmd::Auth(_) | Cmd::Tui | Cmd::Update(_) => unreachable!(),
             }
         }
     }

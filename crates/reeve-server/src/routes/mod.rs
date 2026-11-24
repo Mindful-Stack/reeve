@@ -5,6 +5,7 @@ use utoipa_axum::router::OpenApiRouter;
 pub mod access;
 pub mod activity;
 pub mod attachments;
+pub mod cli_dist;
 pub mod comments;
 pub mod config;
 pub mod connection_requests;
@@ -15,6 +16,7 @@ pub mod events;
 pub mod export;
 pub mod import;
 pub mod initiatives;
+pub mod links;
 pub mod plans;
 pub mod search;
 pub mod sprints;
@@ -115,6 +117,7 @@ async fn health(State(s): State<AppState>) -> (StatusCode, Json<serde_json::Valu
 fn api_router(mcp_enabled: bool) -> OpenApiRouter<AppState> {
     let v1: OpenApiRouter<AppState> = OpenApiRouter::new()
         .merge(initiatives::router())
+        .merge(links::router())
         .merge(epics::router())
         .merge(stories::router())
         .merge(decisions::router())
@@ -196,7 +199,8 @@ fn item_ops(
 pub fn app(state: AppState) -> Router {
     let (api, _) = api_router(state.config.mcp.enabled).split_for_parts();
     let openapi = document();
-    Router::new()
+    let cli_dist = state.cli_dist.clone();
+    let router = Router::new()
         .route("/health", get(health))
         .merge(api)
         .route(
@@ -211,9 +215,13 @@ pub fn app(state: AppState) -> Router {
         // The public OAuth routes (kb/ADR-0029 R11): always mounted, each with the `[mcp]` switch inside. Outside
         // `api_router()`, so not in the OpenAPI document.
         .merge(crate::auth::oauth::router())
+        // The CLI downloads, without sign-in (kb/ADR-0030 R3). Outside `api_router()`, so not in the OpenAPI document.
+        .merge(cli_dist::router())
         .fallback(crate::assets::serve)
         .method_not_allowed_fallback(|| async { crate::error::AppError::MethodNotAllowed })
-        .with_state(state)
+        .with_state(state);
+    // Last, so it wraps the routes and both fallbacks; it sets a header and never touches a body (kb/ADR-0030).
+    crate::cli_dist::offer_header(router, cli_dist.as_deref())
 }
 pub fn openapi_json() -> serde_json::Value {
     serde_json::to_value(document()).unwrap()

@@ -251,6 +251,8 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             promise: None,
+            links: None,
+            web_links: None,
         }
     }
     fn press(code: KeyCode) -> KeyEvent {
