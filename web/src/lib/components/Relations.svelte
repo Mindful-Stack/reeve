@@ -1,7 +1,8 @@
 <!-- web/src/lib/components/Relations.svelte: an item's relations and its web links (kb/ADR-0031), on the initiative
      page, the epic page and in the story drawer. Two sections:
      "Relations": the blockers first (stories only: the drawer passes its own blocker list and controls as `blockers`,
-     and this adds only the label), then the item links grouped by name and side, worded by the server's `label`.
+     and this adds only the label), then, set apart under "Item links" where there are blockers to tell them from, the
+     item links grouped by name and side, worded by the server's `label`.
      "Web links": each a title that opens the URL in a new tab, with its host beside it.
      Nothing here says whether a blocker currently holds the story back: that takes deliveries and owners this
      section does not have, and the readiness reason says it (kb/ADR-0027 R5). -->
@@ -34,8 +35,9 @@
 		webLinks: readonly WebLink[];
 		/** The level of the two section headings: `h2` on a page, `h3` in the drawer. */
 		heading?: 'h2' | 'h3';
-		/** Stories only: the host's blocker list and its controls, shown first under "blocked by". */
-		blockers?: Snippet;
+		/** Stories only: the host's blocker list and its controls, shown first under "blocked by". It is handed the id of
+		 *  that label, which names its list (`aria-labelledby`). */
+		blockers?: Snippet<[string]>;
 		/** Called after a write here landed, so the host refetches its item. */
 		onchanged?: () => void;
 	} = $props();
@@ -262,10 +264,12 @@
 <section class="relations" aria-labelledby="{id}-relations" bind:this={linkSection}>
 	<svelte:element this={heading} id="{id}-relations" class="relations-heading">Relations</svelte:element>
 	{#if blockers}
-		<div class="group">
-			<p class="label">blocked by</p>
-			<div class="items">{@render blockers()}</div>
+		<div class="group blocked">
+			<p class="label" id="{id}-blocked">blocked by</p>
+			<div class="items">{@render blockers(`${id}-blocked`)}</div>
 		</div>
+		<!-- Only beside blockers: the rows under it look like the blocker rows, and the standing line tells the two apart. -->
+		<p class="sublabel">Item links</p>
 	{/if}
 	{#each groups as g (g.id)}
 		<div class="group">
@@ -394,6 +398,18 @@
 		margin: 0;
 		color: var(--muted);
 		font-size: 14px;
+	}
+	/* The one relation that can hold the story back reads in the text colour; the item link labels stay muted. */
+	.blocked .label {
+		color: var(--foreground);
+	}
+	/* Sets the item links apart from the blockers above: a hairline, and more room than between two groups. */
+	.sublabel {
+		margin-top: 8px;
+		padding-top: 12px;
+		border-top: 1px solid var(--line);
+		font-size: 14px;
+		font-weight: 600;
 	}
 	.items {
 		flex: 1 1 14rem;

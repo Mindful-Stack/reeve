@@ -173,6 +173,39 @@ describe('Relations: what it lists', () => {
 		}
 	});
 
+	it('in the story drawer names the blockers list by its label and sets the item links apart under "Item links"; an epic has no sub-label', () => {
+		// The host's snippet is handed the id of the "blocked by" label, for its list to be named by.
+		const blockers = createRawSnippet<[string]>((label) => ({ render: () => `<ul aria-labelledby="${label()}"><li>ABC-6</li></ul>` }));
+		const after = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+		const sub = () => section('Relations').querySelector('.sublabel');
+		render({ blockers, links: [itemLink({ item: to('ABC-11') })] });
+		const list = section('Relations').querySelector('ul[aria-labelledby]')!;
+		expect(list.textContent).toBe('ABC-6');
+		expect(document.getElementById(list.getAttribute('aria-labelledby')!)!.textContent).toBe('blocked by');
+		// Between the blockers and the first item link group, and not a group itself.
+		expect(sub()!.textContent).toBe('Item links');
+		const [blocked, follows] = [...section('Relations').querySelectorAll('.group')];
+		expect(after(blocked, sub()!) && after(sub()!, follows)).toBe(true);
+		expect(sub()!.closest('.group')).toBeNull();
+		unmount(app!);
+		document.body.innerHTML = '';
+		// With no item link it stands above the empty state.
+		render({ blockers });
+		expect(after(sub()!, section('Relations').querySelector('.empty')!)).toBe(true);
+		unmount(app!);
+		document.body.innerHTML = '';
+		// An epic or an initiative has no blockers: nothing to tell its item links from.
+		for (const level of ['epic', 'initiative'] as const) {
+			for (const links of [[], [itemLink({ item: to('ABC-11') })]]) {
+				render({ level, links });
+				expect(sub(), `${level}, ${links.length} links`).toBeNull();
+				unmount(app!);
+				document.body.innerHTML = '';
+			}
+		}
+		app = null;
+	});
+
 	it('still says there are no item links when only blockers are listed', () => {
 		render({ blockers: createRawSnippet(() => ({ render: () => '<p>Nothing blocks this story.</p>' })) });
 		expect(groups()).toEqual([['blocked by', []]]);

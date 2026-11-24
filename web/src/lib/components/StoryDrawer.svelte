@@ -891,11 +891,11 @@
 
 		<!-- The story's own key, not the URL's (which may be an external reference): writes name it in their path. -->
 		<Relations itemKey={s.key} level="story" links={s.links ?? []} webLinks={s.web_links ?? []} heading="h3" onchanged={reload}>
-			{#snippet blockers()}
+			{#snippet blockers(label: string)}
 				{#if s.blocked_by.length === 0}
 					<p class="muted">Nothing blocks this story.</p>
 				{:else}
-					<ul class="blockers">
+					<ul class="blockers" aria-labelledby={label}>
 						{#each s.blocked_by as b (b)}
 							<li>
 								<a data-sveltekit-reset="false" href={storyHref(page.url, b)}><Glyph level="story" />{b}</a>

@@ -263,6 +263,10 @@ describe('StoryDrawer relations', () => {
 		await vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
 		flushSync();
 		expect([...relations.querySelectorAll('.label')].map((l) => l.textContent)).toEqual(['blocked by', 'is followed by']);
+		// The blockers list is named by its label, and the item links are set apart from it under their own.
+		const blockers = relations.querySelector('ul.blockers')!;
+		expect(document.getElementById(blockers.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('blocked by');
+		expect(relations.querySelector('.sublabel')?.textContent).toBe('Item links');
 		// The blocker controls moved in whole.
 		expect(relations.querySelector('button[aria-label="Remove block by RV-6"]')).not.toBeNull();
 		expect(relations.querySelector('#drawer-blocker-edit')?.textContent?.trim()).toBe('+ Add blocker');
