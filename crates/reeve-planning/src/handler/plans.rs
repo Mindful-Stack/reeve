@@ -354,6 +354,7 @@ impl Handlers {
                 ));
             }
         }
+        self.check_name_levels(p, &refs, &mut errors).await?;
         let mut decision_names = std::collections::HashSet::new();
         for d in &p.decisions {
             if refs.planned.contains_key(&d.name) || !decision_names.insert(&d.name) {
@@ -546,6 +547,51 @@ impl Handlers {
         } else {
             Err(HandlerError::Validation(errors.join("; ")))
         }
+    }
+
+    /// A name keeps its level across applies of one plan id. An item is found again under its level, its plan id
+    /// and its name (`plan_key`), so a name listed under another level than an earlier apply made it at would
+    /// miss that item, create a second one, and take the plan's links and decisions with it. Refused here, before
+    /// anything is written, naming the level the name had and the key it has.
+    async fn check_name_levels(
+        &self,
+        p: &ApplyPlan,
+        refs: &Refs,
+        errors: &mut Vec<String>,
+    ) -> Result<(), HandlerError> {
+        const LEVELS: [ItemType; 3] = [ItemType::Initiative, ItemType::Epic, ItemType::Story];
+        let id = p.id.trim();
+        let named = p
+            .initiatives
+            .iter()
+            .map(|i| (&i.name, ItemType::Initiative))
+            .chain(p.epics.iter().map(|e| (&e.name, ItemType::Epic)))
+            .chain(p.stories.iter().map(|s| (&s.name, ItemType::Story)));
+        for (name, t) in named {
+            // A name refused above (empty, key-shaped, used twice under two levels) has its own message.
+            if refs.planned.get(name) != Some(&t) {
+                continue;
+            }
+            for earlier in LEVELS.into_iter().filter(|l| *l != t) {
+                if let Some(k) = self
+                    .ports
+                    .keys
+                    .find_by_idempotency(earlier, &plan_key(id, name))
+                    .await?
+                {
+                    let article = if earlier == ItemType::Story {
+                        "a"
+                    } else {
+                        "an"
+                    };
+                    errors.push(format!(
+                        "{name:?} was {article} {} ({k}) in an earlier apply of this plan; a name keeps its level",
+                        type_name(earlier)
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// A reference names one item across all three types: no two items in the plan may give the same one, and one

@@ -917,3 +917,80 @@ async fn a_plan_web_link_on_one_item_under_two_spellings_cannot_have_two_titles(
     assert_eq!(created, vec![json!(true), json!(false)], "{b}");
     assert_eq!(rows(&h, "web_links").await, 1);
 }
+
+/// A name keeps its level across applies of one plan id. An item is found again by its plan id, its name and its
+/// level, so a name moved from `stories` to `epics` would miss the story an earlier apply made, create an epic
+/// beside it and attach the plan's links to the epic. The plan is refused before anything is written, naming the
+/// name, the level it had and the key it has.
+#[tokio::test]
+async fn a_plan_name_moved_to_another_level_is_refused_before_anything_is_written() {
+    let h = harness().await;
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "p",
+            "epics": [{"name": "e", "title": "E"}],
+            "stories": [{"name": "s", "title": "S", "epic": "e"}]
+        }),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    let key = |name: &str| {
+        b["value"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == name)
+            .unwrap()["key"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (e, s) = (key("e"), key("s"));
+
+    // `s` is now listed under `epics`, `e` under `initiatives`, and the plan links and adds to both.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "p",
+            "initiatives": [{"name": "e", "title": "E", "horizon": "Now"}],
+            "epics": [{"name": "s", "title": "S"}],
+            "stories": [{"name": "new", "title": "New"}],
+            "links": [{"from": "s", "type": "relates_to", "to": "new"}],
+            "web_links": [{"on": "s", "title": "Page", "url": "https://example.com/"}]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    let m = b["message"].as_str().unwrap();
+    for want in [
+        format!("\"s\" was a story ({s}) in an earlier apply of this plan; a name keeps its level"),
+        format!("\"e\" was an epic ({e}) in an earlier apply of this plan; a name keeps its level"),
+    ] {
+        assert!(m.contains(&want), "missing {want:?} in {m}");
+    }
+    assert_eq!(
+        (
+            rows(&h, "initiatives").await,
+            rows(&h, "epics").await,
+            rows(&h, "stories").await,
+            rows(&h, "item_links").await,
+            rows(&h, "web_links").await
+        ),
+        (0, 1, 1, 0, 0),
+        "nothing of the edited plan was written"
+    );
+
+    // The control: the same names under another plan id are other items, at whatever level.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "q", "epics": [{"name": "s", "title": "S"}]}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["items"][0]["created"], true, "{b}");
+}
