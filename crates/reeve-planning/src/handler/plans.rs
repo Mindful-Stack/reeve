@@ -17,6 +17,7 @@
 //! is answered without a transaction (`apply_plan_links`).
 use super::import::check_item_ref;
 use super::item_links::ResolvedItemLink;
+use super::web_links::repeat_among;
 use super::*;
 use crate::domain::item_link::{ItemLink, ItemLinkError};
 use crate::domain::items::*;
@@ -322,12 +323,11 @@ impl Handlers {
         }
         let mut web_links = Vec::with_capacity(wanted_web.len());
         for (level, on, link) in wanted_web {
-            // The item's web links as read; `is_new_among` says whether this one is among them (false), and the
-            // row that equals it has its id. Anything else, a refusal included, is the `_in` form's to answer on
-            // what is stored by then.
+            // The item's web links as read; a row this one repeats (`repeat_among`) has its id. Anything else, a
+            // refusal included, is the `_in` form's to answer on what is stored by then.
             let on_the_item = stored_web.get(&on).map(Vec::as_slice).unwrap_or_default();
-            let stored = match link.is_new_among(on_the_item.iter().map(|s| &s.link)) {
-                Ok(false) => on_the_item.iter().find(|s| s.link == link).map(|s| s.id),
+            let stored = match repeat_among(&link, on_the_item) {
+                Ok(Some(row)) => Some(row.id),
                 _ => None,
             };
             let (id, created) = match stored {

@@ -2,9 +2,24 @@
 //! read by a move or by readiness (R3; the isolation lint bans these names in `handler/moves.rs`), and no item's
 //! version changes. Any caller who may edit an item may add or remove its web links, whatever its token kind (R7).
 use super::*;
-use crate::domain::web_link::WebLink;
+use crate::domain::web_link::{WebLink, WebLinkError};
+use crate::ports::StoredWebLink;
 use reeve_protocol::WebLinkDto;
 use sqlx::{Postgres, Transaction};
+
+/// Which stored row `link` repeats, among the web links of one item (`stored`; the caller passes one item's rows):
+/// `Ok(None)` when it is new there, `Ok(Some(row))` when that row has the same URL under the same title, and
+/// `WebLink::is_new_among`'s refusal when the URL is there under another title. The one place a web link is matched to
+/// its row: adding one (`add_web_link_in`) and plan apply's pre-read both ask here.
+pub(super) fn repeat_among<'a>(
+    link: &WebLink,
+    stored: &'a [StoredWebLink],
+) -> Result<Option<&'a StoredWebLink>, WebLinkError> {
+    if link.is_new_among(stored.iter().map(|s| &s.link))? {
+        return Ok(None);
+    }
+    Ok(stored.iter().find(|s| s.link == *link))
+}
 
 impl Handlers {
     /// Attaches a titled URL to an item of any level. A bad title or URL is a validation error; the item must
@@ -52,12 +67,11 @@ impl Handlers {
                 .web_links
                 .web_links_of_in(tx, std::slice::from_ref(item))
                 .await?;
-            // Not refused and not new: one of the rows is this link, and its id is the answer. None of them is
-            // when it was removed between the insert and the read: nothing was added, so say so.
-            let new = link.is_new_among(stored.iter().map(|w| &w.link))?;
-            return match stored.iter().find(|w| w.link == *link) {
-                Some(there) if !new => Ok((there.id, false)),
-                _ => Err(HandlerError::Conflict { current: -1 }),
+            // Not refused and a repeat: that row's id is the answer. No repeat when it was removed between the
+            // insert and the read: nothing was added, so say so.
+            return match repeat_among(link, &stored)? {
+                Some(there) => Ok((there.id, false)),
+                None => Err(HandlerError::Conflict { current: -1 }),
             };
         };
         self.activity
@@ -146,5 +160,39 @@ impl Handlers {
             .iter()
             .map(super::dto::web_link_dto)
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: i64, title: &str, url: &str) -> StoredWebLink {
+        StoredWebLink {
+            id,
+            item: "ABC-1".parse().unwrap(),
+            link: WebLink::new(title, url).unwrap(),
+        }
+    }
+
+    /// New among none and among other URLs; a repeat answers the row with the same URL and title (whatever the
+    /// spelling of the URL); the same URL under another title is the refusal, never a row.
+    #[test]
+    fn repeat_among_finds_the_row_a_web_link_repeats() {
+        let stored = [
+            row(1, "Spec", "https://example.com/spec"),
+            row(2, "Board", "https://example.com/board"),
+        ];
+        let spec = WebLink::new("Spec", "HTTPS://Example.com/spec").unwrap();
+        assert_eq!(repeat_among(&spec, &[]), Ok(None));
+        assert_eq!(repeat_among(&spec, &stored[1..]), Ok(None));
+        assert_eq!(repeat_among(&spec, &stored), Ok(Some(&stored[0])));
+        let renamed = WebLink::new("The spec", "https://example.com/spec").unwrap();
+        assert_eq!(
+            repeat_among(&renamed, &stored),
+            Err(WebLinkError::SameUrlOtherTitle {
+                titled: "Spec".to_owned()
+            })
+        );
     }
 }
