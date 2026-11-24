@@ -1,6 +1,6 @@
-use super::{Acting, FilterRef, resolve_filter};
+use super::{Acting, FilterRef, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
-use reeve_protocol::{EpicDto, ItemType, KeyRef};
+use reeve_protocol::{CreateEpic, EditItem, EpicDto, ItemType, KeyRef};
 use serde::Deserialize;
 
 /// The query of `GET /api/v1/epics`.
@@ -39,4 +39,61 @@ pub(crate) async fn get_epic(
 ) -> Result<EpicDto, AppError> {
     let key = state.handlers.resolve_ref(key, ItemType::Epic).await?;
     Ok(state.handlers.epic_dto(&key, who.ctx.now).await?)
+}
+
+/// `reeve epic create`. Shared by `POST /api/v1/epics` and the MCP tool `create_epic`. `b` is what the route
+/// takes: its body. Answers the epic and whether this call created it (false: the idempotency key already had
+/// one, and nothing was written).
+pub(crate) async fn create_epic(
+    state: &AppState,
+    who: &Acting<'_>,
+    b: CreateEpic,
+) -> Result<(EpicDto, bool), AppError> {
+    // The key's space is the caller's to decide, never the body's.
+    let idem = who.write_key(&b.idempotency_key)?;
+    let initiative =
+        resolve_opt(&state.handlers, b.initiative.as_ref(), ItemType::Initiative).await?;
+    let (epic, created) = state
+        .handlers
+        .create_epic_reporting(
+            &who.ctx,
+            &idem,
+            &b.title,
+            initiative,
+            b.brief.as_deref().unwrap_or(""),
+            b.external_ref,
+            &b.attachments,
+        )
+        .await?;
+    Ok((
+        state.handlers.epic_dto(epic.key(), who.ctx.now).await?,
+        created,
+    ))
+}
+
+/// `reeve epic edit <KEY>`. Shared by `PATCH /api/v1/epics/{key}` and the MCP tool `edit_epic`. `key` and `b` are
+/// what the route takes: its path parameter and its body. An edit never reads or writes the discovery mark: the
+/// handler carries the stored mark over (`POST …/discovery` is the only way to it).
+pub(crate) async fn edit_epic(
+    state: &AppState,
+    who: &Acting<'_>,
+    key: &str,
+    b: EditItem,
+) -> Result<EpicDto, AppError> {
+    let key = state.handlers.resolve_ref(key, ItemType::Epic).await?;
+    let initiative = resolve_edit(&state.handlers, b.initiative, ItemType::Initiative).await?;
+    let epic = state
+        .handlers
+        .edit_epic_attaching(
+            &who.ctx,
+            &key,
+            b.version,
+            b.title,
+            b.brief,
+            initiative,
+            b.external_ref,
+            &b.attachments,
+        )
+        .await?;
+    Ok(state.handlers.epic_dto(epic.key(), who.ctx.now).await?)
 }

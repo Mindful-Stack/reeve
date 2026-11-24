@@ -75,7 +75,8 @@ impl Handlers {
     }
 
     /// `create_initiative`, and whether this call inserted it (false when its idempotency key already had one).
-    pub(crate) async fn create_initiative_reporting(
+    /// Public for the server's create action, whose MCP receipt says whether this call created the item.
+    pub async fn create_initiative_reporting(
         &self,
         c: &Ctx,
         idem: &str,

@@ -24,9 +24,9 @@ async fn rows(h: &Harness, table: &str) -> i64 {
         .unwrap()
 }
 
-/// The reserved prefix, at the API: the four routes that store a caller's idempotency key in `stories` or
-/// `comments` refuse a key in the MCP callers' space, and write nothing. The control is the same request with a
-/// key outside it.
+/// The reserved prefix, at the API: the six routes that store a caller's idempotency key in `stories`, `comments`,
+/// `epics` or `initiatives` refuse a key in the MCP callers' space, and write nothing. The control is the same
+/// request with a key outside it.
 #[tokio::test]
 async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
     let f = flow().await;
@@ -70,9 +70,27 @@ async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
             comment_body(reserved),
             comment_body("mcpx:k4"),
         ),
+        (
+            "/api/v1/epics".to_string(),
+            json!({"idempotency_key": reserved, "title": "Planted"}),
+            json!({"idempotency_key": "mcpx:k5", "title": "Control"}),
+        ),
+        (
+            "/api/v1/initiatives".to_string(),
+            json!({"idempotency_key": reserved, "title": "Planted", "horizon": "Now"}),
+            json!({"idempotency_key": "mcpx:k6", "title": "Control", "horizon": "Now"}),
+        ),
     ];
+    async fn counts(h: &Harness) -> [i64; 4] {
+        [
+            rows(h, "stories").await,
+            rows(h, "comments").await,
+            rows(h, "epics").await,
+            rows(h, "initiatives").await,
+        ]
+    }
     for (path, refused, control) in routes {
-        let before = (rows(h, "stories").await, rows(h, "comments").await);
+        let before = counts(h).await;
         let (status, body) = call(&h.app, Some(&h.admin_token), "POST", &path, Some(refused)).await;
         assert_eq!(
             (status, body["code"].as_str(), body["message"].as_str()),
@@ -83,11 +101,7 @@ async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
             ),
             "{path}"
         );
-        assert_eq!(
-            (rows(h, "stories").await, rows(h, "comments").await),
-            before,
-            "{path}: nothing written"
-        );
+        assert_eq!(counts(h).await, before, "{path}: nothing written");
         let (status, body) = call(&h.app, Some(&h.admin_token), "POST", &path, Some(control)).await;
         assert_eq!(status, 200, "the control on {path}: {body}");
     }

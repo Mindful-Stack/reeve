@@ -21,21 +21,9 @@ async fn create(
     c: Caller,
     ApiJson(b): ApiJson<CreateInitiative>,
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
-    let i = s
-        .handlers
-        .create_initiative_attaching(
-            &c.ctx(),
-            &b.idempotency_key,
-            &b.title,
-            b.brief.as_deref().unwrap_or(""),
-            &b.horizon,
-            b.target_month,
-            b.owner,
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.initiative_dto(i.key(), c.ctx().now).await?))
+    Ok(ok(crate::actions::create_initiative(&s, &c.acting(), b)
+        .await?
+        .0))
 }
 #[utoipa::path(get, path = "/initiatives/{key}", params(("key" = String, Path)), responses((status = 200, body = Response<InitiativeDto>)))]
 async fn get(
@@ -54,22 +42,13 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Initiative).await?;
-    s.handlers
-        .edit_initiative_attaching(
-            &c.ctx(),
-            &key,
-            b.version,
-            b.title,
-            b.brief,
-            b.horizon,
-            b.target_month,
-            b.owner,
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.initiative_dto(&key, c.ctx().now).await?))
+    Ok(ok(crate::actions::edit_initiative(
+        &s,
+        &c.acting(),
+        &key,
+        b,
+    )
+    .await?))
 }
 #[utoipa::path(post, path = "/initiatives/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<InitiativeDto>)))]
 async fn discovery(

@@ -35,8 +35,9 @@ impl Handlers {
             .map(|(x, _)| x)
     }
 
-    /// `create_epic`, and whether this call inserted it (false when its idempotency key already had one).
-    pub(crate) async fn create_epic_reporting(
+    /// `create_epic`, and whether this call inserted it (false when its idempotency key already had one). Public for
+    /// the server's create action, whose MCP receipt says whether this call created the item.
+    pub async fn create_epic_reporting(
         &self,
         c: &Ctx,
         idem: &str,
@@ -122,7 +123,8 @@ impl Handlers {
             .await
     }
 
-    /// `edit_epic`, claiming `attachments` for the epic in its transaction (kb/ADR-0022 R2).
+    /// `edit_epic`, claiming `attachments` for the epic in its transaction (kb/ADR-0022 R2). The `edited` entry names
+    /// the initiative the epic left and the one it joined when the edit moved it.
     #[allow(clippy::too_many_arguments)]
     pub async fn edit_epic_attaching(
         &self,
@@ -141,6 +143,17 @@ impl Handlers {
         if let Some(ik) = &ini {
             self.ports.initiatives.get_initiative(ik).await?;
         }
+        // A move to another initiative, or out of one, is said in the entry (the keys it left and joined, null for
+        // none), in the shape `edit_decision` gives its entry: it changes whose discovery mark and required
+        // decisions this epic's stories wait on, and a bare `edited` would not tell it from a retitle. An edit that
+        // leaves the initiative where it was says nothing.
+        let moved = (cur.initiative() != ini.as_ref()).then(|| {
+            serde_json::json!({
+                "fields": ["initiative"],
+                "from": {"initiative": cur.initiative().map(ToString::to_string)},
+                "to": {"initiative": ini.as_ref().map(ToString::to_string)},
+            })
+        });
         let next = Epic::new(
             cur.key().clone(),
             title.as_deref().unwrap_or(cur.title()),
@@ -174,7 +187,10 @@ impl Handlers {
                     "epic",
                     &key.to_string(),
                     "edited",
-                    with_ref(serde_json::json!({}), set.as_deref()),
+                    with_ref(
+                        moved.unwrap_or_else(|| serde_json::json!({})),
+                        set.as_deref(),
+                    ),
                 ),
             )
             .await?;

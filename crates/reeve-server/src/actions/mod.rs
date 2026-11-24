@@ -28,8 +28,10 @@ pub(crate) use comments::{add_decision_comment, add_item_comment};
 pub(crate) use decisions::{
     DecisionQuery, decision_dto, decision_scope, list_decisions, resolve_on,
 };
-pub(crate) use epics::{EpicQuery, get_epic, list_epics};
-pub(crate) use initiatives::{get_initiative, list_initiatives};
+pub(crate) use epics::{EpicQuery, create_epic, edit_epic, get_epic, list_epics};
+pub(crate) use initiatives::{
+    create_initiative, edit_initiative, get_initiative, list_initiatives,
+};
 pub(crate) use links::{
     add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
 };
@@ -127,6 +129,38 @@ impl Acting<'_> {
             ));
         }
         Ok(())
+    }
+}
+
+/// An owner (a story's, an initiative's) must be an allowed user (allowed by the floor or a database entry): an
+/// owner nobody can sign in as would hold work no one can pick up. The refusal repeats the owner bounded
+/// (`text::echo`), so however long it is, the words after it are still said.
+pub(super) fn allowed_owner(
+    policy: &AccessPolicy,
+    owner: Option<String>,
+) -> Result<Option<String>, AppError> {
+    match owner {
+        Some(o) if !policy.is_allowed(&o) => {
+            Err(reeve_planning::HandlerError::Validation(format!(
+                "{} is not an allowed user",
+                crate::text::echo(&reeve_protocol::normalise_email(&o))
+            ))
+            .into())
+        }
+        other => Ok(other),
+    }
+}
+
+/// A target month a request names must be a month (`reeve_protocol::is_target_month`): any other text would be
+/// stored and then silently count as no month in the Now ranking. Like `allowed_owner`, it judges only what the
+/// request names; a stored month is never passed here.
+pub(super) fn named_target_month(month: Option<String>) -> Result<Option<String>, AppError> {
+    match month {
+        Some(m) if !reeve_protocol::is_target_month(&m) => Err(AppError::Validation(format!(
+            "target month must be YYYY-MM, for example 2027-03, not {:?}",
+            crate::text::echo(&m)
+        ))),
+        other => Ok(other),
     }
 }
 

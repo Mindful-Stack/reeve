@@ -1,5 +1,5 @@
 use crate::{
-    actions::{EpicQuery, resolve_opt},
+    actions::EpicQuery,
     auth::Caller,
     error::{AppError, ok},
     extract::{ApiJson, ApiPath, ApiQuery},
@@ -23,19 +23,7 @@ async fn create(
     c: Caller,
     ApiJson(b): ApiJson<CreateEpic>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
-    let e = s
-        .handlers
-        .create_epic_attaching(
-            &c.ctx(),
-            &b.idempotency_key,
-            &b.title,
-            resolve_opt(&s.handlers, b.initiative.as_ref(), ItemType::Initiative).await?,
-            b.brief.as_deref().unwrap_or(""),
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))
+    Ok(ok(crate::actions::create_epic(&s, &c.acting(), b).await?.0))
 }
 #[utoipa::path(get, path = "/epics/{key}", params(("key" = String, Path)), responses((status = 200, body = Response<EpicDto>)))]
 async fn get(
@@ -52,21 +40,9 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
-    let key = s.handlers.resolve_ref(&key, ItemType::Epic).await?;
-    let e = s
-        .handlers
-        .edit_epic_attaching(
-            &c.ctx(),
-            &key,
-            b.version,
-            b.title,
-            b.brief,
-            crate::actions::resolve_edit(&s.handlers, b.initiative, ItemType::Initiative).await?,
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
-    Ok(ok(s.handlers.epic_dto(e.key(), c.ctx().now).await?))
+    Ok(ok(
+        crate::actions::edit_epic(&s, &c.acting(), &key, b).await?
+    ))
 }
 #[utoipa::path(post, path = "/epics/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<EpicDto>)))]
 async fn discovery(
