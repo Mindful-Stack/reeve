@@ -3,7 +3,8 @@
      (`initiativeTag`; display only, kb/ADR-0014 R3), what it waits on, its goal links, its progress and the owner's
      initials. Open it adds the initiatives its links reach, the check, the notes, the confidence, the counts (under
      the page's kb/ADR-0014 R2 rule line), the gates, and the page's own controls. It makes no write: the page owns
-     which goals are open, so a live refetch keeps them. -->
+     which goals are open, so a live refetch keeps them. A warning is carried in words (a visible "!" and hidden text),
+     never by colour or hover alone; in a narrow column the link count and the bar drop out of the line. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Goal, GoalGates as Gates, GoalProgress } from '#lib/api/types.ts';
@@ -15,6 +16,7 @@
 	let {
 		goal,
 		gates,
+		active,
 		progress,
 		firstBucket,
 		open,
@@ -25,7 +27,10 @@
 		goal: Goal;
 		/** What the goal waits on and the initiatives it reaches; absent while the reads raced an opening. */
 		gates: Gates | undefined;
-		/** The goal's numbers in the active sprint; absent for a next-sprint goal, which has no window. */
+		/** The goal is in the active sprint (not a next-sprint draft): it carries a confidence and counts. */
+		active: boolean;
+		/** The goal's numbers in the active sprint; absent for a next-sprint goal, and for an active one the counts miss
+		 *  (zeros, no bar). */
 		progress?: GoalProgress;
 		/** The first configured horizon bucket's name, or null: without one no tag warns. */
 		firstBucket: string | null;
@@ -37,36 +42,45 @@
 		controls: Snippet;
 	} = $props();
 
-	const active = $derived(progress !== undefined);
 	const tag = $derived(initiativeTag(gates?.initiatives ?? [], firstBucket));
 	const waits = $derived((gates?.discoveries.length ?? 0) + (gates?.decisions.length ?? 0));
+	const confidenceText = $derived(`confidence: ${goal.confidence ? confidenceLabel(goal.confidence) : 'not recorded'}`);
 	const total = $derived(progress ? progressTotal(progress) : 0);
 	/** The goal's creation as the browser's local day, in the app's day words ("3 Nov"). */
 	const waitingSince = $derived(dayLabel(today(new Date(goal.created_at))));
 </script>
 
-<article class="goal" class:draft={!active} data-testid="goal-{goal.id}" id="goal-{goal.id}" tabindex="-1">
+<article
+	class="goal"
+	class:draft={!active}
+	data-testid="goal-{goal.id}"
+	id="goal-{goal.id}"
+	tabindex="-1"
+	aria-labelledby="goal-{goal.id}-outcome"
+>
 	<div class="line">
 		{@render lead?.()}
 		<button type="button" class="ghost disclose" aria-expanded={open} aria-controls="goal-{goal.id}-detail" onclick={ontoggle}>
 			<span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-			<span class="outcome" title={goal.outcome}>{goal.outcome}</span>
+			<span class="outcome" class:wrap={open} id="goal-{goal.id}-outcome" title={goal.outcome}>{goal.outcome}</span>
 		</button>
 		{#if active}
-			<span
-				class="dot {confidenceTone(goal.confidence)}"
-				role="img"
-				aria-label="confidence: {goal.confidence ? confidenceLabel(goal.confidence) : 'not recorded'}"
-			></span>
+			<span class="dot {confidenceTone(goal.confidence)}" role="img" aria-label={confidenceText} title={confidenceText}></span>
 		{/if}
-		<span class="tag" class:warn={tag.warn} aria-label={tag.label} title={tag.label}>{tag.text}</span>
+		<span class="tag" class:warn={tag.warn} title={tag.label}
+			>{tag.text}{#if tag.warn}{' '}<span aria-hidden="true">!</span>{/if}<span class="visually-hidden">{tag.label}</span></span
+		>
 		{#if waits > 0}<span class="waits">waits on {waits}</span>{/if}
-		<span class="muted small">{plural(goal.links.length, 'link', 'links')}</span>
+		<span class="muted small links">{plural(goal.links.length, 'link', 'links')}</span>
 		{#if progress}
-			<progress max={Math.max(total, 1)} value={progress.completed} aria-label="Completed stories"></progress>
-			<span class="small numbers">{progress.completed}/{total}</span>
+			<progress max={Math.max(total, 1)} value={progress.completed} aria-hidden="true"></progress>
+			<span class="small numbers"
+				>{progress.completed}/{total}<span class="visually-hidden">{' '}{progress.completed} of {total} completed</span></span
+			>
 		{/if}
-		<span class="badge" title={goal.owner} aria-label="Owner: {goal.owner}">{ownerInitials(goal.owner)}</span>
+		<span class="badge" title={goal.owner}
+			><span aria-hidden="true">{ownerInitials(goal.owner)}</span><span class="visually-hidden">Owner: {goal.owner}</span></span
+		>
 	</div>
 	{#if open}
 		<div class="detail" id="goal-{goal.id}-detail">
@@ -82,6 +96,7 @@
 					{/each}
 				</ul>
 			{/if}
+			<p class="muted">Owner: {goal.owner}</p>
 			{#if !active}<p class="muted">Waiting since {waitingSince}</p>{/if}
 			<p>We'll know when: {goal.check}</p>
 			{#if goal.notes}<p class="notes">{goal.notes}</p>{/if}
@@ -107,6 +122,7 @@
 
 <style>
 	.goal {
+		container-type: inline-size;
 		border: 1px solid var(--line);
 		border-radius: 6px;
 		background: var(--raised);
@@ -146,6 +162,10 @@
 		white-space: nowrap;
 	}
 	.tag {
+		flex: 0 1 auto;
+		max-width: 16ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		padding: 1px 6px;
 		border: 1px solid var(--line);
 		border-radius: 999px;
@@ -203,7 +223,9 @@
 	}
 	.detail {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 4px;
+		overflow-wrap: anywhere;
 		padding: 4px 12px 10px 28px;
 		border-top: 1px solid var(--line);
 	}
@@ -214,6 +236,16 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
+	}
+	.outcome.wrap {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+	@container (max-width: 460px) {
+		.links,
+		progress {
+			display: none;
+		}
 	}
 	.notes {
 		white-space: pre-wrap;

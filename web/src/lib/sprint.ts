@@ -150,7 +150,8 @@ export function ownerInitials(owner: string): string {
 	const parts = (owner.split('@')[0] ?? '').split(/[.\-_\s]+/).filter(Boolean);
 	const [a, b] = parts;
 	if (!a) return '?';
-	return (b ? a.charAt(0) + b.charAt(0) : a.slice(0, 2)).toUpperCase();
+	const chars = (part: string) => Array.from(part);
+	return (b ? chars(a)[0]! + chars(b)[0]! : chars(a).slice(0, 2).join('')).toUpperCase();
 }
 
 /** A goal's initiative tag on its row: the first initiative its links reach with its horizon, "+n" for the rest, or
@@ -163,10 +164,13 @@ export function initiativeTag(initiatives: GoalInitiative[], firstBucket: string
 	const more = rest.length ? ` +${rest.length}` : '';
 	let label = `Initiative ${first.key}, ${first.horizon}`;
 	if (rest.length) label += `, and ${rest.length} more`;
-	if (warn) label += rest.length ? `, not all in ${firstBucket}` : `, not in ${firstBucket}`;
+	if (warn) {
+		const none = initiatives.every((i) => !i.in_first_bucket);
+		label += rest.length ? (none ? `, none in ${firstBucket}` : `, not all in ${firstBucket}`) : `, not in ${firstBucket}`;
+	}
 	return { text: `${first.key} ${first.horizon}${more}`, warn, label };
 }
 
 /** The total a goal's progress bar runs to: completed, in flight and todo. In review is inside in flight. */
-export const progressTotal = (p: Pick<GoalProgress, 'completed' | 'in_flight' | 'todo' | 'in_review'>): number =>
+export const progressTotal = (p: Pick<GoalProgress, 'completed' | 'in_flight' | 'todo'>): number =>
 	p.completed + p.in_flight + p.todo;

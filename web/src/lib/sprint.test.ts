@@ -247,6 +247,13 @@ describe('ownerInitials', () => {
 		expect(ownerInitials('dan')).toBe('DA');
 		expect(ownerInitials('x@example.com')).toBe('X');
 	});
+	it('skips a leading separator, a plus tag, keeps digits and whole characters', () => {
+		expect(ownerInitials('.ana@x')).toBe('AN');
+		expect(ownerInitials('ana+w@x')).toBe('AN');
+		expect(ownerInitials('a1.b2@x')).toBe('AB');
+		expect(ownerInitials('åsa.öberg@x')).toBe('ÅÖ');
+		expect(ownerInitials('😀x@x')).toBe('😀X');
+	});
 	it('answers a question mark for nothing to read', () => {
 		expect(ownerInitials('@example.com')).toBe('?');
 		expect(ownerInitials('  ')).toBe('?');
@@ -268,6 +275,14 @@ describe('initiativeTag', () => {
 			label: 'Initiative ABC-1, Now, and 1 more, not all in Now'
 		});
 	});
+	it('says none when every one of several is outside the first bucket', () => {
+		const out = (k: string) => goalInitiative(k, { horizon: 'Later', in_first_bucket: false });
+		expect(initiativeTag([out('ABC-5'), out('ABC-6')], 'Now')).toEqual({
+			text: 'ABC-5 Later +1',
+			warn: true,
+			label: 'Initiative ABC-5, Later, and 1 more, none in Now'
+		});
+	});
 	it('says no initiative, as a warning only when a bucket is configured', () => {
 		expect(initiativeTag([], 'Now')).toEqual({ text: 'no initiative', warn: true, label: 'No initiative' });
 		expect(initiativeTag([], null)).toEqual({ text: 'no initiative', warn: false, label: 'No initiative' });
@@ -280,6 +295,6 @@ describe('initiativeTag', () => {
 
 describe('progressTotal', () => {
 	it('adds completed, in flight and todo; in review is part of in flight', () => {
-		expect(progressTotal({ completed: 2, in_flight: 3, in_review: 1, todo: 4 })).toBe(9);
+		expect(progressTotal({ completed: 2, in_flight: 3, todo: 4 })).toBe(9);
 	});
 });
