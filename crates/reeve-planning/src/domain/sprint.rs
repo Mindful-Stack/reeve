@@ -355,9 +355,10 @@ pub struct BucketInitiative {
 /// The initiatives whose horizon is `first_bucket`, each with the goals that reach it, for display beside the goals:
 /// goals and horizons do not set each other (kb/ADR-0026, Consequences), so nothing here is a rule about either. The
 /// order is target month, earliest first, none last; then title by code point; then key number. A goal reaches an
-/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). A month that is not `YYYY-MM` ranks as none. `goals` is expected to hold the active and the
-/// draft sprint's goals (any goal not in the active sprint sorts after it). `first_bucket` is the configured
-/// name (kb/ADR-0016 R2), passed in: this function knows no configuration. Nothing here reads urgency (kb/ADR-0024 R7).
+/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). A month that is not a real
+/// `YYYY-MM` month ranks as none. `goals` is expected to hold the active and the draft sprint's goals (any goal not in
+/// the active sprint sorts after it). `first_bucket` is the configured name (kb/ADR-0016 R2), passed in: this function
+/// knows no configuration. Nothing here reads urgency (kb/ADR-0024 R7).
 pub fn first_bucket_initiatives(
     first_bucket: &str,
     initiatives: &[Initiative],
@@ -1478,14 +1479,14 @@ mod tests {
             ini_in("ABC-1", "d", "Now", Some("soon")),
             ini_in("ABC-2", "c", "Now", Some("2026-9")),
             ini_in("ABC-3", "b", "Now", Some("")),
-            ini_in("ABC-4", "a", "Now", Some("2026-13")),
+            ini_in("ABC-4", "y", "Now", Some("2026-13")),
             ini_in("ABC-5", "z", "Now", Some("2026-12")),
         ];
         let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
             .iter()
             .map(|b| b.key.to_string())
             .collect();
-        assert_eq!(keys, ["ABC-5", "ABC-4", "ABC-3", "ABC-2", "ABC-1"]);
+        assert_eq!(keys, ["ABC-5", "ABC-3", "ABC-2", "ABC-1", "ABC-4"]);
     }
 
     #[test]
