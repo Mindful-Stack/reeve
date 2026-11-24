@@ -319,7 +319,7 @@ async fn item_link_errors_are_not_found_or_validation() {
     assert_eq!(links_of(&h, &it.b).await, json!([]));
 }
 
-/// Which answers carry `links`: every read of one item, and never a read of several.
+/// Which answers carry `links` and `web_links`: every read of one item, and never a read of several.
 #[tokio::test]
 async fn reads_of_one_item_carry_links_over_the_api_and_lists_do_not() {
     let h = harness().await;
@@ -357,8 +357,22 @@ async fn reads_of_one_item_carry_links_over_the_api_and_lists_do_not() {
         get(format!("/api/v1/initiatives/{}", it.initiative)).await["links"][0]["item"]["key"],
         json!(it.epic)
     );
+    // The shape only: no route writes a web link yet, so every read of one item answers an empty list.
+    for path in [
+        format!("/api/v1/stories/{}", it.b),
+        format!("/api/v1/epics/{}", it.epic),
+        format!("/api/v1/initiatives/{}", it.initiative),
+    ] {
+        assert_eq!(get(path.clone()).await["web_links"], json!([]), "{path}");
+    }
     let context = get(format!("/api/v1/stories/{}/context", it.b)).await;
     assert_eq!(context["story"]["links"][0]["item"]["key"], json!(it.a));
+    assert_eq!(context["story"]["web_links"], json!([]));
+    assert!(context["epic"].get("web_links").is_none(), "{context}");
+    assert!(
+        context["initiative"].get("web_links").is_none(),
+        "{context}"
+    );
     assert!(context["epic"].get("links").is_none(), "{context}");
     assert!(context["initiative"].get("links").is_none(), "{context}");
 
@@ -376,6 +390,7 @@ async fn reads_of_one_item_carry_links_over_the_api_and_lists_do_not() {
         for r in rows {
             let item = if row.is_empty() { r } else { &r[row] };
             assert!(item.get("links").is_none(), "{path}: {item}");
+            assert!(item.get("web_links").is_none(), "{path}: {item}");
         }
     }
 }

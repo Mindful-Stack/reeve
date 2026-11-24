@@ -2598,6 +2598,7 @@ fn urgent_story(sources: Vec<reeve_protocol::ItemRefDto>) -> reeve_protocol::Sto
         urgent_sources: sources,
         promise: None,
         links: None,
+        web_links: None,
     }
 }
 
@@ -2646,6 +2647,7 @@ fn initiative_ls_marks_an_urgent_initiative_with_a_bang_and_no_urgent_line() {
             item: reeve_protocol::ItemType::Epic,
         }],
         links: None,
+        web_links: None,
     };
     let (url, server) = serve(vec![(
         "GET /api/v1/initiatives",
@@ -2679,6 +2681,7 @@ fn epic_show_prints_the_urgent_line_after_the_first_line() {
         }],
         promise: None,
         links: None,
+        web_links: None,
     };
     let (url, server) = serve(vec![
         (
@@ -2840,6 +2843,7 @@ fn epic_urgent_with_a_blank_reason_posts_null() {
         }],
         promise: None,
         links: None,
+        web_links: None,
     };
     let (url, server) = serve(vec![(
         "POST /api/v1/epics/ABC-40/urgent",
@@ -3752,6 +3756,7 @@ fn promised_epic(past: bool) -> serde_json::Value {
             past,
         }),
         links: None,
+        web_links: None,
     })
     .unwrap()
 }

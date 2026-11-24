@@ -725,6 +725,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             // A read of one item is whole: its item links come along (kb/ADR-0031), from the same snapshot.
             dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
             Ok(dto)
         }
         .await;
@@ -897,6 +898,7 @@ impl Handlers {
         // Only the context's own story carries its item links; the blockers, the epic and the initiative come
         // along as they are listed.
         story.links = Some(self.item_link_dtos_in(tx, key).await?);
+        story.web_links = Some(self.web_link_dtos_in(tx, key).await?);
         let blockers = dtos.collect();
         let goals = self.goals_context_in(tx, &story.goals).await?;
         let attachments = self

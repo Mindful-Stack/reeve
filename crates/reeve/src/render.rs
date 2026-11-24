@@ -1147,6 +1147,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 
@@ -1192,6 +1193,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         };
         let out = epic(&e);
         assert!(
@@ -1267,6 +1269,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         };
         assert!(epic(&e).contains(" from: SCRUM-480"), "{}", epic(&e));
         let i = InitiativeDto {
@@ -1283,6 +1286,7 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             links: None,
+            web_links: None,
         };
         assert!(
             initiative(&i).contains(" from: JPD-30"),
@@ -1337,6 +1341,7 @@ mod tests {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 
@@ -1355,6 +1360,7 @@ mod tests {
             urgent_mark: None,
             urgent_sources: vec![],
             links: None,
+            web_links: None,
         }
     }
 

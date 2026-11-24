@@ -1839,6 +1839,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description `DELETE /epics/{key}/promise`: whether this request cleared the epic's promise, and the epic as it is now. */
         EpicPromiseCleared: {
@@ -2086,6 +2091,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /** @description What the client needs from instance configuration (kb/ADR-0016 R2): never hardcoded in the client. */
         InstanceConfigDto: {
@@ -2873,6 +2883,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3098,6 +3113,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3582,6 +3602,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             };
         } | {
             /** @enum {string} */
@@ -3829,6 +3854,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             }[];
         } | {
             /** @enum {string} */
@@ -3969,6 +3999,11 @@ export interface components {
                 urgent_sources: components["schemas"]["ItemRefDto"][];
                 /** Format: int64 */
                 version: number;
+                /**
+                 * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+                 *     left out of every read that answers several items.
+                 */
+                web_links?: components["schemas"]["WebLinkDto"][] | null;
             }[];
         } | {
             /** @enum {string} */
@@ -4483,6 +4518,11 @@ export interface components {
             urgent_sources: components["schemas"]["ItemRefDto"][];
             /** Format: int64 */
             version: number;
+            /**
+             * @description The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;
+             *     left out of every read that answers several items.
+             */
+            web_links?: components["schemas"]["WebLinkDto"][] | null;
         };
         /**
          * @description `DELETE /stories/{key}/promise`: whether this request cleared the story's own promise, and the story as it is now.

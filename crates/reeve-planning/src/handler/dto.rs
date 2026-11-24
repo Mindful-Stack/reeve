@@ -39,6 +39,7 @@ impl From<&Initiative> for InitiativeDto {
             urgent_mark: None,
             urgent_sources: vec![],
             links: None,
+            web_links: None,
         }
     }
 }
@@ -59,6 +60,7 @@ impl From<&Epic> for EpicDto {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 }
@@ -93,6 +95,7 @@ impl From<&Story> for StoryDto {
             urgent_sources: vec![],
             promise: None,
             links: None,
+            web_links: None,
         }
     }
 }

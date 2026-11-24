@@ -1990,8 +1990,9 @@ async fn story_dtos_in_assembles_and_matches_story_dto() {
     for s in &fresh {
         let mut dto = h.story_dto(s.key(), Utc::now()).await.unwrap();
         // The one difference between the two readers, by design (kb/ADR-0031): only a read of one item
-        // carries its item links. None exist here.
+        // carries its item links and its web links. None exist here.
         assert_eq!(dto.links.take(), Some(vec![]));
+        assert_eq!(dto.web_links.take(), Some(vec![]));
         single.push(dto);
     }
     assert_eq!(batched, single);
@@ -4095,8 +4096,9 @@ async fn list_initiatives_progress_matches_one_at_a_time() {
     for dto in &listed {
         let key = dto.key.clone();
         let mut single = h.initiative_dto(&key, Utc::now()).await.unwrap();
-        // Only a read of one item carries its item links (kb/ADR-0031); none exist here.
+        // Only a read of one item carries its item links and its web links (kb/ADR-0031); none exist here.
         assert_eq!(single.links.take(), Some(vec![]));
+        assert_eq!(single.web_links.take(), Some(vec![]));
         assert_eq!(dto, &single);
     }
     assert_eq!(listed.iter().filter(|d| d.progress.is_none()).count(), 2);
@@ -10740,11 +10742,11 @@ async fn item_links_change_no_readiness_delivery_progress_rank_or_version() {
     );
 }
 
-/// The reads of one item (story, epic, initiative, and the story of a context) always carry `links`, an empty
-/// list when there are none; every read of several items, and the items that come along in a context, leave it
-/// out, in Rust and in the JSON.
+/// The reads of one item (story, epic, initiative, and the story of a context) always carry `links` and
+/// `web_links`, an empty list when there are none; every read of several items, and the items that come along in
+/// a context, leave both out, in Rust and in the JSON.
 #[tokio::test]
-async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
+async fn single_item_reads_carry_links_and_web_links_and_list_reads_do_not() {
     use reeve_protocol::ItemLinkType::{Follows, RelatesTo};
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
@@ -10786,6 +10788,26 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
     assert!(h.add_item_link(&c, &s[0], Follows, &s[1]).await.unwrap());
     assert!(h.add_item_link(&c, &e, RelatesTo, &i).await.unwrap());
     h.add_block(&c, &s[0], &s[1]).await.unwrap();
+    assert!(
+        h.add_web_link(&c, &s[0], "Page", "https://example.com/s")
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&c, &e, "Page", "https://example.com/e")
+            .await
+            .unwrap()
+    );
+    assert!(
+        h.add_web_link(&c, &i, "Page", "https://example.com/i")
+            .await
+            .unwrap()
+    );
+    let urls = |links: &Option<Vec<reeve_protocol::WebLinkDto>>| -> Option<Vec<String>> {
+        links
+            .as_ref()
+            .map(|l| l.iter().map(|w| w.url.clone()).collect())
+    };
 
     let shown = |links: &Option<Vec<reeve_protocol::ItemLinkDto>>| -> Option<Vec<String>> {
         links.as_ref().map(|l| {
@@ -10815,10 +10837,31 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         shown(&h.initiative_dto(&i, now).await.unwrap().links),
         Some(vec![format!("relates to {e}")])
     );
+    assert_eq!(
+        urls(&h.story_dto(&s[0], now).await.unwrap().web_links),
+        Some(vec!["https://example.com/s".to_string()])
+    );
+    assert_eq!(
+        urls(&h.story_dto(&s[2], now).await.unwrap().web_links),
+        Some(vec![]),
+        "none is an empty list, not an absent one"
+    );
+    assert_eq!(
+        urls(&h.epic_dto(&e, now).await.unwrap().web_links),
+        Some(vec!["https://example.com/e".to_string()])
+    );
+    assert_eq!(
+        urls(&h.initiative_dto(&i, now).await.unwrap().web_links),
+        Some(vec!["https://example.com/i".to_string()])
+    );
     let context = h.story_context(&s[0], now).await.unwrap();
     assert_eq!(
         shown(&context.story.links),
         Some(vec![format!("follows {}", s[1])])
+    );
+    assert_eq!(
+        urls(&context.story.web_links),
+        Some(vec!["https://example.com/s".to_string()])
     );
     assert_eq!(
         context.blockers.len(),
@@ -10826,8 +10869,13 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         "the control: a blocker comes along"
     );
     assert_eq!(context.blockers[0].links, None);
-    assert_eq!(context.epic.unwrap().links, None);
-    assert_eq!(context.initiative.unwrap().links, None);
+    assert_eq!(context.blockers[0].web_links, None);
+    // The epic and the initiative have links and web links of their own (added above), so `None` here means
+    // "not loaded", not "none".
+    let epic = context.epic.unwrap();
+    assert_eq!((epic.links, epic.web_links), (None, None));
+    let initiative = context.initiative.unwrap();
+    assert_eq!((initiative.links, initiative.web_links), (None, None));
 
     let listed = h
         .list_stories(
@@ -10845,26 +10893,29 @@ async fn single_item_reads_carry_item_links_and_list_reads_do_not() {
         3,
         "the control: the list holds the linked stories"
     );
-    assert!(listed.iter().all(|r| r.story.links.is_none()));
     assert!(
-        serde_json::to_value(&listed[0]).unwrap()["story"]
-            .get("links")
-            .is_none(),
-        "left out of the JSON, not sent as null"
+        listed
+            .iter()
+            .all(|r| r.story.links.is_none() && r.story.web_links.is_none())
+    );
+    let row = serde_json::to_value(&listed[0]).unwrap();
+    assert!(
+        row["story"].get("links").is_none() && row["story"].get("web_links").is_none(),
+        "left out of the JSON, not sent as null: {row}"
     );
     assert!(
         h.epic_dtos(None, now)
             .await
             .unwrap()
             .iter()
-            .all(|e| e.links.is_none())
+            .all(|e| e.links.is_none() && e.web_links.is_none())
     );
     assert!(
         h.list_initiatives(now)
             .await
             .unwrap()
             .iter()
-            .all(|i| i.links.is_none())
+            .all(|i| i.links.is_none() && i.web_links.is_none())
     );
 }
 

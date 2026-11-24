@@ -1638,6 +1638,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2455,6 +2465,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -5131,6 +5151,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -5853,6 +5883,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -7369,6 +7409,16 @@
                   "version": {
                     "format": "int64",
                     "type": "integer"
+                  },
+                  "web_links": {
+                    "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                    "items": {
+                      "$ref": "#/components/schemas/WebLinkDto"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
@@ -8186,6 +8236,16 @@
                     "version": {
                       "format": "int64",
                       "type": "integer"
+                    },
+                    "web_links": {
+                      "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                      "items": {
+                        "$ref": "#/components/schemas/WebLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -8649,6 +8709,16 @@
                     "version": {
                       "format": "int64",
                       "type": "integer"
+                    },
+                    "web_links": {
+                      "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+                      "items": {
+                        "$ref": "#/components/schemas/WebLinkDto"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -10289,6 +10359,16 @@
           "version": {
             "format": "int64",
             "type": "integer"
+          },
+          "web_links": {
+            "description": "The web links of this item, oldest first (kb/ADR-0031 R5). Present, possibly empty, on a read of one item;\nleft out of every read that answers several items.",
+            "items": {
+              "$ref": "#/components/schemas/WebLinkDto"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [

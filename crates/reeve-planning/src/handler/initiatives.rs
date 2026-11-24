@@ -266,6 +266,7 @@ impl Handlers {
             let urg = self.urgency_in(&mut tx, now).await?;
             let mut dto = self.initiative_dto_in(&mut tx, key, &urg).await?;
             dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
+            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
             Ok(dto)
         }
         .await;
