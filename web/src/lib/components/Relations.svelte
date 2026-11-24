@@ -164,6 +164,79 @@
 		});
 		onchanged?.();
 	}
+
+	let addingWeb = $state(false);
+	let title = $state('');
+	let url = $state('');
+	let webError = $state<string | null>(null);
+	let webListError = $state<string | null>(null);
+
+	const webForm = () => document.getElementById(`${id}-web-form`);
+
+	async function openWeb() {
+		addingWeb = true;
+		await tick();
+		webForm()?.querySelector<HTMLElement>('input')?.focus();
+	}
+
+	async function closeWeb() {
+		const free = focusIsFree(webForm());
+		addingWeb = false;
+		title = '';
+		url = '';
+		webError = null;
+		await tick();
+		if (free) document.getElementById(`${id}-web-add`)?.focus();
+	}
+
+	/** `POST /items/{key}/web-links`. The server validates the title and the URL (scheme, length, no user name or
+	 *  password, the same URL under another title) and its message is shown as it is; the answer is this item's web
+	 *  links, the URL as stored. */
+	async function addWeb(e: SubmitEvent) {
+		e.preventDefault();
+		const body = { title: title.trim(), url: url.trim() };
+		if (busy || !body.title || !body.url) return;
+		busy = true;
+		webError = null;
+		webListError = null;
+		let answer: WebLink[];
+		try {
+			answer = await unwrap(api.POST('/api/v1/items/{key}/web-links', { params: { path: { key: itemKey } }, body }));
+		} catch (err) {
+			busy = false;
+			webError = errorMessage(err);
+			await tick();
+			if (focusIsFree(webForm())) webForm()?.querySelector<HTMLElement>('input')?.focus();
+			return;
+		}
+		busy = false;
+		shownWeb = answer;
+		await closeWeb();
+		onchanged?.();
+	}
+
+	/** `DELETE /items/{key}/web-links/{id}`: the answer is this item's web links. No confirmation: a web link can be
+	 *  added again, and its activity entry keeps the title and the URL. */
+	async function removeWeb(w: WebLink, pressed: HTMLButtonElement) {
+		if (busy) return;
+		busy = true;
+		webListError = null;
+		let answer: WebLink[];
+		try {
+			answer = await unwrap(api.DELETE('/api/v1/items/{key}/web-links/{id}', { params: { path: { key: itemKey, id: w.id } } }));
+		} catch (err) {
+			busy = false;
+			webListError = `Could not remove the web link ${w.title}: ${errorMessage(err)}`;
+			// The row stays, and so does focus: back on the button that was pressed.
+			await refocus(pressed, () => pressed);
+			return;
+		}
+		shownWeb = answer;
+		busy = false;
+		// To the section's add control (its button, or the open form's first field), never to another row's Remove.
+		await refocus(pressed, () => document.getElementById(`${id}-web-add`) ?? webForm()?.querySelector<HTMLElement>('input'));
+		onchanged?.();
+	}
 </script>
 
 <section class="relations" aria-labelledby="{id}-relations" bind:this={linkSection}>
@@ -237,9 +310,42 @@
 					{:else}
 						<span>{w.title}</span>
 					{/if}
+					<button type="button" class="remove" aria-label="Remove web link {w.title}" disabled={busy} onclick={(e) => removeWeb(w, e.currentTarget)}>Remove</button>
 				</li>
 			{/each}
 		</ul>
+	{/if}
+	{#if webListError}<p class="error" role="alert">{webListError}</p>{/if}
+	{#if addingWeb}
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<form id="{id}-web-form" class="add-form" aria-label="Add web link" onsubmit={addWeb} onkeydown={cancelOnEscape(closeWeb)}>
+			<label class="field"
+				>Title
+				<input bind:value={title} disabled={busy} aria-invalid={webError ? 'true' : undefined} aria-describedby={webError ? `${id}-web-error` : undefined} />
+			</label>
+			<!-- The hint sits under the field, outside the label, so the field's name stays "URL". -->
+			<div class="url">
+				<label class="field"
+					>URL
+					<input
+						bind:value={url}
+						disabled={busy}
+						inputmode="url"
+						autocomplete="off"
+						spellcheck="false"
+						placeholder="https://"
+						aria-invalid={webError ? 'true' : undefined}
+						aria-describedby={webError ? `${id}-url-hint ${id}-web-error` : `${id}-url-hint`}
+					/>
+				</label>
+				<p class="muted hint" id="{id}-url-hint">The full address, starting with https://</p>
+			</div>
+			<button type="button" disabled={busy} onclick={closeWeb}>Cancel</button>
+			<button type="submit" disabled={busy || !title.trim() || !url.trim()}>Add</button>
+			{#if webError}<p class="error" role="alert" id="{id}-web-error">{webError}</p>{/if}
+		</form>
+	{:else}
+		<button type="button" class="ghost" id="{id}-web-add" onclick={openWeb}>+ Add web link</button>
 	{/if}
 </section>
 
@@ -337,5 +443,18 @@
 	.hint {
 		flex-basis: 100%;
 		font-size: 13px;
+	}
+	/* The two flex children: the title's label, and the URL's label with its hint under it. */
+	.add-form > .field,
+	.add-form > .url {
+		flex: 1 1 12rem;
+		min-width: 0;
+	}
+	.url {
+		display: grid;
+		gap: 2px;
+	}
+	.add-form .field input {
+		width: 100%;
 	}
 </style>

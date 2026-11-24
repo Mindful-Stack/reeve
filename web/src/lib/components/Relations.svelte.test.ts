@@ -475,3 +475,155 @@ describe('Relations: item links', () => {
 		expect(writes()).toEqual([]);
 	});
 });
+
+describe('Relations: web links', () => {
+	const inputs = (f: HTMLFormElement) => [...f.querySelectorAll<HTMLInputElement>('input')];
+
+	it('adds a web link, lists it as the server stored it, and closes the form onto its button', async () => {
+		const { changed } = render({ level: 'epic', itemKey: 'ABC-5' });
+		const f = await openForm('Web links', '+ Add web link', 'Add web link');
+		const [title, url] = inputs(f);
+		await vi.waitFor(() => expect(document.activeElement).toBe(title));
+		expect(f.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+		// The URL field says what it wants before anything is refused, and is described by that hint.
+		const hint = f.querySelector('.hint')!;
+		expect(hint.textContent).toBe('The full address, starting with https://');
+		expect(url.getAttribute('aria-describedby')).toBe(hint.id);
+		expect(title.hasAttribute('aria-describedby')).toBe(false);
+		fill(title, ' Scenario page ');
+		fill(url, 'HTTPS://Example.com/wiki/scenario');
+		// The server trims the title and stores the URL as its parser writes it.
+		net.answer = () => [webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' })];
+		submit(f);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(section('Web links').querySelector('li a')?.getAttribute('href')).toBe('https://example.com/wiki/scenario');
+		});
+		expect(writes()).toEqual([{ method: 'POST', path: '/api/v1/items/ABC-5/web-links', body: { title: 'Scenario page', url: 'HTTPS://Example.com/wiki/scenario' } }]);
+		expect(section('Web links').querySelector('.host')!.textContent).toBe('example.com');
+		expect(form('Add web link')).toBeNull();
+		await vi.waitFor(() => expect(document.activeElement?.textContent?.trim()).toBe('+ Add web link'));
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('removes a web link by its id, once, lists the answer and moves focus to the add button, for each of two removals', async () => {
+		const { changed } = render({ webLinks: [webLink({ id: 4, title: 'Scenario page' }), webLink({ id: 9, title: 'Runbook', url: 'https://example.com/runbook' })] });
+		net.answer = () => [webLink({ id: 9, title: 'Runbook', url: 'https://example.com/runbook' })];
+		const remove = button(section('Web links'), 'Remove web link Scenario page');
+		remove.focus();
+		remove.click();
+		remove.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect([...section('Web links').querySelectorAll('li a')].map((a) => a.getAttribute('href'))).toEqual(['https://example.com/runbook']);
+		});
+		expect(writes()).toEqual([{ method: 'DELETE', path: '/api/v1/items/ABC-10/web-links/4', body: null }]);
+		// To the section's add button, although another Remove is left.
+		await vi.waitFor(() => expect(document.activeElement?.textContent?.trim()).toBe('+ Add web link'));
+		expect(changed).toHaveBeenCalledTimes(1);
+
+		net.answer = () => [];
+		const second = button(section('Web links'), 'Remove web link Runbook');
+		second.focus();
+		second.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(section('Web links').textContent).toContain('No web links yet.');
+		});
+		// The second removal named the second web link's id: the requests, not only the empty list the test answered.
+		expect(writes()).toEqual([
+			{ method: 'DELETE', path: '/api/v1/items/ABC-10/web-links/4', body: null },
+			{ method: 'DELETE', path: '/api/v1/items/ABC-10/web-links/9', body: null }
+		]);
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
+		await vi.waitFor(() => expect(document.activeElement?.textContent?.trim()).toBe('+ Add web link'));
+	});
+
+	it('leaves focus where the person moved it while a web link removal was out', async () => {
+		const { changed } = render({ webLinks: [webLink({ id: 4, title: 'Scenario page' }), webLink({ id: 9, title: 'Runbook', url: 'https://example.com/runbook' })] });
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return [webLink({ id: 9, title: 'Runbook', url: 'https://example.com/runbook' })];
+		};
+		const remove = button(section('Web links'), 'Remove web link Scenario page');
+		remove.focus();
+		remove.click();
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		const elsewhere = section('Web links').querySelector<HTMLAnchorElement>('a[href="https://example.com/runbook"]')!;
+		elsewhere.focus();
+		expect(document.activeElement).toBe(elsewhere);
+		g.release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(section('Web links').querySelectorAll('li')).toHaveLength(1);
+		});
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(document.activeElement).toBe(elsewhere);
+	});
+
+	it('shows what the server refuses beside the fields and keeps what was typed', async () => {
+		const { changed } = render();
+		const f = await openForm('Web links', '+ Add web link', 'Add web link');
+		const [title, url] = inputs(f);
+		fill(title, 'Page');
+		for (const [typed, message] of [
+			['ftp://example.com/file', "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password"],
+			['https://mia:secret@example.com/wiki', "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password"],
+			['https://example.com/wiki', 'this item already has a web link to that URL, titled "Scenario page": remove it first, then add it with the new title']
+		]) {
+			fill(url, typed);
+			net.answer = () => failure(message, 400, 'validation');
+			const before = writes().length;
+			submit(f);
+			// The request first: two of the three messages are the same words, so the alert alone would not show that
+			// this submission was sent, nor with what.
+			await vi.waitFor(() => expect(writes()).toHaveLength(before + 1));
+			expect(writes()[before]).toEqual({ method: 'POST', path: '/api/v1/items/ABC-10/web-links', body: { title: 'Page', url: typed } });
+			await vi.waitFor(() => {
+				flushSync();
+				expect(alertIn(form('Add web link'))).toBe(message);
+			});
+			// Both fields point at the message, and are marked invalid in more than colour; the URL field keeps its hint.
+			const alertId = form('Add web link')!.querySelector('[role="alert"]')!.id;
+			const hintId = form('Add web link')!.querySelector('.hint')!.id;
+			expect([title.getAttribute('aria-invalid'), title.getAttribute('aria-describedby')]).toEqual(['true', alertId]);
+			expect([url.getAttribute('aria-invalid'), url.getAttribute('aria-describedby')]).toEqual(['true', `${hintId} ${alertId}`]);
+			expect([title.value, url.value]).toEqual(['Page', typed]);
+			await vi.waitFor(() => expect(document.activeElement).toBe(title));
+		}
+		expect(section('Web links').textContent).toContain('No web links yet.');
+		expect(changed).not.toHaveBeenCalled();
+		// Cancel drops the draft and the error: a reopened form starts empty.
+		button(f, 'Cancel').click();
+		flushSync();
+		const again = await openForm('Web links', '+ Add web link', 'Add web link');
+		expect(inputs(again).map((i) => i.value)).toEqual(['', '']);
+		expect(alertIn(again)).toBe('');
+	});
+
+	it('shows a failed removal beside the list, keeps the web link and gives focus back to the button that was pressed', async () => {
+		render({ webLinks: [webLink({ id: 4, title: 'Scenario page' })] });
+		const pressed = () => button(section('Web links'), 'Remove web link Scenario page');
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return failure('database down');
+		};
+		pressed().focus();
+		pressed().click();
+		// As in the item link test: focus is dropped to the page at once, as a browser may do for a disabled button.
+		pressed().blur();
+		expect(document.activeElement).toBe(document.body);
+		await vi.waitFor(() => expect(writes()).toEqual([{ method: 'DELETE', path: '/api/v1/items/ABC-10/web-links/4', body: null }]));
+		g.release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertIn(section('Web links'))).toBe('Could not remove the web link Scenario page: database down');
+		});
+		expect(section('Web links').querySelectorAll('li')).toHaveLength(1);
+		await vi.waitFor(() => expect(document.activeElement).toBe(pressed()));
+	});
+});
