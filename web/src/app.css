@@ -326,6 +326,14 @@ textarea[data-drop] {
 	max-width: 100%;
 	margin: 0.75rem 0;
 	overflow-x: auto;
+	/* A shadow on each side that has more table to scroll to (an overlay scrollbar shows nothing until touched). The
+	   two shadows stay at the wrapper's edges; the two covers, in the colour of the surface behind, travel with the
+	   table and hide a shadow once that end is reached. A container on another surface sets --table-surface. */
+	background:
+		linear-gradient(to right, var(--table-surface, var(--background)) 35%, transparent) left / 2.25rem 100% no-repeat local,
+		linear-gradient(to left, var(--table-surface, var(--background)) 35%, transparent) right / 2.25rem 100% no-repeat local,
+		linear-gradient(to right, var(--line), transparent) left / 0.625rem 100% no-repeat scroll,
+		linear-gradient(to left, var(--line), transparent) right / 0.625rem 100% no-repeat scroll;
 }
 [data-table-scroll] table {
 	border-collapse: collapse;
@@ -344,7 +352,8 @@ textarea[data-drop] {
 	overflow-wrap: break-word;
 }
 [data-table-scroll] th {
-	background: var(--lighter-background);
+	/* A wash, not the opaque --lighter-background it comes close to: the wrapper's scroll shadows lie under the cells. */
+	background: color-mix(in srgb, var(--foreground) 7%, transparent);
 	font-weight: 600;
 }
 [data-table-scroll] th:not([align]) {

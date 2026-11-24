@@ -1174,6 +1174,8 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	expect(tables[0].width).toBeLessThanOrEqual(44 * 16 + 1);
 	expect(tables[0].height).toBeLessThan(400);
 	expect(tables[1].width).toBeLessThan(120);
+	// The cue that there is more to the side: two covers that travel with the table over two shadows that stay put.
+	expect(await wraps.nth(0).evaluate((w) => getComputedStyle(w).backgroundAttachment)).toBe('local, local, scroll, scroll');
 	// With room for the table, its wrapper stops being a tab stop.
 	await page.setViewportSize({ width: 1440, height: 800 });
 	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);
