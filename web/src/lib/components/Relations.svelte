@@ -6,11 +6,16 @@
      Nothing here says whether a blocker currently holds the story back: that takes deliveries and owners this
      section does not have, and the readiness reason says it (kb/ADR-0027 R5). -->
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { page } from '$app/state';
-	import type { ItemLink, ItemType, WebLink } from '#lib/api/types.ts';
+	import { api, ApiError, unwrap } from '#lib/api/client.ts';
+	import type { ItemLink, ItemType, ItemLinkType, SearchHit, WebLink } from '#lib/api/types.ts';
 	import Glyph from '#lib/components/Glyph.svelte';
-	import { groupLinks, linkedHref, webHost } from '#lib/relations.ts';
+	import ItemSearch from '#lib/components/ItemSearch.svelte';
+	import { focusIsFree } from '#lib/focus.ts';
+	import { errorMessage } from '#lib/format.ts';
+	import { PICKER_INPUT } from '#lib/picker.ts';
+	import { followsNote, groupLinks, LINK_TYPES, linkedHref, linkTypeHint, linkTypeText, removal, webHost, type FollowsNote } from '#lib/relations.ts';
 
 	let {
 		itemKey,
@@ -41,9 +46,127 @@
 	let shownLinks = $derived(links);
 	let shownWeb = $derived(webLinks);
 	const groups = $derived(groupLinks(shownLinks));
+
+	/** One write at a time, in both sections: a late answer can then never undo a newer one. */
+	let busy = $state(false);
+	let linkSection = $state<HTMLElement>();
+
+	let addingLink = $state(false);
+	let linkType = $state<ItemLinkType>(LINK_TYPES[0]);
+	/** What the form says under the select for the name chosen; '' for a name that needs no hint. */
+	const hint = $derived(linkTypeHint(linkType, level));
+	let picked = $state<SearchHit | null>(null);
+	/** A refused add, shown in the form; a failed removal, shown under the list. */
+	let linkError = $state<string | null>(null);
+	let listError = $state<string | null>(null);
+	/** Set after a `follows` between two stories; cleared by the next write. */
+	let note = $state<FollowsNote | null>(null);
+
+	const linkForm = () => document.getElementById(`${id}-link-form`);
+	const sameLink = (a: ItemLink, b: ItemLink) => a.type === b.type && a.direction === b.direction && a.item.key === b.item.key;
+
+	/** Escape in a form cancels it. The key is prevented, so a host that closes on Escape (the story drawer) stays
+	 *  open; an Escape the item search already used to close its list is left alone. */
+	const cancelOnEscape = (close: () => void) => (e: KeyboardEvent) => {
+		if (e.key !== 'Escape' || e.defaultPrevented || busy) return;
+		e.preventDefault();
+		close();
+	};
+
+	/** Whether focus is still where the press left it: on `pressed`, or on the page because that button gave it up
+	 *  (disabled while the request was out, or gone with its row). Focus the person moved to anything else, another
+	 *  control of this same section included, is theirs. `focusIsFree` is the wrong guard here: it would call the whole
+	 *  section free. */
+	const focusStayed = (pressed: HTMLElement): boolean => {
+		const a = document.activeElement;
+		return !a || a === document.body || a === pressed;
+	};
+	/** After a removal answered, once the DOM shows the result: focus goes to `target()` if it stayed where the press
+	 *  left it, and is left alone otherwise. */
+	async function refocus(pressed: HTMLElement, target: () => HTMLElement | null | undefined) {
+		await tick();
+		if (focusStayed(pressed)) target()?.focus();
+	}
+	/** The item link Remove buttons, in order (the host's blocker buttons carry no `remove` class). */
+	const linkRemoves = () => [...(linkSection?.querySelectorAll<HTMLButtonElement>('button.remove') ?? [])];
+
+	async function openLink() {
+		addingLink = true;
+		await tick();
+		linkForm()?.querySelector<HTMLElement>('select')?.focus();
+	}
+
+	/** Closes the form and drops its draft; focus returns to the add button unless the user moved it elsewhere. */
+	async function closeLink() {
+		const free = focusIsFree(linkForm());
+		addingLink = false;
+		picked = null;
+		linkType = LINK_TYPES[0];
+		linkError = null;
+		await tick();
+		if (free) document.getElementById(`${id}-link-add`)?.focus();
+	}
+
+	/** `POST /items/{key}/links`: this item follows, duplicates or relates to the picked one. Always the forward form.
+	 *  The answer is this item's links. */
+	async function addLink(e: SubmitEvent) {
+		e.preventDefault();
+		const other = picked;
+		if (!other || busy) return;
+		busy = true;
+		linkError = null;
+		listError = null;
+		note = null;
+		let answer: ItemLink[];
+		try {
+			answer = await unwrap(api.POST('/api/v1/items/{key}/links', { params: { path: { key: itemKey } }, body: { type: linkType, to: other.key } }));
+		} catch (err) {
+			// The fields are enabled again before focus returns to one: a disabled field cannot take it.
+			busy = false;
+			linkError = err instanceof ApiError && err.code === 'not_found' ? `No item ${other.key}.` : errorMessage(err);
+			await tick();
+			if (focusIsFree(linkForm())) linkForm()?.querySelector<HTMLElement>(PICKER_INPUT)?.focus();
+			return;
+		}
+		busy = false;
+		shownLinks = answer;
+		note = followsNote(linkType, itemKey, level, other);
+		await closeLink();
+		onchanged?.();
+	}
+
+	/** `DELETE /items/{key}/links/{type}/{to}` in the forward form (`removal` swaps the keys for an `in` link). The
+	 *  answer is the list of the item named first in the path, which for an `in` link is the other item, so the row is
+	 *  dropped here and the answer is not used. The row is dropped from the list on screen when the answer arrives
+	 *  (`shownLinks` read after the await), not from the list as it was when the button was pressed: the host may have
+	 *  passed a newer read meanwhile. */
+	async function removeLink(l: ItemLink, pressed: HTMLButtonElement) {
+		if (busy) return;
+		busy = true;
+		listError = null;
+		note = null;
+		const index = linkRemoves().indexOf(pressed);
+		try {
+			await unwrap(api.DELETE('/api/v1/items/{key}/links/{type}/{to}', { params: { path: removal(itemKey, l) } }));
+		} catch (err) {
+			busy = false;
+			listError = `Could not remove the item link to ${l.item.key}: ${errorMessage(err)}`;
+			// The row stays, and so does focus: back on the button that was pressed, now enabled again.
+			await refocus(pressed, () => pressed);
+			return;
+		}
+		shownLinks = shownLinks.filter((x) => !sameLink(x, l));
+		busy = false;
+		// The Remove that took the row's place, else the last one, else the section's add control.
+		await refocus(pressed, () => {
+			const left = linkRemoves();
+			return left[Math.min(index, left.length - 1)] ?? document.getElementById(`${id}-link-add`) ?? linkForm()?.querySelector<HTMLElement>('select');
+		});
+		onchanged?.();
+	}
 </script>
 
-<section class="relations" aria-labelledby="{id}-relations">
+<section class="relations" aria-labelledby="{id}-relations" bind:this={linkSection}>
 	<svelte:element this={heading} id="{id}-relations" class="relations-heading">Relations</svelte:element>
 	{#if blockers}
 		<div class="group">
@@ -60,6 +183,9 @@
 						<a href={linkedHref(page.url, l.item)} data-sveltekit-reset={l.item.level === 'story' ? 'false' : undefined}
 							><span class="key"><Glyph level={l.item.level} />{l.item.key}</span> {l.item.title}</a
 						>
+						<button type="button" class="remove" aria-label="Remove item link: {l.label} {l.item.key}" disabled={busy} onclick={(e) => removeLink(l, e.currentTarget)}
+							>Remove</button
+						>
 					</li>
 				{/each}
 			</ul>
@@ -68,6 +194,31 @@
 	{#if shownLinks.length === 0}<p class="muted empty">No item links yet. An item link says that this {level} follows, duplicates or relates to another item.</p>{/if}
 	<!-- Always shown, and plain text (no live region): it is not news, it is what the section is. -->
 	<p class="muted standing">{level === 'story' ? 'Item links are informational. Only a blocker holds a story back.' : 'Item links are informational. They never hold work back.'}</p>
+	{#if listError}<p class="error" role="alert">{listError}</p>{/if}
+	<!-- Always present, so a screen reader hears the line arrive; a live region inserted with its text is skipped. Only
+	     ever set in the story drawer (`followsNote`), where "+ Add blocker" is in the "blocked by" group above. -->
+	<p class="informational" class:idle={!note} role="status">
+		{#if note}Informational: this does not hold {note.key} back. To hold it back, add {note.by} with "+ Add blocker" above.{/if}
+	</p>
+	{#if addingLink}
+		<!-- A named form is a landmark, which the linter calls non-interactive; the listener only catches Escape from the
+		     fields inside it. -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<form id="{id}-link-form" class="add-form" aria-label="Add item link" onsubmit={addLink} onkeydown={cancelOnEscape(closeLink)}>
+			<!-- Reads as the sentence the link states: "This story follows <other item>". -->
+			<span class="subject">This {level}</span>
+			<select aria-label="Item link name" aria-describedby={hint ? `${id}-link-hint` : undefined} bind:value={linkType} disabled={busy}>
+				{#each LINK_TYPES as t (t)}<option value={t}>{linkTypeText(t)}</option>{/each}
+			</select>
+			<ItemSearch label="Other item" bind:picked exclude={itemKey} disabled={busy} />
+			<button type="button" disabled={busy} onclick={closeLink}>Cancel</button>
+			<button type="submit" disabled={busy || !picked}>Add</button>
+			{#if hint}<p class="muted hint" id="{id}-link-hint">{hint}</p>{/if}
+			{#if linkError}<p class="error" role="alert">{linkError}</p>{/if}
+		</form>
+	{:else}
+		<button type="button" class="ghost" id="{id}-link-add" onclick={openLink}>+ Add item link</button>
+	{/if}
 </section>
 
 <section class="relations" aria-labelledby="{id}-web">
@@ -146,5 +297,45 @@
 	}
 	p {
 		margin: 0;
+	}
+	.remove {
+		height: 24px;
+		padding: 0 8px;
+		font-size: 13px;
+	}
+	/* The add buttons sit at the start of their row, not stretched across the grid. */
+	.ghost {
+		justify-self: start;
+	}
+	/* Every control may shrink and wrap: at phone width the form stacks instead of scrolling the page sideways. */
+	.add-form {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+		min-width: 0;
+	}
+	.add-form select {
+		max-width: 100%;
+	}
+	/* Said in words and announced (role="alert"); the colour only adds to it. */
+	.error {
+		flex-basis: 100%;
+		color: var(--danger);
+		font-size: 14px;
+	}
+	.informational {
+		color: var(--muted);
+		font-size: 14px;
+		overflow-wrap: anywhere;
+	}
+	/* Empty, it takes no row of the grid, yet stays in the page for screen readers. */
+	.informational.idle {
+		position: absolute;
+	}
+	/* A hint takes a row of its own under the controls it explains. */
+	.hint {
+		flex-basis: 100%;
+		font-size: 13px;
 	}
 </style>

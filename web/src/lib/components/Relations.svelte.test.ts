@@ -206,3 +206,272 @@ describe('Relations: what it lists', () => {
 		expect(section('Web links').querySelector('a')!.textContent).toContain('Runbook');
 	});
 });
+
+describe('Relations: item links', () => {
+	it('adds an item link in the forward form, lists the answer, closes the form onto its button and says a follows between two stories is informational', async () => {
+		net.hits = [searchHit({ key: 'ABC-11', title: 'Billing account', exact: true })];
+		const { changed } = render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		const select = f.querySelector('select')!;
+		await vi.waitFor(() => expect(document.activeElement).toBe(select));
+		expect(select.getAttribute('aria-label')).toBe('Item link name');
+		expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
+			['follows', 'follows'],
+			['duplicates', 'duplicates'],
+			['relates_to', 'relates to']
+		]);
+		// The form reads as a sentence about this item ("This story follows …"), never as a bare key, and the select is
+		// described by the hint for the name chosen.
+		expect(f.querySelector('.subject')!.textContent).toBe('This story');
+		const hint = f.querySelector('.hint')!;
+		expect(hint.textContent).toBe('This story comes after the item you pick. To say what comes after this story, add the item link from that item.');
+		expect(select.getAttribute('aria-describedby')).toBe(hint.id);
+		// Nothing picked yet: there is nothing to add.
+		expect(f.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+		await pick('ABC-11', 'ABC-11');
+		net.answer = () => [itemLink({ type: 'follows', direction: 'out', label: 'follows', item: to('ABC-11', 'story', 'Billing account') })];
+		submit(f);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(groups()).toEqual([['follows', ['/board?story=ABC-11']]]);
+		});
+		expect(writes()).toEqual([{ method: 'POST', path: '/api/v1/items/ABC-10/links', body: { type: 'follows', to: 'ABC-11' } }]);
+		expect(note()).toBe('Informational: this does not hold ABC-10 back. To hold it back, add ABC-11 with "+ Add blocker" above.');
+		// A sentence about the control above it, not a command to copy: no code element.
+		expect(section('Relations').querySelector('.informational code')).toBeNull();
+		expect(form('Add item link')).toBeNull();
+		await vi.waitFor(() => expect(document.activeElement?.textContent?.trim()).toBe('+ Add item link'));
+		expect(changed).toHaveBeenCalledTimes(1);
+		expect(section('Relations').textContent).not.toContain('No item links yet.');
+	});
+
+	it('says nothing after any other name, and what the host passes next replaces the list a write showed', async () => {
+		net.hits = [searchHit({ key: 'ABC-11' })];
+		const { props } = render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		const select = f.querySelector('select')!;
+		const choose = (name: string) => {
+			select.value = name;
+			select.dispatchEvent(new Event('change', { bubbles: true }));
+			flushSync();
+		};
+		// The hint follows the name: none for relates_to (and then the select points at none), its own for duplicates.
+		choose('relates_to');
+		expect(f.querySelector('.hint')).toBeNull();
+		expect(select.hasAttribute('aria-describedby')).toBe(false);
+		choose('duplicates');
+		expect(f.querySelector('.hint')!.textContent).toBe('This story covers the same work as the item you pick.');
+		await pick('ABC-11', 'ABC-11');
+		net.answer = () => [itemLink({ type: 'duplicates', direction: 'out', label: 'duplicates', item: to('ABC-11') })];
+		submit(f);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(groups()).toEqual([['duplicates', ['/board?story=ABC-11']]]);
+		});
+		expect(writes()).toEqual([{ method: 'POST', path: '/api/v1/items/ABC-10/links', body: { type: 'duplicates', to: 'ABC-11' } }]);
+		expect(note()).toBe('');
+		// The host's refetch, with a link someone else added meanwhile.
+		props.links = [itemLink({ type: 'duplicates', direction: 'out', label: 'duplicates', item: to('ABC-11') }), itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-3', 'epic') })];
+		flushSync();
+		expect(groups()).toEqual([
+			['duplicates', ['/board?story=ABC-11']],
+			['relates to', ['/epics/ABC-3']]
+		]);
+	});
+
+	it('removes an out link by naming this item first, once, and moves focus to the next Remove', async () => {
+		const { changed } = render({
+			links: [itemLink({ type: 'follows', direction: 'out', label: 'follows', item: to('ABC-11') }), itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: to('ABC-12') })]
+		});
+		// The server answers the links of the item named first: ABC-10's, with the one that is left.
+		net.answer = () => [itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: to('ABC-12') })];
+		const remove = button(section('Relations'), 'Remove item link: follows ABC-11');
+		remove.focus();
+		remove.click();
+		remove.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(groups()).toEqual([['is followed by', ['/board?story=ABC-12']]]);
+		});
+		expect(writes()).toEqual([{ method: 'DELETE', path: '/api/v1/items/ABC-10/links/follows/ABC-11', body: null }]);
+		await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove item link: is followed by ABC-12'));
+		expect(changed).toHaveBeenCalledTimes(1);
+	});
+
+	it('removes an in link with the two keys swapped, and does not take the other item\'s list for its own', async () => {
+		render({ links: [itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: to('ABC-12') })] });
+		// DELETE /items/ABC-12/links/follows/ABC-10 answers ABC-12's links: here, one that has nothing to do with ABC-10.
+		net.answer = () => [itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-99', 'epic') })];
+		const remove = button(section('Relations'), 'Remove item link: is followed by ABC-12');
+		remove.focus();
+		remove.click();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(section('Relations').textContent).toContain('No item links yet.');
+		});
+		expect(writes()).toEqual([{ method: 'DELETE', path: '/api/v1/items/ABC-12/links/follows/ABC-10', body: null }]);
+		expect(groups()).toEqual([]);
+		// The last Remove is gone: focus goes to the section's add button, not to the page.
+		await vi.waitFor(() => expect(document.activeElement?.textContent?.trim()).toBe('+ Add item link'));
+	});
+
+	it('filters the list on screen when a removal answers late: what the host loaded meanwhile stays, and focus the person moved is left alone', async () => {
+		const { props, changed } = render({ links: [itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: to('ABC-12') })] });
+		const g = gate();
+		net.answer = async () => {
+			await g.opened;
+			// ABC-12's links, as the DELETE answers them.
+			return [];
+		};
+		const remove = button(section('Relations'), 'Remove item link: is followed by ABC-12');
+		remove.focus();
+		remove.click();
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		// While the DELETE is out, a live event makes the host refetch: someone else added a relation.
+		props.links = [
+			itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: to('ABC-12') }),
+			itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-3', 'epic') })
+		];
+		flushSync();
+		expect(groups()).toEqual([
+			['is followed by', ['/board?story=ABC-12']],
+			['relates to', ['/epics/ABC-3']]
+		]);
+		// And the person moves on, to the new row's link, inside this same section.
+		const elsewhere = section('Relations').querySelector<HTMLAnchorElement>('a[href="/epics/ABC-3"]')!;
+		elsewhere.focus();
+		expect(document.activeElement).toBe(elsewhere);
+		g.release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(groups()).toEqual([['relates to', ['/epics/ABC-3']]]);
+		});
+		await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+		await settle();
+		flushSync();
+		expect(document.activeElement).toBe(elsewhere);
+	});
+
+	it('disables Add again when something else is typed after a pick, and sends nothing for the item picked before', async () => {
+		net.hits = [searchHit({ key: 'ABC-11' })];
+		render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		const add = f.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+		await pick('ABC-11', 'ABC-11');
+		expect(add.disabled).toBe(false);
+		// Another text, for which the server finds nothing: ABC-11 must not stay picked behind it.
+		net.hits = [];
+		fill(f.querySelector<HTMLInputElement>('input[role="combobox"]')!, 'zzz');
+		expect(add.disabled).toBe(true);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(f.querySelector('[role="status"]')!.textContent).toBe('No item found');
+		});
+		expect(add.disabled).toBe(true);
+		expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(0);
+		// Enter in a field submits a form whatever its button says: the handler must hold nothing to send either.
+		f.requestSubmit();
+		await settle();
+		expect(writes()).toEqual([]);
+	});
+
+	it('shows a refused item link beside the form, keeps the form and the pick, and names an item the server does not know', async () => {
+		// The item itself is among the server's hits and is not offered. The server's refusal of a self link cannot
+		// come from this form any more; it is still the server's rule, so it is answered here for another pick and must
+		// be shown like any refusal.
+		net.hits = [searchHit({ key: 'ABC-10', title: 'This story', exact: true }), searchHit({ key: 'ABC-11' })];
+		const { changed } = render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		fill(f.querySelector<HTMLInputElement>('input[role="combobox"]')!, 'ABC-1');
+		const offered = await vi.waitFor(() => {
+			flushSync();
+			const o = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')];
+			expect(o.map((x) => x.textContent!.trim().split(' ')[0])).toEqual(['ABC-11']);
+			return o;
+		});
+		offered[0].click();
+		flushSync();
+		net.answer = () => failure('an item cannot have an item link to itself', 400, 'validation');
+		submit(f);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertIn(form('Add item link'))).toBe('an item cannot have an item link to itself');
+		});
+		// Focus is back in the form, not lost to the page.
+		await vi.waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('combobox'));
+		net.answer = () => failure('not found', 404, 'not_found');
+		submit(form('Add item link')!);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertIn(form('Add item link'))).toBe('No item ABC-11.');
+		});
+		// Both refused writes named this item first and the pick second.
+		expect(writes()).toEqual([
+			{ method: 'POST', path: '/api/v1/items/ABC-10/links', body: { type: 'follows', to: 'ABC-11' } },
+			{ method: 'POST', path: '/api/v1/items/ABC-10/links', body: { type: 'follows', to: 'ABC-11' } }
+		]);
+		expect(groups()).toEqual([]);
+		expect(note()).toBe('');
+		expect(changed).not.toHaveBeenCalled();
+	});
+
+	it('shows a failed removal beside the list, keeps the link and gives focus back to the button that was pressed, unless the person moved it', async () => {
+		const both = [
+			['follows', ['/board?story=ABC-11']],
+			['relates to', ['/epics/ABC-3']]
+		];
+		render({ links: [itemLink({ item: to('ABC-11') }), itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-3', 'epic') })] });
+		const pressed = () => button(section('Relations'), 'Remove item link: follows ABC-11');
+		let g = gate();
+		net.answer = async () => {
+			await g.opened;
+			return failure('database down');
+		};
+		pressed().focus();
+		pressed().click();
+		// A browser may drop focus to the page when the focused button is disabled. The test drops it itself, at once
+		// (the button is still enabled in the DOM until the click's state change is flushed), and checks that it did.
+		pressed().blur();
+		expect(document.activeElement).toBe(document.body);
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		g.release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertIn(section('Relations'))).toBe('Could not remove the item link to ABC-11: database down');
+		});
+		expect(groups()).toEqual(both);
+		await vi.waitFor(() => expect(document.activeElement).toBe(pressed()));
+		expect(pressed().disabled).toBe(false);
+
+		// Again, and this time the person moves to another row while the request is out: focus stays there.
+		g = gate();
+		pressed().click();
+		await vi.waitFor(() => expect(writes()).toHaveLength(2));
+		flushSync();
+		expect(pressed().disabled).toBe(true);
+		const elsewhere = section('Relations').querySelector<HTMLAnchorElement>('a[href="/epics/ABC-3"]')!;
+		elsewhere.focus();
+		g.release();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(pressed().disabled).toBe(false);
+		});
+		await settle();
+		flushSync();
+		expect(document.activeElement).toBe(elsewhere);
+		expect(groups()).toEqual(both);
+	});
+
+	it('Escape in the form cancels it without the key reaching the host', async () => {
+		render();
+		const f = await openForm('Relations', '+ Add item link', 'Add item link');
+		const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+		f.querySelector('select')!.dispatchEvent(e);
+		await vi.waitFor(() => {
+			flushSync();
+			expect(form('Add item link')).toBeNull();
+		});
+		expect(e.defaultPrevented).toBe(true);
+		expect(writes()).toEqual([]);
+	});
+});
