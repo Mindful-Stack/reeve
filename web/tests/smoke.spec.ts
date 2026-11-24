@@ -1344,6 +1344,8 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 		await expectTablesScrollInside(page, `${drawer} .comment-body`, 1, drawer);
 		// In a comment the table keeps the comment's own, tighter, spacing between blocks.
 		expect(await page.locator(`${drawer} .comment-body [data-table-scroll]`).evaluate((w) => getComputedStyle(w).margin)).toBe('8px 0px 0px');
+		// The covers take the drawer's own surface.
+		await expectScrollShadows(page.locator(`${drawer} .brief [data-table-scroll]`));
 		// A decision's thread, in the decision drawer.
 		await page.goto(`/decisions?decision=${decision.id}`);
 		const decisionDrawer = '[data-testid="decision-drawer"]';
@@ -1358,6 +1360,9 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 	await expectTablesScrollInside(page, '.comment-body', 1);
 	await page.getByRole('button', { name: 'Discussion' }).click();
 	await expectTablesScrollInside(page, '.decision-list .comment-body', 1);
+	// A decision's row is a raised panel: the covers are that panel's colour, not the page's.
+	const raised = await expectScrollShadows(page.locator('.decision-list .comment-body [data-table-scroll]'));
+	expect(raised.surface).not.toBe((await expectScrollShadows(page.locator('.brief [data-table-scroll]').first())).surface);
 	// A phone has no queue list to pick from: pick the item with room for the list, then narrow the page.
 	await page.setViewportSize({ width: 1440, height: 800 });
 	await page.goto('/triage');
