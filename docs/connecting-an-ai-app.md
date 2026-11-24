@@ -54,7 +54,7 @@ discovery complete, and it cannot add or remove a blocker. It can also put a sto
 under another initiative; that changes which discovery and which decisions the story, or the epic's stories, wait
 on before work can start. If you connected an app with **Read and change** before it could create and edit epics
 and initiatives, it can do so now without asking you again. The only way to take that away is to revoke the
-connection and connect again with **Read**, which takes away every change. To
+connection and connect again with **Read**; the app can then change nothing. To
 keep a mistaken or planted instruction from doing much, one person's apps may try at most 30 changes in any ten
 minutes between them; after that the app tells you when it can go on.
 
