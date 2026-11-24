@@ -189,7 +189,21 @@ impl Handlers {
         Ok(true)
     }
 
-    /// One item's item links as it reads them, from one read-only snapshot. NotFound when no item has the key.
+    /// One item's item links as it reads them, and nothing else, from one read-only snapshot. NotFound when no
+    /// item has the key. The answer of a write that changed an item link (the POST and the DELETE): it loads no
+    /// other kind of link, whatever `link_listing` comes to carry.
+    pub async fn item_links_of(&self, key: &Key) -> Result<Vec<ItemLinkDto>, HandlerError> {
+        self.item_type_of(key).await?;
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.item_link_dtos_in(&mut tx, key).await;
+        end_read(tx, out).await
+    }
+
+    /// Everything `reeve link ls` shows for one item, from one read-only snapshot: its item links as it reads
+    /// them (and, when they exist, its web links, GRA-878). NotFound when no item has the key.
     pub async fn link_listing(&self, key: &Key) -> Result<LinkListingDto, HandlerError> {
         self.item_type_of(key).await?;
         let mut tx = self

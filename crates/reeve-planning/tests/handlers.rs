@@ -10071,6 +10071,16 @@ async fn item_links_are_added_once_logged_on_both_items_and_read_from_either_end
                 "item": {"key": s, "level": "story", "title": "Template"}}])
     );
 
+    // The reader behind a write's answer gives the same item links as the listing, and nothing else.
+    assert_eq!(
+        h.item_links_of(&s).await.unwrap(),
+        h.link_listing(&s).await.unwrap().links
+    );
+    assert!(matches!(
+        h.item_links_of(&"ABC-999".parse().unwrap()).await,
+        Err(HandlerError::NotFound)
+    ));
+
     // relates_to named from either end is one link, `out` on both sides. The initiative has the lower key.
     assert!(h.add_item_link(&bot, &s, RelatesTo, &i).await.unwrap());
     assert!(

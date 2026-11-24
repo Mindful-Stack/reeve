@@ -58,6 +58,7 @@ fail_at reeve-planning/src/handler/moves.rs 'self.ports.item_links.item_links_of
 fail_at reeve-planning/src/handler/moves.rs $'self\n    .ports\n    .item_links\n    .add_item_link(tx, &link)'
 fail_at reeve-planning/src/handler/moves.rs 'ItemLinkRepo::item_links_of_in(&*links, tx, ks)'
 fail_at reeve-planning/src/handler/moves.rs 'self.item_link_dtos_in(tx, key)'
+fail_at reeve-planning/src/handler/moves.rs 'self.item_links_of(&key)'
 fail_at reeve-planning/src/handler/moves.rs 'self.link_listing(key)'
 fail_at reeve-planning/src/handler/moves.rs 'let f = Self::add_item_link;'
 fail_at reeve-planning/src/handler/moves.rs 'Self::remove_item_link(self, c, a, t, b)'

@@ -17,7 +17,7 @@ pub(crate) async fn list_item_links(
 }
 
 /// `reeve link add <KEY> <name> <OTHER>`: the item in the path follows, duplicates or relates to `b.to`. Behind
-/// `POST /api/v1/items/{key}/links`. Answers the item's links after the write; adding a link that exists changes
+/// `POST /api/v1/items/{key}/links`. Answers the item's item links after the write (`Handlers::item_links_of`: item links only, not the listing); adding a link that exists changes
 /// nothing.
 pub(crate) async fn add_item_link(
     state: &AppState,
@@ -31,7 +31,7 @@ pub(crate) async fn add_item_link(
         .handlers
         .add_item_link(&who.ctx, &from, b.link_type, &to)
         .await?;
-    Ok(state.handlers.link_listing(&from).await?.links)
+    Ok(state.handlers.item_links_of(&from).await?)
 }
 
 /// `reeve link rm <KEY> <name> <OTHER>`: removes exactly that link, named in its forward form (for `relates_to`,
@@ -59,5 +59,5 @@ pub(crate) async fn remove_item_link(
         .handlers
         .remove_item_link(&who.ctx, &from, link_type, &to)
         .await?;
-    Ok(state.handlers.link_listing(&from).await?.links)
+    Ok(state.handlers.item_links_of(&from).await?)
 }
