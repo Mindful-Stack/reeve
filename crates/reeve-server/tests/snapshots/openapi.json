@@ -1763,7 +1763,7 @@
         "type": "string"
       },
       "ExportDto": {
-        "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
+        "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
         "properties": {
           "activity": {
             "items": {
@@ -1806,6 +1806,13 @@
             },
             "type": "array"
           },
+          "item_links": {
+            "description": "Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`\nkey, then by name (follows, duplicates, relates_to). An export written before item links existed has no\nsuch field.",
+            "items": {
+              "$ref": "#/components/schemas/ExportItemLinkDto"
+            },
+            "type": "array"
+          },
           "key_prefix": {
             "type": "string"
           },
@@ -1827,6 +1834,13 @@
               "$ref": "#/components/schemas/UserDto"
             },
             "type": "array"
+          },
+          "web_links": {
+            "description": "Every web link, ordered by the number of its item's key and, on one item, by when it was added.",
+            "items": {
+              "$ref": "#/components/schemas/ExportWebLinkDto"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1840,6 +1854,46 @@
           "comments",
           "activity",
           "users"
+        ],
+        "type": "object"
+      },
+      "ExportItemLinkDto": {
+        "description": "An item link in the export: `from` follows, duplicates or relates to `to`. A `relates_to` has the lower key\n(byte order) in `from`, whichever end it was added from.",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ItemLinkType"
+          }
+        },
+        "required": [
+          "from",
+          "type",
+          "to"
+        ],
+        "type": "object"
+      },
+      "ExportWebLinkDto": {
+        "description": "A web link in the export: a title and a URL on one item. Who added it and when is in the exported activity\n(`web_link_added`).",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "title",
+          "url"
         ],
         "type": "object"
       },
@@ -5492,7 +5546,7 @@
                 "type": "string"
               },
               "value": {
-                "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
+                "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
                 "properties": {
                   "activity": {
                     "items": {
@@ -5535,6 +5589,13 @@
                     },
                     "type": "array"
                   },
+                  "item_links": {
+                    "description": "Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`\nkey, then by name (follows, duplicates, relates_to). An export written before item links existed has no\nsuch field.",
+                    "items": {
+                      "$ref": "#/components/schemas/ExportItemLinkDto"
+                    },
+                    "type": "array"
+                  },
                   "key_prefix": {
                     "type": "string"
                   },
@@ -5554,6 +5615,13 @@
                   "users": {
                     "items": {
                       "$ref": "#/components/schemas/UserDto"
+                    },
+                    "type": "array"
+                  },
+                  "web_links": {
+                    "description": "Every web link, ordered by the number of its item's key and, on one item, by when it was added.",
+                    "items": {
+                      "$ref": "#/components/schemas/ExportWebLinkDto"
                     },
                     "type": "array"
                   }

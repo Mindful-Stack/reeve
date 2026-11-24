@@ -1,6 +1,7 @@
 //! Every domain-to-wire conversion for planning: the domain never names a DTO (the isolation lint enforces it).
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
+use crate::domain::item_link::ItemLink;
 use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
@@ -12,11 +13,11 @@ use chrono::NaiveDate;
 use reeve_protocol::{
     AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
     DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
-    EpicDto, EpicPromiseDto, EpicPromiseRefDto, GoalDto, GoalGatesDto, GoalProgressDto,
-    InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue,
-    PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
-    RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto,
-    StoryDto, StoryPromiseDto, WebLinkDto,
+    EpicDto, EpicPromiseDto, EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto,
+    GoalGatesDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType,
+    Key, LinkedItemDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
+    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -570,6 +571,24 @@ pub(crate) fn item_link_dto(
 pub(crate) fn web_link_dto(w: &StoredWebLink) -> WebLinkDto {
     WebLinkDto {
         id: w.id,
+        title: w.link.title().to_owned(),
+        url: w.link.url().to_owned(),
+    }
+}
+
+/// An item link as the export lists it: once, with its ends as stored.
+pub(crate) fn export_item_link_dto(l: &ItemLink) -> ExportItemLinkDto {
+    ExportItemLinkDto {
+        from: l.from_key().clone(),
+        link_type: l.link_type(),
+        to: l.to_key().clone(),
+    }
+}
+
+/// A web link as the export lists it: its item, title and URL.
+pub(crate) fn export_web_link_dto(w: &StoredWebLink) -> ExportWebLinkDto {
+    ExportWebLinkDto {
+        item: w.item.clone(),
         title: w.link.title().to_owned(),
         url: w.link.url().to_owned(),
     }

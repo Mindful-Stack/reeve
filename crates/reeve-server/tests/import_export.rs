@@ -730,6 +730,147 @@ async fn export_document_is_what_the_route_serves() {
     assert_eq!(without_at(serde_json::to_value(&off).unwrap()), route);
 }
 
+/// Makes ten items through the API and returns their keys in the order made: an initiative, its epic and eight
+/// chores. Ten, so that the last key has two digits: `TST-10` is below `TST-9` as text and above it as a number.
+async fn ten_items(h: &Harness) -> Vec<String> {
+    let ini = post(
+        h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key":"li","title":"Orion","horizon":"Now"}),
+    )
+    .await;
+    let epic = post(
+        h,
+        "/api/v1/epics",
+        json!({"idempotency_key":"le","title":"v2","initiative":ini["key"]}),
+    )
+    .await;
+    let mut keys = vec![
+        ini["key"].as_str().unwrap().to_string(),
+        epic["key"].as_str().unwrap().to_string(),
+    ];
+    for n in 0..8 {
+        let s = post(
+            h,
+            "/api/v1/stories",
+            json!({"idempotency_key": format!("ls{n}"), "title": format!("Chore {n}"), "kind": "chore", "criteria": [], "labels": []}),
+        )
+        .await;
+        keys.push(s["key"].as_str().unwrap().to_string());
+    }
+    keys
+}
+
+/// Spec section 6: the export lists every item link once, as stored, and every web link with its item, title and
+/// URL. Content, not a round trip: the export is not a restore source. The order is by key number (not key text,
+/// not the order added) at the `from` end, then at the `to` end, then by name; a removed link is not in it; and
+/// "every" means every row of the two tables, also one that names an item the export does not list.
+#[tokio::test]
+async fn export_lists_every_item_link_and_web_link() {
+    let h = harness().await;
+    let k = ten_items(&h).await;
+    let (ini, epic, third, fourth, ninth, tenth) = (&k[0], &k[1], &k[2], &k[3], &k[8], &k[9]);
+    assert_eq!(
+        (ini.as_str(), third.as_str(), ninth.as_str(), tenth.as_str()),
+        ("TST-1", "TST-3", "TST-9", "TST-10"),
+        "the control: the keys the order below is about"
+    );
+    assert!(
+        tenth.as_bytes() < ninth.as_bytes(),
+        "the control: as text, TST-10 is below TST-9; as a number it is above"
+    );
+    let link = |from: &String, t: &str, to: &String| {
+        (
+            format!("/api/v1/items/{from}/links"),
+            json!({"type": t, "to": to}),
+        )
+    };
+    // Added in an order that is none of the candidate orders. `third` has links to `ninth` and to `tenth` (one
+    // `from`, two destinations whose text order and number order differ), and three names to `ninth` (both ends
+    // shared, the names in neither the table's nor the alphabet's order).
+    for (path, body) in [
+        link(tenth, "follows", third),
+        link(third, "relates_to", ninth),
+        link(fourth, "relates_to", ini),
+        link(third, "follows", tenth),
+        link(ninth, "relates_to", tenth),
+        link(third, "duplicates", ninth),
+        link(ninth, "follows", third),
+        link(epic, "duplicates", third),
+        link(third, "follows", ninth),
+        link(third, "follows", epic),
+    ] {
+        post(&h, &path, body).await;
+    }
+    // One of them is removed again: it must not be exported.
+    let (st, b) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "DELETE",
+        &format!("/api/v1/items/{third}/links/follows/{epic}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    for (item, title, url) in [
+        (third, "Scenario page", "HTTPS://Example.com/wiki/scenario"),
+        (tenth, "Notes", "https://example.com/notes"),
+        (third, "Board", "https://example.com/board"),
+        (ninth, "Wiki", "https://example.com/wiki"),
+        (ini, "Roadmap", "https://example.com/roadmap"),
+    ] {
+        post(
+            &h,
+            &format!("/api/v1/items/{item}/web-links"),
+            json!({"title": title, "url": url}),
+        )
+        .await;
+    }
+    // A row of each table that names no item of this instance, written past the handlers. Nothing in the product
+    // makes one today; the export is the record of the tables all the same, so it lists them.
+    sqlx::query("INSERT INTO item_links (from_key, to_key, link_type) VALUES ('TST-90', 'TST-91', 'follows')")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO web_links (item_key, title, url) VALUES ('TST-90', 'Orphan', 'https://example.com/orphan')")
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+
+    let (st, b) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/export", None).await;
+    assert_eq!(st, 200, "{b}");
+    let e = &b["value"];
+    // The whole array, in order.
+    assert_eq!(
+        e["item_links"],
+        json!([
+            {"from": ini, "type": "relates_to", "to": fourth},
+            {"from": epic, "type": "duplicates", "to": third},
+            {"from": third, "type": "follows", "to": ninth},
+            {"from": third, "type": "duplicates", "to": ninth},
+            {"from": third, "type": "relates_to", "to": ninth},
+            {"from": third, "type": "follows", "to": tenth},
+            {"from": ninth, "type": "follows", "to": third},
+            {"from": tenth, "type": "follows", "to": third},
+            {"from": tenth, "type": "relates_to", "to": ninth},
+            {"from": "TST-90", "type": "follows", "to": "TST-91"}
+        ]),
+        "{e}"
+    );
+    assert_eq!(
+        e["web_links"],
+        json!([
+            {"item": ini, "title": "Roadmap", "url": "https://example.com/roadmap"},
+            {"item": third, "title": "Scenario page", "url": "https://example.com/wiki/scenario"},
+            {"item": third, "title": "Board", "url": "https://example.com/board"},
+            {"item": ninth, "title": "Wiki", "url": "https://example.com/wiki"},
+            {"item": tenth, "title": "Notes", "url": "https://example.com/notes"},
+            {"item": "TST-90", "title": "Orphan", "url": "https://example.com/orphan"}
+        ]),
+        "{e}"
+    );
+}
+
 #[tokio::test]
 async fn export_is_one_snapshot_across_readers() {
     use reeve_planning::Ctx;
@@ -767,6 +908,27 @@ async fn export_is_one_snapshot_across_readers() {
 
     let (_, all) = call(&h.app, Some(&h.admin_token), "GET", "/api/v1/sprints", None).await;
     let gversion = all["value"]["active"]["sprint"]["goals"][0]["version"].clone();
+    // an item link and a web link made before the snapshot (GRA-879); the other end is an initiative, which the
+    // assertions below do not count
+    let early_ini = post(
+        &h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key":"ei","title":"Early initiative","horizon":"Now"}),
+    )
+    .await;
+    let early_ini = early_ini["key"].as_str().unwrap().to_string();
+    post(
+        &h,
+        &format!("/api/v1/items/{p}/links"),
+        json!({"type":"follows","to":early_ini}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{p}/web-links"),
+        json!({"title":"Early page","url":"https://example.com/early"}),
+    )
+    .await;
 
     let mut tx = h
         .state
@@ -866,6 +1028,19 @@ async fn export_is_one_snapshot_across_readers() {
     )
     .await;
     let late_story = late_story["key"].as_str().unwrap().to_string();
+    // a late item link and a late web link, committed while `tx` is open (GRA-879)
+    post(
+        &h,
+        &format!("/api/v1/items/{late_story}/links"),
+        json!({"type":"duplicates","to":p}),
+    )
+    .await;
+    post(
+        &h,
+        &format!("/api/v1/items/{p}/web-links"),
+        json!({"title":"Late page","url":"https://example.com/late"}),
+    )
+    .await;
     post(
         &h,
         "/api/v1/goals",
@@ -918,6 +1093,8 @@ async fn export_is_one_snapshot_across_readers() {
         .unwrap();
     let decisions = h.state.handlers.export_decisions(&mut tx).await.unwrap();
     let comments = h.state.handlers.export_comments(&mut tx).await.unwrap();
+    let item_links = h.state.handlers.export_item_links(&mut tx).await.unwrap();
+    let web_links = h.state.handlers.export_web_links(&mut tx).await.unwrap();
     let users = reeve_identity::list_users_in(&mut tx).await.unwrap();
     let activity = h.state.activity.list_all_in(&mut tx, 0, 500).await.unwrap();
     tx.commit().await.unwrap();
@@ -963,6 +1140,16 @@ async fn export_is_one_snapshot_across_readers() {
     assert!(
         comments.is_empty(),
         "the late comment is after the snapshot"
+    );
+    assert_eq!(
+        serde_json::to_value(&item_links).unwrap(),
+        json!([{"from": p, "type": "follows", "to": early_ini}]),
+        "the late item link is after the snapshot"
+    );
+    assert_eq!(
+        serde_json::to_value(&web_links).unwrap(),
+        json!([{"item": p, "title": "Early page", "url": "https://example.com/early"}]),
+        "the late web link is after the snapshot"
     );
     assert!(
         !users.iter().any(|u| u.email == "carol@example.com"),
@@ -1010,6 +1197,16 @@ async fn export_is_one_snapshot_across_readers() {
     assert_eq!(e["epics"][0]["key"], late_epic.as_str(), "{e}");
     assert_eq!(e["decisions"].as_array().unwrap().len(), 1);
     assert_eq!(e["comments"][0]["body"], "late comment");
+    assert_eq!(
+        e["item_links"].as_array().unwrap().len(),
+        2,
+        "a later export holds the late item link: {e}"
+    );
+    assert_eq!(
+        e["web_links"].as_array().unwrap().len(),
+        2,
+        "a later export holds the late web link: {e}"
+    );
     assert!(
         e["users"]
             .as_array()

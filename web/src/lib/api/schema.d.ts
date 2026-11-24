@@ -1923,7 +1923,8 @@ export interface components {
         ErrorCode: "not_found" | "conflict" | "forbidden" | "unauthenticated" | "validation" | "internal" | "rate_limited";
         /**
          * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
-         *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.
+         *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
+         *     and web links by their item's key.
          *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
          */
         ExportDto: {
@@ -1939,6 +1940,12 @@ export interface components {
             /** Format: date-time */
             exported_at: string;
             initiatives: components["schemas"]["InitiativeDto"][];
+            /**
+             * @description Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`
+             *     key, then by name (follows, duplicates, relates_to). An export written before item links existed has no
+             *     such field.
+             */
+            item_links?: components["schemas"]["ExportItemLinkDto"][];
             key_prefix: string;
             /**
              * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
@@ -1948,6 +1955,26 @@ export interface components {
             sprints: components["schemas"]["SprintDto"][];
             stories: components["schemas"]["StoryDto"][];
             users: components["schemas"]["UserDto"][];
+            /** @description Every web link, ordered by the number of its item's key and, on one item, by when it was added. */
+            web_links?: components["schemas"]["ExportWebLinkDto"][];
+        };
+        /**
+         * @description An item link in the export: `from` follows, duplicates or relates to `to`. A `relates_to` has the lower key
+         *     (byte order) in `from`, whichever end it was added from.
+         */
+        ExportItemLinkDto: {
+            from: components["schemas"]["Key"];
+            to: components["schemas"]["Key"];
+            type: components["schemas"]["ItemLinkType"];
+        };
+        /**
+         * @description A web link in the export: a title and a URL on one item. Who added it and when is in the exported activity
+         *     (`web_link_added`).
+         */
+        ExportWebLinkDto: {
+            item: components["schemas"]["Key"];
+            title: string;
+            url: string;
         };
         /**
          * @description Something worth a look on an initiative or an epic. Advisory: computed on read, never stored, and never consulted by
@@ -3056,7 +3083,8 @@ export interface components {
             outcome: "ok";
             /**
              * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
-             *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email.
+             *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
+             *     and web links by their item's key.
              *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
              */
             value: {
@@ -3072,6 +3100,12 @@ export interface components {
                 /** Format: date-time */
                 exported_at: string;
                 initiatives: components["schemas"]["InitiativeDto"][];
+                /**
+                 * @description Every item link (kb/ADR-0031), once, as stored, ordered by the number of its `from` key, then of its `to`
+                 *     key, then by name (follows, duplicates, relates_to). An export written before item links existed has no
+                 *     such field.
+                 */
+                item_links?: components["schemas"]["ExportItemLinkDto"][];
                 key_prefix: string;
                 /**
                  * @description Every sprint, oldest first, with its goals (confidence, verdict, created_at) and their links nested. Not in the
@@ -3081,6 +3115,8 @@ export interface components {
                 sprints: components["schemas"]["SprintDto"][];
                 stories: components["schemas"]["StoryDto"][];
                 users: components["schemas"]["UserDto"][];
+                /** @description Every web link, ordered by the number of its item's key and, on one item, by when it was added. */
+                web_links?: components["schemas"]["ExportWebLinkDto"][];
             };
         } | {
             /** @enum {string} */
