@@ -14,6 +14,10 @@ pub enum Sprint {
     },
     /// List the active sprint, the draft and the closed sprints (newest first) with their goals and verdicts.
     Ls,
+    /// Show this sprint's and the next sprint's goals with the initiatives they reach and what they wait on, then the
+    /// first horizon bucket's initiatives with their goals. `!` marks a goal that reaches an initiative outside that
+    /// bucket, or none. With --json: the planning answer (goal wording is in `reeve sprint ls --json`).
+    Planning,
     /// Open the draft sprint (interactive tokens only); this creates the next draft.
     Open {
         /// Last day of the sprint (YYYY-MM-DD); defaults to one configured sprint length after today.
@@ -60,6 +64,16 @@ struct Shown {
     at_close: Option<SprintCountsDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     changed_since_close: Option<bool>,
+}
+
+/// `sprint planning`'s value: the planning answer, which is what `--json` prints, and the sprints the text needs for
+/// the goals' wording and counts.
+#[derive(Serialize)]
+struct Planned {
+    #[serde(flatten)]
+    planning: SprintPlanningDto,
+    #[serde(skip)]
+    sprints: SprintsDto,
 }
 
 /// An outcome of another type carried through unchanged (a failed read ends the command with its own answer).
@@ -206,6 +220,19 @@ fn retry_on_conflict<T>(out: Outcome<T>, json: bool) -> Outcome<T> {
     }
 }
 
+async fn planning(c: &Client) -> anyhow::Result<Outcome<Planned>> {
+    let sprints = match c.get::<SprintsDto>("/sprints").await? {
+        Outcome::Ok(s) => s,
+        other => return Ok(carry(other)),
+    };
+    Ok(
+        match c.get::<SprintPlanningDto>("/sprints/planning").await? {
+            Outcome::Ok(planning) => Outcome::Ok(Planned { planning, sprints }),
+            other => carry(other),
+        },
+    )
+}
+
 pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
     Ok(match s {
         Sprint::Show { id } => finish(show(c, id).await?, json, |s| {
@@ -216,6 +243,9 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::sprint_list,
         ),
+        Sprint::Planning => finish(planning(c).await?, json, |p| {
+            crate::render::sprint_planning(&p.sprints, &p.planning)
+        }),
         Sprint::Open { ends } => {
             let draft = match c.get::<SprintsDto>("/sprints").await? {
                 Outcome::Ok(SprintsDto { draft: Some(d), .. }) => d,

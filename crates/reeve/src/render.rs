@@ -1130,6 +1130,122 @@ pub fn sprint_list(x: &SprintsDto) -> String {
     parts.join("\n")
 }
 
+/// A goal's initiatives in one line: `ABC-1 Now`, `ABC-5 Later !` for one outside the first bucket, `no initiative !`
+/// when the links reach none. Without a configured bucket (`marked` false) nothing carries the mark.
+fn goal_initiatives(g: &GoalGatesDto, marked: bool) -> String {
+    let mark = |outside: bool| if marked && outside { " !" } else { "" };
+    if g.initiatives.is_empty() {
+        return format!("no initiative{}", mark(true));
+    }
+    g.initiatives
+        .iter()
+        .map(|i| format!("{} {}{}", i.key, i.horizon, mark(!i.in_first_bucket)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `reeve sprint planning`: the active sprint ("This sprint") and the draft ("Next sprint"), each goal with the
+/// initiatives its links reach, its owner, its counts when its sprint is active (under the membership rule,
+/// kb/ADR-0014 R2) and what its work waits on; then the first horizon bucket's initiatives with their goals. The mark
+/// `!` is for display: a goal may link to any initiative or none (kb/ADR-0014 R3).
+pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
+    let marked = p.first_bucket.is_some();
+    let gates = |id: i64| p.goals.iter().find(|g| g.goal_id == id);
+    let goal_lines = |out: &mut String, g: &GoalDto, counts: Option<&SprintCountsDto>| {
+        let _ = write!(out, "\n  goal #{} {}", g.id, g.outcome);
+        if let Some(gg) = gates(g.id) {
+            let _ = write!(out, "\n    initiatives: {}", goal_initiatives(gg, marked));
+        }
+        let _ = write!(out, "\n    owner: {}", g.owner);
+        if let Some(c) = counts.and_then(|c| c.goals.iter().find(|c| c.goal_id == g.id)) {
+            let _ = write!(
+                out,
+                "\n    completed: {}  in flight: {}  in review: {}  todo: {}",
+                c.completed, c.in_flight, c.in_review, c.todo
+            );
+        }
+        if let Some(gg) = gates(g.id) {
+            let n = gg.discoveries.len() + gg.decisions.len();
+            if n > 0 {
+                let _ = write!(out, "\n    waits on {n}:");
+                for d in &gg.discoveries {
+                    let item = if d.item == ItemType::Initiative {
+                        "initiative"
+                    } else {
+                        "epic"
+                    };
+                    let _ = write!(out, "\n      {} {}: {item} in discovery", d.key, d.title);
+                }
+                for d in &gg.decisions {
+                    let _ = write!(out, "\n      {} (on {})", reason(&d.reason), d.on);
+                }
+            }
+        }
+    };
+    let mut parts = vec![];
+    if let Some(a) = &x.active {
+        let s = &a.sprint;
+        let mut out = format!(
+            "This sprint #{} {} – {}\n{MEMBERSHIP_RULE}",
+            s.id, s.starts_on, s.ends_on
+        );
+        for g in &s.goals {
+            goal_lines(&mut out, g, Some(&a.counts));
+        }
+        parts.push(out);
+    }
+    if let Some(d) = &x.draft {
+        let mut out = format!("Next sprint #{} {} – {}", d.id, d.starts_on, d.ends_on);
+        for g in &d.goals {
+            goal_lines(&mut out, g, None);
+        }
+        parts.push(out);
+    }
+    if parts.is_empty() {
+        return "no sprints yet: `reeve goal add` starts the first draft".into();
+    }
+    if let Some(bucket) = &p.first_bucket {
+        let active_id = x.active.as_ref().map(|a| a.sprint.id);
+        let all: Vec<&GoalDto> = x
+            .active
+            .iter()
+            .flat_map(|a| a.sprint.goals.iter())
+            .chain(x.draft.iter().flat_map(|d| d.goals.iter()))
+            .collect();
+        let mut out = format!("{bucket} initiatives");
+        for i in &p.first_bucket_initiatives {
+            let mut notes = vec![];
+            if let Some(m) = &i.target_month {
+                notes.push(m.clone());
+            }
+            if !i.discovery_complete {
+                notes.push("in discovery".into());
+            }
+            let notes = if notes.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", notes.join(", "))
+            };
+            let _ = write!(out, "\n  {} {}{notes}", i.key, i.title);
+            if i.goals.is_empty() {
+                let _ = write!(out, "\n    no goal");
+            }
+            for id in &i.goals {
+                if let Some(g) = all.iter().find(|g| g.id == *id) {
+                    let which = if Some(g.sprint_id) == active_id {
+                        "this sprint"
+                    } else {
+                        "next sprint"
+                    };
+                    let _ = write!(out, "\n    #{} {} ({which})", g.id, g.outcome);
+                }
+            }
+        }
+        parts.push(out);
+    }
+    parts.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1738,10 +1854,14 @@ mod tests {
     }
 
     fn goal_dto(id: i64) -> GoalDto {
+        goal_named(id, 4, "Bookings work")
+    }
+
+    fn goal_named(id: i64, sprint_id: i64, outcome: &str) -> GoalDto {
         GoalDto {
             id,
-            sprint_id: 4,
-            outcome: "Bookings work".into(),
+            sprint_id,
+            outcome: outcome.into(),
             check: "a customer books".into(),
             owner: "dan@example.com".into(),
             notes: String::new(),
@@ -1758,6 +1878,147 @@ mod tests {
             created_at: "2026-11-03T09:00:00Z".parse().unwrap(),
             links: vec!["ABC-1".parse().unwrap()],
         }
+    }
+
+    fn reaches(key: &str, horizon: &str, in_first_bucket: bool) -> GoalInitiativeDto {
+        GoalInitiativeDto {
+            key: key.parse().unwrap(),
+            title: format!("I {key}"),
+            horizon: horizon.into(),
+            in_first_bucket,
+        }
+    }
+    fn gates_of(goal_id: i64, initiatives: Vec<GoalInitiativeDto>) -> GoalGatesDto {
+        GoalGatesDto {
+            goal_id,
+            initiatives,
+            discoveries: vec![],
+            decisions: vec![],
+            discovery_total: 0,
+            decisions_total: 0,
+        }
+    }
+
+    /// `reeve sprint planning`: both sprints' goals with their initiatives, the rule beside the counts, what a goal
+    /// waits on, and the first bucket's initiatives with their goals.
+    #[test]
+    fn sprint_planning_lists_both_sprints_and_the_first_bucket() {
+        let mut active = view(SprintState::Active, vec![progress(12, 1, 2)]);
+        active.sprint.id = 2;
+        active.sprint.goals = vec![goal_named(12, 2, "Bookings work")];
+        let mut draft = active.sprint.clone();
+        draft.id = 3;
+        draft.state = SprintState::Draft;
+        draft.goals = vec![
+            goal_named(20, 3, "Reports work"),
+            goal_named(21, 3, "Tidy up"),
+        ];
+        let sprints = SprintsDto {
+            active: Some(active),
+            draft: Some(draft),
+            closed: vec![],
+            today: None,
+        };
+        let mut waiting = gates_of(12, vec![reaches("ABC-1", "Now", true)]);
+        waiting.discoveries = vec![DiscoveryGateDto {
+            key: "ABC-1".parse().unwrap(),
+            item: ItemType::Initiative,
+            title: "I ABC-1".into(),
+        }];
+        let p = SprintPlanningDto {
+            goals: vec![
+                waiting,
+                gates_of(
+                    20,
+                    vec![
+                        reaches("ABC-1", "Now", true),
+                        reaches("ABC-5", "Later", false),
+                    ],
+                ),
+                gates_of(21, vec![]),
+            ],
+            first_bucket: Some("Now".into()),
+            first_bucket_initiatives: vec![
+                BucketInitiativeDto {
+                    key: "ABC-1".parse().unwrap(),
+                    title: "I ABC-1".into(),
+                    target_month: Some("2026-12".into()),
+                    discovery_complete: false,
+                    goals: vec![12, 20],
+                },
+                BucketInitiativeDto {
+                    key: "ABC-8".parse().unwrap(),
+                    title: "I ABC-8".into(),
+                    target_month: None,
+                    discovery_complete: true,
+                    goals: vec![],
+                },
+            ],
+        };
+        let out = sprint_planning(&sprints, &p);
+        assert!(out.contains("This sprint #2"), "{out}");
+        assert!(out.contains(MEMBERSHIP_RULE), "{out}");
+        assert!(
+            out.contains("goal #12 Bookings work\n    initiatives: ABC-1 Now\n"),
+            "{out}"
+        );
+        assert!(out.contains("completed: 1  in flight: 2"), "{out}");
+        assert!(
+            out.contains("waits on 1:\n      ABC-1 I ABC-1: initiative in discovery"),
+            "{out}"
+        );
+        assert!(out.contains("Next sprint #3"), "{out}");
+        // One initiative outside the bucket marks only that one; a goal reaching none is marked too.
+        assert!(
+            out.contains("goal #20 Reports work\n    initiatives: ABC-1 Now, ABC-5 Later !"),
+            "{out}"
+        );
+        assert!(
+            out.contains("goal #21 Tidy up\n    initiatives: no initiative !"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Now initiatives\n  ABC-1 I ABC-1 (2026-12, in discovery)\n    #12 Bookings work (this sprint)\n    #20 Reports work (next sprint)\n  ABC-8 I ABC-8\n    no goal"),
+            "{out}"
+        );
+        // The draft has no window: no counts line under its goals.
+        let next = out.split("Next sprint").nth(1).unwrap();
+        assert!(!next.contains("completed:"), "{next}");
+    }
+
+    /// Without a configured bucket nothing is marked and no bucket section prints.
+    #[test]
+    fn sprint_planning_marks_nothing_without_a_bucket() {
+        let mut active = view(SprintState::Active, vec![progress(12, 0, 0)]);
+        active.sprint.goals = vec![goal_named(12, active.sprint.id, "Bookings work")];
+        let sprints = SprintsDto {
+            active: Some(active),
+            draft: None,
+            closed: vec![],
+            today: None,
+        };
+        let p = SprintPlanningDto {
+            goals: vec![gates_of(12, vec![])],
+            first_bucket: None,
+            first_bucket_initiatives: vec![],
+        };
+        let out = sprint_planning(&sprints, &p);
+        assert!(out.contains("initiatives: no initiative\n"), "{out}");
+        assert!(!out.contains('!'), "{out}");
+        assert!(!out.contains("initiatives\n  "), "{out}");
+        let empty = sprint_planning(
+            &SprintsDto {
+                active: None,
+                draft: None,
+                closed: vec![],
+                today: None,
+            },
+            &p,
+        );
+        assert_eq!(
+            empty,
+            "no sprints yet: `reeve goal add` starts the first draft"
+        );
     }
 
     fn view(state: SprintState, goals: Vec<GoalProgressDto>) -> SprintViewDto {
