@@ -1109,6 +1109,34 @@ for (const [width, height, phone] of [[320, 640, true], [720, 800, true], [1280,
 	});
 }
 
+test('a wide table in a brief scrolls inside its wrapper on a phone, and only a wrapper that scrolls is a tab stop', async ({ page }) => {
+	const wide = `| Step | User | Phone | Watch | System | Notes |\n|---:|---|---|:---:|---|---|\n${'| 1 | Opens the group | Shows the map with every member | Buzz | Computes the point | Unbrokenwordthatcannotwrapanywhere |\n'.repeat(3)}`;
+	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
+		idempotency_key: crypto.randomUUID(),
+		title: `Table smoke ${crypto.randomUUID().slice(0, 6)}`,
+		horizon: 'Later',
+		brief: `${wide}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
+	});
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.goto(`/initiatives/${ini.key}`);
+	const wraps = page.locator('.brief .table-scroll');
+	await expect(wraps).toHaveCount(2);
+	// The wide one is a named region the keyboard can reach and scroll; the one that fits is no stop.
+	await expect(page.getByRole('region', { name: 'Scrollable table' })).toHaveCount(1);
+	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	const m = await page.evaluate(() => {
+		const w = document.querySelector('.brief .table-scroll')!;
+		return { page: document.documentElement.scrollWidth, viewport: window.innerWidth, scroll: w.scrollWidth, client: w.clientWidth };
+	});
+	expect(m.page).toBe(m.viewport);
+	expect(m.scroll).toBeGreaterThan(m.client);
+	// With room for the table, its wrapper stops being a tab stop.
+	await page.setViewportSize({ width: 1440, height: 800 });
+	await expect(page.getByRole('region', { name: 'Scrollable table' })).toHaveCount(0);
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+});
+
 // A 4×3 PNG, small enough to inline; every image assertion waits for it to really decode (a broken image is visible too).
 const PNG = Buffer.from(
 	'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADAQMAAACOOjyFAAAAA1BMVEUzZswgIiSpAAAAC0lEQVQI12NgAAEAAAYAAWb0yWwAAAAASUVORK5CYII=',
