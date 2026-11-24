@@ -52,8 +52,9 @@ move a story. Starting work on a story requires it to be ready; the app cannot o
 the CLI or the web client), and it tells you why a story is not ready. It cannot mark an epic's or an initiative's
 discovery complete, and it cannot add or remove a blocker. It can also put a story in another epic and an epic
 under another initiative; that changes which discovery and which decisions the story, or the epic's stories, wait
-on before work can start. If you connected an app before these were added, it can do them now without asking you
-again; to take that away, revoke the connection and connect again with **Read**. To
+on before work can start. If you connected an app with **Read and change** before it could create and edit epics
+and initiatives, it can do so now without asking you again. The only way to take that away is to revoke the
+connection and connect again with **Read**, which takes away every change. To
 keep a mistaken or planted instruction from doing much, one person's apps may try at most 30 changes in any ten
 minutes between them; after that the app tells you when it can go on.
 
