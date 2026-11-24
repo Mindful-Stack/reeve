@@ -112,6 +112,15 @@ describe('tables', () => {
 		expect(marked[0].tagName).toBe('DIV');
 		expect(marked[0].firstElementChild?.tagName).toBe('TABLE');
 	});
+
+	it('marks a header cell that holds a word too long to keep whole on paper, and no other cell', () => {
+		const twenty = 'x'.repeat(20);
+		const el = parse(
+			`| Step | Acceptance criteria | ${twenty} | see ${twenty}y here | ${'x'.repeat(19)} |\n|---|---|---|---|---|\n| ${twenty} | 2 | 3 | 4 | 5 |\n\n<table><tr><th data-long-word>Mine</th></tr></table>`
+		);
+		expect([...el.querySelectorAll('th')].map((th) => th.hasAttribute('data-long-word'))).toEqual([false, false, true, true, false, false]);
+		expect(el.querySelectorAll('td[data-long-word]')).toHaveLength(0);
+	});
 });
 
 describe('images', () => {

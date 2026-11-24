@@ -370,18 +370,20 @@ textarea[data-drop] {
 [data-table-scroll] th:not([align]) {
 	text-align: left;
 }
-/* Paper does not scroll: the table takes the width of the page and its cells wrap wherever they must. A header cell
-   still keeps its words whole, so a narrow column ("Step", with a number under it) is not squeezed to a letter a line. */
+/* Paper does not scroll: a small table keeps its own width, a wide one takes the width of the page and its cells wrap
+   wherever they must. A header keeps its words whole, so a narrow column ("Step", with a number under it) is not
+   squeezed to a letter a line; only a header that holds a long identifier (`renderMarkdown` marks it) breaks anywhere,
+   or it would push the table past the page. */
 @media print {
 	[data-table-scroll] {
 		overflow: visible;
 		background: none;
 	}
 	[data-table-scroll] table {
-		width: 100%;
+		width: auto;
 		max-width: 100%;
 	}
-	[data-table-scroll] td {
+	[data-table-scroll] :is(td, th[data-long-word]) {
 		overflow-wrap: anywhere;
 	}
 }

@@ -1287,30 +1287,60 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 	await expectTablesScrollInside(page, '.item .brief', 1);
 });
 
-test('on paper a wide table takes the width of the page and wraps, since nothing scrolls there', async ({ page }) => {
+// A header that is one long identifier, beside a narrow column whose header is its widest text, and sentences enough to
+// make the table wider than a sheet of paper.
+const LONG_HEADER_TABLE = `| Step | ${'reeve_server_actions_stories_'.repeat(4)} | What it checks |\n|---:|---|---|\n${'| 1 | The move action refuses an override reason from a caller that came through MCP, whatever the tool sends | Only an interactive caller may override the readiness gate, and no tool carries a reason |\n'.repeat(2)}`;
+
+test('on paper a wide table fits the page and wraps, a small one keeps its width, and short header words stay whole', async ({ page }) => {
 	const ini = await post<{ key: string }>(page, '/api/v1/initiatives', {
 		idempotency_key: crypto.randomUUID(),
 		title: `Table print smoke ${crypto.randomUUID().slice(0, 6)}`,
 		horizon: 'Later',
-		brief: WIDE_TABLE
+		brief: `${WIDE_TABLE}\ntext\n\n${LONG_HEADER_TABLE}\ntext\n\n| a | b |\n|---|---|\n| 1 | 2 |`
 	});
 	await page.setViewportSize({ width: 360, height: 800 });
 	await page.goto(`/initiatives/${ini.key}`);
-	const wrap = page.locator('.brief [data-table-scroll]');
-	await expect(wrap).toHaveAttribute('tabindex', '0');
+	const wraps = page.locator('.brief [data-table-scroll]');
+	await expect(wraps).toHaveCount(3);
+	await expect(wraps.nth(0)).toHaveAttribute('tabindex', '0');
+	await expect(wraps.nth(1)).toHaveAttribute('tabindex', '0');
 	// A sheet of A4 at 96 dpi.
 	await page.setViewportSize({ width: 794, height: 1123 });
 	await page.emulateMedia({ media: 'print' });
-	// Nothing to scroll to, so no tab stop either; the table is exactly as wide as its wrapper.
-	await expect(wrap).not.toHaveAttribute('tabindex');
-	const m = await wrap.evaluate((w) => {
-		const s = getComputedStyle(w);
-		return { overflow: s.overflowX, image: s.backgroundImage, wrap: w.getBoundingClientRect().width, table: w.firstElementChild!.getBoundingClientRect().width, page: document.documentElement.scrollWidth, viewport: window.innerWidth };
-	});
-	expect(m.overflow).toBe('visible');
-	expect(m.image).toBe('none');
-	expect(Math.abs(m.table - m.wrap)).toBeLessThanOrEqual(1);
-	expect(m.page).toBe(m.viewport);
+	// Nothing to scroll to, so no tab stop either.
+	await expect(wraps.nth(0)).not.toHaveAttribute('tabindex');
+	await expect(wraps.nth(1)).not.toHaveAttribute('tabindex');
+	const m = await wraps.evaluateAll((all) =>
+		all.map((w) => {
+			const s = getComputedStyle(w);
+			const lines = (cell: Element) => {
+				const range = document.createRange();
+				range.selectNodeContents(cell);
+				return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+			};
+			return {
+				overflow: s.overflowX,
+				image: s.backgroundImage,
+				wrap: w.getBoundingClientRect().width,
+				table: w.firstElementChild!.getBoundingClientRect().width,
+				// How many lines each header of ordinary words takes (the long identifier is the one that may break).
+				headers: [...w.querySelectorAll('th')].filter((th) => th.textContent!.length <= 20).map((th) => `${th.textContent}: ${lines(th)}`)
+			};
+		})
+	);
+	for (const w of m) {
+		expect(w.overflow).toBe('visible');
+		expect(w.image).toBe('none');
+		expect(w.table, 'the table ends inside the page').toBeLessThanOrEqual(w.wrap + 1);
+	}
+	// The table with the long header would be wider than the paper: it takes the whole width and no more.
+	expect(Math.abs(m[1].table - m[1].wrap)).toBeLessThanOrEqual(1);
+	// A small table is not stretched across the sheet.
+	expect(m[2].table).toBeLessThan(120);
+	expect(m[0].headers).toEqual(['Step: 1', 'User: 1', 'Phone: 1', 'Watch: 1', 'System: 1', 'Notes: 1']);
+	expect(m[1].headers).toEqual(['Step: 1', 'What it checks: 1']);
+	expect(m[2].headers).toEqual(['a: 1', 'b: 1']);
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(794);
 });
 
 test('a long link in a table cell wraps instead of setting the width of the table', async ({ page }) => {

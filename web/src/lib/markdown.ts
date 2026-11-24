@@ -30,6 +30,14 @@ export const ATTACHMENT_SRC = /^\/api\/v1\/attachments\/[0-9a-f-]{36}$/;
 /** The attribute on the wrapper `renderMarkdown` puts around each table; select it as `[data-table-scroll]`. */
 export const TABLE_SCROLL = 'data-table-scroll';
 
+/** The attribute on a header cell that holds a word of LONG_WORD characters or more; select it as
+ *  `th[data-long-word]`. On paper only such a header breaks anywhere (app.css): were every header to, a short one
+ *  ("Step", over a column of numbers) would be squeezed to a letter a line whenever the table is wider than the page. */
+export const LONG_WORD_CELL = 'data-long-word';
+
+/** The length, in characters, from which a header's word counts as an identifier rather than an ordinary word. */
+const LONG_WORD = 20;
+
 /** Markdown to sanitised HTML. Needs a DOM (a browser, or jsdom in tests): without one DOMPurify returns its input.
  *  Images load lazily; an attachment image not already inside a link opens its full size in a new tab. */
 export function renderMarkdown(md: string): string {
@@ -57,6 +65,10 @@ export function renderMarkdown(md: string): string {
 		wrap.setAttribute(TABLE_SCROLL, '');
 		table.replaceWith(wrap);
 		wrap.append(table);
+		// Set here for the same reason as the wrapper's marker: after sanitising, so it is never an author's.
+		for (const th of table.querySelectorAll('th')) {
+			if ((th.textContent ?? '').split(/\s+/).some((word) => [...word].length >= LONG_WORD)) th.setAttribute(LONG_WORD_CELL, '');
+		}
 	}
 	return body.innerHTML;
 }
