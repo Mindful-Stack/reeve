@@ -32,6 +32,9 @@ pub(super) const MAX_LINKS: usize = 50;
 /// title, which is why the list is also fitted (`bound_links`).
 pub(super) const MAX_LINK_TITLE_BYTES: usize = 200;
 
+/// How many of an item's web links are sent: the first ones, which are the oldest.
+pub(super) const MAX_WEB_LINKS: usize = 10;
+
 /// The two bytes of an empty JSON list, `[]`. A baseline (see `room`) holds them for its list, so the list's rows
 /// may take them back.
 const EMPTY_LIST: usize = 2;
@@ -113,6 +116,23 @@ pub(super) fn bound_links(
     }
     // Last, on the rows as they will be sent: the caps bound neither the bytes of four-byte text nor what JSON
     // escaping adds.
+    fit_within(links, omitted, room(baseline))
+}
+
+/// Bounds an item's web links in place: by count (the first `MAX_WEB_LINKS`), then by serialized bytes (rows
+/// dropped from the end until the list fits `room(baseline)`). A row is sent whole or not at all: neither a title
+/// (at most 200 characters by validation) nor a URL (at most 1 000; a cut URL would be a wrong URL) is cut.
+/// `baseline` is `sent_bytes` of the tool's whole answer with this list `emptied` and its count at the number of
+/// rows, as for `bound_links`. Returns how many rows the cap or the fit left out.
+pub(super) fn bound_web_links(
+    links: &mut Option<Vec<reeve_protocol::WebLinkDto>>,
+    baseline: usize,
+) -> usize {
+    let Some(links) = links.as_mut() else {
+        return 0;
+    };
+    let omitted = capped(links, MAX_WEB_LINKS);
+    // Whole rows only: nothing here cuts a title or a URL.
     fit_within(links, omitted, room(baseline))
 }
 
@@ -626,5 +646,83 @@ mod tests {
         assert_eq!(one_over, (2..=MAX_RECENT + 1).collect::<Vec<_>>());
         let mut none: Vec<usize> = Vec::new();
         assert_eq!(most_recent(&mut none, MAX_RECENT), 0);
+    }
+
+    /// Ten web links at the longest allowed lengths are about 18 300 bytes. With room they are sent whole, the oldest
+    /// ten; with less room, fewer, still whole and still the oldest; what the cap and the fit leave out is counted.
+    #[test]
+    fn the_first_ten_web_links_are_sent_whole_and_fitted_to_the_room_left() {
+        let title = "𝄞".repeat(200);
+        let url = format!("https://example.com/{}", "a".repeat(980));
+        assert_eq!(
+            (title.len(), url.len()),
+            (800, 1_000),
+            "the control: the longest of each"
+        );
+        let links = || {
+            Some(
+                (1..=60)
+                    .map(|id| reeve_protocol::WebLinkDto {
+                        id,
+                        title: title.clone(),
+                        url: url.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let whole = |sent: &[reeve_protocol::WebLinkDto]| {
+            sent.iter().all(|w| w.url == url && w.title == title)
+        };
+
+        // Room for all ten: the cap alone.
+        let mut all = links();
+        assert_eq!(bound_web_links(&mut all, 0), 50);
+        let ten = all.unwrap();
+        assert_eq!(
+            ten.iter().map(|w| w.id).collect::<Vec<_>>(),
+            (1..=10).collect::<Vec<_>>(),
+            "the oldest ten"
+        );
+        assert!(whole(&ten), "neither a URL nor a title is cut");
+
+        // Room for some of them: a baseline of 60 000 bytes leaves 10 002 for the list.
+        let baseline = 60_000;
+        let ten_bytes = serde_json::to_string(&ten).unwrap().len();
+        assert!(
+            ten_bytes > room(baseline),
+            "the control: the ten are {ten_bytes} bytes and do not fit"
+        );
+        let mut some = links();
+        let omitted = bound_web_links(&mut some, baseline);
+        let sent = some.unwrap();
+        assert!(
+            !sent.is_empty() && sent.len() < MAX_WEB_LINKS,
+            "{} sent",
+            sent.len()
+        );
+        assert_eq!(
+            sent.len() + omitted,
+            60,
+            "every row is either sent or counted"
+        );
+        assert_eq!(
+            sent.iter().map(|w| w.id).collect::<Vec<_>>(),
+            (1..=sent.len() as i64).collect::<Vec<_>>(),
+            "dropped from the end: the oldest stay"
+        );
+        assert!(whole(&sent), "a web link is dropped whole, never cut");
+        assert!(serde_json::to_string(&sent).unwrap().len() <= room(baseline));
+
+        // No room, at the limit and three bytes under it; and no list.
+        for baseline in [crate::mcp::tools::MAX_SENT, crate::mcp::tools::MAX_SENT - 3] {
+            let mut none = links();
+            assert_eq!(
+                bound_web_links(&mut none, baseline),
+                60,
+                "a baseline of {baseline}"
+            );
+            assert_eq!(none, Some(vec![]));
+        }
+        assert_eq!(bound_web_links(&mut None, 0), 0);
     }
 }
