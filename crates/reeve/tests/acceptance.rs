@@ -1178,10 +1178,20 @@ async fn flow() {
         planned["value"].get("sprints").is_none(),
         "--json is the planning answer alone: {planned}"
     );
+    assert_eq!(
+        mine["initiatives"].as_array().unwrap().len(),
+        1,
+        "{planned}"
+    );
     let text = plain(&bot).args(["sprint", "planning"]).output().unwrap();
     assert_eq!(text.status.code(), Some(0));
     let text = String::from_utf8_lossy(&text.stdout).to_string();
     assert!(text.contains("This sprint #"), "{text}");
+    assert!(text.contains("Next sprint #"), "{text}");
+    assert!(text.contains("waits on 2:"), "{text}");
+    let line = format!("initiatives: {ini_key} Now\n");
+    assert!(!text.contains(&format!("{ini_key} Now !")), "{text}");
+    assert!(text.contains(&line), "{text}");
     assert!(
         text.contains(&format!(
             "goal #{gid} Customers book sessions\n    initiatives: {ini_key} Now\n"

@@ -14,9 +14,9 @@ pub enum Sprint {
     },
     /// List the active sprint, the draft and the closed sprints (newest first) with their goals and verdicts.
     Ls,
-    /// Show this sprint's and the next sprint's goals with the initiatives they reach and what they wait on, then the
+    /// Show the goals of the active sprint and the next with the initiatives they reach and what they wait on, then the
     /// first horizon bucket's initiatives with their goals. `!` marks a goal that reaches an initiative outside that
-    /// bucket, or none. With --json: the planning answer (goal wording is in `reeve sprint ls --json`).
+    /// bucket, or none. --json prints the planning answer alone.
     Planning,
     /// Open the draft sprint (interactive tokens only); this creates the next draft.
     Open {
@@ -66,14 +66,14 @@ struct Shown {
     changed_since_close: Option<bool>,
 }
 
-/// `sprint planning`'s value: the planning answer, which is what `--json` prints, and the sprints the text needs for
-/// the goals' wording and counts.
+/// `sprint planning`'s value: the planning answer, which is what `--json` prints, and, for the text only, the sprints it
+/// needs for the goals' wording and counts (`None` under `--json`, which never reads them).
 #[derive(Serialize)]
 struct Planned {
     #[serde(flatten)]
     planning: SprintPlanningDto,
     #[serde(skip)]
-    sprints: SprintsDto,
+    sprints: Option<SprintsDto>,
 }
 
 /// An outcome of another type carried through unchanged (a failed read ends the command with its own answer).
@@ -220,10 +220,16 @@ fn retry_on_conflict<T>(out: Outcome<T>, json: bool) -> Outcome<T> {
     }
 }
 
-async fn planning(c: &Client) -> anyhow::Result<Outcome<Planned>> {
-    let sprints = match c.get::<SprintsDto>("/sprints").await? {
-        Outcome::Ok(s) => s,
-        other => return Ok(carry(other)),
+/// `--json` makes one read, `GET /sprints/planning`, so a failure of `GET /sprints` cannot fail a call that never needed
+/// it; the text also reads `GET /sprints` for the goals' wording and counts.
+async fn planning(c: &Client, json: bool) -> anyhow::Result<Outcome<Planned>> {
+    let sprints = if json {
+        None
+    } else {
+        match c.get::<SprintsDto>("/sprints").await? {
+            Outcome::Ok(s) => Some(s),
+            other => return Ok(carry(other)),
+        }
     };
     Ok(
         match c.get::<SprintPlanningDto>("/sprints/planning").await? {
@@ -243,8 +249,10 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::sprint_list,
         ),
-        Sprint::Planning => finish(planning(c).await?, json, |p| {
-            crate::render::sprint_planning(&p.sprints, &p.planning)
+        Sprint::Planning => finish(planning(c, json).await?, json, |p| {
+            p.sprints.as_ref().map_or_else(String::new, |sprints| {
+                crate::render::sprint_planning(sprints, &p.planning)
+            })
         }),
         Sprint::Open { ends } => {
             let draft = match c.get::<SprintsDto>("/sprints").await? {

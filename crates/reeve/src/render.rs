@@ -1144,6 +1144,99 @@ fn goal_initiatives(g: &GoalGatesDto, marked: bool) -> String {
         .join(", ")
 }
 
+/// One goal's lines under its sprint: outcome, initiatives (or that the planning answer lacks the goal), owner, counts
+/// when given (the active sprint's, under the membership rule, kb/ADR-0014 R2) and what its work waits on.
+fn planned_goal(
+    out: &mut String,
+    g: &GoalDto,
+    gates: Option<&GoalGatesDto>,
+    counts: Option<&SprintCountsDto>,
+    marked: bool,
+) {
+    let _ = write!(out, "\n  goal #{} {}", g.id, g.outcome);
+    match gates {
+        Some(gg) => {
+            let _ = write!(out, "\n    initiatives: {}", goal_initiatives(gg, marked));
+        }
+        None => out.push_str("\n    initiatives: (not in the planning answer)"),
+    }
+    let _ = write!(out, "\n    owner: {}", g.owner);
+    if let Some(c) = counts.and_then(|c| c.goals.iter().find(|c| c.goal_id == g.id)) {
+        let _ = write!(
+            out,
+            "\n    completed: {}  in flight: {}  in review: {}  todo: {}",
+            c.completed, c.in_flight, c.in_review, c.todo
+        );
+    }
+    let Some(gg) = gates else { return };
+    let n = gg.discoveries.len() + gg.decisions.len();
+    if n == 0 {
+        return;
+    }
+    let _ = write!(out, "\n    waits on {n}:");
+    for d in &gg.discoveries {
+        let item = match d.item {
+            ItemType::Initiative => "initiative",
+            ItemType::Epic => "epic",
+            ItemType::Story => "story",
+        };
+        let _ = write!(out, "\n      {} {}: {item} in discovery", d.key, d.title);
+    }
+    for d in &gg.decisions {
+        let _ = write!(out, "\n      {} (on {})", reason(&d.reason), d.on);
+    }
+}
+
+/// The first bucket's initiatives with the goals that reach them; a goal id the sprints answer does not hold prints
+/// bare, so an initiative with goals never reads as having none.
+fn bucket_section(bucket: &str, x: &SprintsDto, p: &SprintPlanningDto) -> String {
+    let active_id = x.active.as_ref().map(|a| a.sprint.id);
+    let all: Vec<&GoalDto> = x
+        .active
+        .iter()
+        .flat_map(|a| a.sprint.goals.iter())
+        .chain(x.draft.iter().flat_map(|d| d.goals.iter()))
+        .collect();
+    let mut out = format!("{bucket} initiatives");
+    if p.first_bucket_initiatives.is_empty() {
+        out.push_str("\n  none");
+    }
+    for i in &p.first_bucket_initiatives {
+        let mut notes = vec![];
+        if let Some(m) = &i.target_month {
+            notes.push(m.clone());
+        }
+        if !i.discovery_complete {
+            notes.push("in discovery".into());
+        }
+        let notes = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join(", "))
+        };
+        let _ = write!(out, "\n  {} {}{notes}", i.key, i.title);
+        if i.goals.is_empty() {
+            out.push_str("\n    no goal");
+        }
+        for id in &i.goals {
+            match all.iter().find(|g| g.id == *id) {
+                Some(g) => {
+                    let which = if Some(g.sprint_id) == active_id {
+                        "this sprint"
+                    } else {
+                        "next sprint"
+                    };
+                    let _ = write!(out, "\n    #{} {} ({which})", g.id, g.outcome);
+                }
+                None => {
+                    let _ = write!(out, "\n    #{id}");
+                }
+            }
+        }
+    }
+    out
+}
+
 /// `reeve sprint planning`: the active sprint ("This sprint") and the draft ("Next sprint"), each goal with the
 /// initiatives its links reach, its owner, its counts when its sprint is active (under the membership rule,
 /// kb/ADR-0014 R2) and what its work waits on; then the first horizon bucket's initiatives with their goals. The mark
@@ -1151,37 +1244,6 @@ fn goal_initiatives(g: &GoalGatesDto, marked: bool) -> String {
 pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
     let marked = p.first_bucket.is_some();
     let gates = |id: i64| p.goals.iter().find(|g| g.goal_id == id);
-    let goal_lines = |out: &mut String, g: &GoalDto, counts: Option<&SprintCountsDto>| {
-        let _ = write!(out, "\n  goal #{} {}", g.id, g.outcome);
-        if let Some(gg) = gates(g.id) {
-            let _ = write!(out, "\n    initiatives: {}", goal_initiatives(gg, marked));
-        }
-        let _ = write!(out, "\n    owner: {}", g.owner);
-        if let Some(c) = counts.and_then(|c| c.goals.iter().find(|c| c.goal_id == g.id)) {
-            let _ = write!(
-                out,
-                "\n    completed: {}  in flight: {}  in review: {}  todo: {}",
-                c.completed, c.in_flight, c.in_review, c.todo
-            );
-        }
-        if let Some(gg) = gates(g.id) {
-            let n = gg.discoveries.len() + gg.decisions.len();
-            if n > 0 {
-                let _ = write!(out, "\n    waits on {n}:");
-                for d in &gg.discoveries {
-                    let item = if d.item == ItemType::Initiative {
-                        "initiative"
-                    } else {
-                        "epic"
-                    };
-                    let _ = write!(out, "\n      {} {}: {item} in discovery", d.key, d.title);
-                }
-                for d in &gg.decisions {
-                    let _ = write!(out, "\n      {} (on {})", reason(&d.reason), d.on);
-                }
-            }
-        }
-    };
     let mut parts = vec![];
     if let Some(a) = &x.active {
         let s = &a.sprint;
@@ -1190,14 +1252,14 @@ pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
             s.id, s.starts_on, s.ends_on
         );
         for g in &s.goals {
-            goal_lines(&mut out, g, Some(&a.counts));
+            planned_goal(&mut out, g, gates(g.id), Some(&a.counts), marked);
         }
         parts.push(out);
     }
     if let Some(d) = &x.draft {
         let mut out = format!("Next sprint #{} {} – {}", d.id, d.starts_on, d.ends_on);
         for g in &d.goals {
-            goal_lines(&mut out, g, None);
+            planned_goal(&mut out, g, gates(g.id), None, marked);
         }
         parts.push(out);
     }
@@ -1205,43 +1267,7 @@ pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
         return "no sprints yet: `reeve goal add` starts the first draft".into();
     }
     if let Some(bucket) = &p.first_bucket {
-        let active_id = x.active.as_ref().map(|a| a.sprint.id);
-        let all: Vec<&GoalDto> = x
-            .active
-            .iter()
-            .flat_map(|a| a.sprint.goals.iter())
-            .chain(x.draft.iter().flat_map(|d| d.goals.iter()))
-            .collect();
-        let mut out = format!("{bucket} initiatives");
-        for i in &p.first_bucket_initiatives {
-            let mut notes = vec![];
-            if let Some(m) = &i.target_month {
-                notes.push(m.clone());
-            }
-            if !i.discovery_complete {
-                notes.push("in discovery".into());
-            }
-            let notes = if notes.is_empty() {
-                String::new()
-            } else {
-                format!(" ({})", notes.join(", "))
-            };
-            let _ = write!(out, "\n  {} {}{notes}", i.key, i.title);
-            if i.goals.is_empty() {
-                let _ = write!(out, "\n    no goal");
-            }
-            for id in &i.goals {
-                if let Some(g) = all.iter().find(|g| g.id == *id) {
-                    let which = if Some(g.sprint_id) == active_id {
-                        "this sprint"
-                    } else {
-                        "next sprint"
-                    };
-                    let _ = write!(out, "\n    #{} {} ({which})", g.id, g.outcome);
-                }
-            }
-        }
-        parts.push(out);
+        parts.push(bucket_section(bucket, x, p));
     }
     parts.join("\n")
 }
@@ -1903,7 +1929,11 @@ mod tests {
     /// waits on, and the first bucket's initiatives with their goals.
     #[test]
     fn sprint_planning_lists_both_sprints_and_the_first_bucket() {
-        let mut active = view(SprintState::Active, vec![progress(12, 1, 2)]);
+        // A counts row for a draft goal too: the text must not show it under the draft.
+        let mut active = view(
+            SprintState::Active,
+            vec![progress(12, 1, 2), progress(20, 5, 5)],
+        );
         active.sprint.id = 2;
         active.sprint.goals = vec![goal_named(12, 2, "Bookings work")];
         let mut draft = active.sprint.clone();
@@ -1920,10 +1950,24 @@ mod tests {
             today: None,
         };
         let mut waiting = gates_of(12, vec![reaches("ABC-1", "Now", true)]);
-        waiting.discoveries = vec![DiscoveryGateDto {
-            key: "ABC-1".parse().unwrap(),
-            item: ItemType::Initiative,
-            title: "I ABC-1".into(),
+        waiting.discoveries = vec![
+            DiscoveryGateDto {
+                key: "ABC-1".parse().unwrap(),
+                item: ItemType::Initiative,
+                title: "I ABC-1".into(),
+            },
+            DiscoveryGateDto {
+                key: "ABC-3".parse().unwrap(),
+                item: ItemType::Epic,
+                title: "E ABC-3".into(),
+            },
+        ];
+        waiting.decisions = vec![DecisionGateDto {
+            on: "ABC-1".parse().unwrap(),
+            reason: Reason::DecisionUnchecked {
+                decision_id: 7,
+                title: "Region".into(),
+            },
         }];
         let p = SprintPlanningDto {
             goals: vec![
@@ -1964,7 +2008,9 @@ mod tests {
         );
         assert!(out.contains("completed: 1  in flight: 2"), "{out}");
         assert!(
-            out.contains("waits on 1:\n      ABC-1 I ABC-1: initiative in discovery"),
+            out.contains(
+                "waits on 3:\n      ABC-1 I ABC-1: initiative in discovery\n      ABC-3 E ABC-3: epic in discovery\n      decision #7 \"Region\" has not been checked (on ABC-1)\nNext sprint #3"
+            ),
             "{out}"
         );
         assert!(out.contains("Next sprint #3"), "{out}");
@@ -1982,8 +2028,57 @@ mod tests {
             "{out}"
         );
         // The draft has no window: no counts line under its goals.
-        let next = out.split("Next sprint").nth(1).unwrap();
+        let next = out.split("\nNext sprint #3").nth(1).unwrap();
         assert!(!next.contains("completed:"), "{next}");
+        assert!(!next.contains("completed: 5"), "{next}");
+    }
+
+    /// The two reads are two snapshots: a goal the planning answer lacks says so, a bucket goal the sprints answer lacks
+    /// still prints its id, a story gate is called a story, and a bucket with no initiative says `none`.
+    #[test]
+    fn sprint_planning_says_so_when_the_two_reads_disagree() {
+        let mut active = view(SprintState::Active, vec![progress(12, 0, 0)]);
+        active.sprint.goals = vec![
+            goal_named(12, active.sprint.id, "Bookings work"),
+            goal_named(13, active.sprint.id, "Newly added"),
+        ];
+        let sprints = SprintsDto {
+            active: Some(active),
+            draft: None,
+            closed: vec![],
+            today: None,
+        };
+        let mut known = gates_of(12, vec![reaches("ABC-1", "Now", true)]);
+        known.discoveries = vec![DiscoveryGateDto {
+            key: "ABC-9".parse().unwrap(),
+            item: ItemType::Story,
+            title: "S ABC-9".into(),
+        }];
+        let mut p = SprintPlanningDto {
+            goals: vec![known],
+            first_bucket: Some("Now".into()),
+            first_bucket_initiatives: vec![BucketInitiativeDto {
+                key: "ABC-1".parse().unwrap(),
+                title: "I ABC-1".into(),
+                target_month: None,
+                discovery_complete: true,
+                goals: vec![12, 99],
+            }],
+        };
+        let out = sprint_planning(&sprints, &p);
+        assert!(
+            out.contains("goal #13 Newly added\n    initiatives: (not in the planning answer)\n"),
+            "{out}"
+        );
+        assert!(out.contains("ABC-9 S ABC-9: story in discovery"), "{out}");
+        assert!(
+            out.contains("ABC-1 I ABC-1\n    #12 Bookings work (this sprint)\n    #99"),
+            "{out}"
+        );
+        assert!(!out.contains("no goal"), "{out}");
+        p.first_bucket_initiatives = vec![];
+        let out = sprint_planning(&sprints, &p);
+        assert!(out.ends_with("Now initiatives\n  none"), "{out}");
     }
 
     /// Without a configured bucket nothing is marked and no bucket section prints.
