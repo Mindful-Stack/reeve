@@ -46,17 +46,30 @@ describe('rendered', () => {
 
 describe('rendered tables', () => {
 	const table = '| a | b |\n|---|---|\n| 1 | 2 |';
-	// jsdom lays nothing out: a wrapper's widths are set by hand, and the stub hands back what a resize would call.
+	// jsdom lays nothing out: a wrapper's widths are set by hand, and the stub hands back what a resize would call and
+	// records what is watched.
 	let resized: () => void = () => {};
+	let observed: Element[] = [];
+	let disconnects = 0;
 	function stubResize(): void {
+		observed = [];
+		disconnects = 0;
 		vi.stubGlobal(
 			'ResizeObserver',
 			class {
 				constructor(cb: () => void) {
 					resized = cb;
 				}
-				observe() {}
-				disconnect() {}
+				observe(target: Element) {
+					observed.push(target);
+				}
+				unobserve(target: Element) {
+					observed = observed.filter((o) => o !== target);
+				}
+				disconnect() {
+					observed = [];
+					disconnects += 1;
+				}
 			}
 		);
 	}
@@ -109,5 +122,43 @@ describe('rendered tables', () => {
 		box.append(document.createElement('p'));
 		await new Promise((r) => setTimeout(r));
 		expect(stop(wrap)).toEqual(['0', 'region', 'Scrollable table']);
+	});
+
+	it('watches the container, each wrapper and each table, so a late image or font that widens a table is seen', () => {
+		stubResize();
+		const box = mountBox(`${table}\n\ntext\n\n${table}`);
+		const wraps = [...box.querySelectorAll('[data-table-scroll]')];
+		expect(new Set(observed)).toEqual(new Set([box, ...wraps, ...wraps.map((w) => w.firstElementChild!)]));
+		expect(observed).toHaveLength(5);
+	});
+
+	it('stops watching the tables that went when the Markdown is replaced, and watches the new ones', async () => {
+		stubResize();
+		const box = mountBox(table);
+		const old = box.querySelector('[data-table-scroll]')!;
+		const oldTable = old.firstElementChild!;
+		box.innerHTML = renderMarkdown(`${table}\n\ntext`);
+		await new Promise((r) => setTimeout(r));
+		const wrap = box.querySelector('[data-table-scroll]')!;
+		expect(observed).not.toContain(old);
+		expect(observed).not.toContain(oldTable);
+		expect(new Set(observed)).toEqual(new Set([box, wrap, wrap.firstElementChild!]));
+		expect(observed).toHaveLength(3);
+		box.innerHTML = renderMarkdown('no table any more');
+		await new Promise((r) => setTimeout(r));
+		expect(observed).toEqual([box]);
+	});
+
+	it('lets go of everything when the container unmounts', () => {
+		stubResize();
+		const nodes = vi.spyOn(MutationObserver.prototype, 'disconnect');
+		mountBox(table);
+		expect(observed).toHaveLength(3);
+		detach();
+		detach = () => {};
+		expect(observed).toEqual([]);
+		expect(disconnects).toBe(1);
+		expect(nodes).toHaveBeenCalledTimes(1);
+		nodes.mockRestore();
 	});
 });

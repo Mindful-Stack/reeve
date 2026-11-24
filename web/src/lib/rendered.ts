@@ -17,10 +17,12 @@ function unavailable(img: HTMLImageElement): void {
 }
 
 /** Only a wrapper that scrolls sideways is a tab stop (the arrow keys scroll it), and it says what it is; a table that
- *  fits gets no stop. Checked on mount, when the container resizes and when its Markdown is replaced. */
+ *  fits gets no stop. Checked on mount, when the container, a wrapper or a table resizes (a late image or font widens
+ *  a table without changing the container's box) and when the container's Markdown is replaced. */
 function tableStops(el: HTMLElement): () => void {
+	const wrappers = () => [...el.querySelectorAll(`[${TABLE_SCROLL}]`)];
 	const check = () => {
-		for (const wrap of el.querySelectorAll(`[${TABLE_SCROLL}]`)) {
+		for (const wrap of wrappers()) {
 			if (wrap.scrollWidth > wrap.clientWidth) {
 				wrap.setAttribute('tabindex', '0');
 				wrap.setAttribute('role', 'region');
@@ -30,15 +32,31 @@ function tableStops(el: HTMLElement): () => void {
 			}
 		}
 	};
-	check();
 	// jsdom (the component tests) has no ResizeObserver; a browser does.
 	const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(check);
-	sizes?.observe(el);
-	const nodes = new MutationObserver(check);
+	let watched = new Set<Element>();
+	// The observer holds exactly the container, the wrappers and their tables that are there now.
+	const watch = () => {
+		const now = new Set<Element>([el]);
+		for (const wrap of wrappers()) {
+			now.add(wrap);
+			if (wrap.firstElementChild) now.add(wrap.firstElementChild);
+		}
+		for (const gone of watched) if (!now.has(gone)) sizes?.unobserve(gone);
+		for (const added of now) if (!watched.has(added)) sizes?.observe(added);
+		watched = now;
+	};
+	check();
+	watch();
+	const nodes = new MutationObserver(() => {
+		watch();
+		check();
+	});
 	nodes.observe(el, { childList: true });
 	return () => {
 		sizes?.disconnect();
 		nodes.disconnect();
+		watched.clear();
 	};
 }
 
