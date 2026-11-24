@@ -1167,6 +1167,13 @@ test('a wide table in a brief scrolls inside its wrapper on a phone, and only a 
 	});
 	expect(m.page).toBe(m.viewport);
 	expect(m.scroll).toBeGreaterThan(m.client);
+	// Once it scrolls anyway, the table keeps a width its text can be read at (up to 44rem) instead of one or two words
+	// a line; a table that fits stays as narrow as its content.
+	const tables = await wraps.locator('table').evaluateAll((all) => all.map((t) => ({ width: t.getBoundingClientRect().width, height: t.getBoundingClientRect().height })));
+	expect(tables[0].width).toBeGreaterThan(600);
+	expect(tables[0].width).toBeLessThanOrEqual(44 * 16 + 1);
+	expect(tables[0].height).toBeLessThan(400);
+	expect(tables[1].width).toBeLessThan(120);
 	// With room for the table, its wrapper stops being a tab stop.
 	await page.setViewportSize({ width: 1440, height: 800 });
 	await expect(page.getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(0);

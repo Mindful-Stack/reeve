@@ -330,6 +330,10 @@ textarea[data-drop] {
 [data-table-scroll] table {
 	border-collapse: collapse;
 	font-size: 0.9375em;
+	/* As wide as its content, up to the wrapper; where the wrapper is narrow (a phone, the drawer) up to 44rem, so a
+	   table that has to scroll anyway keeps lines that can be read instead of one or two words per line. */
+	width: max-content;
+	max-width: max(100%, 44rem);
 }
 [data-table-scroll] th,
 [data-table-scroll] td {
