@@ -1176,3 +1176,21 @@ describe('epic page: promise', () => {
 		expect(document.body.querySelector('#stories a.title')?.nextElementSibling?.classList.contains('promise-chip')).toBe(true);
 	});
 });
+
+describe('epic page: relations', () => {
+	it('lists the item links and web links its read carries, under headings of the page\'s level, with no blocked-by group', async () => {
+		net.epic = {
+			...net.fresh(),
+			links: [{ type: 'relates_to', direction: 'out', label: 'relates to', item: { key: 'ABC-9', level: 'initiative', title: 'Billing' } }],
+			web_links: [{ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' }]
+		};
+		await open();
+		const section = (name: string) => [...document.body.querySelectorAll('section')].find((s) => s.querySelector('h2')?.textContent === name);
+		expect([...section('Relations')!.querySelectorAll('.label')].map((l) => l.textContent)).toEqual(['relates to']);
+		expect(section('Relations')!.querySelector('a[href="/initiatives/ABC-9"]')?.textContent).toContain('Billing');
+		expect(section('Web links')!.querySelector('a[href="https://example.com/wiki/scenario"]')?.textContent).toContain('Scenario page');
+		// After the brief, before the stories.
+		const order = [...document.body.querySelectorAll('.page > section')].map((s) => s.querySelector('h2')?.textContent?.trim().split(' ')[0]);
+		expect(order.slice(order.indexOf('Brief'), order.indexOf('Stories') + 1)).toEqual(['Brief', 'Relations', 'Web', 'Stories']);
+	});
+});

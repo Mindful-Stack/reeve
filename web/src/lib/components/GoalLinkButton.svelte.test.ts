@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// The link button an item shows while linking: hidden otherwise, "+ Link" when the picked goal does not link the key
-// directly, "✓ Linked" when it does; a click links, and the reload turns it into ✓.
+// The link button an item shows while linking: hidden otherwise, "+ Link to goal" when the picked goal does not link the key
+// directly, "✓ Linked to goal" when it does; a click links, and the reload turns it into ✓.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Sprints } from '#lib/api/types.ts';
@@ -53,18 +53,18 @@ describe('GoalLinkButton', () => {
 		expect(button()).toBeNull();
 	});
 
-	it('offers "+ Link" for a key the goal does not link, naming the key and the goal', () => {
+	it('offers "+ Link to goal" for a key the goal does not link, naming the key and the goal', () => {
 		linking();
 		app = mount(GoalLinkButton, { target: document.body, props: { key: 'ABC-7' } });
-		expect(button()?.textContent?.trim()).toBe('+ Link');
+		expect(button()?.textContent?.trim()).toBe('+ Link to goal');
 		expect(button()?.getAttribute('aria-label')).toBe('Link ABC-7 to goal: Cut Y');
 		expect(button()?.getAttribute('aria-pressed')).toBe('false');
 	});
 
-	it('shows "✓ Linked", pressed, for a key the goal links', () => {
+	it('shows "✓ Linked to goal", pressed, for a key the goal links', () => {
 		linking();
 		app = mount(GoalLinkButton, { target: document.body, props: { key: 'ABC-6' } });
-		expect(button()?.textContent?.trim()).toBe('✓ Linked');
+		expect(button()?.textContent?.trim()).toBe('✓ Linked to goal');
 		expect(button()?.getAttribute('aria-pressed')).toBe('true');
 	});
 
