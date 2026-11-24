@@ -5568,6 +5568,23 @@ fn link_help_names_item_links_and_web_links() {
     );
 }
 
+/// `reeve --help` names everything a plan holds on the `apply` line: items, required decisions, blockers, item links
+/// and web links.
+#[test]
+fn apply_help_line_names_what_a_plan_holds() {
+    let out = reeve_at("http://127.0.0.1:9", &["--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&out.stdout).to_string();
+    let line = help
+        .lines()
+        .find(|l| l.trim_start().starts_with("apply "))
+        .unwrap_or_else(|| panic!("no `apply` line in:\n{help}"));
+    assert!(
+        line.contains("items, required decisions, blockers, item links and web links"),
+        "{line}"
+    );
+}
+
 /// The two forms of `link add` and `link rm` are exclusive and each complete: every other mix is a usage error
 /// (exit 1) before anything is sent.
 #[test]

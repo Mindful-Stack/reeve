@@ -28,10 +28,10 @@ url="http://127.0.0.1:7476"
 email="skill-smoke@example.com"
 work="$root/target/skill-smoke"
 config="$work/reeve.toml"
-# The fewest tests the Lorekeeper run may report: 12 top-level tests plus one subtest per Commands row (36) and per
-# refusal case (7, a person's promise commands). A lower count means a test stopped running; raise it when Lorekeeper
-# adds tests, never lower it to make a run pass.
-min_tests=55
+# The fewest tests the Lorekeeper run may report: 12 top-level tests plus one subtest per Commands row and per refusal
+# case (7, a person's promise commands). A lower count means a test stopped running; raise it when Lorekeeper adds
+# tests, never lower it to make a run pass.
+min_tests=57
 
 # State the cleanup reads; main fills it in as the run creates things.
 use_url=""
