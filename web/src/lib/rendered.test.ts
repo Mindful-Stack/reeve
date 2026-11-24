@@ -120,6 +120,31 @@ describe('rendered tables', () => {
 		]);
 	});
 
+	it('keeps the name to 80 characters, an ellipsis last, however long the caption or the headers are', () => {
+		stubResize();
+		const exact = 'c'.repeat(80);
+		const box = mountBox(
+			[
+				`<table><caption>${'Budget  per\n year '.repeat(30)}</caption><tr><th>Year</th></tr></table>`,
+				`| ${'a'.repeat(60)} | ${'b'.repeat(60)} | ${'c'.repeat(60)} |\n|---|---|---|\n| 1 | 2 | 3 |`,
+				`<table><caption>${exact}</caption><tr><td>1</td></tr></table>`,
+				`<table><caption>${exact}d</caption><tr><td>1</td></tr></table>`
+			].join('\n\n')
+		);
+		const wraps = [...box.querySelectorAll('[data-table-scroll]')];
+		for (const wrap of wraps) widths(wrap, 900, 320);
+		resized();
+		const names = wraps.map((w) => w.getAttribute('aria-label')!);
+		expect(names.map((n) => n.length)).toEqual([80, 80, 80, 80]);
+		// Whitespace is one space before the cut, and the cut leaves no space before the ellipsis.
+		expect(names[0]).toMatch(/^Budget per year Budget per year .*\S…$/);
+		expect(names[0]).not.toMatch(/\s{2}/);
+		expect(names[1]).toBe(`Table: ${'a'.repeat(60)}, ${'b'.repeat(10)}…`);
+		// A name of exactly the limit is kept whole; one character more is cut.
+		expect(names[2]).toBe(exact);
+		expect(names[3]).toBe(`${'c'.repeat(79)}…`);
+	});
+
 	it('leaves a table alone whose author gave it the class of a wrapper', () => {
 		stubResize();
 		const box = mountBox('<table class="table-scroll" aria-label="Budget" tabindex="0"><tr><td>1</td></tr></table>');
