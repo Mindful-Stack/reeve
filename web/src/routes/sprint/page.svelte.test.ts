@@ -1010,20 +1010,22 @@ describe('the redesigned page', () => {
 			],
 			first_bucket: 'Soon',
 			first_bucket_initiatives: [
-				// Served order is what counts: the old client rule (dated first, then title) would put ABC-9 first.
-				bucketInitiative({ key: 'ABC-7', title: 'A Payments', discovery_complete: true }),
-				bucketInitiative({ key: 'ABC-9', title: 'Z Bookings', target_month: '2026-11', goals: [1, 5, 77] })
+				// Served order [8, 7, 9] is what counts: it differs from key order (7, 8, 9), from title order (Alpha, Mike,
+				// Zulu: 9, 7, 8) and from dated-first-then-title order (9, 8, 7), so no client sort passes.
+				bucketInitiative({ key: 'ABC-8', title: 'Zulu Reports', target_month: '2026-12', discovery_complete: true }),
+				bucketInitiative({ key: 'ABC-7', title: 'Mike Payments', discovery_complete: true }),
+				bucketInitiative({ key: 'ABC-9', title: 'Alpha Bookings', target_month: '2026-11', goals: [1, 5, 77] })
 			]
 		});
 		await open({ closed: true });
 		const section = q('[data-testid="bucket-initiatives"]')!;
 		expect(text(q('h2', section))).toBe('Soon initiatives');
-		expect([...section.querySelectorAll('[data-testid^="bucket-ABC"]')].map((r) => r.getAttribute('data-testid'))).toEqual(['bucket-ABC-7', 'bucket-ABC-9']);
+		expect([...section.querySelectorAll('[data-testid^="bucket-ABC"]')].map((r) => r.getAttribute('data-testid'))).toEqual(['bucket-ABC-8', 'bucket-ABC-7', 'bucket-ABC-9']);
 		const first = q('[data-testid="bucket-ABC-9"]')!;
 		expect(text(first)).toContain('Nov 2026');
 		expect(text(first)).toContain('in discovery');
 		// A goal id the page does not hold (the reads raced) shows as a count, not nothing.
-		expect(text(q('.muted.more', first))).toBe('1 more');
+		expect(text(q('.muted.more', first))).toBe('1 goal not shown');
 		expect([...first.querySelectorAll('a.goal-chip')].map((a) => [text(a), a.getAttribute('href')])).toEqual([
 			['Bookings work · this sprint', '#goal-1'],
 			['Reports work · next sprint', '#goal-5']

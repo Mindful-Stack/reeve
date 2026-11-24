@@ -380,7 +380,7 @@
 							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 						{/each}
 						{#if i.goals.some((id) => !everyGoal.has(id))}
-							<span class="muted more">{i.goals.filter((id) => !everyGoal.has(id)).length} more</span>
+							<span class="muted more">{plural(i.goals.filter((id) => !everyGoal.has(id)).length, 'goal', 'goals')} not shown</span>
 						{/if}
 					</div>
 					{#if goalFor === i.key}
