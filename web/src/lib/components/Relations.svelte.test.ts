@@ -492,6 +492,41 @@ describe('Relations: item links', () => {
 		expect(groups()).toEqual(both);
 	});
 
+	it('after a failed removal whose row a reload took meanwhile, focus goes to the next Remove, else to the add button, not to the page', async () => {
+		const first = itemLink({ item: to('ABC-11') });
+		const second = itemLink({ type: 'relates_to', direction: 'out', label: 'relates to', item: to('ABC-3', 'epic') });
+		for (const [left, lands] of [
+			[[second], 'Remove item link: relates to ABC-3'],
+			[[], '+ Add item link']
+		] as const) {
+			const { props } = render({ links: [first, second] });
+			const g = gate();
+			net.answer = async () => {
+				await g.opened;
+				return failure('database down');
+			};
+			const pressed = button(section('Relations'), 'Remove item link: follows ABC-11');
+			pressed.focus();
+			pressed.click();
+			await vi.waitFor(() => expect(writes()).toHaveLength(1));
+			// A live reload while the DELETE is out: someone else removed the row already, and its button goes with it.
+			props.links = [...left];
+			flushSync();
+			expect(pressed.isConnected).toBe(false);
+			expect(document.activeElement).toBe(document.body);
+			g.release();
+			await vi.waitFor(() => {
+				flushSync();
+				expect(alertIn(section('Relations'))).toBe('Could not remove the item link to ABC-11: database down');
+			});
+			await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent?.trim()).toBe(lands));
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+			net.calls.length = 0;
+		}
+	});
+
 	it('Escape in the form cancels it without the key reaching the host', async () => {
 		render();
 		const f = await openForm('Relations', '+ Add item link', 'Add item link');
@@ -705,5 +740,39 @@ describe('Relations: web links', () => {
 		});
 		expect(section('Web links').querySelectorAll('li')).toHaveLength(1);
 		await vi.waitFor(() => expect(document.activeElement).toBe(pressed()));
+	});
+
+	it('after a failed removal whose row a reload took meanwhile, focus goes to the next Remove, else to the add button, not to the page', async () => {
+		const first = webLink({ id: 4, title: 'Scenario page' });
+		const second = webLink({ id: 9, title: 'Runbook', url: 'https://example.com/runbook' });
+		for (const [left, lands] of [
+			[[second], 'Remove web link Runbook'],
+			[[], '+ Add web link']
+		] as const) {
+			const { props } = render({ webLinks: [first, second] });
+			const g = gate();
+			net.answer = async () => {
+				await g.opened;
+				return failure('database down');
+			};
+			const pressed = button(section('Web links'), 'Remove web link Scenario page');
+			pressed.focus();
+			pressed.click();
+			await vi.waitFor(() => expect(writes()).toHaveLength(1));
+			props.webLinks = [...left];
+			flushSync();
+			expect(pressed.isConnected).toBe(false);
+			expect(document.activeElement).toBe(document.body);
+			g.release();
+			await vi.waitFor(() => {
+				flushSync();
+				expect(alertIn(section('Web links'))).toBe('Could not remove the web link Scenario page: database down');
+			});
+			await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent?.trim()).toBe(lands));
+			unmount(app!);
+			app = null;
+			document.body.innerHTML = '';
+			net.calls.length = 0;
+		}
 	});
 });

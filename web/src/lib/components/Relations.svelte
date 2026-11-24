@@ -93,8 +93,17 @@
 		await tick();
 		if (focusStayed(pressed)) target()?.focus();
 	}
-	/** The item link Remove buttons, in order (the host's blocker buttons carry no `remove` class). */
-	const linkRemoves = () => [...(linkSection?.querySelectorAll<HTMLButtonElement>('button.remove') ?? [])];
+	/** A section's Remove buttons, in order (the host's blocker buttons carry no `remove` class). */
+	const removes = (section: HTMLElement | undefined) => [...(section?.querySelectorAll<HTMLButtonElement>('button.remove') ?? [])];
+	const linkRemoves = () => removes(linkSection);
+	/** Where focus goes when a row's Remove was pressed at place `index` and that button is no longer there to take it:
+	 *  the Remove now at that place, else the last one, else the section's add control (its button, or its open form's
+	 *  first field). */
+	const nextControl = (left: HTMLButtonElement[], index: number, add: () => HTMLElement | null | undefined) => left[Math.min(index, left.length - 1)] ?? add();
+	const afterLink = (index: number) => nextControl(linkRemoves(), index, () => document.getElementById(`${id}-link-add`) ?? linkForm()?.querySelector<HTMLElement>('select'));
+	/** After a removal failed: the button that was pressed, enabled again; when a reload took its row while the request
+	 *  was out, a detached button takes no focus, so `next()` says where it goes instead. */
+	const pressedOr = (pressed: HTMLButtonElement, next: () => HTMLElement | null | undefined) => () => (pressed.isConnected && !pressed.disabled ? pressed : next());
 
 	async function openLink() {
 		addingLink = true;
@@ -159,16 +168,13 @@
 			busy = false;
 			listError = `Could not remove the item link to ${l.item.key}: ${errorMessage(err)}`;
 			// The row stays, and so does focus: back on the button that was pressed, now enabled again.
-			await refocus(pressed, () => pressed);
+			await refocus(pressed, pressedOr(pressed, () => afterLink(index)));
 			return;
 		}
 		shownLinks = shownLinks.filter((x) => !sameLink(x, l));
 		busy = false;
 		// The Remove that took the row's place, else the last one, else the section's add control.
-		await refocus(pressed, () => {
-			const left = linkRemoves();
-			return left[Math.min(index, left.length - 1)] ?? document.getElementById(`${id}-link-add`) ?? linkForm()?.querySelector<HTMLElement>('select');
-		});
+		await refocus(pressed, () => afterLink(index));
 		onchanged?.();
 	}
 
@@ -178,7 +184,9 @@
 	let webError = $state<string | null>(null);
 	let webListError = $state<string | null>(null);
 
+	let webSection = $state<HTMLElement>();
 	const webForm = () => document.getElementById(`${id}-web-form`);
+	const webAdd = () => document.getElementById(`${id}-web-add`) ?? webForm()?.querySelector<HTMLElement>('input');
 
 	async function openWeb() {
 		addingWeb = true;
@@ -232,6 +240,7 @@
 		busy = true;
 		webListError = null;
 		const under = hostWeb;
+		const index = removes(webSection).indexOf(pressed);
 		let answer: WebLink[];
 		try {
 			answer = await unwrap(api.DELETE('/api/v1/items/{key}/web-links/{id}', { params: { path: { key: itemKey, id: w.id } } }));
@@ -239,13 +248,13 @@
 			busy = false;
 			webListError = `Could not remove the web link ${w.title}: ${errorMessage(err)}`;
 			// The row stays, and so does focus: back on the button that was pressed.
-			await refocus(pressed, () => pressed);
+			await refocus(pressed, pressedOr(pressed, () => nextControl(removes(webSection), index, webAdd)));
 			return;
 		}
 		shownWeb = hostWeb === under ? answer : shownWeb.filter((x) => x.id !== w.id);
 		busy = false;
 		// To the section's add control (its button, or the open form's first field), never to another row's Remove.
-		await refocus(pressed, () => document.getElementById(`${id}-web-add`) ?? webForm()?.querySelector<HTMLElement>('input'));
+		await refocus(pressed, webAdd);
 		onchanged?.();
 	}
 </script>
@@ -308,7 +317,7 @@
 	{/if}
 </section>
 
-<section class="relations" aria-labelledby="{id}-web">
+<section class="relations" aria-labelledby="{id}-web" bind:this={webSection}>
 	<svelte:element this={heading} id="{id}-web" class="relations-heading">Web links</svelte:element>
 	{#if shownWeb.length === 0}
 		<p class="muted empty">No web links yet. A web link points at a page outside the planner.</p>
