@@ -42,6 +42,7 @@ db_created=""
 pid=""
 tests_pid=""
 cli_dir=""
+bundle_dir=""
 
 log() { printf '\n== %s\n' "$*" >&2; }
 
@@ -221,6 +222,7 @@ cleanup() {
 		wait "$pid" 2>/dev/null || true
 	fi
 	if [[ -n "$cli_dir" ]]; then rm -rf "$cli_dir"; fi
+	if [[ -n "$bundle_dir" ]]; then rm -rf "$bundle_dir"; fi
 	# The config holds the admin password on the DATABASE_URL route: never left behind.
 	rm -f "$config"
 	if [[ $status -ne 0 && -f "$work/server.log" ]]; then
@@ -327,7 +329,10 @@ main() {
 	export REEVE_CONFIG="$config"
 
 	log "starting reeve-server on $url"
-	RUST_LOG="${RUST_LOG:-info,reeve_server=debug,reeve_identity=debug}" "$server" serve >"$work/server.log" 2>&1 &
+	# An empty CLI bundle directory: the smoke never serves a CLI, whatever the host has in /srv/cli (kb/ADR-0030), so
+	# no response carries X-Reeve-Cli and the CLI under test prints no update notice.
+	bundle_dir="$(mktemp -d)"
+	REEVE_CLI_DIR="$bundle_dir" RUST_LOG="${RUST_LOG:-info,reeve_server=debug,reeve_identity=debug}" "$server" serve >"$work/server.log" 2>&1 &
 	pid=$!
 	cli_dir="$(mktemp -d)"
 

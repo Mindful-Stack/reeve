@@ -3,6 +3,7 @@ mod actions;
 pub mod assets;
 pub mod atomic_file;
 pub mod auth;
+pub mod cli_dist;
 pub mod config;
 pub mod error;
 pub mod export;

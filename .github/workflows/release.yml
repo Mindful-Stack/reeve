@@ -3,6 +3,8 @@ name: release
 # image is the operator's business, outside this repository (deploy/README.md covers the reference stack).
 # Once it is published, `notify` tells every subscriber: each repository with the release App installed gets its
 # reeve-release.yml started (scripts/release-dispatch.sh; inert unless the App's two secrets are set).
+# Before the image, `cli` (.github/workflows/cli.yml) makes sure the bundle of this commit's CLI version is published;
+# the image carries it in /srv/cli, checked before the push (kb/ADR-0030).
 on:
   push:
     branches: [main]
@@ -16,7 +18,46 @@ defaults:
   run:
     shell: bash
 jobs:
+  # This commit's CLI version, computed first so that `cli` can lock on it.
+  cli-version:
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - id: version
+        run: |
+          set -euo pipefail
+          version=$(scripts/cli-version.sh)
+          [[ "$version" =~ ^[0-9a-f]{40}$ ]] || { echo "scripts/cli-version.sh printed '$version'" >&2; exit 1; }
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+  # The CLI bundle of this commit's CLI version (kb/ADR-0030 R1): built and published only when that version is new,
+  # one run per version at a time. The lock is this job's: a job-level concurrency group on a job that calls a reusable
+  # workflow holds for the whole called workflow, so cli.yml's registry lookup, its builds, the assembly and the push
+  # all run inside it, and a run that waited behind one that published the version finds it published and builds
+  # nothing. cancel-in-progress: false never cancels a run holding the lock; GitHub keeps at most one pending run per
+  # group, so a third run for the same version replaces (cancels) the one waiting. Which run waits is decided by when
+  # its `cli-version` job reached the group, not by commit order, so the cancelled run may be the newest commit's: its
+  # commit then gets no image and no notify until someone re-runs it by hand ("Re-run all jobs": it takes the lock,
+  # finds the bundle published, and publishes the image; deploy/README.md, "Subscribe to releases"). cli.yml takes no
+  # lock of its own (a nested group of the same name would wait on this one forever; scripts/tests/workflows.sh checks
+  # both).
+  cli:
+    needs: cli-version
+    concurrency:
+      group: reeve-cli-${{ needs.cli-version.outputs.version }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/cli.yml
+    with:
+      locked-version: ${{ needs.cli-version.outputs.version }}
+    permissions: { contents: read, packages: write }
+
   publish:
+    needs: cli
     if: github.event_name == 'push'
     timeout-minutes: 45
     runs-on: ubuntu-24.04
@@ -32,8 +73,39 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Never an image without its bundle (R1): cli must hand over a digest and a CLI version, or nothing is built.
+      - name: cli named a bundle
+        env:
+          DIGEST: ${{ needs.cli.outputs.digest }}
+          CLI_VERSION: ${{ needs.cli.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no bundle digest from cli: '$DIGEST'" >&2; exit 1; }
+          [[ "$CLI_VERSION" =~ ^[0-9a-f]{40}$ ]] || { echo "no CLI version from cli: '$CLI_VERSION'" >&2; exit 1; }
+      # The bundle goes in as the Dockerfile's `cli` stage, by digest. Loaded, not pushed: the loaded image's
+      # /srv/cli/VERSION must name this commit's CLI version before anything is pushed. The check reads the file from
+      # the image, not from the bundle, so a Dockerfile that stopped copying it fails here.
+      - name: build, not pushed, with the CLI bundle
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: reeve-release-check:${{ github.sha }}
+          build-contexts: cli=docker-image://ghcr.io/mindful-stack/reeve-cli@${{ needs.cli.outputs.digest }}
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,scope=image,mode=max
+      - name: the image carries this commit's CLI bundle
+        env:
+          CLI_VERSION: ${{ needs.cli.outputs.version }}
+        run: |
+          set -euo pipefail
+          got=$(docker run --rm --entrypoint cat "reeve-release-check:$GITHUB_SHA" /srv/cli/VERSION)
+          [ "$got" = "$CLI_VERSION" ] || { echo "/srv/cli/VERSION is '$got', want '$CLI_VERSION'" >&2; exit 1; }
+          echo "image carries CLI build ${CLI_VERSION:0:7}"
       # The Dockerfile as is: it never enables static-oidc (config_no_static proves a production build refuses it).
-      # Every published commit gets its own tag (docs-only pushes do not run, see `on`). Never `latest`.
+      # Every published commit gets its own tag (docs-only pushes do not run, see `on`). Never `latest`. Same inputs
+      # as the checked build above, so the layers come from the builder's cache.
       - name: build and push
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -41,8 +113,8 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/mindful-stack/reeve:${{ github.sha }}
+          build-contexts: cli=docker-image://ghcr.io/mindful-stack/reeve-cli@${{ needs.cli.outputs.digest }}
           cache-from: type=gha,scope=image
-          cache-to: type=gha,scope=image,mode=max
       - name: the published image runs
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

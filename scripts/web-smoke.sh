@@ -65,15 +65,21 @@ done
 log "starting reeve-server on $url"
 # Auth refusals name their reason at warn/debug (reeve_server's Caller, reeve_identity's authenticate_api); CI uploads this
 # log with the traces when the smoke fails.
-RUST_LOG="${RUST_LOG:-info,reeve_server=debug,reeve_identity=debug}" "$server" serve >"$work/server.log" 2>&1 &
-pid=$!
+pid=""
+# An empty CLI bundle directory: the smoke never serves a CLI, whatever the host has in /srv/cli (kb/ADR-0030), so no
+# response carries X-Reeve-Cli and the CLI under test prints no update notice.
+bundle_dir="$(mktemp -d)"
 cli_dir="$(mktemp -d)"
 cleanup() {
-	kill "$pid" 2>/dev/null || true
-	wait "$pid" 2>/dev/null || true
-	rm -rf "$cli_dir"
+	if [[ -n "$pid" ]]; then
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+	rm -rf "$cli_dir" "$bundle_dir"
 }
 trap cleanup EXIT
+REEVE_CLI_DIR="$bundle_dir" RUST_LOG="${RUST_LOG:-info,reeve_server=debug,reeve_identity=debug}" "$server" serve >"$work/server.log" 2>&1 &
+pid=$!
 
 for _ in $(seq 60); do
 	curl -fsS --max-time 2 "$url/health" >/dev/null 2>&1 && break
