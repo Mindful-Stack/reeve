@@ -584,12 +584,14 @@ async fn web_link_errors_are_not_found_or_validation() {
         entries(&h, &it.a, "web_link_added").await.is_empty(),
         "no activity entry for a refused web link"
     );
-    // A control character in a title is a validation error before any write: a NUL never reaches PostgreSQL
-    // (which refuses it, and that was a 500), and an escape sequence never reaches a row a terminal prints.
+    // A control character or a line separator in a title is a validation error before any write: a NUL never
+    // reaches PostgreSQL (which refuses it, and that was a 500), and an escape sequence never reaches a row a
+    // terminal prints.
     for bad in [
         "Report\0",
         "Report\u{1b}[2J\u{1b}[Hfake output",
         "Report\nsecond line",
+        "Report\u{2028}second line",
         "Report\tpage",
     ] {
         let (st, v) = call(
@@ -605,7 +607,9 @@ async fn web_link_errors_are_not_found_or_validation() {
             (
                 400,
                 Some("validation"),
-                Some("a web link's title must be 1 to 200 characters, on one line")
+                Some(
+                    "a web link's title must be 1 to 200 characters on one line, with no tab or other control character"
+                )
             ),
             "{bad:?}: {v}"
         );

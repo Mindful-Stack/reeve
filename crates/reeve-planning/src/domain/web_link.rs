@@ -9,7 +9,9 @@ pub const MAX_URL: usize = 1_000;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum WebLinkError {
-    #[error("a web link's title must be 1 to 200 characters, on one line")]
+    #[error(
+        "a web link's title must be 1 to 200 characters on one line, with no tab or other control character"
+    )]
     Title,
     #[error(
         "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password"
@@ -31,14 +33,14 @@ pub struct WebLink {
 }
 
 impl WebLink {
-    /// The title trimmed, 1 to `MAX_TITLE` characters and none of them a control character (Unicode category Cc:
-    /// NUL, ESC, a line break, a tab and the rest); the URL as `canonical_url` gives it. A control character is
-    /// refused, not stripped: PostgreSQL takes no NUL in text, and an escape sequence in a stored title would be
-    /// replayed by the terminal of everyone who lists it.
+    /// The title trimmed, 1 to `MAX_TITLE` characters on one line: none of them a control character (Unicode
+    /// category Cc: NUL, ESC, a line break, a tab and the rest) or a line or paragraph separator (U+2028, U+2029);
+    /// the URL as `canonical_url` gives it. Such a character is refused, not stripped: PostgreSQL takes no NUL in
+    /// text, and an escape sequence in a stored title would be replayed by the terminal of everyone who lists it.
     pub fn new(title: &str, url: &str) -> Result<Self, WebLinkError> {
         let title = title.trim();
-        if !(1..=MAX_TITLE).contains(&title.chars().count()) || title.chars().any(char::is_control)
-        {
+        let off_the_line = |c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}');
+        if !(1..=MAX_TITLE).contains(&title.chars().count()) || title.chars().any(off_the_line) {
             return Err(WebLinkError::Title);
         }
         Ok(Self {
@@ -135,6 +137,9 @@ mod tests {
             // The C1 block is category Cc too (U+009B is a one-character CSI on some terminals).
             "Report\u{9b}2J",
             "Report\u{85}page",
+            // Not category Cc, but a line break all the same: the line and paragraph separators.
+            "Report\u{2028}second line",
+            "Report\u{2029}second paragraph",
         ] {
             assert_eq!(
                 WebLink::new(bad, "https://example.com/"),
@@ -335,7 +340,7 @@ mod tests {
     fn the_refusals_say_what_a_title_and_a_url_must_be() {
         assert_eq!(
             WebLinkError::Title.to_string(),
-            "a web link's title must be 1 to 200 characters, on one line"
+            "a web link's title must be 1 to 200 characters on one line, with no tab or other control character"
         );
         assert_eq!(
             WebLinkError::Url.to_string(),

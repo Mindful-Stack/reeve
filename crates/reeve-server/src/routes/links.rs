@@ -58,10 +58,10 @@ async fn remove_item_link(
     .await?))
 }
 
-/// Attaches a titled URL to the item: a title of 1 to 200 characters on one line (no control character), and an
-/// `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has with the same
-/// title answers ok and changes nothing; with another title it is a validation error (remove it first). Answers
-/// the item's web links, oldest first.
+/// Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control
+/// character, and an `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has
+/// with the same title answers ok and changes nothing; with another title it is a validation error (remove it
+/// first). Answers the item's web links, oldest first.
 #[utoipa::path(post, path = "/items/{key}/web-links", params(("key" = String, Path)), request_body = AddWebLink, responses((status = 200, body = Response<Vec<WebLinkDto>>)))]
 async fn add_web_link(
     State(s): State<AppState>,

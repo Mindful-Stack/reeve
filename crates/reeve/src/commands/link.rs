@@ -30,7 +30,7 @@ pub enum Link {
         /// Attach a web link instead: an http or https URL.
         #[arg(long, conflicts_with_all = ["name", "other"], requires = "title")]
         url: Option<String>,
-        /// The web link's title, 1 to 200 characters, on one line.
+        /// The web link's title, 1 to 200 characters on one line, with no tab or other control character.
         #[arg(long, requires = "url")]
         title: Option<String>,
     },

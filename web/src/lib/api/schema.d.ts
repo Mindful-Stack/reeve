@@ -847,10 +847,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Attaches a titled URL to the item: a title of 1 to 200 characters on one line (no control character), and an
-         *     `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has with the same
-         *     title answers ok and changes nothing; with another title it is a validation error (remove it first). Answers
-         *     the item's web links, oldest first.
+         * Attaches a titled URL to the item: a title of 1 to 200 characters on one line, with no tab or other control
+         *     character, and an `http` or `https` URL, stored as the URL parser writes it. Adding a URL the item already has
+         *     with the same title answers ok and changes nothing; with another title it is a validation error (remove it
+         *     first). Answers the item's web links, oldest first.
          */
         post: operations["add_web_link"];
         delete?: never;
@@ -1431,8 +1431,8 @@ export interface components {
             type: components["schemas"]["ItemLinkType"];
         };
         /**
-         * @description `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line (no control
-         *     character); the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused
+         * @description `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line, with no tab or
+         *     other control character; the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused
          *     rather than ignored.
          */
         AddWebLink: {
