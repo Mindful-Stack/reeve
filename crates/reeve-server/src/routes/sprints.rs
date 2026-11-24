@@ -7,7 +7,7 @@ use crate::{
     state::AppState,
 };
 use axum::{Json, extract::State};
-use reeve_planning::{Handlers, goal_dto, sprint_dto};
+use reeve_planning::{Handlers, goal_dto, sprint_dto, sprint_planning_dto};
 use reeve_protocol::*;
 use serde::Deserialize;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -83,15 +83,16 @@ async fn close(
     Ok(ok(sprint_now(&s.handlers, id).await?))
 }
 
-/// Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how
-/// many of each are done, derived on read. Any signed-in caller; no parameters.
-#[utoipa::path(get, path = "/sprints/planning", responses((status = 200, body = Response<Vec<GoalGatesDto>>)))]
+/// Each goal of the active and the draft sprint with the initiatives its links reach and the discoveries and required
+/// decisions its work waits on, and the first horizon bucket's initiatives with their goals; derived on read. Any
+/// signed-in caller; no parameters.
+#[utoipa::path(get, path = "/sprints/planning", responses((status = 200, body = Response<SprintPlanningDto>)))]
 async fn planning(
     State(s): State<AppState>,
     _c: Caller,
-) -> Result<Json<Response<Vec<GoalGatesDto>>>, AppError> {
-    let gates = s.handlers.sprint_planning().await?;
-    Ok(ok(gates.iter().map(GoalGatesDto::from).collect()))
+) -> Result<Json<Response<SprintPlanningDto>>, AppError> {
+    let p = s.handlers.sprint_planning().await?;
+    Ok(ok(sprint_planning_dto(&p)))
 }
 
 /// Adds a goal to the draft, or to the active sprint with `active` (interactive only), linked to `links` in the same

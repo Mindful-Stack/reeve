@@ -61,7 +61,7 @@
 				goalFor = null;
 			}
 			sprints = s;
-			gates = new Map(g.map((x) => [x.goal_id, x]));
+			gates = new Map(g.goals.map((x) => [x.goal_id, x]));
 			initiatives = i;
 			loadError = null;
 			staleNotice = null;
@@ -189,7 +189,7 @@
 	/** A sprint's goals under the first of their initiatives, in the planning order (`groupByInitiative`), goals with
 	 *  none last; only groups holding a goal. */
 	function groups(goals: Goal[]) {
-		return groupByInitiative(buckets, initiatives, goals, (g) => gates.get(g.id)?.initiatives[0] ?? null, 'Upkeep / no initiative').filter(
+		return groupByInitiative(buckets, initiatives, goals, (g) => gates.get(g.id)?.initiatives[0]?.key ?? null, 'Upkeep / no initiative').filter(
 			(x) => x.items.length > 0
 		);
 	}
@@ -199,7 +199,7 @@
 	 *  then title). Urgency never orders, filters or shows here (kb/ADR-0024 R7). */
 	const noGoalYet = $derived.by(() => {
 		if (nowBucket === null) return [];
-		const covered = new Set([...gates.values()].flatMap((x) => x.initiatives));
+		const covered = new Set([...gates.values()].flatMap((x) => x.initiatives.map((i) => i.key)));
 		return planningOrder([nowBucket], initiatives.filter((i) => i.horizon === nowBucket && !covered.has(i.key)));
 	});
 	/** The initiative whose "+ goal" form is open. */

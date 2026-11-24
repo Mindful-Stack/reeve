@@ -962,8 +962,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how
-         *     many of each are done, derived on read. Any signed-in caller; no parameters.
+         * Each goal of the active and the draft sprint with the initiatives its links reach and the discoveries and required
+         *     decisions its work waits on, and the first horizon bucket's initiatives with their goals; derived on read. Any
+         *     signed-in caller; no parameters.
          */
         get: operations["planning"];
         put?: never;
@@ -1526,6 +1527,15 @@ export interface components {
         BlockEdge: {
             blocker: components["schemas"]["KeyRef"];
         };
+        /** @description An initiative of the first configured horizon bucket with the goals whose links reach it. */
+        BucketInitiativeDto: {
+            discovery_complete: boolean;
+            /** @description Goal ids: the active sprint's first, then the draft's, by id inside each. Empty when no goal reaches it. */
+            goals: number[];
+            key: components["schemas"]["Key"];
+            target_month?: string | null;
+            title: string;
+        };
         /** @description The outcome of the last record check on a required decision. */
         CheckResult: {
             /** @enum {string} */
@@ -2056,8 +2066,9 @@ export interface components {
             version: number;
         };
         /**
-         * @description What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
-         *     kb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+         * @description One goal of the active or the draft sprint in `GET /sprints/planning`, derived on read (kb/ADR-0014 R6,
+         *     kb/ADR-0027 R1): the initiatives its links reach, and what its work waits on. The gate numbers are not
+         *     sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
          */
         GoalGatesDto: {
             /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */
@@ -2078,9 +2089,20 @@ export interface components {
             goal_id: number;
             /**
              * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
-             *     key number); the sprint page groups the goal under the first.
+             *     key number). Empty when the goal's links reach none.
              */
-            initiatives: components["schemas"]["Key"][];
+            initiatives: components["schemas"]["GoalInitiativeDto"][];
+        };
+        /** @description An initiative a goal's links reach, with what a client needs to show it beside the goal. */
+        GoalInitiativeDto: {
+            horizon: string;
+            /**
+             * @description The initiative's horizon is the first configured bucket. False when no bucket is configured. For display
+             *     only: a goal may link to any initiative or none (kb/ADR-0014 R3).
+             */
+            in_first_bucket: boolean;
+            key: components["schemas"]["Key"];
+            title: string;
         };
         /** @description One goal's counts over a sprint's window (kb/ADR-0014 R2). */
         GoalProgressDto: {
@@ -3608,6 +3630,42 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_SprintPlanningDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /**
+             * @description `GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives
+             *     with their goals. Goals and horizons do not set each other (kb/ADR-0026); this compares them for display.
+             */
+            value: {
+                /** @description The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured. */
+                first_bucket?: string | null;
+                /** @description That bucket's initiatives: by target month (earliest first, none last), then title, then key number. */
+                first_bucket_initiatives: components["schemas"]["BucketInitiativeDto"][];
+                goals: components["schemas"]["GoalGatesDto"][];
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_SprintViewDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -4104,54 +4162,6 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
-        Response_Vec_GoalGatesDto: {
-            /** @enum {string} */
-            outcome: "ok";
-            value: {
-                /** @description By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title. */
-                decisions: components["schemas"]["DecisionGateDto"][];
-                /**
-                 * Format: int32
-                 * @description All the goal's decisions (withdrawn excluded); decided = total - decisions.len().
-                 */
-                decisions_total: number;
-                /** @description Initiatives first, then epics, each by key number. */
-                discoveries: components["schemas"]["DiscoveryGateDto"][];
-                /**
-                 * Format: int32
-                 * @description All the goal's initiatives and epics; marked = total - discoveries.len().
-                 */
-                discovery_total: number;
-                /** Format: int64 */
-                goal_id: number;
-                /**
-                 * @description Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
-                 *     key number); the sprint page groups the goal under the first.
-                 */
-                initiatives: components["schemas"]["Key"][];
-            }[];
-        } | {
-            /** @enum {string} */
-            outcome: "refused";
-            /**
-             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
-             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
-             */
-            overridable: boolean;
-            reasons: components["schemas"]["Reason"][];
-        } | {
-            code: components["schemas"]["ErrorCode"];
-            /**
-             * Format: int64
-             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
-             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
-             */
-            current?: number | null;
-            message: string;
-            /** @enum {string} */
-            outcome: "error";
-        };
-        /** @description Every API response body is one of these three shapes. */
         Response_Vec_InitiativeDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -4599,6 +4609,17 @@ export interface components {
             version: number;
             /** @description Advice from the goal count, for a draft or the active sprint only; a closed sprint has none. */
             warnings: components["schemas"]["SprintWarning"][];
+        };
+        /**
+         * @description `GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives
+         *     with their goals. Goals and horizons do not set each other (kb/ADR-0026); this compares them for display.
+         */
+        SprintPlanningDto: {
+            /** @description The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured. */
+            first_bucket?: string | null;
+            /** @description That bucket's initiatives: by target month (earliest first, none last), then title, then key number. */
+            first_bucket_initiatives: components["schemas"]["BucketInitiativeDto"][];
+            goals: components["schemas"]["GoalGatesDto"][];
         };
         /**
          * @description One row of a sprint's promise list (R8): a story whose effective date falls after the previous sprint's planned
@@ -9697,7 +9718,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Response_Vec_GoalGatesDto"];
+                    "application/json": components["schemas"]["Response_SprintPlanningDto"];
                 };
             };
             /** @description validation error */

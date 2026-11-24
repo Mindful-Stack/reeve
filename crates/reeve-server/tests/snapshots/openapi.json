@@ -395,6 +395,41 @@
         ],
         "type": "object"
       },
+      "BucketInitiativeDto": {
+        "description": "An initiative of the first configured horizon bucket with the goals whose links reach it.",
+        "properties": {
+          "discovery_complete": {
+            "type": "boolean"
+          },
+          "goals": {
+            "description": "Goal ids: the active sprint's first, then the draft's, by id inside each. Empty when no goal reaches it.",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "target_month": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "discovery_complete",
+          "goals"
+        ],
+        "type": "object"
+      },
       "CheckResult": {
         "description": "The outcome of the last record check on a required decision.",
         "oneOf": [
@@ -2127,7 +2162,7 @@
         "type": "object"
       },
       "GoalGatesDto": {
-        "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
+        "description": "One goal of the active or the draft sprint in `GET /sprints/planning`, derived on read (kb/ADR-0014 R6,\nkb/ADR-0027 R1): the initiatives its links reach, and what its work waits on. The gate numbers are not\nsprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
         "properties": {
           "decisions": {
             "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",
@@ -2160,9 +2195,9 @@
             "type": "integer"
           },
           "initiatives": {
-            "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
+            "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number). Empty when the goal's links reach none.",
             "items": {
-              "$ref": "#/components/schemas/Key"
+              "$ref": "#/components/schemas/GoalInitiativeDto"
             },
             "type": "array"
           }
@@ -2174,6 +2209,31 @@
           "decisions",
           "discovery_total",
           "decisions_total"
+        ],
+        "type": "object"
+      },
+      "GoalInitiativeDto": {
+        "description": "An initiative a goal's links reach, with what a client needs to show it beside the goal.",
+        "properties": {
+          "horizon": {
+            "type": "string"
+          },
+          "in_first_bucket": {
+            "description": "The initiative's horizon is the first configured bucket. False when no bucket is configured. For display\nonly: a goal may link to any initiative or none (kb/ADR-0014 R3).",
+            "type": "boolean"
+          },
+          "key": {
+            "$ref": "#/components/schemas/Key"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "horizon",
+          "in_first_bucket"
         ],
         "type": "object"
       },
@@ -7117,6 +7177,112 @@
           }
         ]
       },
+      "Response_SprintPlanningDto": {
+        "description": "Every API response body is one of these three shapes.",
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "ok"
+                ],
+                "type": "string"
+              },
+              "value": {
+                "description": "`GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives\nwith their goals. Goals and horizons do not set each other (kb/ADR-0026); this compares them for display.",
+                "properties": {
+                  "first_bucket": {
+                    "description": "The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "first_bucket_initiatives": {
+                    "description": "That bucket's initiatives: by target month (earliest first, none last), then title, then key number.",
+                    "items": {
+                      "$ref": "#/components/schemas/BucketInitiativeDto"
+                    },
+                    "type": "array"
+                  },
+                  "goals": {
+                    "items": {
+                      "$ref": "#/components/schemas/GoalGatesDto"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "goals",
+                  "first_bucket_initiatives"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "value",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              },
+              "overridable": {
+                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
+                "type": "boolean"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/Reason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "reasons",
+              "overridable",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "current": {
+                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "error"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Response_SprintViewDto": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -8724,136 +8890,6 @@
           }
         ]
       },
-      "Response_Vec_GoalGatesDto": {
-        "description": "Every API response body is one of these three shapes.",
-        "oneOf": [
-          {
-            "properties": {
-              "outcome": {
-                "enum": [
-                  "ok"
-                ],
-                "type": "string"
-              },
-              "value": {
-                "items": {
-                  "description": "What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,\nkb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.",
-                  "properties": {
-                    "decisions": {
-                      "description": "By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.",
-                      "items": {
-                        "$ref": "#/components/schemas/DecisionGateDto"
-                      },
-                      "type": "array"
-                    },
-                    "decisions_total": {
-                      "description": "All the goal's decisions (withdrawn excluded); decided = total - decisions.len().",
-                      "format": "int32",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "discoveries": {
-                      "description": "Initiatives first, then epics, each by key number.",
-                      "items": {
-                        "$ref": "#/components/schemas/DiscoveryGateDto"
-                      },
-                      "type": "array"
-                    },
-                    "discovery_total": {
-                      "description": "All the goal's initiatives and epics; marked = total - discoveries.len().",
-                      "format": "int32",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "goal_id": {
-                      "format": "int64",
-                      "type": "integer"
-                    },
-                    "initiatives": {
-                      "description": "Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by\nkey number); the sprint page groups the goal under the first.",
-                      "items": {
-                        "$ref": "#/components/schemas/Key"
-                      },
-                      "type": "array"
-                    }
-                  },
-                  "required": [
-                    "goal_id",
-                    "initiatives",
-                    "discoveries",
-                    "decisions",
-                    "discovery_total",
-                    "decisions_total"
-                  ],
-                  "type": "object"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "value",
-              "outcome"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "outcome": {
-                "enum": [
-                  "refused"
-                ],
-                "type": "string"
-              },
-              "overridable": {
-                "description": "True when there is at least one reason and every one is a readiness fact: an interactive caller may retry\nwith an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.",
-                "type": "boolean"
-              },
-              "reasons": {
-                "items": {
-                  "$ref": "#/components/schemas/Reason"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "reasons",
-              "overridable",
-              "outcome"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "code": {
-                "$ref": "#/components/schemas/ErrorCode"
-              },
-              "current": {
-                "description": "On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried\nserialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.",
-                "format": "int64",
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "outcome": {
-                "enum": [
-                  "error"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "code",
-              "message",
-              "outcome"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "Response_Vec_InitiativeDto": {
         "description": "Every API response body is one of these three shapes.",
         "oneOf": [
@@ -10324,6 +10360,36 @@
           "version",
           "goals",
           "warnings"
+        ],
+        "type": "object"
+      },
+      "SprintPlanningDto": {
+        "description": "`GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives\nwith their goals. Goals and horizons do not set each other (kb/ADR-0026); this compares them for display.",
+        "properties": {
+          "first_bucket": {
+            "description": "The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_bucket_initiatives": {
+            "description": "That bucket's initiatives: by target month (earliest first, none last), then title, then key number.",
+            "items": {
+              "$ref": "#/components/schemas/BucketInitiativeDto"
+            },
+            "type": "array"
+          },
+          "goals": {
+            "items": {
+              "$ref": "#/components/schemas/GoalGatesDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "goals",
+          "first_bucket_initiatives"
         ],
         "type": "object"
       },
@@ -17188,7 +17254,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Response_Vec_GoalGatesDto"
+                  "$ref": "#/components/schemas/Response_SprintPlanningDto"
                 }
               }
             },
@@ -17250,7 +17316,7 @@
             "bearer": []
           }
         ],
-        "summary": "Each goal of the active and the draft sprint with the discoveries and required decisions its work waits on, and how\nmany of each are done, derived on read. Any signed-in caller; no parameters."
+        "summary": "Each goal of the active and the draft sprint with the initiatives its links reach and the discoveries and required\ndecisions its work waits on, and the first horizon bucket's initiatives with their goals; derived on read. Any\nsigned-in caller; no parameters."
       }
     },
     "/api/v1/sprints/{id}": {

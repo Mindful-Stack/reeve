@@ -429,8 +429,9 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
     assert_eq!(g["goal"]["links"], json!([epic]));
     assert!(g["goal"]["created_at"].is_string(), "{g}");
     let gid = g["goal"]["id"].as_i64().unwrap();
+    let planned = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
     assert_eq!(
-        ok_value(&h, "GET", "/api/v1/sprints/planning", None).await,
+        planned["goals"],
         json!([
             {
                 "goal_id": aid, "initiatives": [],
@@ -444,4 +445,78 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
             }
         ])
     );
+}
+
+async fn new_initiative(h: &Harness, idem: &str, title: &str, horizon: &str) -> String {
+    ok_value(
+        h,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key": idem, "title": title, "horizon": horizon})),
+    )
+    .await["key"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// `GET /sprints/planning` names each goal's initiatives with their horizon and whether it is the first configured
+/// bucket, and lists that bucket's initiatives with the goals that reach them (display only, kb/ADR-0026).
+#[tokio::test]
+async fn planning_compares_goals_with_the_first_horizon_bucket() {
+    let h = harness().await;
+    // The harness keeps the default buckets, which start "Now", "Next" (`default_buckets` in config.rs).
+    let inside = new_initiative(&h, "i-in", "In the bucket", "Now").await;
+    let outside = new_initiative(&h, "i-out", "Outside it", "Next").await;
+    let empty = new_initiative(&h, "i-empty", "No goal reaches it", "Now").await;
+    let goal = |idem: &'static str, links: serde_json::Value| {
+        let h = &h;
+        async move {
+            ok_value(
+                h,
+                "POST",
+                "/api/v1/goals",
+                Some(
+                    json!({"idempotency_key": idem, "outcome": idem, "check": "c", "links": links}),
+                ),
+            )
+            .await["goal"]["id"]
+                .as_i64()
+                .unwrap()
+        }
+    };
+    let both = goal("both", json!([inside, outside])).await;
+    let none = goal("none", json!([])).await;
+    let p = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
+    assert_eq!(p["first_bucket"], "Now", "{p}");
+    assert_eq!(
+        p["goals"][0]["initiatives"],
+        json!([
+            {"key": inside, "title": "In the bucket", "horizon": "Now", "in_first_bucket": true},
+            {"key": outside, "title": "Outside it", "horizon": "Next", "in_first_bucket": false}
+        ]),
+        "{p}"
+    );
+    assert_eq!(p["goals"][0]["goal_id"], both);
+    assert_eq!(p["goals"][1]["goal_id"], none);
+    assert_eq!(p["goals"][1]["initiatives"], json!([]));
+    assert_eq!(
+        p["first_bucket_initiatives"],
+        json!([
+            {"key": inside, "title": "In the bucket", "target_month": null, "discovery_complete": false, "goals": [both]},
+            {"key": empty, "title": "No goal reaches it", "target_month": null, "discovery_complete": false, "goals": []}
+        ]),
+        "{p}"
+    );
+}
+
+/// Without a configured bucket the answer names none and lists none.
+#[tokio::test]
+async fn planning_names_no_bucket_when_none_is_configured() {
+    // Edited into the configuration text: a patch after `build_state` would not reach the handlers.
+    let h = harness_with(|c| format!("horizon_buckets = []\n{c}")).await;
+    let p = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
+    assert_eq!(p["first_bucket"], json!(null), "{p}");
+    assert_eq!(p["first_bucket_initiatives"], json!([]), "{p}");
+    assert_eq!(p["goals"], json!([]), "{p}");
 }

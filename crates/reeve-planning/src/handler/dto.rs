@@ -1,4 +1,5 @@
 //! Every domain-to-wire conversion for planning: the domain never names a DTO (the isolation lint enforces it).
+use super::sprints::SprintPlanning;
 use super::urgent::WarRoomEntry;
 use crate::domain::decision::RequiredDecision;
 use crate::domain::item_link::ItemLink;
@@ -6,18 +7,19 @@ use crate::domain::items::{Epic, Initiative, Story};
 use crate::domain::promise::{self, Clock, HeldBy, Promise, SprintPromise, StoryPromise, epic_due};
 use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
-use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
+use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
 use crate::ports::{ItemHead, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
-    AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
-    DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
-    EpicDto, EpicPromiseDto, EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto,
-    GoalGatesDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType,
-    Key, LinkedItemDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
-    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
+    AffectedStoryDto, BucketInitiativeDto, ClosedDto, CriterionDto, DecisionGateDto,
+    DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto,
+    DiscoveryGateDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto,
+    ExportItemLinkDto, ExportWebLinkDto, GoalDto, GoalGatesDto, GoalInitiativeDto, GoalProgressDto,
+    InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue,
+    PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
+    RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPlanningDto, SprintPromiseDto,
+    SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -257,31 +259,63 @@ pub fn goal_dto(g: &Goal, links: &[GoalLink]) -> GoalDto {
     }
 }
 
-impl From<&GoalGates> for GoalGatesDto {
-    fn from(g: &GoalGates) -> Self {
-        Self {
-            goal_id: g.goal_id,
-            initiatives: g.initiatives.clone(),
-            discoveries: g
-                .discoveries
-                .iter()
-                .map(|d| DiscoveryGateDto {
-                    key: d.key.clone(),
-                    item: d.item,
-                    title: d.title.clone(),
-                })
-                .collect(),
-            decisions: g
-                .decisions
-                .iter()
-                .map(|d| DecisionGateDto {
-                    on: d.on.clone(),
-                    reason: d.reason.clone(),
-                })
-                .collect(),
-            discovery_total: g.discovery_total,
-            decisions_total: g.decisions_total,
-        }
+/// The planning answer on the wire. Titles and horizons come from the snapshot's initiatives; a key the snapshot does
+/// not hold (none can exist inside one snapshot) is left out instead of invented.
+pub fn sprint_planning_dto(p: &SprintPlanning) -> SprintPlanningDto {
+    let by_key: std::collections::HashMap<&Key, &Initiative> =
+        p.initiatives.iter().map(|i| (i.key(), i)).collect();
+    let bucket = p.first_bucket.as_deref();
+    SprintPlanningDto {
+        goals: p
+            .gates
+            .iter()
+            .map(|g| GoalGatesDto {
+                goal_id: g.goal_id,
+                initiatives: g
+                    .initiatives
+                    .iter()
+                    .filter_map(|k| by_key.get(k))
+                    .map(|i| GoalInitiativeDto {
+                        key: i.key().clone(),
+                        title: i.title().to_owned(),
+                        horizon: i.horizon().to_owned(),
+                        in_first_bucket: bucket == Some(i.horizon()),
+                    })
+                    .collect(),
+                discoveries: g
+                    .discoveries
+                    .iter()
+                    .map(|d| DiscoveryGateDto {
+                        key: d.key.clone(),
+                        item: d.item,
+                        title: d.title.clone(),
+                    })
+                    .collect(),
+                decisions: g
+                    .decisions
+                    .iter()
+                    .map(|d| DecisionGateDto {
+                        on: d.on.clone(),
+                        reason: d.reason.clone(),
+                    })
+                    .collect(),
+                discovery_total: g.discovery_total,
+                decisions_total: g.decisions_total,
+            })
+            .collect(),
+        first_bucket: p.first_bucket.clone(),
+        first_bucket_initiatives: p
+            .first_bucket_initiatives
+            .iter()
+            .filter_map(|b| by_key.get(&b.key).map(|i| (b, i)))
+            .map(|(b, i)| BucketInitiativeDto {
+                key: b.key.clone(),
+                title: i.title().to_owned(),
+                target_month: i.target_month().map(str::to_owned),
+                discovery_complete: i.discovery().is_some(),
+                goals: b.goals.clone(),
+            })
+            .collect(),
     }
 }
 
