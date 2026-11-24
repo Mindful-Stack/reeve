@@ -4901,6 +4901,37 @@ fn link_add_says_nothing_about_a_story_the_write_did_not_link() {
     );
 }
 
+/// The help of `link add` and `link rm` restates the names by hand (clap's value name and the argument's line),
+/// so this holds them to the protocol's name table: every command-line spelling, in the table's order, as the
+/// value name and in the argument's own line. A name added to the table fails here until the help says it.
+#[test]
+fn link_add_and_rm_help_list_every_name_of_the_table() {
+    let names = reeve_protocol::ItemLinkType::ALL.map(reeve_protocol::ItemLinkType::cli);
+    let value_name = format!("<{}>", names.join("|"));
+    let (last, first) = names.split_last().unwrap();
+    let sentence = format!("{} or {last}", first.join(", "));
+    for sub in ["add", "rm"] {
+        let out = reeve_at("http://127.0.0.1:9", &["link", sub, "--help"]);
+        assert_eq!(out.status.code(), Some(0));
+        let help = String::from_utf8_lossy(&out.stdout);
+        let usage = help
+            .lines()
+            .find(|l| l.starts_with("Usage:"))
+            .unwrap_or_else(|| panic!("link {sub}: no usage line: {help}"));
+        assert!(usage.contains(&value_name), "link {sub}: {usage}");
+        let argument = help
+            .lines()
+            .skip_while(|l| !l.trim_start().starts_with(&value_name))
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            argument.contains(&sentence),
+            "link {sub}: the argument's line says {sentence:?}: {help}"
+        );
+    }
+}
+
 /// A blocking word is refused before anything is sent, with the pointer to `story block`; a usage error exits 1.
 #[test]
 fn link_add_refuses_a_blocking_word_with_a_pointer_to_story_block() {
