@@ -69,6 +69,7 @@ We decided to model work as initiative, epic and story with kinds story, bug and
 - 2026-11-10 (kb/ADR-0018): R3's discovery mark is set on standing loose-work epics without product decisions behind it; for their items the ancestor discovery check is a formality (kb/ADR-0018, Consequences). No trigger fired; the decision holds.
 - 2026-11-10 (kb/ADR-0022, kb/ADR-0023): R6's bound vocabulary grows by "attachment" (an image owned by one initiative, epic or story, or uploaded and not yet saved with any); it is not an item and adds no hierarchy level, so R1 holds. No trigger fired; the decision holds.
 - 2026-11-12 (kb/ADR-0025): R6's bound vocabulary grows by "promise", "overdue" and "late" (a dated commitment on a story or epic and two derived states of it). No trigger fired; the decision holds.
+- 2026-11-24 (kb/ADR-0031, GRA-877): R6's bound vocabulary grows by two terms, "item link" (a named, informational connection between two items of any level) and "web link" (a titled URL on one item; it ships with GRA-878). An item link is never a parent and rolls up nothing, and a web link is not an item and adds no level, so R1 holds; that neither gates is kb/ADR-0031's own rule, not R1's. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0003, kb/ADR-0004.
