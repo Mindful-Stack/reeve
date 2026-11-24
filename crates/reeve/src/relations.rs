@@ -1,5 +1,6 @@
 //! Text for an item's relations (kb/ADR-0031): the item link name as the command line spells it, the line that
-//! tells a `follows` from a blocker, and the `relations:` block of `show`, `story context` and `link ls`.
+//! tells a `follows` from a blocker, and the `relations:` and `web links:` blocks of `show`, `story context` and
+//! `link ls`.
 use crate::glyphs::{Level, mark};
 use reeve_protocol::*;
 use std::fmt::Write;
@@ -80,14 +81,121 @@ pub fn relations(blockers: &[BlockerLine<'_>], links: &[ItemLinkDto]) -> Option<
     Some(out)
 }
 
-/// What `reeve link ls` prints.
+/// What `reeve link ls` prints: the relations block, then the web links block.
 pub fn listing(v: &LinkListingDto) -> String {
-    relations(&[], &v.links).unwrap_or_else(|| "no item links".into())
+    let blocks: Vec<String> = [relations(&[], &v.links), web_links(&v.web_links)]
+        .into_iter()
+        .flatten()
+        .collect();
+    if blocks.is_empty() {
+        "no item links or web links".into()
+    } else {
+        blocks.join("\n")
+    }
+}
+
+/// The `web links:` block: one line per web link, title then URL, oldest first as the server sent them. None when
+/// there are none.
+pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
+    if links.is_empty() {
+        return None;
+    }
+    let mut out = String::from("web links:");
+    for l in links {
+        let _ = write!(out, "\n  {}  {}", l.title, l.url);
+    }
+    Some(out)
+}
+
+/// Whether a URL as a person typed it names a stored web link. The stored form is the server's URL parser's
+/// serialisation, so the typed one is parsed the same way first; text the parser refuses is compared as typed.
+pub fn same_url(typed: &str, stored: &str) -> bool {
+    let typed = typed.trim();
+    typed == stored || url::Url::parse(typed).is_ok_and(|u| u.as_str() == stored)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn web(id: i64, title: &str, url: &str) -> WebLinkDto {
+        WebLinkDto {
+            id,
+            title: title.into(),
+            url: url.into(),
+        }
+    }
+
+    #[test]
+    fn web_links_print_title_then_url_and_nothing_when_there_are_none() {
+        assert_eq!(web_links(&[]), None);
+        assert_eq!(
+            web_links(&[
+                web(1, "Scenario page", "https://example.com/wiki/scenario"),
+                web(2, "Board", "http://example.com/board"),
+            ])
+            .as_deref(),
+            Some(
+                "web links:\n  Scenario page  https://example.com/wiki/scenario\n  Board  http://example.com/board"
+            )
+        );
+    }
+
+    #[test]
+    fn a_typed_url_finds_its_stored_form() {
+        let stored = "http://example.com/";
+        for typed in [
+            "http://example.com/",
+            "HTTP://Example.COM",
+            " http://example.com ",
+            "http://example.com:80",
+        ] {
+            assert!(same_url(typed, stored), "{typed}");
+        }
+        for other in [
+            "https://example.com/",
+            "http://example.com/a",
+            "example.com",
+            "",
+        ] {
+            assert!(!same_url(other, stored), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_listing_prints_both_blocks_or_says_there_is_nothing() {
+        let follows = ItemLinkDto {
+            link_type: ItemLinkType::Follows,
+            direction: ItemLinkDirection::Out,
+            label: "follows".into(),
+            item: LinkedItemDto {
+                key: "ABC-5".parse().unwrap(),
+                level: ItemType::Epic,
+                title: "Billing".into(),
+            },
+        };
+        let both = LinkListingDto {
+            links: vec![follows],
+            web_links: vec![web(1, "Board", "http://example.com/board")],
+        };
+        assert_eq!(
+            listing(&both),
+            "relations:\n  follows  ■ ABC-5 Billing\nweb links:\n  Board  http://example.com/board"
+        );
+        let only_web = LinkListingDto {
+            links: vec![],
+            web_links: both.web_links.clone(),
+        };
+        assert_eq!(
+            listing(&only_web),
+            "web links:\n  Board  http://example.com/board"
+        );
+        let none = LinkListingDto {
+            links: vec![],
+            web_links: vec![],
+        };
+        assert_eq!(listing(&none), "no item links or web links");
+    }
 
     #[test]
     fn a_name_is_spelled_with_a_hyphen_and_blocking_words_point_at_story_block() {

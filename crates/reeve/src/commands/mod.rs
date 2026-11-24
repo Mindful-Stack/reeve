@@ -68,7 +68,8 @@ pub enum Cmd {
     /// Team goals in a sprint: add, edit, link work, record or suggest confidence.
     #[command(subcommand)]
     Goal(goal::Goal),
-    /// Item links: say that an item follows, duplicates or relates to another (informational, never a gate).
+    /// Item links and web links: say that an item follows, duplicates or relates to another, or attach a titled
+    /// URL to it (informational, never a gate).
     #[command(subcommand)]
     Link(link::Link),
     /// Comments on stories and decisions.

@@ -4950,7 +4950,8 @@ fn link_add_says_nothing_about_a_story_the_write_did_not_link() {
 #[test]
 fn link_add_and_rm_help_list_every_name_of_the_table() {
     let names = reeve_protocol::ItemLinkType::ALL.map(reeve_protocol::ItemLinkType::cli);
-    let value_name = format!("<{}>", names.join("|"));
+    // In square brackets: the name is optional, since `--url` takes its place for a web link.
+    let value_name = format!("[{}]", names.join("|"));
     let (last, first) = names.split_last().unwrap();
     let sentence = format!("{} or {last}", first.join(", "));
     for sub in ["add", "rm"] {
@@ -5062,5 +5063,187 @@ fn link_rm_deletes_the_forward_form_and_link_ls_lists() {
     )]);
     let out = reeve_at(&url, &["link", "ls", "TST-7"]);
     server.join().unwrap();
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "no item links\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "no item links or web links\n"
+    );
+}
+
+/// `link add --url --title` posts the two fields as given (the server trims and stores the URL's parsed form) and
+/// prints the item's web links; `link rm --url` reads the listing, finds the web link whose stored URL the typed
+/// one names, and deletes it by id.
+#[test]
+fn link_add_and_rm_with_a_url_work_on_web_links() {
+    let stored =
+        serde_json::json!([{"id": 4, "title": "Scenario page", "url": "http://example.com/"}]);
+    let (url, server) = serve(vec![(
+        "POST /api/v1/items/TST-12/web-links",
+        200,
+        ok(stored.clone()),
+    )]);
+    let out = reeve_at(
+        &url,
+        &[
+            "link",
+            "add",
+            "TST-12",
+            "--url",
+            "HTTP://Example.com",
+            "--title",
+            "Scenario page",
+        ],
+    );
+    let bodies = server.join().unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&bodies[0]).unwrap(),
+        serde_json::json!({"title": "Scenario page", "url": "HTTP://Example.com"})
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "web links:\n  Scenario page  http://example.com/\n"
+    );
+
+    // rm --url: a GET, then a DELETE by the id the listing gave. The typed URL is another spelling of the stored one.
+    let listing = ok(serde_json::json!({"links": [], "web_links": stored}));
+    let (url, server) = serve(vec![
+        ("GET /api/v1/items/TST-12/links", 200, listing.clone()),
+        (
+            "DELETE /api/v1/items/TST-12/web-links/4",
+            200,
+            ok(serde_json::json!([])),
+        ),
+    ]);
+    let out = reeve_at(
+        &url,
+        &[
+            "--json",
+            "link",
+            "rm",
+            "TST-12",
+            "--url",
+            "HTTP://EXAMPLE.com",
+        ],
+    );
+    assert_eq!(
+        server.join().unwrap(),
+        vec![String::new(), String::new()],
+        "no bodies"
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        ok(serde_json::json!([])),
+        "the DELETE's envelope: the item's web links after the removal"
+    );
+
+    // A URL the item does not have: ok, nothing removed, nothing deleted (one request only).
+    let (url, server) = serve(vec![(
+        "GET /api/v1/items/TST-12/links",
+        200,
+        listing.clone(),
+    )]);
+    let out = reeve_at(
+        &url,
+        &["link", "rm", "TST-12", "--url", "https://example.com/other"],
+    );
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "no web link with that URL: nothing removed\n"
+    );
+    let (url, server) = serve(vec![("GET /api/v1/items/TST-12/links", 200, listing)]);
+    let out = reeve_at(
+        &url,
+        &[
+            "--json",
+            "link",
+            "rm",
+            "TST-12",
+            "--url",
+            "https://example.com/other",
+        ],
+    );
+    server.join().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap(),
+        ok(serde_json::json!([{"id": 4, "title": "Scenario page", "url": "http://example.com/"}])),
+        "ok, with the web links as they still are"
+    );
+
+    // A failed listing is the outcome: not found exits 1 and nothing is deleted.
+    let not_found = serde_json::json!({"outcome":"error","code":"not_found","message":"not found"});
+    let (url, server) = serve(vec![("GET /api/v1/items/TST-99/links", 404, not_found)]);
+    let out = reeve_at(
+        &url,
+        &["link", "rm", "TST-99", "--url", "http://example.com/"],
+    );
+    assert_eq!(server.join().unwrap().len(), 1);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+/// `reeve --help` names both concepts on the `link` line, and `reeve link --help` says where a URL goes: a person
+/// looking for how to attach a page finds it without knowing the word "web link".
+#[test]
+fn link_help_names_item_links_and_web_links() {
+    let out = reeve_at("http://127.0.0.1:9", &["--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&out.stdout).to_string();
+    let line = help
+        .lines()
+        .find(|l| l.trim_start().starts_with("link "))
+        .unwrap_or_else(|| panic!("no `link` line in:\n{help}"));
+    assert!(line.contains("Item links and web links"), "{line}");
+
+    let out = reeve_at("http://127.0.0.1:9", &["link", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        help.contains("--url"),
+        "the add line says how a web link is attached:\n{help}"
+    );
+}
+
+/// The two forms of `link add` and `link rm` are exclusive and each complete: every other mix is a usage error
+/// (exit 1) before anything is sent.
+#[test]
+fn link_takes_either_a_name_and_another_item_or_a_url() {
+    let unserved = "http://127.0.0.1:9";
+    for args in [
+        &["link", "add", "TST-12"][..],
+        &["link", "add", "TST-12", "follows"],
+        &["link", "add", "TST-12", "--url", "https://example.com/"],
+        &["link", "add", "TST-12", "--title", "Page"],
+        &[
+            "link",
+            "add",
+            "TST-12",
+            "follows",
+            "TST-7",
+            "--url",
+            "https://example.com/",
+            "--title",
+            "Page",
+        ],
+        &["link", "rm", "TST-12"],
+        &["link", "rm", "TST-12", "follows"],
+        &[
+            "link",
+            "rm",
+            "TST-12",
+            "follows",
+            "TST-7",
+            "--url",
+            "https://example.com/",
+        ],
+    ] {
+        let out = reeve_at(unserved, args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("Usage:"),
+            "{args:?} must be refused by the argument parser: {err}"
+        );
+    }
 }
