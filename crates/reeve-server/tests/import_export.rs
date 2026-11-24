@@ -1183,10 +1183,12 @@ fn the_importer_has_no_path_to_a_promise() {
     }
 }
 
-/// kb/ADR-0031 R2: the importer has no path to an item link or a web link. Neither the server's import handler and
-/// route nor the CLI's Jira importer, which is the code that knows another tool's relations, names one or a route
-/// that writes one, so an import never turns another tool's relation (a blocking one least of all) into an item
-/// link and never attaches a web link.
+/// The importer has no path to an item link or a web link. For item links that is kb/ADR-0031 R2 (an importer must
+/// not turn another tool's blocking relation into an item link); no rule of the record speaks of web links and an
+/// import: the import is unchanged by design, it creates none, and this test holds it. Neither the server's import
+/// handler and route nor the CLI's Jira importer, which is the code that knows another tool's relations, names one
+/// or a route that writes one, so an import never turns another tool's relation (a blocking one least of all) into
+/// an item link and never attaches a web link.
 #[test]
 fn the_importer_has_no_path_to_an_item_link_or_a_web_link() {
     for (path, src) in [

@@ -82,8 +82,8 @@ impl WebLink {
 
 /// The form a URL is stored and compared in: the `url` crate's serialisation of the trimmed input, so two
 /// spellings of one address (`HTTP://Example.com`, `http://example.com/`) are the same URL. Refused: anything the
-/// parser rejects, a scheme other than `http` or `https` (the web client renders it as a link, and a
-/// `javascript:` URL would run there), no host, a user name or a password (a credential would be shown to every
+/// parser rejects, a scheme other than `http` or `https` (a client that renders it as a link would run a
+/// `javascript:` URL), no host, a user name or a password (a credential would be shown to every
 /// reader and kept by the activity log after the web link is gone), and a serialisation over `MAX_URL` characters.
 /// The stored form never holds a raw control character: the parser drops a tab and a line break, percent-encodes
 /// any other one in a path, a query or a fragment, and refuses one in a host

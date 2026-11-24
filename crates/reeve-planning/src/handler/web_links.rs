@@ -32,9 +32,9 @@ impl Handlers {
     /// both and validated the link (`WebLink::new`). Nothing here reads through the pool, so it also serves a
     /// caller whose item is not committed yet, and it neither commits nor rolls back. The same URL with the same
     /// title answers false and writes nothing; with another title it is `WebLink::is_new_among`'s refusal as a
-    /// validation error, and what the caller does with its transaction then is the caller's. Plan apply (GRA-879)
-    /// composes it with the plan's other writes, and its check before any write asks `is_new_among` the same
-    /// question of the item's stored web links.
+    /// validation error, and what the caller does with its transaction then is the caller's. It passes
+    /// `is_new_among` the item's stored web links; that method takes the web links of one item, whatever their
+    /// source. Plan apply (GRA-879) composes it with the plan's other writes.
     pub(super) async fn add_web_link_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
