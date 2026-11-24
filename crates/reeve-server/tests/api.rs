@@ -2057,10 +2057,11 @@ async fn a_target_month_a_request_names_must_be_a_month() {
     assert_eq!(b["value"]["target_month"], serde_json::Value::Null);
 }
 
-/// Decision A of 2026-11-24: an edit that moves an epic to another initiative, or out of one, says so in its
-/// `edited` entry, in the shape a required decision's `edited` entry has (`fields`, `from`, `to`; each initiative a
-/// key or null), because the move changes whose discovery mark and required decisions the epic's stories wait on.
-/// An edit that leaves the initiative where it was says nothing about it.
+/// Decision A of 2026-11-24: an epic's `edited` entry names every field the edit changed (`fields`: title, brief,
+/// initiative), in the shape a required decision's `edited` entry has, and gives the old and new value (`from`,
+/// `to`; each initiative a key or null) for the initiative alone, because a move changes whose discovery mark and
+/// required decisions the epic's stories wait on. An edit that leaves the initiative where it was gives no values,
+/// and an edit that changes nothing names no field.
 #[tokio::test]
 async fn an_epic_edit_that_moves_it_logs_the_initiative_it_left_and_joined() {
     let h = harness().await;
@@ -2116,28 +2117,33 @@ async fn an_epic_edit_that_moves_it_logs_the_initiative_it_left_and_joined() {
             edits.pop().unwrap()["payload"].clone()
         }
     };
-    let moved = |from: serde_json::Value, to: serde_json::Value| json!({"fields": ["initiative"], "from": {"initiative": from}, "to": {"initiative": to}});
+    let moved = |fields: serde_json::Value, from: serde_json::Value, to: serde_json::Value| json!({"fields": fields, "from": {"initiative": from}, "to": {"initiative": to}});
     assert_eq!(
         edit(json!({"title":"Checkout flow"})).await,
-        json!({}),
-        "no move, nothing said"
+        json!({"fields": ["title"]}),
+        "a retitle names the field and gives no values"
     );
     assert_eq!(
         edit(json!({"initiative": a})).await,
-        moved(json!(null), json!(a))
+        moved(json!(["initiative"]), json!(null), json!(a))
     );
     assert_eq!(
         edit(json!({"initiative": a, "title": "Checkout"})).await,
-        json!({}),
+        json!({"fields": ["title"]}),
         "naming the initiative it is already in is no move"
     );
     assert_eq!(
-        edit(json!({"initiative": b})).await,
-        moved(json!(a), json!(b))
+        edit(json!({"title": "Checkout"})).await,
+        json!({}),
+        "an edit that changes nothing names no field"
+    );
+    assert_eq!(
+        edit(json!({"initiative": b, "brief": "Moved."})).await,
+        moved(json!(["brief", "initiative"]), json!(a), json!(b))
     );
     assert_eq!(
         edit(json!({"initiative": null})).await,
-        moved(json!(b), json!(null))
+        moved(json!(["initiative"]), json!(b), json!(null))
     );
 }
 

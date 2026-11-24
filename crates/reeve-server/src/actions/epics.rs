@@ -1,6 +1,6 @@
 use super::{Acting, FilterRef, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
-use reeve_protocol::{CreateEpic, EditItem, EpicDto, ItemType, KeyRef};
+use reeve_protocol::{CreateEpic, EditItem, EpicDto, ItemType, Key, KeyRef};
 use serde::Deserialize;
 
 /// The query of `GET /api/v1/epics`.
@@ -73,15 +73,20 @@ pub(crate) async fn create_epic(
 
 /// `reeve epic edit <KEY>`. Shared by `PATCH /api/v1/epics/{key}` and the MCP tool `edit_epic`. `key` and `b` are
 /// what the route takes: its path parameter and its body. An edit never reads or writes the discovery mark: the
-/// handler carries the stored mark over (`POST …/discovery` is the only way to it).
+/// handler carries the stored mark over (`POST …/discovery` is the only way to it). Answers the epic as edited and,
+/// when the edit moved it to another initiative or out of one, the initiative it left (`Some(None)`: it was in
+/// none), which `edit_epic`'s receipt says (decision A). The epic is read before the edit: the versioned update
+/// refuses the edit if the row changed since the caller's version, so an edit that succeeds replaced the row that
+/// read saw.
 pub(crate) async fn edit_epic(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,
     b: EditItem,
-) -> Result<EpicDto, AppError> {
+) -> Result<(EpicDto, Option<Option<Key>>), AppError> {
     let key = state.handlers.resolve_ref(key, ItemType::Epic).await?;
     let initiative = resolve_edit(&state.handlers, b.initiative, ItemType::Initiative).await?;
+    let before = state.handlers.epic_dto(&key, who.ctx.now).await?;
     let epic = state
         .handlers
         .edit_epic_attaching(
@@ -95,5 +100,7 @@ pub(crate) async fn edit_epic(
             &b.attachments,
         )
         .await?;
-    Ok(state.handlers.epic_dto(epic.key(), who.ctx.now).await?)
+    let after = state.handlers.epic_dto(epic.key(), who.ctx.now).await?;
+    let left = (after.initiative != before.initiative).then(|| before.initiative.clone());
+    Ok((after, left))
 }
