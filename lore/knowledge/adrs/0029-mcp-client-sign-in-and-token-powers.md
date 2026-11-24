@@ -147,6 +147,37 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   free text written by people that a chat model now reads, which the tool descriptions say and the operator's
   privacy statement must cover (`deploy/README.md`). No tool was added, so R10's set stands. No trigger fired; the
   decision holds.
+- 2026-11-24 (GRA-901, GRA-902, https://github.com/Mindful-Stack/reeve/pull/<n>): R10's set grows by eight tools, named here as R10
+  requires. Four come with this pull request: `create_epic`, `edit_epic`, `create_initiative` and `edit_initiative`.
+  Four come with the pull request after it (GRA-902) and do not exist until it merges: `add_item_link`,
+  `remove_item_link`, `add_web_link` and `remove_web_link`. Each mirrors one CLI command and runs the action its API
+  route runs (R1): `reeve epic create`, `reeve epic edit`, `reeve initiative create`, `reeve initiative edit`,
+  `reeve link add` and `reeve link rm` for an item link, and `reeve link add --url` and `reeve link rm --url` for a
+  web link, which the tool removes by its id as the route does, where the CLI finds that id by the URL. Each needs a
+  connection with the `write` scope (R7), counts against the person's limit on changes, and records the client in
+  every activity entry it writes (R9). Each input is a type of its own (R12); the epic and initiative inputs
+  withhold the external reference and attachments, as the story tools do.
+  The conditions these eight were named on, each held by a test: no tool marks or reopens discovery
+  (`no_epic_or_initiative_tool_can_mark_or_reopen_discovery`), adds or removes a blocker
+  (`the_link_tools_gate_nothing_and_no_tool_touches_a_blocker`, which comes with the four link tools) or carries an
+  override reason (`no_tool_takes_an_override_reason_or_another_withheld_field`, which from this pull request on also
+  refuses an input that names a discovery mark or a blocker; `move_story_never_overrides_the_gate`). Not in the set,
+  and needing an observation of their own under R10: promises, urgent marks, and writing a required decision, a
+  sprint or a goal.
+  We decided that `edit_epic` keeps what `reeve epic edit` can do: move an epic to another initiative or out of one.
+  That changes whose discovery mark and required decisions its stories wait on, as `edit_story` already can by
+  putting a story in another epic. It is an edit, not an override: readiness is derived (kb/ADR-0027 R1), no tool
+  carries an override reason, and the epic's `edited` entry names the client and the initiative it left and joined.
+  A story's `edited` entry does not yet name the epic it left and joined (GRA-905).
+  We accepted that a connection approved for "read and change" before either pull request is deployed gains that
+  pull request's tools without a new approval: `write` is R7's scope for everything that changes, the approval page
+  named fewer things when it was approved (until this pull request "create, edit, comment on and move stories"),
+  and R5 ends every such connection within 30 days of its approval.
+  Text in the planner can now steer a model into creating an epic or an initiative, replacing a title or a brief (an
+  `edited` entry keeps no earlier text), moving an epic, or adding or removing an item link or a web link, a URL of
+  that text's choosing included, under the person's name; the client's confirmation and the limit on changes remain
+  the only checks. Briefs, and web link titles and URLs, are text a chat model can now write as well as read, which
+  the operator's privacy statement must cover (`deploy/README.md`). No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0005 (the CLI is the agent surface; R5 allows an MCP server that wraps the same commands)
