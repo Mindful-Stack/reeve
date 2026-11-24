@@ -8,10 +8,11 @@ use reeve_protocol::{ItemLinkDto, ItemLinkType, LinkListingDto};
 use sqlx::{Postgres, Transaction};
 
 /// An item link ready to write: the link as stored, and the level of each of its two items. The one value the
-/// `_in` writers take, and the one place where a level is paired with a key: `new` takes each end as
-/// `(level, key)` in the order the caller named them, builds the stored link (`ItemLink::new`, which puts the
-/// lower key of a `relates_to` first) and keeps each level with its own key through that swap. So no caller
-/// reorders anything, and an activity entry cannot be recorded under the other item's level.
+/// `_in` writers take, and the one place where the two ends are reordered, so a level never parts from its key:
+/// the caller states each end as `(level, key)` once, in the order it named them, and vouches for it; `new` builds
+/// the stored link (`ItemLink::new`, which puts the lower key of a `relates_to` first) and keeps each level with its
+/// own key through that swap. So no caller reorders anything, and an activity entry cannot be recorded under the
+/// other item's level.
 ///
 /// It reads nothing. The caller says that both items exist at those levels: the public handlers look each key up
 /// (`Handlers::item_type_of`), and a handler that created the items in its own transaction (plan apply, GRA-879)
