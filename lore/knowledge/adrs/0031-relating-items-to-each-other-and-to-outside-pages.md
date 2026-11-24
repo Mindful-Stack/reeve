@@ -3,7 +3,7 @@ id: kb/ADR-0031
 title: "ADR-0031: An item link is a named, informational connection between two items; a web link is a titled URL on one item"
 description: "We decided that any two items can be joined by an item link with one of three fixed names, and that an item can carry web links, both informational and kept apart from story blockers, because relating work must never change what the readiness gate reads."
 tags: [adr, reeve, planning, domain, cli]
-status: proposed
+status: accepted
 date: 2026-11-23
 decided_by: [Daniel Thyselius]
 consulted: []
@@ -24,6 +24,7 @@ rfc:
 
 ## Status
 Proposed 2026-11-23.
+Accepted 2026-11-24 by Daniel Thyselius.
 
 ## Context
 The planner relates items in two ways: the hierarchy (kb/ADR-0002) and the story blocker, where one story holds
