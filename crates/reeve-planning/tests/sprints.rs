@@ -3405,7 +3405,7 @@ mod planning_gates {
         };
         let planned = h.sprint_planning().await.unwrap();
         assert_eq!(
-            planned,
+            planned.gates,
             vec![
                 GoalGates {
                     goal_id: ga.id,
@@ -3437,6 +3437,18 @@ mod planning_gates {
                 },
             ]
         );
+        // The harness's settings name one bucket, "Now" (`settings()` in this file); `i` was created in it, and `ga`
+        // links to `e1`, an epic under `i`: the goal reaches the initiative through stored links.
+        assert_eq!(planned.first_bucket.as_deref(), Some("Now"));
+        assert!(
+            planned
+                .first_bucket_initiatives
+                .iter()
+                .any(|b| &b.key == i.key() && b.goals.contains(&ga.id)),
+            "{:?}",
+            planned.first_bucket_initiatives
+        );
+        assert!(planned.initiatives.iter().any(|x| x.key() == i.key()));
     }
 
     /// The read costs the same for one goal and for ten over more stories and decisions: whole-table reads filtered in
@@ -3520,7 +3532,7 @@ mod planning_gates {
             .await
             .unwrap();
         }
-        assert_eq!(h.sprint_planning().await.unwrap().len(), 10);
+        assert_eq!(h.sprint_planning().await.unwrap().gates.len(), 10);
         let ten = super::common::statements(&pool, read).await;
         assert_eq!(one, ten);
     }
