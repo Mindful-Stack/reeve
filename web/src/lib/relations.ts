@@ -20,12 +20,12 @@ export const linkTypeText = (t: ItemLinkType): string => t.replaceAll('_', ' ');
  *  form and the select offers no "is followed by". `satisfies` makes a name the schema gains fail `npm run check`
  *  until it has an entry here; '' is the entry of a name that needs no hint. */
 const HINTS = {
-	follows: 'This {level} comes after the item you pick. To say what comes after this {level}, add the item link from that item.',
+	follows: 'This {level} comes after the item you pick. For the reverse, open the other item and add the item link there.',
 	duplicates: 'This {level} covers the same work as the item you pick.',
 	relates_to: ''
 } satisfies Record<ItemLinkType, string>;
 
-/** What the Add form says under the name select once `type` is chosen, in the words of the item's level; '' for none. */
+/** What the Add form says above its controls once `type` is chosen, in the words of the item's level; '' for none. */
 export function linkTypeHint(type: ItemLinkType, level: ItemType): string {
 	return HINTS[type].replaceAll('{level}', level);
 }

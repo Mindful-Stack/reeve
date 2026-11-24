@@ -18,8 +18,8 @@ describe('LINK_TYPES', () => {
 
 describe('linkTypeHint', () => {
 	it('says what follows states, from this item, in the words of its level, and how to say the reverse', () => {
-		expect(linkTypeHint('follows', 'epic')).toBe('This epic comes after the item you pick. To say what comes after this epic, add the item link from that item.');
-		expect(linkTypeHint('follows', 'story')).toBe('This story comes after the item you pick. To say what comes after this story, add the item link from that item.');
+		expect(linkTypeHint('follows', 'epic')).toBe('This epic comes after the item you pick. For the reverse, open the other item and add the item link there.');
+		expect(linkTypeHint('follows', 'story')).toBe('This story comes after the item you pick. For the reverse, open the other item and add the item link there.');
 	});
 	it('says what duplicates states', () => {
 		expect(linkTypeHint('duplicates', 'initiative')).toBe('This initiative covers the same work as the item you pick.');

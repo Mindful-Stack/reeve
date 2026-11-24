@@ -257,8 +257,10 @@ describe('Relations: item links', () => {
 		// described by the hint for the name chosen.
 		expect(f.querySelector('.subject')!.textContent).toBe('This story');
 		const hint = f.querySelector('.hint')!;
-		expect(hint.textContent).toBe('This story comes after the item you pick. To say what comes after this story, add the item link from that item.');
+		expect(hint.textContent).toBe('This story comes after the item you pick. For the reverse, open the other item and add the item link there.');
 		expect(select.getAttribute('aria-describedby')).toBe(hint.id);
+		// On a row of its own above the controls, where the open search list does not cover it.
+		expect(f.firstElementChild).toBe(hint);
 		// Nothing picked yet: there is nothing to add.
 		expect(f.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
 		await pick('ABC-11', 'ABC-11');

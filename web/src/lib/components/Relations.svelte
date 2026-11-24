@@ -61,7 +61,7 @@
 
 	let addingLink = $state(false);
 	let linkType = $state<ItemLinkType>(LINK_TYPES[0]);
-	/** What the form says under the select for the name chosen; '' for a name that needs no hint. */
+	/** What the form says above its controls for the name chosen; '' for a name that needs no hint. */
 	const hint = $derived(linkTypeHint(linkType, level));
 	let picked = $state<SearchHit | null>(null);
 	/** A refused add, shown in the form; a failed removal, shown under the list. */
@@ -302,6 +302,8 @@
 		     fields inside it. -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form id="{id}-link-form" class="add-form" aria-label="Add item link" onsubmit={addLink} onkeydown={cancelOnEscape(closeLink)}>
+			<!-- First, on a row of its own above the controls: under them the open search list would cover it. -->
+			{#if hint}<p class="muted hint" id="{id}-link-hint">{hint}</p>{/if}
 			<!-- Reads as the sentence the link states: "This story follows <other item>". -->
 			<span class="subject">This {level}</span>
 			<select aria-label="Item link name" aria-describedby={hint ? `${id}-link-hint` : undefined} bind:value={linkType} disabled={busy}>
@@ -313,7 +315,6 @@
 				<button type="button" disabled={busy} onclick={closeLink}>Cancel</button>
 				<button type="submit" disabled={busy || !picked}>Add</button>
 			</span>
-			{#if hint}<p class="muted hint" id="{id}-link-hint">{hint}</p>{/if}
 			{#if linkError}<p class="error" role="alert">{linkError}</p>{/if}
 		</form>
 	{:else}
@@ -492,7 +493,7 @@
 	.informational.idle {
 		position: absolute;
 	}
-	/* A hint takes a row of its own under the controls it explains. */
+	/* A hint takes a row of its own: above the item link controls, under the URL field. */
 	.hint {
 		flex-basis: 100%;
 		font-size: 13px;
