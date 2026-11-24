@@ -33,7 +33,8 @@ pub struct Sprints {
 pub struct SprintPlanning {
     /// Each active and draft goal's gates, by sprint then goal id.
     pub gates: Vec<GoalGates>,
-    /// Every initiative, for the titles and horizons of the ones the gates name.
+    /// Every initiative of the snapshot: the wire assembly takes from it the titles, horizons, target months and
+    /// discovery marks of the ones the gates and the bucket name, and sends nothing else of them.
     pub initiatives: Vec<Initiative>,
     /// `[planning] horizon_buckets[0]` (kb/ADR-0016 R2); None when no bucket is configured.
     pub first_bucket: Option<String>,
