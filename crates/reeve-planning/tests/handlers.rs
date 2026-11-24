@@ -12093,3 +12093,94 @@ async fn an_edit_ahead_of_its_read_never_undoes_a_concurrent_discovery_mark() {
         );
     }
 }
+
+/// The handler that writes an epic edit answers the move it wrote: the initiative left and the one joined, `None`
+/// when the edit did not change the initiative. It is the move its `edited` entry names, and the epic it answers
+/// is the row that write left.
+#[tokio::test]
+async fn an_epic_edit_answers_the_move_it_wrote() {
+    let (_db, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan", false);
+    let a = h
+        .create_initiative(&dan, "a", "A", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let b = h
+        .create_initiative(&dan, "b", "B", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let (a, b) = (a.key().clone(), b.key().clone());
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    let key = e.key().clone();
+    let name =
+        |k: &Option<Key>| serde_json::json!({"initiative": k.as_ref().map(ToString::to_string)});
+    // (the title sent, the initiative sent, the move expected)
+    type Step = (Option<&'static str>, Option<Option<Key>>, Option<EpicMove>);
+    let steps: Vec<Step> = vec![
+        (
+            None,
+            Some(Some(a.clone())),
+            Some(EpicMove {
+                from: None,
+                to: Some(a.clone()),
+            }),
+        ),
+        (Some("Retitled"), None, None),
+        (Some("Same place"), Some(Some(a.clone())), None),
+        (
+            Some("Moved and retitled"),
+            Some(Some(b.clone())),
+            Some(EpicMove {
+                from: Some(a.clone()),
+                to: Some(b.clone()),
+            }),
+        ),
+        (
+            None,
+            Some(None),
+            Some(EpicMove {
+                from: Some(b.clone()),
+                to: None,
+            }),
+        ),
+        (None, Some(None), None),
+    ];
+    let mut version = e.version();
+    for (n, (title, initiative, expected)) in steps.into_iter().enumerate() {
+        let (edited, moved) = h
+            .edit_epic_reporting(
+                &dan,
+                &key,
+                version,
+                title.map(String::from),
+                None,
+                initiative,
+                None,
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(moved, expected, "step {n}");
+        let entry = sink.0.lock().unwrap().last().unwrap().clone();
+        assert_eq!(entry.action, "edited", "step {n}");
+        match &moved {
+            Some(m) => {
+                assert_eq!(entry.payload["from"], name(&m.from), "step {n}");
+                assert_eq!(entry.payload["to"], name(&m.to), "step {n}");
+                assert_eq!(edited.initiative(), m.to.as_ref(), "step {n}");
+            }
+            None => {
+                assert!(entry.payload.get("from").is_none(), "step {n}");
+                assert!(entry.payload.get("to").is_none(), "step {n}");
+            }
+        }
+        version += 1;
+        assert_eq!(edited.version(), version, "step {n}");
+        assert_eq!(
+            edited,
+            h.ports.epics.get_epic(&key).await.unwrap(),
+            "step {n}: the epic answered is the stored one"
+        );
+    }
+}

@@ -5,6 +5,13 @@ use crate::domain::promise::{Clock, Promise};
 use crate::domain::{items::*, urgency::Urgency};
 use reeve_protocol::{EpicDto, ItemType, Key};
 
+/// The move an epic edit wrote: the initiative the epic left and the one it joined (`None`: none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EpicMove {
+    pub from: Option<Key>,
+    pub to: Option<Key>,
+}
+
 impl Handlers {
     pub async fn create_epic(
         &self,
@@ -123,8 +130,7 @@ impl Handlers {
             .await
     }
 
-    /// `edit_epic`, claiming `attachments` for the epic in its transaction (kb/ADR-0022 R2). The `edited` entry names
-    /// every field the edit changed, and the initiative the epic left and the one it joined when the edit moved it.
+    /// `edit_epic`, claiming `attachments` for the epic in its transaction (kb/ADR-0022 R2).
     #[allow(clippy::too_many_arguments)]
     pub async fn edit_epic_attaching(
         &self,
@@ -137,6 +143,36 @@ impl Handlers {
         external_ref: Option<String>,
         attachments: &[Uuid],
     ) -> Result<Epic, HandlerError> {
+        self.edit_epic_reporting(
+            c,
+            key,
+            version,
+            title,
+            brief,
+            initiative,
+            external_ref,
+            attachments,
+        )
+        .await
+        .map(|(x, _)| x)
+    }
+
+    /// `edit_epic_attaching`, and the move this edit wrote (`None`: it did not change the initiative). Answers the
+    /// epic as this write left it, not a later read of it. The `edited` entry names every field the edit changed,
+    /// and the initiative the epic left and the one it joined when the edit moved it: the entry and the answer take
+    /// the move from one value. Public for the server's edit action, whose MCP receipt says where the epic moved.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn edit_epic_reporting(
+        &self,
+        c: &Ctx,
+        key: &Key,
+        version: i64,
+        title: Option<String>,
+        brief: Option<String>,
+        initiative: Option<Option<Key>>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<(Epic, Option<EpicMove>), HandlerError> {
         let attachments = attachment_ids(attachments)?;
         let cur = self.ports.epics.get_epic(key).await?;
         // The version the caller read must be the row read here: the row written below is rebuilt from this read (the
@@ -162,10 +198,14 @@ impl Handlers {
         // required decisions this epic's stories wait on, and a bare `edited` would not tell it from a retitle. A
         // title or a brief is named, never copied: the entry keeps no earlier text. An edit that changes nothing
         // names no field.
+        let moved = (next.initiative() != cur.initiative()).then(|| EpicMove {
+            from: cur.initiative().cloned(),
+            to: next.initiative().cloned(),
+        });
         let fields: Vec<&str> = [
             ("title", next.title() != cur.title()),
             ("brief", next.brief() != cur.brief()),
-            ("initiative", next.initiative() != cur.initiative()),
+            ("initiative", moved.is_some()),
         ]
         .into_iter()
         .filter_map(|(field, changed)| changed.then_some(field))
@@ -174,11 +214,11 @@ impl Handlers {
         if !fields.is_empty() {
             payload["fields"] = serde_json::json!(fields);
         }
-        if next.initiative() != cur.initiative() {
+        if let Some(m) = &moved {
             payload["from"] =
-                serde_json::json!({"initiative": cur.initiative().map(ToString::to_string)});
+                serde_json::json!({"initiative": m.from.as_ref().map(ToString::to_string)});
             payload["to"] =
-                serde_json::json!({"initiative": next.initiative().map(ToString::to_string)});
+                serde_json::json!({"initiative": m.to.as_ref().map(ToString::to_string)});
         }
         let mut tx = self.pool.begin().await?;
         let (r, set) = self
@@ -212,7 +252,18 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.ports.epics.get_epic(key).await?)
+        // The row as this write left it: the update wrote `next` at `version` (the version read, checked above) and
+        // raised it by one.
+        let written = Epic::from_persisted(
+            next.key().clone(),
+            next.title().into(),
+            next.initiative().cloned(),
+            next.brief().into(),
+            next.discovery().cloned(),
+            next.external_ref().map(String::from),
+            version + 1,
+        );
+        Ok((written, moved))
     }
 
     /// One epic with its urgency, from one `REPEATABLE READ READ ONLY` snapshot. Its item links are read on the same

@@ -40,9 +40,9 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
-    Ok(ok(crate::actions::edit_epic(&s, &c.acting(), &key, b)
-        .await?
-        .0))
+    // The move the edit wrote is the MCP receipt's to say; the route answers the epic.
+    let (epic, _moved) = crate::actions::edit_epic(&s, &c.acting(), &key, b).await?;
+    Ok(ok(epic))
 }
 #[utoipa::path(post, path = "/epics/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<EpicDto>)))]
 async fn discovery(

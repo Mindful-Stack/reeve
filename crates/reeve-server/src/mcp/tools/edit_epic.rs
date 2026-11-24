@@ -7,14 +7,15 @@ use crate::{
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{EditEpicInput, EditItem, EpicReceipt, Key};
+use reeve_planning::EpicMove;
+use reeve_protocol::{EditEpicInput, EditItem, EpicReceipt};
 use serde_json::{Value, json};
 
 /// The receipt's note when the edit moved the epic (decision A): where it was moved from and to, and what its
-/// stories now wait on. Built from the action's answer: `from` is the initiative it left, `to` the one it is in now
-/// (None: none). None when neither is set, which a move cannot be.
-fn moved_note(from: Option<&Key>, to: Option<&Key>) -> Option<String> {
-    match (from, to) {
+/// stories now wait on. Built from the move the edit wrote, as the action answers it. None for a move that names
+/// neither initiative, which no edit writes.
+fn moved_note(moved: &EpicMove) -> Option<String> {
+    match (&moved.from, &moved.to) {
         (Some(from), Some(to)) => Some(format!(
             "Moved from {from} to {to}: its stories now wait on {to}'s discovery mark and required decisions."
         )),
@@ -93,7 +94,7 @@ fn run<'a>(
             },
             ..EditItem::default()
         };
-        let (epic, left) = actions::edit_epic(state, who, &input.key, body)
+        let (epic, moved) = actions::edit_epic(state, who, &input.key, body)
             .await
             .map_err(|e| match (e, &named) {
                 // With an initiative named, a missing item may be either.
@@ -106,7 +107,7 @@ fn run<'a>(
                     super::item_write_failed(other, "epic", "get_epic", &input.key, prefix)
                 }
             })?;
-        let note = left.and_then(|from| moved_note(from.as_ref(), epic.initiative.as_ref()));
+        let note = moved.as_ref().and_then(moved_note);
         let mut receipt = EpicReceipt::from(epic);
         receipt.note = note;
         super::sent(receipt)
