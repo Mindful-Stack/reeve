@@ -287,6 +287,15 @@ async fn seed(h: &Harness) -> Seeded {
         json!({"type":"follows","to":active}),
     )
     .await;
+    // A web link (migration 1014, kb/ADR-0031), written with SQL: the route that writes one comes in a later
+    // change, and the round trip compares rows, whoever wrote them.
+    sqlx::query(
+        "INSERT INTO web_links (item_key, title, url) VALUES ($1, 'Scenario page', 'https://example.com/wiki/scenario')",
+    )
+    .bind(&todo)
+    .execute(&h.state.pool)
+    .await
+    .unwrap();
     Seeded { todo, active }
 }
 

@@ -619,6 +619,9 @@ next upload after that.
 
 ### Releases and rollback
 
+Migration 1014 adds the `web_links` table (kb/ADR-0031). As for 1013, a rollback past this release restores the
+pre-release backup (see "Restore after an incident"), and every web link added since that backup is lost.
+
 Migration 1013 adds the `item_links` table (kb/ADR-0031). The server refuses to start on a database that has a
 migration it does not know (the same strict `VersionMissing`), so a rollback past this release restores the
 pre-release backup (see "Restore after an incident"), and every item link added since that backup is lost.
