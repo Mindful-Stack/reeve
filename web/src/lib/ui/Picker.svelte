@@ -1,7 +1,9 @@
 <!-- web/src/lib/ui/Picker.svelte: one searchable picker for epics, initiatives and labels (GRA-641), an editable combobox
-     with list autocomplete (WAI-ARIA APG). It narrows the options it is given and never fetches. Closed, Enter and
-     Escape belong to the surrounding form or drawer; open, they belong to the picker. `value` may be bound (a form field)
-     or passed one way with `onchange` (a URL filter: the pick shows until the URL answers, as a <select> does). -->
+     with list autocomplete (WAI-ARIA APG). It narrows the options it is given and never fetches; a host that fetches its
+     options for the typed text passes `onquery` and gets them shown as they are (components/ItemSearch.svelte). Closed,
+     Enter and Escape belong to the surrounding form or drawer; open, they belong to the picker. `value` may be bound (a
+     form field) or passed one way with `onchange` (a URL filter: the pick shows until the URL answers, as a <select>
+     does). -->
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { narrow, withCurrent, type PickerOption } from '#lib/picker.ts';
@@ -12,7 +14,10 @@
 		value = $bindable(''),
 		empty,
 		disabled = false,
-		onchange
+		onchange,
+		onquery,
+		none = 'No match',
+		more
 	}: {
 		label: string;
 		options: readonly PickerOption[];
@@ -20,6 +25,15 @@
 		empty?: string;
 		disabled?: boolean;
 		onchange?: (value: string) => void;
+		/** Called with the text as it is typed. A host that passes it fetches the options for that text itself, so the
+		 *  picker shows the options it is given and narrows nothing: the server may have matched what a label does not
+		 *  show. */
+		onquery?: (query: string) => void;
+		/** What an open list with no option says, on screen and to a screen reader. */
+		none?: string;
+		/** What an open list with options says after its last one, on screen and to a screen reader: that the host shows
+		 *  only the first of more. Not an option: it cannot be picked. */
+		more?: string;
 	} = $props();
 
 	const id = $props.id();
@@ -31,7 +45,7 @@
 	const all = $derived(withCurrent(options, value));
 	const shown = $derived<readonly PickerOption[]>([
 		...(empty !== undefined && query.trim() === '' ? [{ value: '', label: empty }] : []),
-		...narrow(all, query)
+		...(onquery ? all : narrow(all, query))
 	]);
 	// `withCurrent` holds every non-empty value, so only '' falls through to the empty text.
 	const text = $derived(open ? query : (all.find((o) => o.value === value)?.label ?? empty ?? ''));
@@ -108,6 +122,7 @@
 			if (!open) show();
 			query = e.currentTarget.value;
 			active = 0;
+			onquery?.(query);
 		}}
 		onclick={show}
 		onkeydown={keydown}
@@ -117,7 +132,7 @@
 		<!-- One mousedown handler keeps focus in the input for a press anywhere on the list, its padding and scrollbar
 		     included; otherwise the input blurs and the list closes before the click lands. -->
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<ul class="list" id="{id}-list" role="listbox" aria-label={label} onmousedown={(e) => e.preventDefault()}>
+		<ul class="list" id="{id}-list" role="listbox" aria-label={label} data-more={more} onmousedown={(e) => e.preventDefault()}>
 			{#each shown as o, i}
 				<!-- svelte-ignore a11y_click_events_have_key_events (the input owns the keyboard: APG combobox) -->
 				<li
@@ -135,10 +150,10 @@
 			{/each}
 		</ul>
 	{:else if open}
-		<p class="none" aria-hidden="true">No match</p>
+		<p class="none" aria-hidden="true">{none}</p>
 	{/if}
 	<!-- Always present, so a screen reader hears the text change; a live region inserted with its text is skipped. -->
-	<span class="visually-hidden" role="status">{open && !shown.length ? 'No match' : ''}</span>
+	<span class="visually-hidden" role="status">{!open ? '' : shown.length ? (more ?? '') : none}</span>
 </span>
 
 <style>
@@ -191,6 +206,15 @@
 		padding: 4px 0;
 		overflow-y: auto;
 		list-style: none;
+	}
+	/* The host's "there are more" line, after the last option. Drawn from the attribute, so the listbox still holds
+	   options only; a screen reader hears the same words from the status region. */
+	.list[data-more]::after {
+		content: attr(data-more);
+		display: block;
+		padding: 6px 10px;
+		color: var(--muted);
+		font-size: 13px;
 	}
 	li {
 		padding: 6px 10px;
