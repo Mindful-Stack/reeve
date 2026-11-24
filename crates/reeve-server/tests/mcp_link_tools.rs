@@ -60,6 +60,10 @@ async fn links_of(h: &Harness, key: &str) -> Value {
     api(h, &h.admin_token, &format!("/api/v1/items/{key}/links")).await["links"].clone()
 }
 
+async fn web_links_of(h: &Harness, key: &str) -> Value {
+    api(h, &h.admin_token, &format!("/api/v1/items/{key}/links")).await["web_links"].clone()
+}
+
 /// The last entry about `key`, as `(action, actor, via, client)`.
 async fn last_entry(h: &Harness, key: &str) -> (String, String, String, Value) {
     trail(h, key).await.pop().unwrap()
@@ -333,4 +337,263 @@ async fn remove_item_link_removes_the_link_named_as_it_was_added() {
     )
     .await;
     assert_eq!(again["changed"], false);
+}
+
+#[tokio::test]
+async fn add_web_link_writes_what_the_route_writes_and_answers_its_id() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let it = items(h).await;
+    let scenario = "https://example.com/wiki/scenario";
+    let receipt = answer(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.epic, "title": "  Scenario page ", "url": "HTTPS://Example.com/wiki/scenario"}),
+    )
+    .await;
+    let id = receipt["id"].as_i64().unwrap();
+    // The receipt carries the title and the URL as stored, not as sent.
+    assert_eq!(
+        receipt,
+        json!({"item": it.epic, "id": id, "title": "Scenario page", "url": scenario, "changed": true})
+    );
+    assert_eq!(
+        web_links_of(h, &it.epic).await,
+        json!([{"id": id, "title": "Scenario page", "url": scenario}])
+    );
+    assert_eq!(
+        last_entry(h, &it.epic).await,
+        by_dan_through_the_flow("web_link_added")
+    );
+    // The same web link through the route, on another item, is stored the same: one action behind both.
+    let (status, by_route) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "POST",
+        &format!("/api/v1/items/{}/web-links", it.a),
+        Some(json!({"title": "  Scenario page ", "url": "HTTPS://Example.com/wiki/scenario"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{by_route}");
+    assert_eq!(
+        json!([by_route["value"][0]["title"], by_route["value"][0]["url"]]),
+        json!([receipt["title"], receipt["url"]])
+    );
+
+    // A repeat, in another spelling of the URL: the same id, nothing written.
+    let entries_before = trail(h, &it.epic).await.len();
+    let repeat = answer(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.epic, "title": "Scenario page", "url": "https://EXAMPLE.com/wiki/scenario"}),
+    )
+    .await;
+    assert_eq!(
+        repeat,
+        json!({"item": it.epic, "id": id, "title": "Scenario page", "url": scenario, "changed": false,
+               "note": "Nothing was written: the item already has this web link."})
+    );
+    assert_eq!(trail(h, &it.epic).await.len(), entries_before);
+
+    // What the planner refuses is told in its words, and nothing is written.
+    let said = |arguments: Value| refusal(h, &dan, "add_web_link", arguments);
+    assert_eq!(
+        said(json!({"key": it.epic, "title": "Scenario", "url": scenario})).await,
+        "this item already has a web link to that URL, titled \"Scenario page\": remove it first, then add it with the new title"
+    );
+    let url_rule = "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password";
+    for bad in [
+        "ftp://example.com/file",
+        "https://dan:secret@example.com/",
+        "example.com",
+    ] {
+        assert_eq!(
+            said(json!({"key": it.epic, "title": "Bad", "url": bad})).await,
+            url_rule,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        said(json!({"key": it.epic, "title": " ", "url": "https://example.com/x"})).await,
+        "a web link's title must be 1 to 200 characters on one line, with no tab or other control character"
+    );
+    assert_eq!(
+        said(json!({"key": "TST-999", "title": "Page", "url": "https://example.com/x"})).await,
+        "No item with key \"TST-999\". Keys look like TST-123."
+    );
+    for extra in ["type", "to", "id"] {
+        let mut arguments =
+            json!({"key": it.epic, "title": "Page", "url": "https://example.com/x"});
+        arguments[extra] = json!("x");
+        assert!(
+            said(arguments)
+                .await
+                .starts_with("Invalid arguments: unknown field")
+        );
+    }
+    assert_eq!(
+        rows(h, "web_links").await,
+        2,
+        "the epic's and the story's, and no other"
+    );
+}
+
+#[tokio::test]
+async fn remove_web_link_removes_by_id_on_its_own_item_only() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let it = items(h).await;
+    let add = |item: &str, title: &str, url: &str| {
+        answer(
+            h,
+            &dan,
+            "add_web_link",
+            json!({"key": item, "title": title, "url": url}),
+        )
+    };
+    let on_epic = add(&it.epic, "Spec", "https://example.com/spec").await["id"]
+        .as_i64()
+        .unwrap();
+    let on_story = add(&it.a, "Board", "https://example.com/board").await["id"]
+        .as_i64()
+        .unwrap();
+
+    // Another item's id: nothing is removed, and the receipt says where ids are shown.
+    let entries_before = trail(h, &it.epic).await.len();
+    let wrong = answer(
+        h,
+        &dan,
+        "remove_web_link",
+        json!({"key": it.epic, "id": on_story}),
+    )
+    .await;
+    assert_eq!(
+        wrong,
+        json!({"item": it.epic, "id": on_story, "changed": false,
+               "note": format!("Nothing was removed: {} has no web link with id {on_story}. get_story, get_epic and get_initiative show each web link's `id`.", it.epic)})
+    );
+    assert_eq!(rows(h, "web_links").await, 2);
+    assert_eq!(trail(h, &it.epic).await.len(), entries_before);
+
+    let removed = answer(
+        h,
+        &dan,
+        "remove_web_link",
+        json!({"key": it.epic, "id": on_epic}),
+    )
+    .await;
+    assert_eq!(
+        removed,
+        json!({"item": it.epic, "id": on_epic, "changed": true})
+    );
+    assert_eq!(web_links_of(h, &it.epic).await, json!([]));
+    assert_eq!(
+        web_links_of(h, &it.a).await[0]["id"],
+        json!(on_story),
+        "the other item's web link is untouched"
+    );
+    assert_eq!(
+        last_entry(h, &it.epic).await,
+        by_dan_through_the_flow("web_link_removed")
+    );
+    // Again, and on an item that does not exist.
+    assert_eq!(
+        answer(
+            h,
+            &dan,
+            "remove_web_link",
+            json!({"key": it.epic, "id": on_epic})
+        )
+        .await["changed"],
+        false
+    );
+    assert_eq!(
+        refusal(
+            h,
+            &dan,
+            "remove_web_link",
+            json!({"key": "TST-999", "id": on_story})
+        )
+        .await,
+        "No item with key \"TST-999\". Keys look like TST-123."
+    );
+    // By id only: a URL is not an argument.
+    let said = refusal(
+        h,
+        &dan,
+        "remove_web_link",
+        json!({"key": it.a, "url": "https://example.com/board"}),
+    )
+    .await;
+    assert!(said.starts_with("Invalid arguments:"), "{said}");
+    assert_eq!(rows(h, "web_links").await, 1);
+}
+
+/// A receipt carries the longest web link the planner stores, whole: a title of 200 characters and a URL of
+/// 1 000. Nothing in a web link's receipt is cut (a cut URL is another address), and the receipt of the largest
+/// one is still a small answer.
+#[tokio::test]
+async fn a_web_link_receipt_carries_the_longest_title_and_url_whole() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let it = items(h).await;
+    // Exactly at both limits, in the form the planner stores (lower-case host, nothing to encode), so what is sent
+    // is what is stored. The title is 200 two-byte characters: characters are counted, not bytes.
+    let prefix = "https://example.com/";
+    let url = format!("{prefix}{}", "a".repeat(1_000 - prefix.len()));
+    let title = "å".repeat(200);
+    assert_eq!(
+        (url.chars().count(), title.chars().count()),
+        (1_000, 200),
+        "the control"
+    );
+    let receipt = answer(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.epic, "title": title, "url": url}),
+    )
+    .await;
+    assert_eq!(
+        receipt,
+        json!({"item": it.epic, "id": receipt["id"], "title": title, "url": url, "changed": true})
+    );
+    assert!(
+        !receipt.to_string().contains("[cut:"),
+        "nothing in a web link's receipt is cut"
+    );
+    assert!(
+        receipt.to_string().len() < 2_000,
+        "{} bytes",
+        receipt.to_string().len()
+    );
+    // The control: one character more is the planner's refusal, so 1 000 really is the most a receipt can hold.
+    let said = refusal(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.epic, "title": "Too long", "url": format!("{url}a")}),
+    )
+    .await;
+    assert_eq!(
+        said,
+        "a web link's URL must start with http:// or https://, be at most 1000 characters and hold no user name or password"
+    );
+    // A repeat answers the same whole URL.
+    let repeat = answer(
+        h,
+        &dan,
+        "add_web_link",
+        json!({"key": it.epic, "title": title, "url": url}),
+    )
+    .await;
+    assert_eq!(
+        (repeat["changed"].clone(), repeat["url"].clone()),
+        (json!(false), json!(url))
+    );
 }

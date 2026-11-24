@@ -8,7 +8,6 @@ use reeve_protocol::{
 };
 
 /// What writing an item link answers: the list its route sends, and beside it what a tool's receipt needs.
-#[allow(dead_code)] // read by the MCP tools, added next
 pub(crate) struct ItemLinkWritten {
     /// The item named first, as resolved: its level and its key.
     pub(crate) from: (ItemType, Key),
@@ -21,7 +20,6 @@ pub(crate) struct ItemLinkWritten {
 }
 
 /// What writing a web link answers: the list its route sends, and beside it what a tool's receipt needs.
-#[allow(dead_code)] // read by the MCP tools, added next
 pub(crate) struct WebLinkWritten {
     /// The item, as resolved.
     pub(crate) item: Key,
