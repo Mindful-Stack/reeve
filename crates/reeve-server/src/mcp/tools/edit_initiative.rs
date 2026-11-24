@@ -14,10 +14,15 @@ pub(super) fn tool(key_prefix: &str, horizons: &[String]) -> Tool {
     input_schema["properties"]["key"]["description"] = json!(format!(
         "The initiative's key, for example {key_prefix}-12."
     ));
-    input_schema["properties"]["horizon"]["description"] = json!(format!(
-        "A new horizon, exactly one of: {}.",
-        horizons.join(", ")
-    ));
+    input_schema["properties"]["horizon"]["description"] = json!(if horizons.is_empty() {
+        "A new horizon (how far off the team plans this initiative). This planner has no horizons configured."
+            .to_string()
+    } else {
+        format!(
+            "A new horizon (how far off the team plans this initiative), exactly one of: {}.",
+            horizons.join(", ")
+        )
+    });
     Tool {
         name: "edit_initiative",
         title: "Edit an initiative",

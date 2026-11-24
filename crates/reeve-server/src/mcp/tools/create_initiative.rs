@@ -10,10 +10,16 @@ use serde_json::{Value, json};
 
 pub(super) fn tool(horizons: &[String]) -> Tool {
     let mut input_schema = super::input_schema::<CreateInitiativeInput>();
-    input_schema["properties"]["horizon"]["description"] = json!(format!(
-        "The planning horizon, exactly one of: {}.",
-        horizons.join(", ")
-    ));
+    // The horizon is required, and nothing else tells the model what it is or which values this planner takes.
+    input_schema["properties"]["horizon"]["description"] = json!(if horizons.is_empty() {
+        "The horizon: how far off the team plans this initiative. This planner has no horizons configured."
+            .to_string()
+    } else {
+        format!(
+            "The horizon: how far off the team plans this initiative. Exactly one of, in this planner's order: {}. When the person has not said which, ask; do not pick one.",
+            horizons.join(", ")
+        )
+    });
     Tool {
         name: "create_initiative",
         title: "Create an initiative",

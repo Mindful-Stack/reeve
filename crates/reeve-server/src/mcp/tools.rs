@@ -762,4 +762,43 @@ mod tests {
             );
         }
     }
+
+    /// The horizon is required to create an initiative, and only its description can say what it is and which
+    /// values this planner takes; an owner is an address a model must not invent. The texts are compared whole.
+    #[test]
+    fn the_initiative_tools_explain_the_horizon_and_the_owner() {
+        let described = |tools: &[Tool], name: &str, property: &str| {
+            let tool = tools.iter().find(|t| t.name == name).unwrap();
+            tool.input_schema["properties"][property]["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let tools = tools();
+        assert_eq!(
+            described(&tools, "create_initiative", "horizon"),
+            "The horizon: how far off the team plans this initiative. Exactly one of, in this planner's order: Now, Later. When the person has not said which, ask; do not pick one."
+        );
+        assert_eq!(
+            described(&tools, "edit_initiative", "horizon"),
+            "A new horizon (how far off the team plans this initiative), exactly one of: Now, Later."
+        );
+        let none = registry("TST", &[]);
+        assert_eq!(
+            described(&none, "create_initiative", "horizon"),
+            "The horizon: how far off the team plans this initiative. This planner has no horizons configured."
+        );
+        assert_eq!(
+            described(&none, "edit_initiative", "horizon"),
+            "A new horizon (how far off the team plans this initiative). This planner has no horizons configured."
+        );
+        assert_eq!(
+            described(&tools, "create_initiative", "owner"),
+            "The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person."
+        );
+        assert_eq!(
+            described(&tools, "edit_initiative", "owner"),
+            "A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`."
+        );
+    }
 }

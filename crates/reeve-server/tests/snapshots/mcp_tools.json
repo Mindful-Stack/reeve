@@ -652,7 +652,7 @@
           "type": "string"
         },
         "horizon": {
-          "description": "The planning horizon, exactly one of: Now, Next, Upcoming, Later, Won't do.",
+          "description": "The horizon: how far off the team plans this initiative. Exactly one of, in this planner's order: Now, Next, Upcoming, Later, Won't do. When the person has not said which, ask; do not pick one.",
           "type": "string"
         },
         "idempotency_key": {
@@ -662,7 +662,7 @@
           "type": "string"
         },
         "owner": {
-          "description": "The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address.",
+          "description": "The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.",
           "type": "string"
         },
         "target_month": {
@@ -709,7 +709,7 @@
           "type": "boolean"
         },
         "horizon": {
-          "description": "A new horizon, exactly one of: Now, Next, Upcoming, Later, Won't do.",
+          "description": "A new horizon (how far off the team plans this initiative), exactly one of: Now, Next, Upcoming, Later, Won't do.",
           "type": "string"
         },
         "key": {
@@ -717,7 +717,7 @@
           "type": "string"
         },
         "owner": {
-          "description": "A new owner: the email of someone who can sign in here. Set it only when the person names an owner. Not together with `clear_owner`.",
+          "description": "A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.",
           "type": "string"
         },
         "target_month": {

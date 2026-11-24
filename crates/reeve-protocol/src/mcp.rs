@@ -554,13 +554,13 @@ pub struct CreateInitiativeInput {
     pub idempotency_key: String,
     /// A short title, at most 200 characters.
     pub title: String,
-    /// The planning horizon: one of this instance's horizon buckets.
+    /// The horizon: how far off the team plans this initiative, one of this planner's horizons. The tool's schema lists them.
     pub horizon: String,
     /// The brief, in Markdown: why this initiative exists.
     pub brief: Option<String>,
     /// The target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused.
     pub target_month: Option<String>,
-    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address.
+    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.
     pub owner: Option<String>,
 }
 
@@ -577,14 +577,14 @@ pub struct EditInitiativeInput {
     pub title: Option<String>,
     /// A new brief, in Markdown, replacing the whole text: to change a part, send the brief exactly as get_initiative gave it with only that part changed. Never send a text that ends with `[cut: N more characters]`.
     pub brief: Option<String>,
-    /// A new horizon: one of this instance's horizon buckets.
+    /// A new horizon (how far off the team plans this initiative), one of this planner's horizons. The tool's schema lists them.
     pub horizon: Option<String>,
     /// A new target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused. Not together with `clear_target_month`.
     pub target_month: Option<String>,
     /// True removes the target month. Not together with `target_month`.
     #[serde(default)]
     pub clear_target_month: bool,
-    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner. Not together with `clear_owner`.
+    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.
     pub owner: Option<String>,
     /// True removes the owner. Not together with `owner`.
     #[serde(default)]
