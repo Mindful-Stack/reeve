@@ -147,7 +147,7 @@ We decided that the Reeve server is the OAuth authorization server for its own r
   free text written by people that a chat model now reads, which the tool descriptions say and the operator's
   privacy statement must cover (`deploy/README.md`). No tool was added, so R10's set stands. No trigger fired; the
   decision holds.
-- 2026-11-24 (GRA-901, GRA-902, https://github.com/Mindful-Stack/reeve/pull/<n>): R10's set grows by eight tools, named here as R10
+- 2026-11-24 (GRA-901, GRA-902, https://github.com/Mindful-Stack/reeve/pull/79): R10's set grows by eight tools, named here as R10
   requires. Four come with this pull request: `create_epic`, `edit_epic`, `create_initiative` and `edit_initiative`.
   Four come with the pull request after it (GRA-902) and do not exist until it merges: `add_item_link`,
   `remove_item_link`, `add_web_link` and `remove_web_link`. Each mirrors one CLI command and runs the action its API
