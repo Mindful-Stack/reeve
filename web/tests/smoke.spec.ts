@@ -1227,6 +1227,8 @@ test('a wide table in a description or a comment scrolls inside its wrapper: the
 		await expect(page.getByTestId('story-drawer').getByRole('region', { name: WIDE_TABLE_NAME })).toHaveCount(2);
 		await expectTablesScrollInside(page, `${drawer} .brief`, 1, drawer);
 		await expectTablesScrollInside(page, `${drawer} .comment-body`, 1, drawer);
+		// In a comment the table keeps the comment's own, tighter, spacing between blocks.
+		expect(await page.locator(`${drawer} .comment-body [data-table-scroll]`).evaluate((w) => getComputedStyle(w).margin)).toBe('8px 0px 0px');
 		// A decision's thread, in the decision drawer.
 		await page.goto(`/decisions?decision=${decision.id}`);
 		const decisionDrawer = '[data-testid="decision-drawer"]';

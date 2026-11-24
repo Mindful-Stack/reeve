@@ -37,6 +37,10 @@
 	.comment-body :global(blockquote) {
 		margin: 0.25rem 0 0;
 	}
+	/* A table keeps the comment's own spacing between blocks, a little looser than a paragraph's. */
+	.comment-body :global([data-table-scroll]) {
+		margin: 0.5rem 0 0;
+	}
 	.comment-body :global(:first-child) {
 		margin-top: 0;
 	}
