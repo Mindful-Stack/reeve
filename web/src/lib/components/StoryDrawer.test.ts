@@ -6,7 +6,7 @@ import { page } from '$app/state';
 import { decisionHref } from '#lib/drawer.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Story } from '#lib/api/types.ts';
-import { activity, decision, goal, sprint, sprintView, story as storyDto } from '#lib/test/fixtures.ts';
+import { activity, decision, goal, itemLink, sprint, sprintView, story as storyDto, webLink } from '#lib/test/fixtures.ts';
 import { failure, json } from '#lib/test/net.ts';
 import { discardDraft } from '#lib/report.svelte.ts';
 import { resetDecisionDraftsForTests } from '#lib/decisionDrafts.svelte.ts';
@@ -238,6 +238,62 @@ describe('StoryDrawer removes a block', () => {
 		const b = document.body.querySelector<HTMLButtonElement>('button[aria-label="Remove block by RV-6"]');
 		expect(b).not.toBeNull();
 		expect(b!.disabled).toBe(false);
+	});
+});
+
+describe('StoryDrawer relations', () => {
+	it('lists the blockers first under Relations, with their controls, then the story\'s item links and its web links', async () => {
+		net.answers.of = (url, method) =>
+			url.pathname === '/api/v1/stories/RV-5'
+				? storyDto({
+						...story,
+						blocked_by: ['RV-6'],
+						links: [itemLink({ type: 'follows', direction: 'in', label: 'is followed by', item: { key: 'RV-9', level: 'story', title: 'Dunning' } })],
+						web_links: [webLink({ id: 4, title: 'Scenario page', url: 'https://example.com/wiki/scenario' })]
+					})
+				: answer(url, method);
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'RV-5', onclose: () => {} } });
+		const section = (name: string) => [...document.body.querySelectorAll('section')].find((s) => s.querySelector('h3')?.textContent === name);
+		const relations = await vi.waitFor(() => {
+			flushSync();
+			const s = section('Relations');
+			expect(s).toBeDefined();
+			return s!;
+		});
+		await vi.waitFor(() => expect(net.requested.some((u) => u.pathname === '/api/v1/activity')).toBe(true));
+		flushSync();
+		expect([...relations.querySelectorAll('.label')].map((l) => l.textContent)).toEqual(['blocked by', 'is followed by']);
+		// The blocker controls moved in whole.
+		expect(relations.querySelector('button[aria-label="Remove block by RV-6"]')).not.toBeNull();
+		expect(relations.querySelector('#drawer-blocker-edit')?.textContent?.trim()).toBe('+ Add blocker');
+		// The item link opens the other story over the same view; its Remove names the server's wording.
+		expect(relations.querySelector('a[href="/board?story=RV-9"]')?.textContent).toContain('Dunning');
+		expect(relations.querySelector('button[aria-label="Remove item link: is followed by RV-9"]')).not.toBeNull();
+		expect(section('Web links')?.querySelector('a[href="https://example.com/wiki/scenario"]')?.textContent).toContain('Scenario page');
+		// One place for blockers: the old section is gone, not doubled.
+		expect([...document.body.querySelectorAll('h3')].map((h) => h.textContent?.trim())).not.toContain('Blocked by');
+		expect(document.body.querySelectorAll('button[aria-label="Remove block by RV-6"]')).toHaveLength(1);
+	});
+
+	it('writes with the story\'s own key when the drawer was opened by an external reference', async () => {
+		net.answers.of = (url, method) => {
+			if (method === 'DELETE') return [];
+			if (url.pathname === '/api/v1/stories/SCRUM-11') return storyDto({ ...story, web_links: [webLink({ id: 4, title: 'Scenario page' })] });
+			return answer(url, method);
+		};
+		app = mount(StoryDrawer, { target: document.body, props: { storyKey: 'SCRUM-11', onclose: () => {} } });
+		const remove = await vi.waitFor(() => {
+			flushSync();
+			const b = document.body.querySelector<HTMLButtonElement>('button[aria-label="Remove web link Scenario page"]');
+			expect(b).not.toBeNull();
+			return b!;
+		});
+		const before = net.sent.length;
+		remove.click();
+		await vi.waitFor(() => expect(net.sent.slice(before).some((r) => r.method === 'DELETE')).toBe(true));
+		expect(net.sent.slice(before).find((r) => r.method === 'DELETE')).toEqual({ method: 'DELETE', path: '/api/v1/items/RV-5/web-links/4' });
+		// The drawer refetches its story after the write.
+		await vi.waitFor(() => expect(net.sent.slice(before).some((r) => r.method === 'GET' && r.path === '/api/v1/stories/SCRUM-11')).toBe(true));
 	});
 });
 
