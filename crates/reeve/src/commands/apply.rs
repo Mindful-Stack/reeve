@@ -18,7 +18,8 @@ use std::fmt::Write;
 ///
 /// A plan may also relate its items: `links` is a list of `{from, type, to}` between items of any level, with type
 /// follows, duplicates or relates_to, and `web_links` is a list of `{on, title, url}`. `from` is the item that
-/// follows: `{from: step-2, type: follows, to: step-1}` means step-2 comes after step-1.
+/// follows: `{from: step-2, type: follows, to: step-1}` means step-2 comes after step-1. A plan holds at most 500
+/// item links and 500 web links; split a larger one into several plans.
 ///
 /// Item links are informational: to hold a story back, list it under `blocks` as `{story, blocked_by}`. A plan
 /// written from another tool's data puts a blocking relation under `blocks` or leaves it out, never under `links`

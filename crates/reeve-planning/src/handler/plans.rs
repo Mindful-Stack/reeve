@@ -23,8 +23,8 @@ use crate::domain::items::*;
 use crate::domain::web_link::{WebLink, WebLinkError};
 use crate::ports::StoredWebLink;
 use reeve_protocol::{
-    ApplyPlan, DeliveryState, Kind, PlanApplied, PlanLink, PlanWebLink, PlannedBlock,
-    PlannedDecision, PlannedItem, PlannedLink, PlannedWebLink,
+    ApplyPlan, DeliveryState, Kind, MAX_PLAN_ITEM_LINKS, MAX_PLAN_WEB_LINKS, PlanApplied, PlanLink,
+    PlanWebLink, PlannedBlock, PlannedDecision, PlannedItem, PlannedLink, PlannedWebLink,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -550,6 +550,21 @@ impl Handlers {
                 b.blocked_by.clone(),
                 Some(ItemType::Story),
                 format!("{at}: story {:?}", b.blocked_by),
+            ));
+        }
+
+        // A plan is one request, answered within a client's timeout: the two lists are bounded. An oversize list
+        // is still checked entry by entry, so its other problems come back in the same answer.
+        if p.links.len() > MAX_PLAN_ITEM_LINKS {
+            errors.push(format!(
+                "a plan holds at most {MAX_PLAN_ITEM_LINKS} item links; this one has {}",
+                p.links.len()
+            ));
+        }
+        if p.web_links.len() > MAX_PLAN_WEB_LINKS {
+            errors.push(format!(
+                "a plan holds at most {MAX_PLAN_WEB_LINKS} web links; this one has {}",
+                p.web_links.len()
             ));
         }
 

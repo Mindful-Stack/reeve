@@ -1479,11 +1479,14 @@ export interface components {
             initiatives?: components["schemas"]["PlanInitiative"][];
             /**
              * @description Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`
-             *     does that.
+             *     does that. At most 500 in one plan; more is a validation error.
              */
             links?: components["schemas"]["PlanLink"][];
             stories?: components["schemas"]["PlanStory"][];
-            /** @description Web links (kb/ADR-0031): titled URLs on items of any level. */
+            /**
+             * @description Web links (kb/ADR-0031): titled URLs on items of any level. At most 500 in one plan; more is a validation
+             *     error.
+             */
             web_links?: components["schemas"]["PlanWebLink"][];
         };
         ApproveConnection: {

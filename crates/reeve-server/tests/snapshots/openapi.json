@@ -277,7 +277,7 @@
             "type": "array"
           },
           "links": {
-            "description": "Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`\ndoes that.",
+            "description": "Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`\ndoes that. At most 500 in one plan; more is a validation error.",
             "items": {
               "$ref": "#/components/schemas/PlanLink"
             },
@@ -290,7 +290,7 @@
             "type": "array"
           },
           "web_links": {
-            "description": "Web links (kb/ADR-0031): titled URLs on items of any level.",
+            "description": "Web links (kb/ADR-0031): titled URLs on items of any level. At most 500 in one plan; more is a validation\nerror.",
             "items": {
               "$ref": "#/components/schemas/PlanWebLink"
             },

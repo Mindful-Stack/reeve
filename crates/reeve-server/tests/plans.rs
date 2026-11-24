@@ -994,3 +994,71 @@ async fn a_plan_name_moved_to_another_level_is_refused_before_anything_is_writte
     assert_eq!(st, 200, "{b}");
     assert_eq!(b["value"]["items"][0]["created"], true, "{b}");
 }
+
+/// A plan holds at most 500 item links and 500 web links. One more of either is a validation error, reported with
+/// the plan's other problems, and nothing is written. Exactly 500 of each is applied.
+#[tokio::test]
+async fn a_plan_holds_at_most_500_item_links_and_500_web_links() {
+    let h = harness().await;
+    // 33 stories give 528 pairs, so 500 item links between distinct pairs; web link `n` is on story `n % 33`.
+    let stories: Vec<_> = (0..33)
+        .map(|n| json!({"name": format!("s{n}"), "title": format!("S{n}")}))
+        .collect();
+    let pairs: Vec<(usize, usize)> = (0..33)
+        .flat_map(|a| (a + 1..33).map(move |b| (a, b)))
+        .collect();
+    let links = |n: usize| -> Vec<_> {
+        pairs[..n]
+            .iter()
+            .map(|(a, b)| json!({"from": format!("s{a}"), "type": "relates_to", "to": format!("s{b}")}))
+            .collect()
+    };
+    let web_links = |n: usize| -> Vec<_> {
+        (0..n)
+            .map(|i| {
+                json!({"on": format!("s{}", i % 33), "title": format!("Page {i}"),
+                       "url": format!("https://example.com/{i}")})
+            })
+            .collect()
+    };
+
+    let mut too_many = stories.clone();
+    too_many.push(json!({"name": "lost", "title": "Lost", "epic": "nowhere"}));
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "big", "stories": too_many, "links": links(501), "web_links": web_links(502)}),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    let m = b["message"].as_str().unwrap();
+    for want in [
+        "a plan holds at most 500 item links; this one has 501",
+        "a plan holds at most 500 web links; this one has 502",
+        "story \"lost\": epic \"nowhere\"",
+    ] {
+        assert!(m.contains(want), "missing {want:?} in {m}");
+    }
+    assert_eq!(
+        (
+            rows(&h, "stories").await,
+            rows(&h, "item_links").await,
+            rows(&h, "web_links").await
+        ),
+        (0, 0, 0),
+        "nothing was written"
+    );
+
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({"id": "big", "stories": stories, "links": links(500), "web_links": web_links(500)}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(
+        (rows(&h, "item_links").await, rows(&h, "web_links").await),
+        (500, 500)
+    );
+}

@@ -4,6 +4,11 @@ use crate::{enums::*, ids::Key, links::ItemLinkType};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// The most item links one plan may hold (`ApplyPlan::links`); one more fails the validation.
+pub const MAX_PLAN_ITEM_LINKS: usize = 500;
+/// The most web links one plan may hold (`ApplyPlan::web_links`); one more fails the validation.
+pub const MAX_PLAN_WEB_LINKS: usize = 500;
+
 /// Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
 /// or external reference. The whole plan is validated before anything is written, and applying the same plan (`id`)
 /// again creates nothing: every write is keyed `plan:<id>:<name>`. Unknown fields are refused, so a typo is an error,
@@ -24,10 +29,11 @@ pub struct ApplyPlan {
     #[serde(default)]
     pub blocks: Vec<PlanBlock>,
     /// Item links (kb/ADR-0031) between items of any level. Informational: a link never holds work back; `blocks`
-    /// does that.
+    /// does that. At most 500 in one plan; more is a validation error.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<PlanLink>,
-    /// Web links (kb/ADR-0031): titled URLs on items of any level.
+    /// Web links (kb/ADR-0031): titled URLs on items of any level. At most 500 in one plan; more is a validation
+    /// error.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub web_links: Vec<PlanWebLink>,
 }
