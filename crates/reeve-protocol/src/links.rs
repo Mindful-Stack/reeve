@@ -159,8 +159,9 @@ pub struct WebLinkDto {
     pub url: String,
 }
 
-/// `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming; the URL is `http` or `https`
-/// and at most 1 000 characters as stored. Any other field is refused rather than ignored.
+/// `POST /items/{key}/web-links`. The title is 1 to 200 characters after trimming, on one line (no control
+/// character); the URL is `http` or `https` and at most 1 000 characters as stored. Any other field is refused
+/// rather than ignored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AddWebLink {
