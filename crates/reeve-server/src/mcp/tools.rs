@@ -786,7 +786,7 @@ mod tests {
         let none = registry("TST", &[]);
         assert_eq!(
             described(&none, "create_initiative", "horizon"),
-            "The horizon: how far off the team plans this initiative. This planner has no horizons configured."
+            "The horizon: how far off the team plans this initiative. This planner has no horizons configured, so an initiative cannot be created here: tell the person."
         );
         assert_eq!(
             described(&none, "edit_initiative", "horizon"),

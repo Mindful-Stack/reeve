@@ -18,13 +18,13 @@ use serde_json::{Value, json};
 fn moved_note(moved: &EpicMove) -> Option<String> {
     match (&moved.from, &moved.to) {
         (Some(from), Some(to)) => Some(format!(
-            "Moved from {from} to {to}: whether its stories are ready now depends on {to}'s discovery mark and required decisions, no longer on {from}'s."
+            "Moved from {from} to {to}: its stories' readiness now depends on {to}'s discovery mark and required decisions, and no longer on {from}'s."
         )),
         (None, Some(to)) => Some(format!(
-            "Moved to {to}: whether its stories are ready now also depends on {to}'s discovery mark and required decisions."
+            "Moved to {to}: its stories' readiness now also depends on {to}'s discovery mark and required decisions."
         )),
         (Some(from), None) => Some(format!(
-            "Taken out of {from}: whether its stories are ready no longer depends on {from}'s discovery mark and required decisions."
+            "Taken out of {from}: its stories' readiness no longer depends on {from}'s discovery mark and required decisions."
         )),
         (None, None) => None,
     }

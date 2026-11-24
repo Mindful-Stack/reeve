@@ -254,7 +254,7 @@ async fn edit_epic_changes_only_what_it_names_and_keeps_the_discovery_mark() {
     assert_eq!(
         moved_in["note"],
         json!(format!(
-            "Moved to {a}: whether its stories are ready now also depends on {a}'s discovery mark and required decisions."
+            "Moved to {a}: its stories' readiness now also depends on {a}'s discovery mark and required decisions."
         ))
     );
     assert_eq!(
@@ -281,7 +281,7 @@ async fn edit_epic_changes_only_what_it_names_and_keeps_the_discovery_mark() {
     assert_eq!(
         moved_on["note"],
         json!(format!(
-            "Moved from {a} to {b}: whether its stories are ready now depends on {b}'s discovery mark and required decisions, no longer on {a}'s."
+            "Moved from {a} to {b}: its stories' readiness now depends on {b}'s discovery mark and required decisions, and no longer on {a}'s."
         ))
     );
     assert_eq!(epic(h, &made).await["initiative"], json!(b));
@@ -300,7 +300,7 @@ async fn edit_epic_changes_only_what_it_names_and_keeps_the_discovery_mark() {
     assert_eq!(
         detached["note"],
         json!(format!(
-            "Taken out of {b}: whether its stories are ready no longer depends on {b}'s discovery mark and required decisions."
+            "Taken out of {b}: its stories' readiness no longer depends on {b}'s discovery mark and required decisions."
         ))
     );
     assert_eq!(

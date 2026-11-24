@@ -12,7 +12,7 @@ pub(super) fn tool(horizons: &[String]) -> Tool {
     let mut input_schema = super::input_schema::<CreateInitiativeInput>();
     // The horizon is required, and nothing else tells the model what it is or which values this planner takes.
     input_schema["properties"]["horizon"]["description"] = json!(if horizons.is_empty() {
-        "The horizon: how far off the team plans this initiative. This planner has no horizons configured."
+        "The horizon: how far off the team plans this initiative. This planner has no horizons configured, so an initiative cannot be created here: tell the person."
             .to_string()
     } else {
         format!(

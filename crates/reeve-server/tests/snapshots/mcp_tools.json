@@ -354,7 +354,7 @@
           "type": "array"
         },
         "owner": {
-          "description": "The owner's email address. Set it only when the person names an owner, and use the exact address.",
+          "description": "The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.",
           "type": "string"
         },
         "title": {
@@ -427,7 +427,7 @@
           "type": "string"
         },
         "owner": {
-          "description": "A new owner's email address. Set it only when the person names an owner. Not together with `clear_owner`.",
+          "description": "A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.",
           "type": "string"
         },
         "remove_labels": {

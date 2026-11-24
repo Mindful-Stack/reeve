@@ -349,7 +349,7 @@ pub struct CreateStoryInput {
     /// Labels.
     #[serde(default)]
     pub labels: Vec<String>,
-    /// The owner's email address. Set it only when the person names an owner, and use the exact address.
+    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.
     pub owner: Option<String>,
 }
 
@@ -376,7 +376,7 @@ pub struct EditStoryInput {
     pub description: Option<String>,
     /// The story's acceptance criteria, replacing the list: send every criterion the story should have, not only a new one. A criterion keeps its done mark when its text and position are unchanged. Cannot be empty.
     pub criteria: Option<Vec<String>>,
-    /// A new owner's email address. Set it only when the person names an owner. Not together with `clear_owner`.
+    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.
     pub owner: Option<String>,
     /// True removes the owner. Not together with `owner`.
     #[serde(default)]
