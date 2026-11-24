@@ -1268,6 +1268,8 @@ test('on paper a wide table takes the width of the page and wraps, since nothing
 	await page.goto(`/initiatives/${ini.key}`);
 	const wrap = page.locator('.brief [data-table-scroll]');
 	await expect(wrap).toHaveAttribute('tabindex', '0');
+	// A sheet of A4 at 96 dpi.
+	await page.setViewportSize({ width: 794, height: 1123 });
 	await page.emulateMedia({ media: 'print' });
 	// Nothing to scroll to, so no tab stop either; the table is exactly as wide as its wrapper.
 	await expect(wrap).not.toHaveAttribute('tabindex');

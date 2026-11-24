@@ -363,7 +363,8 @@ textarea[data-drop] {
 [data-table-scroll] th:not([align]) {
 	text-align: left;
 }
-/* Paper does not scroll: the table takes the width of the page and its cells wrap wherever they must. */
+/* Paper does not scroll: the table takes the width of the page and its cells wrap wherever they must. A header cell
+   still keeps its words whole, so a narrow column ("Step", with a number under it) is not squeezed to a letter a line. */
 @media print {
 	[data-table-scroll] {
 		overflow: visible;
@@ -373,7 +374,7 @@ textarea[data-drop] {
 		width: 100%;
 		max-width: 100%;
 	}
-	[data-table-scroll] :is(th, td) {
+	[data-table-scroll] td {
 		overflow-wrap: anywhere;
 	}
 }
