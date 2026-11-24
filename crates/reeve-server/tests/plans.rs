@@ -662,12 +662,38 @@ async fn a_plan_attaches_web_links_and_reapplying_it_creates_nothing() {
             .unwrap()
             .to_string()
     };
+    // The id each web link has in its item's listing: how one is removed (`DELETE …/web-links/{id}`). The answer
+    // carries it for a web link this apply created and for one that was there alike.
+    let mut ids = vec![];
+    for (item, url) in [
+        (key("s"), scenario),
+        (key("e"), scenario),
+        (held.clone(), "https://example.com/board"),
+    ] {
+        let listing = get(&h, &format!("/api/v1/items/{item}/links")).await;
+        let id = listing["web_links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["url"] == url)
+            .unwrap()["id"]
+            .clone();
+        assert!(
+            id.is_i64(),
+            "the control: a listed web link has an id: {listing}"
+        );
+        ids.push(id);
+    }
+    assert!(
+        ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
+        "the control: three web links, three ids: {ids:?}"
+    );
     let want = |created: [bool; 4]| {
         json!([
-            {"on": key("s"), "level": "story", "title": "Scenario page", "url": scenario, "created": created[0]},
-            {"on": key("e"), "level": "epic", "title": "Scenario page", "url": scenario, "created": created[1]},
-            {"on": held, "level": "story", "title": "Board", "url": "https://example.com/board", "created": created[2]},
-            {"on": key("s"), "level": "story", "title": "Scenario page", "url": scenario, "created": created[3]}
+            {"on": key("s"), "level": "story", "id": ids[0], "title": "Scenario page", "url": scenario, "created": created[0]},
+            {"on": key("e"), "level": "epic", "id": ids[1], "title": "Scenario page", "url": scenario, "created": created[1]},
+            {"on": held, "level": "story", "id": ids[2], "title": "Board", "url": "https://example.com/board", "created": created[2]},
+            {"on": key("s"), "level": "story", "id": ids[0], "title": "Scenario page", "url": scenario, "created": created[3]}
         ])
     };
     assert_eq!(v["web_links"], want([true, true, false, false]), "{v}");

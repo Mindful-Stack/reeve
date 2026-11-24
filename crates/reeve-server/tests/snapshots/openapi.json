@@ -246,7 +246,7 @@
       },
       "ApplyPlan": {
         "additionalProperties": false,
-        "description": "Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key\nor external reference. The whole plan is validated before anything is written, and applying the same plan (`id`)\nagain creates nothing: every write is keyed `plan:<id>:<name>`. Unknown fields are refused, so a typo is an error,\nnot a silently dropped field.",
+        "description": "A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.\nItems refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key\nor external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)\nagain creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,\nitem links and web links are idempotent by their content. Each write commits on its own, so a plan is not\natomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its\nlevel across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.",
         "properties": {
           "blocks": {
             "items": {
@@ -3469,7 +3469,7 @@
       },
       "PlanWebLink": {
         "additionalProperties": false,
-        "description": "A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is\n1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.",
+        "description": "A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title\nand the URL are under the rule of `AddWebLink`.",
         "properties": {
           "on": {
             "type": "string"
@@ -3583,10 +3583,14 @@
         "type": "object"
       },
       "PlannedWebLink": {
-        "description": "A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is\nfalse when the item already had that URL under that title.",
+        "description": "A web link the plan asked for, as stored: its `id` on the item (how one is removed), the title trimmed and the\nURL in the URL parser's form. `created` is false when the item already had that URL under that title; the `id`\nis then the one it had.",
         "properties": {
           "created": {
             "type": "boolean"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
           },
           "level": {
             "$ref": "#/components/schemas/ItemType"
@@ -3604,6 +3608,7 @@
         "required": [
           "on",
           "level",
+          "id",
           "title",
           "url",
           "created"
@@ -17015,7 +17020,7 @@
             "bearer": []
           }
         ],
-        "summary": "Validated whole before anything is written; applying the same plan id again creates nothing."
+        "summary": "A plan of items, required decisions, blockers, item links and web links. Validated whole before anything is\nwritten. Items and required decisions are keyed by plan id and name; blockers, item links and web links are\nidempotent by content; so applying the same plan id again creates nothing. Each write commits on its own: a\nfailed apply is finished by applying the same id again once the cause is corrected."
       }
     },
     "/api/v1/search": {

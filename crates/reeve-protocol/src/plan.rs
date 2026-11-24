@@ -9,10 +9,13 @@ pub const MAX_PLAN_ITEM_LINKS: usize = 500;
 /// The most web links one plan may hold (`ApplyPlan::web_links`); one more fails the validation.
 pub const MAX_PLAN_WEB_LINKS: usize = 500;
 
+/// A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.
 /// Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
-/// or external reference. The whole plan is validated before anything is written, and applying the same plan (`id`)
-/// again creates nothing: every write is keyed `plan:<id>:<name>`. Unknown fields are refused, so a typo is an error,
-/// not a silently dropped field.
+/// or external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)
+/// again creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,
+/// item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
+/// atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its
+/// level across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyPlan {
@@ -129,8 +132,8 @@ pub struct PlanLink {
     pub to: String,
 }
 
-/// A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is
-/// 1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.
+/// A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title
+/// and the URL are under the rule of `AddWebLink`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlanWebLink {
@@ -193,12 +196,14 @@ pub struct PlannedLink {
     pub created: bool,
 }
 
-/// A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is
-/// false when the item already had that URL under that title.
+/// A web link the plan asked for, as stored: its `id` on the item (how one is removed), the title trimmed and the
+/// URL in the URL parser's form. `created` is false when the item already had that URL under that title; the `id`
+/// is then the one it had.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PlannedWebLink {
     pub on: Key,
     pub level: ItemType,
+    pub id: i64,
     pub title: String,
     pub url: String,
     pub created: bool,

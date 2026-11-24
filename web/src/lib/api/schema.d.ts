@@ -904,7 +904,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validated whole before anything is written; applying the same plan id again creates nothing. */
+        /**
+         * A plan of items, required decisions, blockers, item links and web links. Validated whole before anything is
+         *     written. Items and required decisions are keyed by plan id and name; blockers, item links and web links are
+         *     idempotent by content; so applying the same plan id again creates nothing. Each write commits on its own: a
+         *     failed apply is finished by applying the same id again once the cause is corrected.
+         */
         post: operations["apply"];
         delete?: never;
         options?: never;
@@ -1465,10 +1470,13 @@ export interface components {
             value: string;
         };
         /**
-         * @description Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
-         *     or external reference. The whole plan is validated before anything is written, and applying the same plan (`id`)
-         *     again creates nothing: every write is keyed `plan:<id>:<name>`. Unknown fields are refused, so a typo is an error,
-         *     not a silently dropped field.
+         * @description A plan holds items (initiatives, epics and stories), required decisions, blockers, item links and web links.
+         *     Items refer to each other by their local `name`; a reference that is no name in the plan is an existing item's key
+         *     or external reference. The plan is validated whole before anything is written. Applying the same plan (`id`)
+         *     again creates nothing: items and required decisions are keyed by the plan id and their name, while blockers,
+         *     item links and web links are idempotent by their content. Each write commits on its own, so a plan is not
+         *     atomic: a failed apply is finished by applying the same id again once the cause is corrected. A name keeps its
+         *     level across applies of one id. Unknown fields are refused, so a typo is an error, not a silently dropped field.
          */
         ApplyPlan: {
             blocks?: components["schemas"]["PlanBlock"][];
@@ -2452,8 +2460,8 @@ export interface components {
             title: string;
         };
         /**
-         * @description A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title is
-         *     1 to 200 characters after trimming; the URL is `http` or `https`, without a user name or a password.
+         * @description A titled URL on `on`, which is a plan item's name or an existing item's key or external reference. The title
+         *     and the URL are under the rule of `AddWebLink`.
          */
         PlanWebLink: {
             on: string;
@@ -2490,11 +2498,14 @@ export interface components {
             type: components["schemas"]["ItemLinkType"];
         };
         /**
-         * @description A web link the plan asked for, as stored: the title trimmed and the URL in the URL parser's form. `created` is
-         *     false when the item already had that URL under that title.
+         * @description A web link the plan asked for, as stored: its `id` on the item (how one is removed), the title trimmed and the
+         *     URL in the URL parser's form. `created` is false when the item already had that URL under that title; the `id`
+         *     is then the one it had.
          */
         PlannedWebLink: {
             created: boolean;
+            /** Format: int64 */
+            id: number;
             level: components["schemas"]["ItemType"];
             on: components["schemas"]["Key"];
             title: string;

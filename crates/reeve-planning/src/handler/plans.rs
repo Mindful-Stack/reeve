@@ -322,24 +322,27 @@ impl Handlers {
         }
         let mut web_links = Vec::with_capacity(wanted_web.len());
         for (level, on, link) in wanted_web {
-            // The item's web links as read; `is_new_among` says whether this one is among them (false). Anything
-            // else, a refusal included, is the `_in` form's to answer on what is stored by then.
+            // The item's web links as read; `is_new_among` says whether this one is among them (false), and the
+            // row that equals it has its id. Anything else, a refusal included, is the `_in` form's to answer on
+            // what is stored by then.
             let on_the_item = stored_web.get(&on).map(Vec::as_slice).unwrap_or_default();
-            let stored = matches!(
-                link.is_new_among(on_the_item.iter().map(|s| &s.link)),
-                Ok(false)
-            );
-            let created = if stored {
-                false
-            } else {
-                let mut tx = self.pool.begin().await?;
-                let created = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
-                tx.commit().await?;
-                created
+            let stored = match link.is_new_among(on_the_item.iter().map(|s| &s.link)) {
+                Ok(false) => on_the_item.iter().find(|s| s.link == link).map(|s| s.id),
+                _ => None,
+            };
+            let (id, created) = match stored {
+                Some(id) => (id, false),
+                None => {
+                    let mut tx = self.pool.begin().await?;
+                    let added = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
+                    tx.commit().await?;
+                    added
+                }
             };
             web_links.push(PlannedWebLink {
                 on,
                 level,
+                id,
                 title: link.title().to_owned(),
                 url: link.url().to_owned(),
                 created,

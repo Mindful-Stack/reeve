@@ -1567,7 +1567,7 @@ fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
                  "to": "TST-3", "to_level": "story", "created": false}
             ],
             "web_links": [
-                {"on": "TST-3", "level": "story", "title": "Scenario page",
+                {"on": "TST-3", "level": "story", "id": 7, "title": "Scenario page",
                  "url": "https://example.com/wiki/scenario", "created": true}
             ]
         })
@@ -1619,6 +1619,8 @@ fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
     let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(printed["value"]["links"][1]["created"], false);
     assert_eq!(printed["value"]["web_links"][0]["title"], "Scenario page");
+    // The web link's id (how one is removed) is in the JSON; text mode prints the same line as before (above).
+    assert_eq!(printed["value"]["web_links"][0]["id"], 7);
     assert!(!String::from_utf8_lossy(&out.stdout).contains("Informational"));
 
     // No `follows` between two stories was created: no informational line.
