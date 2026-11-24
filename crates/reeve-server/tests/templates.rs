@@ -708,3 +708,43 @@ async fn a_plan_and_an_import_apply_no_template() {
         }
     }
 }
+
+#[tokio::test]
+async fn the_export_holds_every_brief_template_in_list_order() {
+    let h = harness().await;
+    let (st, empty) = admin(&h, "GET", "/api/v1/export", None).await;
+    assert_eq!(st, 200, "{empty}");
+    assert_eq!(
+        empty["value"]["brief_templates"],
+        json!([]),
+        "the control: present and empty"
+    );
+
+    // Created in the reverse of the list's order: the epic template first, then "Zulu", then "alpha".
+    let epic = template(&h, "epic", "Tech debt", DEBT).await;
+    let zulu = template(&h, "initiative", "Zulu", "Z").await;
+    let alpha = template(&h, "initiative", "alpha", SCENARIO).await;
+    mark(&h, &alpha).await;
+    assert!(
+        epic["id"].as_i64() < zulu["id"].as_i64() && zulu["id"].as_i64() < alpha["id"].as_i64(),
+        "the control: ids rise in the order of creation"
+    );
+
+    let (st, b) = admin(&h, "GET", "/api/v1/export", None).await;
+    assert_eq!(st, 200, "{b}");
+    let id = |t: &Value| t["id"].clone();
+    assert_eq!(
+        b["value"]["brief_templates"],
+        json!([
+            {"id": id(&alpha), "level": "initiative", "name": "alpha", "body": SCENARIO, "is_default": true, "version": 1},
+            {"id": id(&zulu), "level": "initiative", "name": "Zulu", "body": "Z", "is_default": false, "version": 1},
+            {"id": id(&epic), "level": "epic", "name": "Tech debt", "body": DEBT, "is_default": false, "version": 1}
+        ]),
+        "{b}"
+    );
+    // The export is what the list shows.
+    assert_eq!(
+        b["value"]["brief_templates"],
+        api(&h, &h.admin_token, LIST).await
+    );
+}

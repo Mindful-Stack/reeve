@@ -2072,7 +2072,7 @@ export interface components {
         /**
          * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
          *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
-         *     and web links by their item's key.
+         *     and web links by their item's key. Brief templates order by level, then name.
          *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
          */
         ExportDto: {
@@ -2082,6 +2082,11 @@ export interface components {
              *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
              */
             attachments?: components["schemas"]["AttachmentDto"][];
+            /**
+             * @description Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name
+             *     (compared lowercased), then by id. An export written before brief templates existed has no such field.
+             */
+            brief_templates?: components["schemas"]["BriefTemplateDto"][];
             comments: components["schemas"]["CommentDto"][];
             decisions: components["schemas"]["RequiredDecisionDto"][];
             epics: components["schemas"]["EpicDto"][];
@@ -3281,7 +3286,7 @@ export interface components {
             /**
              * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
              *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
-             *     and web links by their item's key.
+             *     and web links by their item's key. Brief templates order by level, then name.
              *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
              */
             value: {
@@ -3291,6 +3296,11 @@ export interface components {
                  *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
                  */
                 attachments?: components["schemas"]["AttachmentDto"][];
+                /**
+                 * @description Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name
+                 *     (compared lowercased), then by id. An export written before brief templates existed has no such field.
+                 */
+                brief_templates?: components["schemas"]["BriefTemplateDto"][];
                 comments: components["schemas"]["CommentDto"][];
                 decisions: components["schemas"]["RequiredDecisionDto"][];
                 epics: components["schemas"]["EpicDto"][];

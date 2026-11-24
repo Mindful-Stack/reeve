@@ -1879,7 +1879,7 @@
         "type": "string"
       },
       "ExportDto": {
-        "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
+        "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key. Brief templates order by level, then name.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
         "properties": {
           "activity": {
             "items": {
@@ -1891,6 +1891,13 @@
             "description": "Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump\n(kb/ADR-0022 R5). Uploads not yet saved with any text are left out.",
             "items": {
               "$ref": "#/components/schemas/AttachmentDto"
+            },
+            "type": "array"
+          },
+          "brief_templates": {
+            "description": "Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name\n(compared lowercased), then by id. An export written before brief templates existed has no such field.",
+            "items": {
+              "$ref": "#/components/schemas/BriefTemplateDto"
             },
             "type": "array"
           },
@@ -5780,7 +5787,7 @@
                 "type": "string"
               },
               "value": {
-                "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
+                "description": "The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one\n`REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key\nand web links by their item's key. Brief templates order by level, then name.\nUsers carry emails and roles only; the export never holds token hashes, secrets or configuration.",
                 "properties": {
                   "activity": {
                     "items": {
@@ -5792,6 +5799,13 @@
                     "description": "Every attachment an item owns, by upload time then id: metadata only; the bytes travel in the database dump\n(kb/ADR-0022 R5). Uploads not yet saved with any text are left out.",
                     "items": {
                       "$ref": "#/components/schemas/AttachmentDto"
+                    },
+                    "type": "array"
+                  },
+                  "brief_templates": {
+                    "description": "Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name\n(compared lowercased), then by id. An export written before brief templates existed has no such field.",
+                    "items": {
+                      "$ref": "#/components/schemas/BriefTemplateDto"
                     },
                     "type": "array"
                   },
