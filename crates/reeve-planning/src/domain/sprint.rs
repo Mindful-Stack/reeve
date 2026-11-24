@@ -355,7 +355,8 @@ pub struct BucketInitiative {
 /// The initiatives whose horizon is `first_bucket`, each with the goals that reach it, for display beside the goals:
 /// goals and horizons do not set each other (kb/ADR-0026, Consequences), so nothing here is a rule about either. The
 /// order is target month, earliest first, none last; then title by code point; then key number. A goal reaches an
-/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). `first_bucket` is the configured
+/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). A month that is not `YYYY-MM` ranks as none. `goals` is expected to hold the active and the
+/// draft sprint's goals (any goal not in the active sprint sorts after it). `first_bucket` is the configured
 /// name (kb/ADR-0016 R2), passed in: this function knows no configuration. Nothing here reads urgency (kb/ADR-0024 R7).
 pub fn first_bucket_initiatives(
     first_bucket: &str,
@@ -370,7 +371,10 @@ pub fn first_bucket_initiatives(
         .filter(|i| i.horizon() == first_bucket)
         .collect();
     bucket.sort_by(|a, b| {
-        let month = match (a.target_month(), b.target_month()) {
+        let month = match (
+            a.target_month().and_then(super::queue::real_month),
+            b.target_month().and_then(super::queue::real_month),
+        ) {
             (Some(x), Some(y)) => x.cmp(y),
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
@@ -1378,7 +1382,7 @@ mod tests {
         );
     }
 
-    /// An initiative with a title, a horizon and a target month; `ini` fixes all three.
+    /// An initiative with a title, a horizon and a target month; `ini` takes neither a title, a horizon nor a month.
     fn ini_in(key: &str, title: &str, horizon: &str, month: Option<&str>) -> Initiative {
         Initiative::from_persisted(
             k(key),
@@ -1449,11 +1453,11 @@ mod tests {
     #[test]
     fn the_bucket_orders_by_target_month_then_title_then_key_number() {
         let initiatives = [
-            ini_in("ABC-9", "Same", "Now", None),
+            ini_in("ABC-10", "Same", "Now", None),
             ini_in("ABC-4", "Zeta", "Now", Some("2026-12")),
             ini_in("ABC-5", "alpha", "Now", None),
             ini_in("ABC-6", "Beta", "Now", Some("2027-01")),
-            ini_in("ABC-10", "Same", "Now", None),
+            ini_in("ABC-9", "Same", "Now", None),
             ini_in("ABC-7", "Alpha", "Now", Some("2026-12")),
         ];
         let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
@@ -1469,14 +1473,30 @@ mod tests {
     }
 
     #[test]
+    fn a_target_month_that_is_not_a_real_month_ranks_as_none() {
+        let initiatives = [
+            ini_in("ABC-1", "d", "Now", Some("soon")),
+            ini_in("ABC-2", "c", "Now", Some("2026-9")),
+            ini_in("ABC-3", "b", "Now", Some("")),
+            ini_in("ABC-4", "a", "Now", Some("2026-13")),
+            ini_in("ABC-5", "z", "Now", Some("2026-12")),
+        ];
+        let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
+            .iter()
+            .map(|b| b.key.to_string())
+            .collect();
+        assert_eq!(keys, ["ABC-5", "ABC-4", "ABC-3", "ABC-2", "ABC-1"]);
+    }
+
+    #[test]
     fn a_bucket_initiatives_goals_are_the_active_sprints_first_then_by_id() {
         let initiatives = [ini_in("ABC-1", "Bookings", "Now", None)];
         // Sprint 2 is active, sprint 3 the draft; goal ids do not follow that order.
         let goals = [
-            goal_in(20, 3),
-            goal_in(21, 2),
-            goal_in(22, 3),
             goal_in(23, 2),
+            goal_in(20, 3),
+            goal_in(22, 3),
+            goal_in(21, 2),
         ];
         let gates = [
             reaches(20, &["ABC-1"]),

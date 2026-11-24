@@ -468,12 +468,17 @@ fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
         .first()?
         .initiative_target_month
         .as_deref()?;
+    real_month(m).map(str::to_owned)
+}
+
+/// `m` when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12 (text order then sorts by date).
+pub(crate) fn real_month(m: &str) -> Option<&str> {
     let b = m.as_bytes();
     let real = b.len() == 7
         && b[..4].iter().all(u8::is_ascii_digit)
         && b[4] == b'-'
         && matches!(&b[5..], [b'0', b'1'..=b'9'] | [b'1', b'0'..=b'2']);
-    real.then(|| m.to_string())
+    real.then_some(m)
 }
 
 /// `d`'s due date and id when it is on or before `limit` (overdue included).
