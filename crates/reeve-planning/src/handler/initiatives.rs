@@ -257,7 +257,19 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.ports.initiatives.get_initiative(key).await?)
+        // The row as this write left it: the update wrote every field of `next` at `version` (the version read,
+        // checked above) and raised it by one. Never a read after the commit, which another writer can land before.
+        Ok(Initiative::from_persisted(
+            next.key().clone(),
+            next.title().into(),
+            next.brief().into(),
+            next.horizon().into(),
+            next.target_month().map(String::from),
+            next.owner().map(String::from),
+            next.discovery().cloned(),
+            next.external_ref().map(String::from),
+            version + 1,
+        ))
     }
 
     /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot. Its item links

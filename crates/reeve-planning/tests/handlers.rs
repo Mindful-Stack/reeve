@@ -12094,6 +12094,107 @@ async fn an_edit_ahead_of_its_read_never_undoes_a_concurrent_discovery_mark() {
     }
 }
 
+/// The real initiative rows, with one write of another caller's let in: the first read after an update (the
+/// handler's read after its commit, when it makes one) first retitles the row on another connection, as a second
+/// writer landing between the edit's commit and that read would.
+struct RetitledAfterUpdate {
+    real: Arc<dyn InitiativeRepo>,
+    pool: sqlx::PgPool,
+    armed: Mutex<bool>,
+}
+#[async_trait]
+impl InitiativeRepo for RetitledAfterUpdate {
+    async fn insert_initiative(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        i: &Initiative,
+        idem: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool, RepoError> {
+        self.real.insert_initiative(tx, i, idem, now).await
+    }
+    async fn get_initiative(&self, key: &Key) -> Result<Initiative, RepoError> {
+        let armed = std::mem::take(&mut *self.armed.lock().unwrap());
+        if armed {
+            sqlx::query(
+                "UPDATE initiatives SET title = 'Theirs', version = version + 1 WHERE key = $1",
+            )
+            .bind(key.to_string())
+            .execute(&self.pool)
+            .await?;
+        }
+        self.real.get_initiative(key).await
+    }
+    async fn get_initiative_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        key: &Key,
+    ) -> Result<Initiative, RepoError> {
+        self.real.get_initiative_in(tx, key).await
+    }
+    async fn list_initiatives_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<Vec<Initiative>, RepoError> {
+        self.real.list_initiatives_in(tx).await
+    }
+    async fn update_initiative(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        i: &Initiative,
+        expected_version: i64,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<(), RepoError> {
+        self.real
+            .update_initiative(tx, i, expected_version, now)
+            .await?;
+        *self.armed.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
+/// The handler that writes an initiative edit answers the row that write left, never a read made after its commit:
+/// another caller's write can land between the two, and the MCP receipt built from the answer would then report that
+/// caller's title and version as this edit's. A chat sending that version next would overwrite a change it never
+/// saw. Goes red if the handler answers a read after its commit: it then answers "Theirs" at version 3.
+#[tokio::test]
+async fn an_initiative_edit_answers_the_row_it_wrote_not_a_later_one() {
+    let (_db, pool) = common::pg().await;
+    let (mut h, _) = mk(pool.clone());
+    h.ports.initiatives = Arc::new(RetitledAfterUpdate {
+        real: h.ports.initiatives.clone(),
+        pool: pool.clone(),
+        armed: Mutex::new(false),
+    });
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let edited = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (edited.title(), edited.version()),
+        ("Mine", 2),
+        "the edit answered another writer's row"
+    );
+    // The other writer did land after the edit: the row now is theirs.
+    let now = h.ports.initiatives.get_initiative(i.key()).await.unwrap();
+    assert_eq!((now.title(), now.version()), ("Theirs", 3));
+}
+
 /// The handler that writes an epic edit answers the move it wrote: the initiative left and the one joined, `None`
 /// when the edit did not change the initiative. It is the move its `edited` entry names, and the epic it answers
 /// is the row that write left.
