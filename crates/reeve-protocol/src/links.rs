@@ -123,7 +123,9 @@ impl ItemLinkType {
 /// between two stories"); for every other name and every other pair of levels, nothing. `from_level` and
 /// `to_level` are the levels of the two items as the server resolved them, and `story` is the key of the item that
 /// follows, which the sentence names. The condition and the wording live here once, for the CLI and the MCP tool;
-/// each adds after the sentence what its own reader can do next.
+/// each adds after the sentence what its own reader can do next. The web client does not call this: it keeps its
+/// own copy of the sentence in `web/src/lib/components/Relations.svelte` and of the condition in `followsNote`
+/// (`web/src/lib/relations.ts`), which that component calls; a change here is made there too.
 pub fn follows_is_informational(
     link_type: ItemLinkType,
     from_level: ItemType,
