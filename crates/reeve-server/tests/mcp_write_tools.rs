@@ -453,7 +453,11 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
             "create_epic",
             "edit_epic",
             "create_initiative",
-            "edit_initiative"
+            "edit_initiative",
+            "add_item_link",
+            "remove_item_link",
+            "add_web_link",
+            "remove_web_link"
         ],
         "every tool that changes anything"
     );
@@ -474,6 +478,8 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
         rows(h, "stories").await,
         rows(h, "epics").await,
         rows(h, "initiatives").await,
+        rows(h, "item_links").await,
+        rows(h, "web_links").await,
     ];
     let challenge = "Bearer error=\"insufficient_scope\", scope=\"write\", resource_metadata=\"http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp\", error_description=\"This tool changes the planner and needs a connection that may read and change\"";
     for name in &writes {
@@ -499,6 +505,8 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
             rows(h, "stories").await,
             rows(h, "epics").await,
             rows(h, "initiatives").await,
+            rows(h, "item_links").await,
+            rows(h, "web_links").await,
         ],
         count,
         "nothing was written"
@@ -690,9 +698,15 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         "edit_initiative" => {
             json!({"key": an_initiative, "version": 1, "title": format!("Edit {n}")})
         }
+        "add_item_link" => json!({"key": made, "type": "relates_to", "to": an_epic}),
+        "remove_item_link" => json!({"key": made, "type": "relates_to", "to": an_epic}),
+        "add_web_link" => {
+            json!({"key": made, "title": format!("Page {n}"), "url": format!("https://example.com/{n}")})
+        }
+        "remove_web_link" => json!({"key": made, "id": 1}),
         other => panic!("{other}"),
     };
-    const WRITE: [&str; 8] = [
+    const WRITE: [&str; 12] = [
         "create_story",
         "edit_story",
         "add_comment",
@@ -701,6 +715,10 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         "edit_epic",
         "create_initiative",
         "edit_initiative",
+        "add_item_link",
+        "remove_item_link",
+        "add_web_link",
+        "remove_web_link",
     ];
     let over = "Too many changes:";
 
@@ -722,6 +740,8 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         rows(h, "comments").await,
         rows(h, "epics").await,
         rows(h, "initiatives").await,
+        rows(h, "item_links").await,
+        rows(h, "web_links").await,
     ];
     for name in WRITE {
         let said = refusal(h, &writer, name, valid(name, 99)).await;
@@ -733,6 +753,8 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
             rows(h, "comments").await,
             rows(h, "epics").await,
             rows(h, "initiatives").await,
+            rows(h, "item_links").await,
+            rows(h, "web_links").await,
         ],
         count,
         "nothing was written at exhaustion"

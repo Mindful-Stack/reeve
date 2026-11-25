@@ -3,7 +3,7 @@
 use super::finish;
 use crate::client::Client;
 use crate::glyphs::{Level, mark};
-use crate::relations::{for_terminal, is_blocking_word};
+use crate::relations::for_terminal;
 use anyhow::Context;
 use clap::Args;
 use reeve_protocol::*;
