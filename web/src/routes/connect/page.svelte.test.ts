@@ -96,7 +96,7 @@ describe('the approval page', () => {
 	it('says what a connection that may change can do', async () => {
 		await shown();
 		expect(radio('write').closest('label')?.textContent?.trim()).toBe(
-			'Read and change: also create and edit stories, epics and initiatives, comment, and move stories, as you'
+			'Read and change: also create and edit stories, epics and initiatives, comment, move stories, and add or remove item links and web links, as you'
 		);
 	});
 

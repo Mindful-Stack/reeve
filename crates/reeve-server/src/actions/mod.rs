@@ -9,7 +9,9 @@
 //! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
 //! the DTO, and the receipt needs the flag. An edit whose receipt needs the item as its write left it answers an
 //! `Edited` (`edit_epic`, `edit_initiative`). A comment action answers the comment's id and whether this call wrote
-//! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that.
+//! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that. A link
+//! action answers a struct (`ItemLinkWritten`, `WebLinkWritten`): the list its route sends, and what a receipt
+//! needs beside it (each item as resolved, the web link's id, whether this call changed anything).
 //!
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
 //! passes what it parsed, and a tool is an adapter that turns its own narrower input into the route's and calls the
@@ -34,7 +36,7 @@ pub(crate) use initiatives::{
     create_initiative, edit_initiative, get_initiative, list_initiatives,
 };
 pub(crate) use links::{
-    add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
+    WebLinkWritten, add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
 };
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Via};

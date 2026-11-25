@@ -6,6 +6,7 @@ use crate::context::StoryContextDto;
 use crate::enums::{DeliveryState, Kind, Resolution};
 use crate::ids::Key;
 use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit, StoryDto};
+use crate::links::ItemLinkType;
 use crate::promise::PromisedFilter;
 use crate::readiness::Reason;
 use chrono::NaiveDate;
@@ -623,6 +624,100 @@ impl From<InitiativeDto> for InitiativeReceipt {
     }
 }
 
+// `add_item_link` (`reeve link add <KEY> <name> <OTHER>`). The doc comment is the schema's root description. One
+// shape: a web link has a tool of its own.
+/// An item link: `key` follows, duplicates or relates to `to`. Informational: it holds nothing back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddItemLinkInput {
+    /// The item that follows, duplicates or relates: the key of a story, an epic or an initiative. To say the reverse ("A is followed by B"), this is B.
+    pub key: String,
+    /// The item link's name. `follows`: `key` comes after `to` in a sequence; it does not make `key` wait for `to`. `duplicates`: `key` covers the same work as `to`; it only records that, and neither item is closed, dropped, moved or merged. `relates_to`: the two are related, the same from both sides.
+    #[serde(rename = "type")]
+    #[schema(inline)]
+    pub link_type: ItemLinkType,
+    /// The other item: the key of a story, an epic or an initiative. To say the reverse ("A is followed by B"), this is A.
+    pub to: String,
+}
+
+// `remove_item_link` (`reeve link rm <KEY> <name> <OTHER>`). The doc comment is the schema's root description.
+/// The item link to remove, named as it was added: `key` follows, duplicates or relates to `to`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveItemLinkInput {
+    /// The item that follows, duplicates or relates. For an item link an item shows with `direction: in`, this is the other item.
+    pub key: String,
+    /// The item link's name: `follows`, `duplicates` or `relates_to`; for `relates_to` either order of `key` and `to` names the same item link.
+    #[serde(rename = "type")]
+    #[schema(inline)]
+    pub link_type: ItemLinkType,
+    /// The other item: the key of a story, an epic or an initiative.
+    pub to: String,
+}
+
+/// What a tool that adds or removes an item link answers: the item link as it was named, under the input's own
+/// three names (`key`, `type`, `to`), with each key as the planner resolved it, and whether this call changed
+/// anything. Nothing a person wrote is in it. Reading an item's item links is `get_story`'s, `get_epic`'s and
+/// `get_initiative`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ItemLinkReceipt {
+    /// The item that follows, duplicates or relates: the input's `key`, as resolved.
+    pub key: Key,
+    #[serde(rename = "type")]
+    pub link_type: ItemLinkType,
+    /// The other item: the input's `to`, as resolved.
+    pub to: Key,
+    /// Whether this call added or removed the item link. False: it was already there, or was not there.
+    pub changed: bool,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+// `add_web_link` (`reeve link add <KEY> --url <URL> --title <TITLE>`). The doc comment is the schema's root
+// description.
+/// A web link on one item: a title and a URL. Informational: it holds nothing back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddWebLinkInput {
+    /// The item to attach it to: the key of a story, an epic or an initiative.
+    pub key: String,
+    /// The web link's title, 1 to 200 characters on one line.
+    pub title: String,
+    /// An `http` or `https` URL, at most 1000 characters, with no user name or password in it. Use the address exactly as the person gave it.
+    pub url: String,
+}
+
+// `remove_web_link` (`reeve link rm <KEY> --url <URL>`; the CLI finds the id by the URL, the tool is given it).
+// The doc comment is the schema's root description.
+/// The web link to remove from one item, by its id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveWebLinkInput {
+    /// The item the web link is on: the key of a story, an epic or an initiative.
+    pub key: String,
+    /// The web link's `id`, a number, as get_story, get_epic and get_initiative show it in `web_links`.
+    pub id: i64,
+}
+
+/// What a tool that adds or removes a web link answers: the item, the web link's id, and whether this call
+/// changed anything. After an add, also the title and the URL as stored (the title trimmed, the URL in its
+/// normalised form): at most 200 characters and 1 000, so the answer is small, and a URL is never cut.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WebLinkReceipt {
+    pub item: Key,
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Whether this call added or removed the web link. False: it was already there, or was not there.
+    pub changed: bool,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -989,5 +1084,149 @@ mod tests {
                 .to_string();
             assert!(e.contains(withheld), "edit: {e}");
         }
+    }
+
+    /// Each link tool has exactly one input shape: the three fields, all required, nothing else. kb/ADR-0031 R2:
+    /// no name that means holding work back is accepted.
+    #[test]
+    fn the_item_link_inputs_are_one_shape_and_take_only_the_three_names() {
+        let call = json!({"key": "TST-2", "type": "follows", "to": "TST-1"});
+        let add: AddItemLinkInput = serde_json::from_value(call.clone()).unwrap();
+        assert_eq!(
+            (add.key.as_str(), add.link_type, add.to.as_str()),
+            ("TST-2", ItemLinkType::Follows, "TST-1")
+        );
+        let remove: RemoveItemLinkInput = serde_json::from_value(call.clone()).unwrap();
+        assert_eq!(
+            (remove.key.as_str(), remove.link_type, remove.to.as_str()),
+            ("TST-2", ItemLinkType::Follows, "TST-1")
+        );
+        let refused = |sent: serde_json::Value| {
+            let add = serde_json::from_value::<AddItemLinkInput>(sent.clone())
+                .unwrap_err()
+                .to_string();
+            let remove = serde_json::from_value::<RemoveItemLinkInput>(sent)
+                .unwrap_err()
+                .to_string();
+            (add, remove)
+        };
+        for name in ["blocks", "depends_on", "relates-to", ""] {
+            let mut sent = call.clone();
+            sent["type"] = json!(name);
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains("unknown variant") && remove.contains("unknown variant"),
+                "{name}: {add}"
+            );
+        }
+        for missing in ["key", "type", "to"] {
+            let mut sent = call.clone();
+            sent.as_object_mut().unwrap().remove(missing);
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains(missing) && remove.contains(missing),
+                "{missing}: {add}"
+            );
+        }
+        for extra in ["url", "title", "id", "blocker", "from"] {
+            let mut sent = call.clone();
+            sent[extra] = json!("x");
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains(extra) && remove.contains(extra),
+                "{extra}: {add}"
+            );
+        }
+    }
+
+    /// The receipt names the item link as the input does (`key`, `type`, `to`), so a model reads back what it
+    /// sent; `from`, the word the activity entry uses, is not an argument and not a receipt field.
+    #[test]
+    fn an_item_link_receipt_is_these_fields() {
+        let mut receipt = ItemLinkReceipt {
+            key: "TST-2".parse().unwrap(),
+            link_type: ItemLinkType::RelatesTo,
+            to: "TST-1".parse().unwrap(),
+            changed: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "type": "relates_to", "to": "TST-1", "changed": true})
+        );
+        receipt.changed = false;
+        receipt.note = Some("n".into());
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "type": "relates_to", "to": "TST-1", "changed": false, "note": "n"})
+        );
+        // The same three names are the input's, in both tools.
+        let sent = json!({"key": "TST-2", "type": "relates_to", "to": "TST-1"});
+        assert!(serde_json::from_value::<AddItemLinkInput>(sent.clone()).is_ok());
+        assert!(serde_json::from_value::<RemoveItemLinkInput>(sent).is_ok());
+    }
+
+    #[test]
+    fn the_web_link_inputs_are_one_shape_each() {
+        let add: AddWebLinkInput = serde_json::from_value(
+            json!({"key": "TST-2", "title": "Spec", "url": "https://example.com/spec"}),
+        )
+        .unwrap();
+        assert_eq!(
+            (add.key.as_str(), add.title.as_str(), add.url.as_str()),
+            ("TST-2", "Spec", "https://example.com/spec")
+        );
+        let remove: RemoveWebLinkInput =
+            serde_json::from_value(json!({"key": "TST-2", "id": 7})).unwrap();
+        assert_eq!((remove.key.as_str(), remove.id), ("TST-2", 7));
+        // A web link is removed by id only: no URL, no title.
+        for extra in ["url", "title", "type", "to"] {
+            let e = serde_json::from_value::<RemoveWebLinkInput>(
+                json!({"key": "TST-2", "id": 7, extra: "x"}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains(extra), "{e}");
+        }
+        for extra in ["id", "type", "to"] {
+            let e = serde_json::from_value::<AddWebLinkInput>(
+                json!({"key": "TST-2", "title": "Spec", "url": "https://example.com/spec", extra: "x"}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains(extra), "{e}");
+        }
+        assert!(serde_json::from_value::<RemoveWebLinkInput>(json!({"key": "TST-2"})).is_err());
+        assert!(
+            serde_json::from_value::<AddWebLinkInput>(
+                json!({"key": "TST-2", "url": "https://example.com/"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_web_link_receipt_is_these_fields() {
+        let added = WebLinkReceipt {
+            item: "TST-2".parse().unwrap(),
+            id: 7,
+            title: Some("Spec".into()),
+            url: Some("https://example.com/spec".into()),
+            changed: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&added).unwrap(),
+            json!({"item": "TST-2", "id": 7, "title": "Spec", "url": "https://example.com/spec", "changed": true})
+        );
+        let removed = WebLinkReceipt {
+            title: None,
+            url: None,
+            ..added
+        };
+        assert_eq!(
+            serde_json::to_value(&removed).unwrap(),
+            json!({"item": "TST-2", "id": 7, "changed": true})
+        );
     }
 }
