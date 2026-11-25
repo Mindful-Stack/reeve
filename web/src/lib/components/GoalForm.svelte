@@ -4,10 +4,9 @@
     (`PATCH /goals/{id}` at its version). Mount a new form under `{#key}` of the draft so a half-typed goal never
     moves to another sprint. -->
 <script lang="ts">
-	import { api, Conflict, Refused, unwrap } from '#lib/api/client.ts';
+	import { api, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { CreatedGoal, Goal } from '#lib/api/types.ts';
-	import { fullLabel } from '#lib/board.ts';
-	import { errorMessage } from '#lib/format.ts';
+	import { refusalText } from '#lib/board.ts';
 	import { CreateCycle } from '#lib/idempotency.ts';
 
 	let {
@@ -51,8 +50,6 @@
 	let notes = $state(start?.notes ?? '');
 	let error = $state<string | null>(null);
 	let busy = $state(false);
-	/** A refusal in words (its reasons), any other failure as its message. */
-	const explain = (e: unknown) => (e instanceof Refused ? e.reasons.map(fullLabel).join('; ') : errorMessage(e));
 	/** A new key after each success, the same key for a retry of the same text, one request per double submit. */
 	const cycle = new CreateCycle();
 
@@ -72,7 +69,7 @@
 		if (out.kind === 'sent') {
 			outcome = check = owner = notes = '';
 			await done?.(out.value);
-		} else if (out.kind === 'failed') error = explain(out.error); // the draft and its key stay
+		} else if (out.kind === 'failed') error = refusalText(out.error); // the draft and its key stay
 	}
 
 	async function save(g: Goal) {
@@ -92,7 +89,7 @@
 			await onsaved?.(saved);
 		} catch (e) {
 			if (e instanceof Conflict) await onconflict?.();
-			else error = explain(e);
+			else error = refusalText(e);
 		}
 	}
 

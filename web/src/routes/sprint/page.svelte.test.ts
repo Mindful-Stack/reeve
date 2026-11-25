@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-// The sprint page: the active sprint with the membership rule above its counts, confidence recorded by a
-// person (a suggestion pre-fills the form, never shows as recorded), the draft's goals and links, the close step that
-// ends in "Open next sprint", and the history, where a closed sprint shows its counts at close beside the derived ones
-// only when they differ (kb/ADR-0014 R6).
+// The sprint page: this sprint and the next side by side as one-line goals that open in place, the kb/ADR-0014 R2
+// rule line, confidence recorded by a person (a suggestion pre-fills the form, never shows as recorded), the draft's
+// goals, ticks and links, "+ goal" under each sprint and in the first bucket's rows, the close step that ends in
+// "Open next sprint", and the history, where a closed sprint shows its counts at close beside the derived ones only
+// when they differ (kb/ADR-0014 R6).
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry, Goal, Sprint, SprintCounts, SprintPlanning, Sprints, SprintView } from '#lib/api/types.ts';
-import { session } from '#lib/me.svelte.ts';
 import { fullLabel } from '#lib/board.ts';
 import { activity, bucketInitiative, goal, goalGates, goalInitiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
@@ -88,7 +88,6 @@ afterEach(() => {
 	net.gate = null;
 	net.planning = null;
 	net.fail = null;
-	session.config = null;
 });
 
 /** Opens every closed goal row: a goal's detail is behind its disclosure. */
@@ -720,7 +719,7 @@ describe('the history', () => {
 	});
 });
 
-describe('planning by goal', () => {
+describe('gates, the first bucket and its "+ goal"', () => {
 	it("shows each goal's gates: discovery by level, decisions by what they need, and the counts line", async () => {
 		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] }), goal({ id: 2, links: ['ABC-2'] })]);
 		net.planning = planning({
@@ -809,7 +808,7 @@ describe('planning by goal', () => {
 		await settle(() => expect(q('form', row)).toBeNull());
 	});
 
-	it('focuses the new goal\'s card after "+ goal" adds it, as its row unmounts', async () => {
+	it('focuses the new goal\'s card after "+ goal" adds it, once the bucket form has closed', async () => {
 		withBucketRow();
 		await open();
 		const row = q('[data-testid="bucket-ABC-7"]')!;
@@ -849,7 +848,7 @@ describe('planning by goal', () => {
 	});
 });
 
-describe('the redesigned page', () => {
+describe('goal rows and the two columns', () => {
 	it('shows this sprint and the next side by side, every goal as one closed line', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1, check: 'check one' }), goal({ id: 2, check: 'check two' })]);
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, check: 'check five' })]);
@@ -1025,7 +1024,7 @@ describe('the redesigned page', () => {
 		expect(text(first)).toContain('Nov 2026');
 		expect(text(first)).toContain('in discovery');
 		// A goal id the page does not hold (the reads raced) shows as a count, not nothing.
-		expect(text(q('.muted.more', first))).toBe('1 goal not shown');
+		expect(text(q('[data-testid="not-shown"]', first))).toBe('1 goal not shown');
 		expect([...first.querySelectorAll('a.goal-chip')].map((a) => [text(a), a.getAttribute('href')])).toEqual([
 			['Bookings work · this sprint', '#goal-1'],
 			['Reports work · next sprint', '#goal-5']

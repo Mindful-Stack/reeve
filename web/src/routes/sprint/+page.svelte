@@ -7,9 +7,9 @@
 	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { api, Refused, unwrap } from '#lib/api/client.ts';
+	import { api, unwrap } from '#lib/api/client.ts';
 	import type { Confidence, Goal, Sprints, SprintPlanning, SprintView, SprintWarning } from '#lib/api/types.ts';
-	import { fullLabel } from '#lib/board.ts';
+	import { refusalText } from '#lib/board.ts';
 	import CloseSprint from '#lib/components/CloseSprint.svelte';
 	import GoalForm from '#lib/components/GoalForm.svelte';
 	import GoalRow from '#lib/components/GoalRow.svelte';
@@ -82,10 +82,6 @@
 	// Any activity entry, and every (re)connect, refetches (#lib/events.svelte.ts).
 	onLive(reload);
 
-	function explain(e: unknown): string {
-		return e instanceof Refused ? e.reasons.map(fullLabel).join('; ') : errorMessage(e);
-	}
-
 	/** One write: the page reloads after it, and a refusal or failure shows as the notice. */
 	async function act(write: () => Promise<unknown>): Promise<boolean> {
 		if (busy) return false;
@@ -95,7 +91,7 @@
 			await write();
 			return true;
 		} catch (e) {
-			notice = explain(e);
+			notice = refusalText(e);
 			return false;
 		} finally {
 			await reload();
@@ -295,7 +291,7 @@
 				</div>
 				<!-- kb/ADR-0014 R2: every view that shows counts states the membership rule. -->
 				<p class="rule">{RULE}</p>
-				<p class="upkeep muted">{upkeepText(active.counts, active.upkeep_line)}</p>
+				<p class="upkeep">{upkeepText(active.counts, active.upkeep_line)}</p>
 				{#if active.sprint.warnings.length}
 					<p class="warn">Warning: {active.sprint.warnings.map((w) => warningText(w)).join('; ')}</p>
 				{/if}
@@ -306,7 +302,7 @@
 				{:else}
 					<p class="muted">The active sprint has no goals.</p>
 				{/each}
-				<div bind:this={activeForm} class="add-slot">
+				<div bind:this={activeForm}>
 					{#if goalFor === 'active'}
 						<GoalForm
 							title="New goal for this sprint"
@@ -380,7 +376,7 @@
 							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 						{/each}
 						{#if i.goals.some((id) => !everyGoal.has(id))}
-							<span class="muted more">{plural(i.goals.filter((id) => !everyGoal.has(id)).length, 'goal', 'goals')} not shown</span>
+							<span class="muted" data-testid="not-shown">{plural(i.goals.filter((id) => !everyGoal.has(id)).length, 'goal', 'goals')} not shown</span>
 						{/if}
 					</div>
 					{#if goalFor === i.key}
@@ -543,8 +539,5 @@
 	/* The folded sections' headings sit inside the summary, so the disclosure marker stays on the same line. */
 	summary h2 {
 		display: inline;
-	}
-	.add-goal {
-		justify-self: start;
 	}
 </style>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Refused } from '#lib/api/client.ts';
 import type { Reason, Story, StoryPromise, StoryWithReadiness } from '#lib/api/types.ts';
 import {
 	accepts,
@@ -12,6 +13,7 @@ import {
 	COLUMNS,
 	dropBefore,
 	fullLabel,
+	refusalText,
 	hitState,
 	neighbourBefore,
 	orderAfterDrop,
@@ -456,5 +458,14 @@ describe('hitState', () => {
 		expect(hitState({ delivery: 'done', resolution: 'dropped' })).toBe('done, dropped');
 		expect(hitState({ delivery: 'done' })).toBe('done');
 		expect(hitState({ delivery: 'in_progress', resolution: 'dropped' })).toBe('in progress');
+	});
+});
+
+describe('refusalText', () => {
+	it('words a refusal by its reasons, and any other failure by its message', () => {
+		const reasons: Reason[] = [{ reason: 'no_criteria' }, { reason: 'no_criteria' }];
+		expect(refusalText(new Refused(reasons, false))).toBe(reasons.map(fullLabel).join('; '));
+		expect(refusalText(new Error('boom'))).toBe('boom');
+		expect(refusalText('plain')).toBe('plain');
 	});
 });
