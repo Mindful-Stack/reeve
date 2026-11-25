@@ -287,7 +287,8 @@
 	<div aria-busy={busy}>
 		{#if isAdmin()}
 			<details class="new" bind:open={adding}>
-				<summary>New template</summary>
+				<!-- Drawn as the page's buttons are: as plain text beside a small triangle it was not found. -->
+				<summary class="button">New template</summary>
 				<form class="create" aria-label="New template" onsubmit={create}>
 					<label class="field">
 						Level
@@ -386,9 +387,16 @@
 	.new {
 		margin: 0 0 24px;
 	}
-	.new > summary,
 	article summary {
 		cursor: pointer;
+	}
+	/* The summary is a button (app.css `.button`), so it has no triangle; while the form is open it looks pressed. */
+	.new > summary::-webkit-details-marker {
+		display: none;
+	}
+	.new[open] > summary {
+		border-color: var(--accent);
+		background: var(--selection);
 	}
 	/* One column: the summary, then the admin's buttons on a row of their own, then the body at the row's full
 	   width. A column of buttons beside the summary took its width first: a name broke letter by letter on a phone
@@ -413,9 +421,11 @@
 	.mark {
 		margin-left: 8px;
 		padding: 0 6px;
-		border: 1px solid var(--line);
+		border: 1px solid var(--accent);
 		border-radius: 3px;
+		background: var(--selection);
 		font-size: 13px;
+		font-weight: 600;
 	}
 	.actions {
 		display: flex;
@@ -426,6 +436,15 @@
 	.preview {
 		margin-top: 8px;
 		overflow-x: auto;
+	}
+	/* A line between the row's name and the template's own text, which often starts with a heading. */
+	.body {
+		padding-top: 8px;
+		border-top: 1px solid var(--line);
+	}
+	/* A notice in a form is spaced by the form's grid. */
+	form :global(.notice) {
+		margin: 0;
 	}
 	.preview {
 		padding: 8px 12px;
