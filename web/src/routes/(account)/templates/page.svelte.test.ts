@@ -156,6 +156,8 @@ const marks = () =>
 	[...document.body.querySelectorAll<HTMLElement>('[data-template]')].filter((a) => a.querySelector('summary .mark')).map((a) => Number(a.dataset.template));
 /** The page's own controls. The rendered bodies are not searched: what is in them is the brief renderer's. */
 const controls = () => document.body.querySelectorAll('article > .actions button, .confirm button, form');
+/** The notices of the page itself: the ones that are in no form. */
+const pageNotices = () => [...document.body.querySelectorAll('.notice .text')].filter((n) => !n.closest('form')).map((n) => n.textContent!.trim());
 const newForm = () => document.body.querySelector('form[aria-label="New template"]') as HTMLFormElement | null;
 const editForm = (id: number) => row(id)?.querySelector('form[aria-label="Edit template"]') as HTMLFormElement | null | undefined;
 const nameOf = (form: HTMLFormElement) => form.querySelector('input') as HTMLInputElement;
@@ -331,6 +333,55 @@ describe('templates page', () => {
 		flushSync();
 		expect(button(row(1)!, 'Edit')!.disabled).toBe(false);
 		expect(button(row(1)!, 'Edit')!.title).toBe('');
+	});
+
+	const REMOVED = 'Someone else removed the template you were editing. Your text is now under "New template", so you can save it as a new template.';
+
+	it("moves the admin's name and text into New template when a colleague removes the template being edited", async () => {
+		await open('admin');
+		const mine = 'One slice.\nAnd what it proves.\n';
+		const form = startEdit(3);
+		type(nameOf(form), 'Thin slice');
+		type(textOf(form), mine);
+		// The control: the form for a new template is folded, empty and set to the other level.
+		expect(newForm()!.closest('details')!.open).toBe(false);
+		expect(newForm()!.querySelector('select')!.value).toBe('initiative');
+		db.rows = db.rows.filter((r) => r.id !== 3);
+		await liveFns[0]();
+		flushSync();
+		expect(row(3)).toBeNull();
+		expect(document.body.querySelector('form[aria-label="Edit template"]')).toBeNull();
+		// What was typed is in the form for a new template, open, at the removed template's level.
+		expect(newForm()!.closest('details')!.open).toBe(true);
+		expect(newForm()!.querySelector('select')!.value).toBe('epic');
+		expect(nameOf(newForm()!).value).toBe('Thin slice');
+		expect(textOf(newForm()!).value).toBe(mine);
+		expect(pageNotices()).toEqual([REMOVED]);
+		// And it can be saved from there.
+		newForm()!.requestSubmit();
+		await written(1);
+		expect(stored(10)).toMatchObject({ level: 'epic', name: 'Thin slice', body: mine });
+		// The other rows can be edited again.
+		expect(button(row(1)!, 'Edit')!.disabled).toBe(false);
+	});
+
+	it('keeps both texts when the template being edited is removed while a new template is half written', async () => {
+		await open('admin');
+		const fresh = newForm()!;
+		fresh.closest('details')!.open = true;
+		type(nameOf(fresh), 'Spike');
+		type(textOf(fresh), '## Question\n');
+		type(textOf(startEdit(3)), 'One slice, rewritten.\n');
+		// The save itself finds the template gone.
+		db.meanwhile = () => (db.rows = db.rows.filter((r) => r.id !== 3));
+		editForm(3)!.requestSubmit();
+		await written(1);
+		expect(row(3)).toBeNull();
+		// The half-written template keeps its level and name; the editor's text follows its own.
+		expect(newForm()!.querySelector('select')!.value).toBe('initiative');
+		expect(nameOf(newForm()!).value).toBe('Spike');
+		expect(textOf(newForm()!).value).toBe('## Question\n\nOne slice, rewritten.\n');
+		expect(pageNotices()).toEqual([REMOVED]);
 	});
 
 	it('shows a rendered preview of the text while it is edited', async () => {

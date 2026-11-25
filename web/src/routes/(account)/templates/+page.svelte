@@ -21,6 +21,7 @@
 	 *  words (reeve-planning, domain/findings.rs), so a template that says one raises it on every item made from it
 	 *  that has no required decision on it or above it. */
 	const CITES_HINT = "Avoid the words 'decided', 'Jira' and 'Confluence' in a template: Reeve would note on each initiative or epic made from it that its brief cites them without a required decision.";
+	const REMOVED = 'Someone else removed the template you were editing. Your text is now under "New template", so you can save it as a new template.';
 	const CHANGED = 'Someone else changed this template while you were editing.';
 
 	let templates = $state<BriefTemplate[] | null>(null);
@@ -32,7 +33,7 @@
 	let draft = $state<{ level: BriefTemplateLevel; name: string; body: string }>({ level: 'initiative', name: '', body: '' });
 	/** The template being edited: the version its save names, and its fields as the editor last took them from the
 	 *  server (when it opened, or when a conflict was merged). `edit` is what the admin has typed. */
-	let editing = $state<{ id: number; version: number; from: TemplateFields } | null>(null);
+	let editing = $state<{ id: number; level: BriefTemplateLevel; version: number; from: TemplateFields } | null>(null);
 	let edit = $state<TemplateFields>({ name: '', body: '' });
 	/** The template whose removal awaits its confirmation. */
 	let removing = $state<number | null>(null);
@@ -46,6 +47,24 @@
 	function closeEdit() {
 		editing = null;
 		edit = { name: '', body: '' };
+	}
+
+	/** The template being edited is gone. What its admin typed is not: it moves into the form for a new template,
+	 *  which opens. A new template that was half written there keeps its level and its name, and the editor's text
+	 *  follows its own. */
+	function keepRemoved(level: BriefTemplateLevel) {
+		const mine = { ...edit };
+		closeEdit();
+		const begun = draft.name.trim() !== '' || draft.body.trim() !== '';
+		draft = begun
+			? {
+					level: draft.level,
+					name: draft.name.trim() ? draft.name : mine.name,
+					body: draft.body.trim() ? `${draft.body.trimEnd()}\n\n${mine.body}` : mine.body
+				}
+			: { level, ...mine };
+		adding = true;
+		notice = REMOVED;
 	}
 
 	let latest = 0;
@@ -74,8 +93,7 @@
 		// A template someone removed takes its open editor or confirmation with it.
 		const open = editing;
 		if (open && !list.some((t) => t.id === open.id)) {
-			closeEdit();
-			notice = 'The template you were editing was removed.';
+			keepRemoved(open.level);
 		}
 		if (removing !== null && !list.some((t) => t.id === removing)) removing = null;
 		return true;
@@ -130,7 +148,7 @@
 	function startEdit(t: BriefTemplate) {
 		if (editing) return; // one editor at a time: its text is not discarded for another row's
 		const from = templateFields(t);
-		editing = { id: t.id, version: t.version, from };
+		editing = { id: t.id, level: t.level, version: t.version, from };
 		edit = { ...from };
 		removing = null;
 	}
@@ -138,7 +156,7 @@
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
 		if (!editing) return;
-		const { id, version, from } = editing;
+		const { id, level, version, from } = editing;
 		// Only the fields changed since the editor took them from the server are sent.
 		const change = templateEdit(from, edit);
 		if (change.kind === 'unchanged') {
@@ -169,7 +187,7 @@
 		if (!now || !editing) return; // removed meanwhile: `reload` closed the editor and said so
 		const server = templateFields(now);
 		edit = mergeDraft(TEMPLATE_SAME, from, edit, server);
-		editing = { id, version: now.version, from: server };
+		editing = { id, level, version: now.version, from: server };
 		notice = `${CHANGED} What you changed is still here; everything else now shows their version. Where you both changed the same thing, saving again replaces their change.`;
 	}
 
