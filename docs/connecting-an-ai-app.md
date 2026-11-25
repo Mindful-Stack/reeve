@@ -48,16 +48,20 @@ With **Read** it can search Reeve, list and open stories, epics and initiatives,
 choices that must be made before work is ready), and show a sprint.
 
 With **Read and change** it can also, as you: create and edit a story, an epic or an initiative, add a comment, move
-a story, and add or remove an item link or a web link on any of them. Item links and web links are informational:
-they never hold a story back. Starting work on a story requires it to be ready; the app cannot override that check
-(a person can, in the CLI or the web client), and it tells you why a story is not ready. It cannot mark an epic's or
-an initiative's discovery complete, and it cannot add or remove a blocker. It can also put a story in another epic
-and an epic under another initiative; that changes which discovery and which decisions the story, or the epic's
-stories, wait on before work can start. If you connected an app with **Read and change** before it could create and
-edit epics and initiatives, or add and remove item links and web links, it can do so now without asking you again.
-The only way to take that away is to revoke the connection and connect again with **Read**; the app can then change
-nothing. To keep a mistaken or planted instruction from doing much, one person's apps may try at most 30 changes in
-any ten minutes between them; after that the app tells you when it can go on.
+a story, and add or remove an item link (a note that one item follows, duplicates or relates to another) or a web
+link (a titled web address) on any of them. Item links and web links are informational: they never hold a story
+back. If you ask the app to make one story wait for another, it will tell you to add a blocker yourself, in the CLI
+or the web client. A web link's title and address can be read by everyone signed in and stay in the activity log
+after the web link is removed, so do not give the app an address with a secret in it. Starting work on a story
+requires it to be ready; the app cannot override that check (a person can, in the CLI or the web client), and it
+tells you why a story is not ready. It cannot mark an epic's or an initiative's discovery complete, and it cannot
+add or remove a blocker. It can also put a story in another epic and an epic under another initiative; that changes
+which discovery and which decisions the story, or the epic's stories, wait on before work can start. If you
+connected an app with **Read and change** before it could create and edit epics and initiatives, or add and remove
+item links and web links, it can do so now without asking you again. The only way to take that away is to revoke the
+connection and connect again with **Read**; the app can then change nothing. To keep a mistaken or planted
+instruction from doing much, one person's apps may try at most 30 changes in any ten minutes between them; after
+that the app tells you when it can go on.
 
 Whatever you choose, it can never issue tokens or change who has access.
 
