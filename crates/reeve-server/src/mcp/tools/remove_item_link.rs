@@ -18,7 +18,7 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
         name: "remove_item_link",
         title: "Remove an item link",
         description: format!(
-            "Remove one item link, named as it was added: `key` is the item that follows, duplicates or relates to `to`. An item link that an item shows with `direction: in` (for example \"is followed by\") is removed by sending the other item as `key`; for `relates_to` either order names the same item link. An item link is informational: it never holds a story back, so removing one lets nothing start. {} Removing an item link that is not there changes nothing. Answers a receipt: `key`, `type` and `to` as you sent them, each key as the planner resolved it, and `changed`.",
+            "Remove one item link, named as it was added: `key` is the item that follows, duplicates or relates to `to`. An item link that an item shows with `direction: in` (for example \"is followed by\") is removed by sending the other item as `key`; for `relates_to` either order names the same item link. An item link is informational and holds nothing back, so removing one lets nothing start. {} Removing an item link that is not there changes nothing. Answers a receipt: `key`, `type` and `to` as you sent them, each key as the planner resolved it, and `changed`.",
             super::WRITE_TEXT
         ),
         input_schema,

@@ -782,10 +782,20 @@ mod tests {
     /// sentences a reviewer or the owner asked for by name. One row per sentence; the text is compared whole.
     #[test]
     fn a_description_says_what_only_it_can_tell_the_model() {
-        const SAID: [(&str, &str); 5] = [
+        const SAID: [(&str, &str); 7] = [
             (
                 "edit_epic",
                 "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
+            ),
+            // The words of the observation for GRA-901 on kb/ADR-0029: "an item link is informational and holds
+            // nothing back".
+            (
+                "add_item_link",
+                "An item link is informational and holds nothing back: nothing reads it to decide whether a story is ready or may move.",
+            ),
+            (
+                "remove_item_link",
+                "An item link is informational and holds nothing back, so removing one lets nothing start.",
             ),
             (
                 "add_item_link",
