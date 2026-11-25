@@ -269,7 +269,7 @@
 	}
 </script>
 
-<svelte:head><title>Templates · Reeve</title></svelte:head>
+<svelte:head><title>Brief templates · Reeve</title></svelte:head>
 
 <PageHeader title="Brief templates" />
 <p class="muted">
@@ -296,7 +296,7 @@
 							<option value="epic">Epic</option>
 						</select>
 					</label>
-					<label class="field">Name <input bind:value={draft.name} required disabled={busy} /></label>
+					<label class="field">Name <input bind:value={draft.name} required maxlength="100" disabled={busy} /></label>
 					<label class="field">Template text (Markdown) <textarea bind:value={draft.body} rows="10" required disabled={busy}></textarea></label>
 					<p class="muted hint">{CITES_HINT}</p>
 					{#if draft.body.trim()}
@@ -320,7 +320,7 @@
 					<article data-template={t.id}>
 						{#if isAdmin() && editing?.id === t.id}
 							<form class="edit" aria-label="Edit template" onsubmit={save}>
-								<label class="field">Name <input bind:value={edit.name} required disabled={busy} /></label>
+								<label class="field">Name <input bind:value={edit.name} required maxlength="100" disabled={busy} /></label>
 								<label class="field">Template text (Markdown) <textarea bind:value={edit.body} rows="12" required disabled={busy}></textarea></label>
 								<p class="muted hint">{CITES_HINT}</p>
 								{#if edit.body.trim()}

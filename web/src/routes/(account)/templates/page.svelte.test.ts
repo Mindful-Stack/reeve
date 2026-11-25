@@ -445,6 +445,14 @@ describe('templates page', () => {
 		expect(confirmOf(2)).toBe('Remove the template "Tech debt"? Briefs already made from it stay as they are.');
 	});
 
+	it('is titled as its heading, and lets a name be as long as the server allows', async () => {
+		await open('admin');
+		expect(document.title).toBe('Brief templates · Reeve');
+		expect(document.body.querySelector('h1')!.textContent).toBe('Brief templates');
+		expect(nameOf(newForm()!).maxLength).toBe(100);
+		expect(nameOf(startEdit(2)).maxLength).toBe(100);
+	});
+
 	it('takes every control from a viewer who stops being an admin, whatever is open', async () => {
 		await open('admin');
 		// The form for a new template.
