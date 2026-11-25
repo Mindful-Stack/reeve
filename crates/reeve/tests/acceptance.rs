@@ -2324,6 +2324,22 @@ async fn brief_templates_from_the_cli() {
         text(&member, &["template", "show", &id]),
         format!("#{id} initiative Scenario (default) (version 2)\n\n# Rewritten\n")
     );
+    // The line an edit prints carries the version the next edit takes (this one changes nothing and writes nothing).
+    assert_eq!(
+        text(
+            &admin,
+            &[
+                "template",
+                "edit",
+                &id,
+                "--version",
+                "2",
+                "--body",
+                "# Rewritten\n"
+            ]
+        ),
+        format!("#{id} initiative Scenario (default) (version 2)\n")
+    );
     let key = from_default["key"].as_str().unwrap();
     let again = json(&admin, &["initiative", "show", key]);
     assert_eq!(again["value"]["brief"], scenario);

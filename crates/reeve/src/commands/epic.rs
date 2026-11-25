@@ -7,8 +7,8 @@ use reeve_protocol::*;
 #[derive(Subcommand)]
 pub enum Epic {
     /// Create an epic. A repeated --idempotency-key returns the same epic. The brief is --brief or --brief-file;
-    /// without one it starts from a brief template (--template, or the level's default), or from nothing with
-    /// --no-template.
+    /// without one it starts from a brief template: the one --template names, else the level's default if an
+    /// admin has marked one; --no-template starts it empty.
     Create {
         /// Caller-chosen key that makes a retried create safe.
         #[arg(long)]

@@ -17,13 +17,13 @@ fn parse_level(s: &str) -> Result<BriefTemplateLevel, String> {
 
 #[derive(Subcommand)]
 pub enum Template {
-    /// List brief templates: initiative templates first, then by name. The level's default is marked.
+    /// List brief templates: initiative templates first, then by name. Each level's default is marked `(default)`.
     Ls {
         /// Only this level's templates.
         #[arg(long, value_parser = parse_level, value_name = "initiative|epic")]
         level: Option<BriefTemplateLevel>,
     },
-    /// Show one brief template with its body.
+    /// Show one brief template: its line, its version (what `edit --version` takes) and its body.
     Show {
         /// The template's id (`reeve template ls` prints it as #<ID>).
         id: i64,
@@ -31,6 +31,7 @@ pub enum Template {
     /// Create a brief template (admins only). Idempotent by content (level, name, body): creating one that exists
     /// with the same body succeeds and changes nothing, so a directory of templates can be loaded again; the same
     /// name with another body is refused (use `edit`). It is not the default until `reeve template default <ID>`.
+    /// One of --body and --body-file is required.
     Create {
         /// The level whose briefs it is for.
         #[arg(long, value_parser = parse_level, value_name = "initiative|epic")]
@@ -38,7 +39,7 @@ pub enum Template {
         /// Its name, 1 to 100 characters on one line; unique at its level, whatever its case.
         #[arg(long)]
         name: String,
-        /// The body, in Markdown.
+        /// The body, in Markdown. One of --body and --body-file is required.
         #[arg(long, required_unless_present = "body_file")]
         body: Option<String>,
         /// Read the body from this file, unchanged (no shell quoting in between); `-` reads stdin.
@@ -50,7 +51,8 @@ pub enum Template {
     Edit {
         /// The template's id.
         id: i64,
-        /// The template version you are editing (optimistic concurrency).
+        /// The version you last read (`reeve template show <ID>` prints it). The edit is refused with a conflict
+        /// if the template has changed since.
         #[arg(long)]
         version: i64,
         /// New name.
@@ -69,8 +71,8 @@ pub enum Template {
         id: i64,
     },
     /// Make a template its level's default (admins only): the brief `reeve initiative create` and `reeve epic
-    /// create` start from when they are given no brief, no --template and no --no-template, and what the web
-    /// form shows first. It replaces the level's previous default. With --clear, take the mark off it instead.
+    /// create` start from when they are given no brief, no --template and no --no-template. It replaces the
+    /// level's previous default. With --clear, take the mark off it instead.
     Default {
         /// The template's id.
         id: i64,
@@ -92,6 +94,11 @@ fn line(t: &BriefTemplateDto) -> String {
     )
 }
 
+/// What `edit` prints: the template's line and the version it has now, so a second edit needs no `show` in between.
+fn edited(t: &BriefTemplateDto) -> String {
+    format!("{} (version {})", line(t), t.version)
+}
+
 /// A template with its version and its body. The body keeps its line breaks, and each line prints through
 /// `for_terminal`: every other control character (a tab, an escape sequence) is written as its escape, so stored
 /// text cannot drive the reader's terminal. `--json` does not come through here and stays lossless.
@@ -101,7 +108,7 @@ fn shown(t: &BriefTemplateDto) -> String {
         .lines()
         .map(|l| for_terminal(l).into_owned())
         .collect();
-    format!("{} (version {})\n\n{}", line(t), t.version, body.join("\n"))
+    format!("{}\n\n{}", edited(t), body.join("\n"))
 }
 
 #[allow(clippy::ptr_arg)] // `finish` hands its renderer exactly `&Vec<_>`
@@ -163,7 +170,7 @@ pub async fn run(c: &Client, cmd: Template, json: bool) -> anyhow::Result<i32> {
             )
             .await?,
             json,
-            line,
+            edited,
         ),
         Template::Rm { id } => finish(
             c.delete::<serde_json::Value>(&format!("/brief-templates/{id}"))
@@ -218,6 +225,18 @@ mod tests {
         assert_eq!(
             listed(&vec![template("A", "b", true), template("B", "b", false)]),
             "#3 initiative A (default)\n#3 initiative B"
+        );
+    }
+
+    #[test]
+    fn an_edit_prints_the_version_the_next_edit_takes() {
+        assert_eq!(
+            edited(&template("Scenario", "b", true)),
+            "#3 initiative Scenario (default) (version 2)"
+        );
+        assert_eq!(
+            edited(&template("Scenario", "b", false)),
+            "#3 initiative Scenario (version 2)"
         );
     }
 
