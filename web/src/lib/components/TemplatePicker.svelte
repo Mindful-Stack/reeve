@@ -157,6 +157,13 @@
 {/if}
 
 <style>
+	/* The picker's lines take the form's width and never set it: a dialog sized by its content would otherwise grow
+	   when the list arrives and again when the question appears. */
+	.ask,
+	.muted {
+		width: 0;
+		min-width: 100%;
+	}
 	.ask {
 		display: flex;
 		flex-wrap: wrap;

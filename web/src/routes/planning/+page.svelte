@@ -429,7 +429,9 @@
 	.create {
 		display: grid;
 		gap: 12px;
-		min-width: min(28rem, 80vw);
+		/* The full width a dialog allows (app.css): room to write a brief in and to read a template, and the dialog
+		   keeps its width when the template picker appears. */
+		min-width: min(520px, 80vw);
 	}
 	.create .actions {
 		display: flex;
