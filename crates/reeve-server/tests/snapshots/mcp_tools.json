@@ -800,11 +800,11 @@
           "type": "string"
         },
         "to": {
-          "description": "The other item.",
+          "description": "The other item: the key of a story, an epic or an initiative.",
           "type": "string"
         },
         "type": {
-          "description": "The item link's name: `follows`, `duplicates` or `relates_to`.",
+          "description": "The item link's name: `follows`, `duplicates` or `relates_to`; for `relates_to` either order of `key` and `to` names the same item link.",
           "enum": [
             "follows",
             "duplicates",

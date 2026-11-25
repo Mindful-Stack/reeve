@@ -6,7 +6,7 @@ use crate::{
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{RemoveWebLinkInput, WebLinkReceipt};
+use reeve_protocol::{Key, RemoveWebLinkInput, WebLinkReceipt};
 use serde_json::{Value, json};
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
@@ -34,6 +34,13 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
     }
 }
 
+/// What the model is told when the item has no web link with that id.
+pub(super) fn not_removed(item: &Key, id: i64) -> String {
+    format!(
+        "Nothing was removed: {item} has no web link with id {id}. get_story, get_epic and get_initiative show each web link's `id`."
+    )
+}
+
 fn run<'a>(
     state: &'a AppState,
     who: &'a Acting<'a>,
@@ -44,12 +51,7 @@ fn run<'a>(
         let written = actions::remove_web_link(state, who, &input.key, input.id)
             .await
             .map_err(|e| super::not_found(e, "item", &input.key, &state.config.key_prefix))?;
-        let note = (!written.changed).then(|| {
-            format!(
-                "Nothing was removed: {} has no web link with id {}. get_story, get_epic and get_initiative show each web link's `id`.",
-                written.item, written.id
-            )
-        });
+        let note = (!written.changed).then(|| not_removed(&written.item, written.id));
         super::sent(WebLinkReceipt {
             item: written.item,
             id: written.id,

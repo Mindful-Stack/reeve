@@ -647,11 +647,11 @@ pub struct AddItemLinkInput {
 pub struct RemoveItemLinkInput {
     /// The item that follows, duplicates or relates. For an item link an item shows with `direction: in`, this is the other item.
     pub key: String,
-    /// The item link's name: `follows`, `duplicates` or `relates_to`.
+    /// The item link's name: `follows`, `duplicates` or `relates_to`; for `relates_to` either order of `key` and `to` names the same item link.
     #[serde(rename = "type")]
     #[schema(inline)]
     pub link_type: ItemLinkType,
-    /// The other item.
+    /// The other item: the key of a story, an epic or an initiative.
     pub to: String,
 }
 

@@ -34,6 +34,9 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
     }
 }
 
+/// What the model is told when the item had this web link, title and URL, before this call.
+pub(super) const ALREADY_THERE: &str = "Nothing was written: the item already has this web link.";
+
 fn run<'a>(
     state: &'a AppState,
     who: &'a Acting<'a>,
@@ -64,8 +67,7 @@ fn run<'a>(
             title,
             url,
             changed: written.changed,
-            note: (!written.changed)
-                .then(|| "Nothing was written: the item already has this web link.".to_string()),
+            note: (!written.changed).then(|| ALREADY_THERE.to_string()),
         })
     })
 }

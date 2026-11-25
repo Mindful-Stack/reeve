@@ -389,7 +389,7 @@ fn told(e: AppError) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reeve_protocol::Reason;
+    use reeve_protocol::{ItemLinkType, ItemType, Key, Reason};
 
     /// What the model is told; `None` for an internal error.
     fn said(e: AppError) -> Option<String> {
@@ -895,31 +895,115 @@ mod tests {
         );
     }
 
-    /// kb/ADR-0031 R6: where both kinds are in view, a description says "item link" or "web link", never bare
-    /// "link". Every "link" in a link tool's description is part of one of the two terms (or of "linked", for the
-    /// items at the other end).
+    /// kb/ADR-0031 R6: where both kinds are in view, a text says "item link" or "web link", never bare "link".
+    /// Every "link" in what a link tool tells the model is part of one of the two terms (or of "linked", for the
+    /// items at the other end): its description, every description in its input schema (the input's own and each
+    /// field's), and every note its receipt can carry.
     #[test]
     fn a_link_tools_description_never_says_bare_link() {
+        fn descriptions(schema: &Value, out: &mut Vec<String>) {
+            match schema {
+                Value::Object(map) => {
+                    for (name, value) in map {
+                        match value {
+                            Value::String(text) if name == "description" => out.push(text.clone()),
+                            other => descriptions(other, out),
+                        }
+                    }
+                }
+                Value::Array(values) => values.iter().for_each(|v| descriptions(v, out)),
+                _ => {}
+            }
+        }
+        let mut texts: Vec<(String, String)> = Vec::new();
+        let mut link_tools = 0;
         for tool in tools() {
             if !tool.name.contains("_link") {
                 continue;
             }
+            link_tools += 1;
+            texts.push((format!("{} description", tool.name), tool.description));
+            let mut fields = Vec::new();
+            descriptions(&tool.input_schema, &mut fields);
+            // The input's own description and one per field: three fields for an item link and for adding a web
+            // link, two for removing one.
+            let expected = if tool.name == "remove_web_link" { 3 } else { 4 };
+            assert_eq!(fields.len(), expected, "{}: {fields:?}", tool.name);
+            texts.extend(
+                fields
+                    .into_iter()
+                    .map(|text| (format!("{} schema", tool.name), text)),
+            );
+        }
+        assert_eq!(link_tools, 4);
+        // Every note an adapter can put in a receipt, for each name and for each pair of levels.
+        let (a, b): (Key, Key) = ("TST-2".parse().unwrap(), "TST-1".parse().unwrap());
+        for link_type in ItemLinkType::ALL {
+            texts.push((
+                "add_item_link note".into(),
+                add_item_link::already_there(link_type, &a, &b),
+            ));
+            texts.push((
+                "remove_item_link note".into(),
+                remove_item_link::not_removed(link_type, &a, &b),
+            ));
+        }
+        texts.push((
+            "add_item_link note".into(),
+            format!(
+                "{} {}",
+                reeve_protocol::follows_is_informational(
+                    ItemLinkType::Follows,
+                    ItemType::Story,
+                    ItemType::Story,
+                    &a
+                )
+                .unwrap(),
+                add_item_link::where_a_dependency_goes(&a, &b)
+            ),
+        ));
+        texts.push((
+            "add_web_link note".into(),
+            add_web_link::ALREADY_THERE.into(),
+        ));
+        texts.push((
+            "remove_web_link note".into(),
+            remove_web_link::not_removed(&a, 7),
+        ));
+        texts.push((
+            "a blocking word as `type`".into(),
+            BLOCKING_IS_NOT_AN_ITEM_LINK.into(),
+        ));
+        for (what, text) in texts {
             // The field names `web_links` and `web_links_omitted` are names, not prose.
-            let rest = tool
-                .description
+            let rest = text
                 .replace("web_links", "")
                 .replace("item links", "")
                 .replace("item link", "")
                 .replace("web links", "")
                 .replace("web link", "")
                 .replace("linked", "");
-            assert!(
-                !rest.contains("link"),
-                "{}: {}",
-                tool.name,
-                tool.description
-            );
+            assert!(!rest.contains("link"), "{what}: {text}");
         }
+    }
+
+    /// The hint about `direction: in` is for a name that has a direction. `relates_to` has none: either order of
+    /// `key` and `to` names the same item link, so its note is only that nothing was removed.
+    #[test]
+    fn the_not_removed_note_explains_direction_only_for_a_name_that_has_one() {
+        let (a, b): (Key, Key) = ("TST-2".parse().unwrap(), "TST-1".parse().unwrap());
+        assert_eq!(
+            remove_item_link::not_removed(ItemLinkType::Follows, &a, &b),
+            "Nothing was removed: there is no item link \"TST-2 follows TST-1\". An item link is removed as it was added: for one that an item shows with `direction: in`, send the other item as `key`."
+        );
+        assert_eq!(
+            remove_item_link::not_removed(ItemLinkType::Duplicates, &a, &b),
+            "Nothing was removed: there is no item link \"TST-2 duplicates TST-1\". An item link is removed as it was added: for one that an item shows with `direction: in`, send the other item as `key`."
+        );
+        assert_eq!(
+            remove_item_link::not_removed(ItemLinkType::RelatesTo, &a, &b),
+            "Nothing was removed: there is no item link \"TST-2 relates to TST-1\"."
+        );
     }
 
     /// Every tool that changes something says whose text the planner holds, web link titles and URLs included

@@ -6,7 +6,9 @@ use crate::{
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{AddItemLink, AddItemLinkInput, ItemLinkDirection, ItemLinkReceipt, Key};
+use reeve_protocol::{
+    AddItemLink, AddItemLinkInput, ItemLinkDirection, ItemLinkReceipt, ItemLinkType, Key,
+};
 use serde_json::{Value, json};
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
@@ -37,9 +39,17 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
 /// What the model is told after the shared informational sentence (decision C of 2026-11-24): where a dependency
 /// is recorded, and that it is not here. It names the two keys and no tool or command: a chat has no tool that
 /// holds a story back, and the person adds a blocker where people do.
-fn where_a_dependency_goes(from: &Key, to: &Key) -> String {
+pub(super) fn where_a_dependency_goes(from: &Key, to: &Key) -> String {
     format!(
         "If the person meant that {from} must wait for {to}, tell them: that is a blocker, which a person adds in the CLI or the web client; this app cannot add one."
+    )
+}
+
+/// What the model is told when the item link was there before this call.
+pub(super) fn already_there(link_type: ItemLinkType, from: &Key, to: &Key) -> String {
+    format!(
+        "Nothing was written: {from} already {} {to}.",
+        link_type.label(ItemLinkDirection::Out)
     )
 }
 
@@ -64,10 +74,7 @@ fn run<'a>(
         let ((from_level, from), (to_level, to)) = (written.from, written.to);
         let mut notes = Vec::new();
         if !written.changed {
-            notes.push(format!(
-                "Nothing was written: {from} already {} {to}.",
-                input.link_type.label(ItemLinkDirection::Out)
-            ));
+            notes.push(already_there(input.link_type, &from, &to));
         }
         // Whether the sentence is said is the protocol's to answer (`follows` between two stories), as for the
         // CLI: no comparison of names or levels is written here.

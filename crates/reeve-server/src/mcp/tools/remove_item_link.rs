@@ -6,7 +6,7 @@ use crate::{
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{ItemLinkDirection, ItemLinkReceipt, RemoveItemLinkInput};
+use reeve_protocol::{ItemLinkDirection, ItemLinkReceipt, ItemLinkType, Key, RemoveItemLinkInput};
 use serde_json::{Value, json};
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
@@ -34,6 +34,23 @@ pub(super) fn tool(key_prefix: &str) -> Tool {
     }
 }
 
+/// What the model is told when there was no such item link to remove. For a name with a direction it says how
+/// the reverse is named, since that is the likeliest mistake; `relates_to` has none (either order names the same
+/// item link), so the hint would send the model to a call that finds nothing either.
+pub(super) fn not_removed(link_type: ItemLinkType, from: &Key, to: &Key) -> String {
+    let nothing = format!(
+        "Nothing was removed: there is no item link \"{from} {} {to}\".",
+        link_type.label(ItemLinkDirection::Out)
+    );
+    if link_type.directed() {
+        format!(
+            "{nothing} An item link is removed as it was added: for one that an item shows with `direction: in`, send the other item as `key`."
+        )
+    } else {
+        nothing
+    }
+}
+
 fn run<'a>(
     state: &'a AppState,
     who: &'a Acting<'a>,
@@ -50,12 +67,7 @@ fn run<'a>(
                 .await
                 .map_err(|e| super::link_failed(e, &input.key, &input.to, prefix))?;
         let ((_, from), (_, to)) = (written.from, written.to);
-        let note = (!written.changed).then(|| {
-            format!(
-                "Nothing was removed: there is no item link \"{from} {} {to}\". An item link is removed as it was added: for one that an item shows with `direction: in`, send the other item as `key`.",
-                input.link_type.label(ItemLinkDirection::Out)
-            )
-        });
+        let note = (!written.changed).then(|| not_removed(input.link_type, &from, &to));
         super::sent(ItemLinkReceipt {
             key: from,
             link_type: input.link_type,
