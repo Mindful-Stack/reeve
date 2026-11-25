@@ -265,9 +265,25 @@
 			onPage
 		);
 
-	async function remove(id: number) {
+	/** Removes a confirmed template. Its confirmation goes either way, and focus with it: after a failure back to the
+	 *  row's "Remove"; after a removal to the first control of the row after it, else of the row before it (in page
+	 *  order, across the levels), else to "New template". The neighbours are taken when the removal is sent. */
+	async function remove(id: number, confirm: Element | null) {
+		const rows = [...document.querySelectorAll<HTMLElement>('article[data-template]')].map((a) => Number(a.dataset.template));
+		const at = rows.indexOf(id);
+		const near = [rows[at + 1], rows[at - 1]].filter((n) => n !== undefined);
 		const out = await write(() => unwrap(api.DELETE('/api/v1/brief-templates/{id}', { params: { path: { id } } })), onPage);
-		if (out.kind !== 'busy') removing = null;
+		if (out.kind === 'busy') return;
+		removing = null;
+		void refocus(confirm, () => {
+			const row = rowOf(id);
+			if (row) return row.querySelector<HTMLElement>('[data-action="remove"]');
+			for (const n of near) {
+				const first = rowOf(n)?.querySelector<HTMLElement>('summary, input:not(:disabled), button:not(:disabled)');
+				if (first) return first;
+			}
+			return document.querySelector<HTMLElement>('details.new > summary');
+		});
 	}
 
 	/** Closes the removal's confirmation and gives focus back to its row's "Remove". */
@@ -376,7 +392,7 @@
 												{' '}New {items} will then start with an empty brief.{/if}
 										</span>
 										<button type="button" disabled={busy} onclick={(e) => cancelRemove(t.id, e.currentTarget.closest('.confirm'))}>Cancel</button>
-										<button type="button" class="danger" disabled={busy} onclick={() => remove(t.id)}>Remove template</button>
+										<button type="button" class="danger" disabled={busy} onclick={(e) => remove(t.id, e.currentTarget.closest('.confirm'))}>Remove template</button>
 									</p>
 								{/if}
 							{/if}

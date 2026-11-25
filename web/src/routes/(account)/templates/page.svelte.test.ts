@@ -681,6 +681,49 @@ describe('templates page: focus', () => {
 		await focused(() => button(row(3)!, 'Remove'));
 	});
 
+	// Catches focus dropped to the page by a failed removal: the confirmation went and nothing took focus back.
+	it('puts focus back on Remove when a removal fails', async () => {
+		await open('admin');
+		press(button(row(3)!, 'Remove')!);
+		db.fail = 'network';
+		press(button(row(3)!, 'Remove template')!);
+		await written(1);
+		expect(row(3)).not.toBeNull();
+		await focused(() => button(row(3)!, 'Remove'));
+	});
+
+	// Catches focus dropped to the page by a removal: its row went and nothing took focus. It goes to the next
+	// row's first control, else the previous row's, else "New template".
+	it('puts focus on a neighbouring row after a removal, or on New template when none is left', async () => {
+		await open('admin');
+		const first = (id: number) => row(id)!.querySelector('summary');
+		press(button(row(1)!, 'Remove')!);
+		press(button(row(1)!, 'Remove template')!);
+		await written(1);
+		await focused(() => first(2));
+		// The last row: the previous one takes focus, across the levels.
+		press(button(row(3)!, 'Remove')!);
+		press(button(row(3)!, 'Remove template')!);
+		await written(2);
+		await focused(() => first(2));
+		press(button(row(2)!, 'Remove')!);
+		press(button(row(2)!, 'Remove template')!);
+		await written(3);
+		await focused(() => newForm()!.closest('details')!.querySelector('summary'));
+	});
+
+	// A guard, green before removals restored focus: the restoring code must not take focus the admin moved.
+	it('leaves focus where the admin moved it while a removal was on its way', async () => {
+		await open('admin');
+		press(button(row(3)!, 'Remove')!);
+		press(button(row(3)!, 'Remove template')!);
+		const elsewhere = document.body.appendChild(document.createElement('button'));
+		elsewhere.focus();
+		await written(1);
+		await new Promise((r) => setTimeout(r));
+		expect(active()).toBe(elsewhere);
+	});
+
 	it('keeps focus on the default button, which is replaced by its opposite', async () => {
 		await open('admin');
 		press(button(row(2)!, 'Use as default')!);
