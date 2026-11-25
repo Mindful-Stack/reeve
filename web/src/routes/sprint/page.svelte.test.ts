@@ -255,6 +255,10 @@ describe('the next sprint (draft)', () => {
 	it('adds a goal with a fresh idempotency key', async () => {
 		net.sprints!.draft = draft();
 		await open();
+		// The form is behind its button, like the active sprint's.
+		expect(q('form[aria-label="New goal for next sprint"]')).toBeNull();
+		button('+ goal for next sprint', q('[data-testid="next-sprint"]')!)!.click();
+		await settle(() => expect(document.activeElement).toBe(q('[data-testid="next-sprint"] input[name="outcome"]')));
 		const form = q<HTMLFormElement>('form[aria-label="New goal for next sprint"]')!;
 		const outcome = q<HTMLInputElement>('input[name="outcome"]', form)!;
 		expect(outcome.placeholder).toBe('By 2026-11-27, <who> can <outcome>');
@@ -263,12 +267,18 @@ describe('the next sprint (draft)', () => {
 		type(q<HTMLInputElement>('input[name="owner"]', form)!, 'ana@example.com');
 		type(q<HTMLTextAreaElement>('textarea[name="notes"]', form)!, 'pairs');
 		flushSync();
+		// Focus leaves the input (as a click on Add goal takes it), so its return below is the page's doing.
+		outcome.blur();
+		expect(document.activeElement).not.toBe(outcome);
 		button('Add goal', form)!.click();
 		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(1));
 		const body = writes('/api/v1/goals')[0].body as Record<string, unknown>;
 		expect(body).toMatchObject({ outcome: 'By Friday, Ana can book a room', check: 'one real booking', owner: 'ana@example.com', notes: 'pairs' });
 		expect(body.idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
 		expect(body.active).toBeUndefined();
+		// The form stays open for the next goal, and focus is back in its outcome input.
+		await settle(() => expect(document.activeElement).toBe(q('[data-testid="next-sprint"] input[name="outcome"]')));
+		expect(q('form[aria-label="New goal for next sprint"]')).toBe(form);
 
 		// The next goal is another goal, so it carries another key.
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'another');
@@ -277,6 +287,12 @@ describe('the next sprint (draft)', () => {
 		button('Add goal', form)!.click();
 		await settle(() => expect(writes('/api/v1/goals')).toHaveLength(2));
 		expect((writes('/api/v1/goals')[1].body as Record<string, unknown>).idempotency_key).not.toBe(body.idempotency_key);
+
+		// Cancel closes it and hands focus back to the button.
+		button('Cancel', q('form[aria-label="New goal for next sprint"]')!)!.click();
+		const panel = q('[data-testid="next-sprint"]')!;
+		await settle(() => expect(document.activeElement).toBe(button('+ goal for next sprint', panel)));
+		expect(q('form[aria-label="New goal for next sprint"]')).toBeNull();
 	});
 
 	it('warns past three goals that go in, not past three goals in the draft', async () => {
@@ -374,6 +390,19 @@ describe('editing a goal', () => {
 			body: { version: 4, outcome: 'New', check: 'old check', owner: 'ana@example.com', notes: '' }
 		});
 		await settle(() => expect(q('form[aria-label="Edit goal"]')).toBeNull());
+		// Focus returns to the Edit button that opened the form, not to the top of the page.
+		await settle(() => expect(document.activeElement).toBe(button('Edit', q('[data-testid="goal-5"]')!)));
+	});
+
+	it('returns focus to the Edit button on cancel', async () => {
+		net.sprints!.active = activeWith([goal({ id: 5 })]);
+		await open();
+		const card = q('[data-testid="goal-5"]')!;
+		button('Edit', card)!.click();
+		flushSync();
+		button('Cancel', q('form[aria-label="Edit goal"]', card)!)!.click();
+		await settle(() => expect(document.activeElement).toBe(button('Edit', card)));
+		expect(q('form[aria-label="Edit goal"]')).toBeNull();
 	});
 
 	it('on a conflict keeps the typed form, refetches, says so, and saves again at the current version', async () => {
@@ -975,6 +1004,8 @@ describe('goal rows and the two columns', () => {
 	it('adds to the next sprint without the active flag', async () => {
 		net.sprints!.draft = draft();
 		await open();
+		button('+ goal for next sprint', q('[data-testid="next-sprint"]')!)!.click();
+		flushSync();
 		const form = q<HTMLFormElement>('[data-testid="next-sprint"] form[aria-label="New goal for next sprint"]')!;
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'Later');
 		type(q<HTMLInputElement>('input[name="check"]', form)!, 'c');
@@ -1081,11 +1112,11 @@ describe('goal rows and the two columns', () => {
 		expect(mark(2)).toBeNull();
 	});
 
-	it('draws an active goal the counts miss as an active row, with its confidence dot', async () => {
+	it('draws an active goal the counts miss as an active row, with its confidence', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1 })], { counts: counts([], 0) });
 		await open({ closed: true });
 		const row = q('[data-testid="goal-1"]')!;
 		expect(row.classList.contains('draft')).toBe(false);
-		expect(q('.dot', row)).not.toBeNull();
+		expect(q('[data-testid="confidence-mark"]', row)).not.toBeNull();
 	});
 });

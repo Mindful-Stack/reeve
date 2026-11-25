@@ -57,7 +57,8 @@
 			if (s.draft?.id !== sprints?.draft?.id) {
 				leftOut.clear();
 				// The "+ goal" form is for the draft it was opened on: a new draft never receives its half-typed goal.
-				goalFor = null;
+				// The next sprint's own form stays open: it is keyed on the draft below, so it starts empty for a new one.
+				if (goalFor !== 'next') goalFor = null;
 			}
 			sprints = s;
 			plan = p;
@@ -155,8 +156,21 @@
 	/** The goal whose edit form is open (on either panel). */
 	let editing = $state<number | null>(null);
 	async function edited() {
+		const id = editing;
 		editing = null;
 		await reload();
+		await focusEdit(id);
+	}
+	/** Focus goes back to the goal's Edit button once its form is gone (the row itself when the button is not shown). */
+	async function focusEdit(id: number | null) {
+		await tick();
+		const row = id === null ? null : document.getElementById(`goal-${id}`);
+		(row?.querySelector<HTMLButtonElement>('button.edit') ?? row)?.focus();
+	}
+	async function cancelEdit() {
+		const id = editing;
+		editing = null;
+		await focusEdit(id);
 	}
 	/** The edit form stays open with what was typed; it saves again at the refetched goal's version. */
 	async function editConflict() {
@@ -189,13 +203,16 @@
 			...(draft?.goals ?? []).map((g) => [g.id, { goal: g, where: 'next sprint' }] as const)
 		])
 	);
-	/** The open "+ goal" form: an initiative's key (the bucket list), `'active'` (this sprint's column), or none. */
+	/** The open "+ goal" form: an initiative's key (the bucket list), `'active'` or `'next'` (a sprint's column), or
+	 *  none. */
 	let goalFor = $state<string | null>(null);
 	/** The bucket rows, by initiative key, to put focus inside them. */
 	const rows: Record<string, HTMLElement | undefined> = {};
 	/** The new-goal form under this sprint: its own element, so the query never finds an Edit form's inputs. */
 	let activeForm = $state<HTMLElement | undefined>();
-	const holder = (key: string) => (key === 'active' ? activeForm : rows[key]);
+	/** The same under the next sprint. */
+	let nextForm = $state<HTMLElement | undefined>();
+	const holder = (key: string) => (key === 'active' ? activeForm : key === 'next' ? nextForm : rows[key]);
 	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	async function openGoal(key: string) {
 		goalFor = key;
@@ -207,6 +224,13 @@
 		goalFor = null;
 		await tick();
 		holder(key)?.querySelector<HTMLButtonElement>('button.add-goal')?.focus();
+	}
+	/** After an add to the next sprint: the form stays open for the next goal, with focus back in its outcome input. */
+	function addedNext() {
+		// Not awaited: the form keeps its inputs disabled until this returns, and a disabled input takes no focus.
+		void reload()
+			.then(tick)
+			.then(() => nextForm?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus());
 	}
 	/** After an add: the form closes, the page reloads, and focus goes to the new goal's row. */
 	async function added(id: number) {
@@ -235,7 +259,7 @@
 		<button type="submit" disabled={busy}>Link</button>
 	</form>
 	{#if editing === g.id}
-		<GoalForm goal={g} onsaved={edited} onconflict={editConflict} oncancel={() => (editing = null)} />
+		<GoalForm goal={g} onsaved={edited} onconflict={editConflict} oncancel={cancelEdit} />
 	{/if}
 	{#if isActive && confidenceFor?.id === g.id}
 		<form class="confidence" aria-label="Record confidence" onsubmit={recordConfidence}>
@@ -257,7 +281,7 @@
 	{:else}
 		<div class="row">
 			{#if isActive}<button type="button" disabled={busy} onclick={() => openConfidence(g)}>Record confidence</button>{/if}
-			{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
+			{#if editing !== g.id}<button type="button" class="ghost edit" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
 			{#if !isActive}<button type="button" class="ghost" disabled={busy} onclick={() => remove(g)}>Remove</button>{/if}
 		</div>
 	{/if}
@@ -354,9 +378,15 @@
 					{#snippet controls()}{@render goalControls(g, false)}{/snippet}
 				</GoalRow>
 			{/each}
-			{#key draft?.id}
-				<GoalForm title="New goal for next sprint" endsOn={draft?.ends_on ?? null} oncreated={() => reload()} />
-			{/key}
+			<div bind:this={nextForm}>
+				{#if goalFor === 'next'}
+					{#key draft?.id}
+						<GoalForm title="New goal for next sprint" endsOn={draft?.ends_on ?? null} oncreated={addedNext} oncancel={() => closeGoal('next')} />
+					{/key}
+				{:else}
+					<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('next')}>+ goal for next sprint</button>
+				{/if}
+			</div>
 		</section>
 	</div>
 

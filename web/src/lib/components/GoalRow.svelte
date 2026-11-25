@@ -5,6 +5,7 @@
      the page's kb/ADR-0014 R2 rule line), the gates, and the page's own controls. It makes no write: the page owns
      which goals are open, so a live refetch keeps them. A warning is carried in words (a visible "!" and hidden text),
      never by colour or hover alone;
+     confidence leads the row in a fixed slot, so it reads as one column: a dot when on track, the word otherwise;
      the article is a size container (`container-type: inline-size`), so anything the `controls` snippet positions as
      fixed or absolute is positioned against the row; in a narrow column the link count and the bar drop out of the line. -->
 <script lang="ts">
@@ -62,13 +63,21 @@
 >
 	<div class="line">
 		{@render lead?.()}
+		{#if active}
+			<span class="confidence {confidenceTone(goal.confidence)}" data-testid="confidence-mark" title={confidenceText}>
+				{#if goal.confidence === 'on_track'}
+					<span class="dot" role="img" aria-label={confidenceText}></span>
+				{:else}
+					<span class="word"
+						><span class="visually-hidden">{'confidence: '}</span>{goal.confidence ? confidenceLabel(goal.confidence) : 'not recorded'}</span
+					>
+				{/if}
+			</span>
+		{/if}
 		<button type="button" class="ghost disclose" aria-expanded={open} aria-controls="goal-{goal.id}-detail" onclick={ontoggle}>
 			<span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
 			<span class="outcome" class:wrap={open} id="goal-{goal.id}-outcome" title={goal.outcome}>{goal.outcome}</span>
 		</button>
-		{#if active}
-			<span class="dot {confidenceTone(goal.confidence)}" role="img" aria-label={confidenceText} title={confidenceText}></span>
-		{/if}
 		<span class="tag" class:warn={tag.warn} title={tag.label}
 			>
 			<span class="tag-text" aria-hidden="true">{tag.text}</span>
@@ -207,25 +216,41 @@
 		height: 6px;
 		accent-color: var(--ready);
 	}
-	.dot {
+	/* One width for every row, wide enough for "not recorded", so the outcomes start on one line down the column. */
+	.confidence {
+		display: inline-flex;
 		flex: none;
+		align-items: center;
+		width: 6.5em;
+		font-size: 12px;
+		white-space: nowrap;
+	}
+	.dot {
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: transparent;
-		box-shadow: inset 0 0 0 1px var(--muted);
-	}
-	.dot.ready {
 		background: var(--ready);
-		box-shadow: none;
 	}
-	.dot.warn {
-		background: var(--warn);
-		box-shadow: none;
+	.word {
+		color: var(--muted);
 	}
-	.dot.danger {
-		background: var(--danger);
-		box-shadow: none;
+	.confidence.warn .word,
+	.confidence.danger .word {
+		padding: 1px 6px;
+		border-radius: 4px;
+	}
+	.confidence.warn .word {
+		background: var(--warn-soft);
+		color: var(--warn);
+	}
+	.confidence.danger .word {
+		background: var(--danger-soft);
+		color: var(--danger);
+	}
+	/* The count keeps one width ("12/15"), so the bars before it line up too. */
+	.line .numbers {
+		min-width: 5ch;
+		text-align: right;
 	}
 	.badge {
 		display: inline-grid;

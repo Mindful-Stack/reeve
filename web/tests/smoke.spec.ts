@@ -684,6 +684,8 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	// The first goal creates the draft; no sprint is active, so the draft opens from its own panel.
 	await page.goto('/sprint');
 	const next = page.getByTestId('next-sprint');
+	// The add form is behind its button, and stays open from one goal to the next.
+	await next.getByRole('button', { name: '+ goal for next sprint', exact: true }).click();
 	const add = next.getByRole('form', { name: 'New goal for next sprint', exact: true });
 	await add.getByLabel('Outcome').fill(outcome);
 	await add.getByLabel("We'll know when").fill('the smoke closes it');

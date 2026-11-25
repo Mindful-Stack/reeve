@@ -11,11 +11,13 @@ vi.mock('$app/state', async () => {
 });
 
 let app: ReturnType<typeof mount> | null = null;
-afterEach(() => {
+afterEach(() => cleanup());
+
+const cleanup = () => {
 	if (app) unmount(app);
 	app = null;
 	document.body.innerHTML = '';
-});
+};
 
 const controls = createRawSnippet(() => ({ render: () => '<p data-testid="controls">controls</p>' }));
 const text = (el: Element | null) => el?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
@@ -54,9 +56,12 @@ describe('a goal row', () => {
 		const bar = row().querySelector('progress')!;
 		expect([bar.value, bar.max]).toEqual([1, 6]);
 		expect(bar.getAttribute('aria-hidden')).toBe('true');
-		const dot = row().querySelector('.dot')!;
-		expect(dot.getAttribute('aria-label')).toBe('confidence: at risk');
-		expect(dot.getAttribute('title')).toBe('confidence: at risk');
+		// Not on track is said in words (never by colour alone), and stands first in the line, before the outcome.
+		const mark = row().querySelector('[data-testid="confidence-mark"]')!;
+		expect(text(mark)).toBe('confidence: at risk');
+		expect(mark.querySelector('.dot')).toBeNull();
+		expect(mark.getAttribute('title')).toBe('confidence: at risk');
+		expect(mark.compareDocumentPosition(row().querySelector('button.disclose')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(text(row().querySelector('.badge'))).toContain('Owner: ana.berg@example.com');
 		expect(row().querySelector('.badge')!.getAttribute('title')).toBe('ana.berg@example.com');
 		expect(row().getAttribute('aria-labelledby')).toBe('goal-7-outcome');
@@ -66,6 +71,25 @@ describe('a goal row', () => {
 		expect(line).not.toContain('by phone');
 		expect(document.querySelector('[data-testid="controls"]')).toBeNull();
 		expect(document.querySelector('[data-testid="gates"]')).toBeNull();
+	});
+
+	it('draws on track as a dot with its words as the label, and says the other states in words', () => {
+		show({ goal: goal({ id: 7, confidence: 'on_track' }) });
+		const mark = () => row().querySelector('[data-testid="confidence-mark"]')!;
+		expect(mark().querySelector('.dot')!.getAttribute('aria-label')).toBe('confidence: on track');
+		expect(mark().querySelector('.word')).toBeNull();
+		cleanup();
+		show({ goal: goal({ id: 7, confidence: 'off_track' }) });
+		expect(text(mark())).toBe('confidence: off track');
+		expect(mark().classList.contains('danger')).toBe(true);
+		cleanup();
+		show({ goal: goal({ id: 7, confidence: null }) });
+		expect(text(mark())).toBe('confidence: not recorded');
+		expect(mark().querySelector('.dot')).toBeNull();
+		cleanup();
+		// A next-sprint goal takes no confidence (kb/ADR-0026).
+		show({ active: false, progress: undefined });
+		expect(row().querySelector('[data-testid="confidence-mark"]')).toBeNull();
 	});
 
 	it('asks to be toggled from its disclosure button, which says whether it is open', () => {
@@ -158,7 +182,7 @@ describe('a goal row', () => {
 	it('an active goal without a counts row is not drawn as a draft', () => {
 		show({ progress: undefined, active: true, open: true });
 		expect(row().classList.contains('draft')).toBe(false);
-		expect(row().querySelector('.dot')).not.toBeNull();
+		expect(row().querySelector('[data-testid="confidence-mark"]')).not.toBeNull();
 		expect(row().querySelector('progress')).toBeNull();
 		expect(text(row().querySelector('.detail'))).toContain('0 completed · 0 in flight (0 in review) · 0 todo');
 		expect(text(row())).not.toContain('Waiting since');
