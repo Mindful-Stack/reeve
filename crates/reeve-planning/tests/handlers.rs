@@ -12094,6 +12094,116 @@ async fn an_edit_ahead_of_its_read_never_undoes_a_concurrent_discovery_mark() {
     }
 }
 
+/// The story form of the test above. A story is at version 1, with no owner, under its epic. An edit names version
+/// 2 and reads version 1; before it writes, another caller makes version 2: a move to in progress, which makes the
+/// mover its owner, or an edit that moves it to another epic. The story edit rebuilds the whole row from its read
+/// (owner and epic included), so it must be refused at its read rather than write the stale owner or epic back. It
+/// is held between its read and its update on the external reference lock `set_ref` takes, as above. Goes red if the
+/// story edit handler stops comparing the version it was given with the row it read: the conditional update alone
+/// lets the edit through at version 2, and it clears the mover's ownership or puts the story back under its epic.
+#[tokio::test]
+async fn a_story_edit_ahead_of_its_read_never_undoes_a_concurrent_owner_or_epic() {
+    let (_db, pool) = common::pg().await;
+    let (h, _) = mk(pool.clone());
+    let (dan, ann) = (ctx("dan", false), ctx("ann@example.com", false));
+    let epic = ready_epic(&h, &dan).await;
+    let other = h
+        .create_epic(&dan, "other", "Other", None, "", None)
+        .await
+        .unwrap();
+    for (case, reference) in [("owner", "JPD-3"), ("epic", "JPD-4")] {
+        let s = h
+            .create_story(
+                &dan,
+                case,
+                "S",
+                Kind::Story,
+                Some(epic.clone()),
+                "",
+                vec!["works".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!((s.version(), s.owner()), (1, None));
+        let key = s.key().clone();
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_import:' || $1))")
+            .bind(reference)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let edit = tokio::spawn({
+            let (h, dan, key) = (h.clone(), dan.clone(), key.clone());
+            async move {
+                h.edit_story(
+                    &dan,
+                    &key,
+                    2,
+                    Some("Ahead".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(reference.into()),
+                )
+                .await
+            }
+        });
+        answered_or_waiting(&pool, &edit).await;
+        // The concurrent write, through its own handler: it takes no reference lock, so it is not held.
+        let theirs = if case == "owner" {
+            h.move_story(&ann, &key, 1, DeliveryState::InProgress, None, None)
+                .await
+                .unwrap()
+        } else {
+            h.edit_story(
+                &ann,
+                &key,
+                1,
+                None,
+                None,
+                None,
+                Some(Some(other.key().clone())),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+        };
+        assert_eq!(theirs.version(), 2, "{case}");
+        lock.commit().await.unwrap();
+        let answer = edit.await.unwrap();
+        let now = h.get_story(&key).await.unwrap();
+        if case == "owner" {
+            assert_eq!(
+                now.owner(),
+                Some("ann@example.com"),
+                "owner: the edit undid the mover's ownership"
+            );
+        } else {
+            assert_eq!(
+                now.epic(),
+                Some(other.key()),
+                "epic: the edit put the story back under its epic"
+            );
+        }
+        assert_ne!(now.title(), "Ahead", "{case}: the edit was written");
+        assert!(
+            matches!(answer, Err(HandlerError::Conflict { current: 1 })),
+            "{case}: {answer:?}"
+        );
+    }
+}
+
 /// The real initiative rows, with one write of another caller's let in: the first read after an update (the
 /// handler's read after its commit, when it makes one) first retitles the row on another connection, as a second
 /// writer landing between the edit's commit and that read would.
