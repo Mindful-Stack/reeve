@@ -135,10 +135,7 @@ pub async fn run(c: &Client, i: Initiative, json: bool) -> anyhow::Result<i32> {
             no_template,
         } => {
             let brief = super::text_arg(brief, brief_file)?;
-            // Ask for the level's default only when the person named nothing: no brief flag (whatever the brief
-            // holds), no --template and no --no-template. --no-template sends nothing: a create that asks for no
-            // template gets none.
-            let default_template = brief.is_none() && template.is_none() && !no_template;
+            let default_template = super::asks_for_default(&brief, &template, no_template);
             finish(
                 c.post::<InitiativeDto>(
                     "/initiatives",

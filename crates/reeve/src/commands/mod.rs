@@ -22,6 +22,18 @@ use reeve_protocol::{ErrorCode, ItemRefDto, Key, MarkUrgent, PromiseShortcut, Ur
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+/// Whether `reeve initiative create` and `reeve epic create` ask the server for the level's default brief template
+/// (`default_template: true`): only when the person named nothing, that is no brief flag, no --template and no
+/// --no-template. A brief flag counts whatever it holds, so `--brief ""` is a brief given and starts empty.
+/// --no-template sends nothing: a create that asks for no template gets none. Written once, for both levels.
+pub fn asks_for_default(
+    brief: &Option<String>,
+    template: &Option<String>,
+    no_template: bool,
+) -> bool {
+    brief.is_none() && template.is_none() && !no_template
+}
+
 /// A text argument (a brief, a description) given inline, or read from a file whose contents are sent unchanged, so no
 /// shell quoting stands between an agent's Markdown and the server; the path `-` reads stdin. Clap keeps the two
 /// exclusive.
@@ -349,4 +361,23 @@ pub fn finish<T: Serialize>(out: Outcome<T>, json: bool, render: impl Fn(&T) -> 
         }
     }
     out.exit_code()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asks_for_default;
+
+    #[test]
+    fn the_default_template_is_asked_for_only_when_nothing_was_named() {
+        let some = |s: &str| Some(s.to_string());
+        // Nothing named: ask.
+        assert!(asks_for_default(&None, &None, false));
+        // A brief given, an empty one included: it is the brief.
+        assert!(!asks_for_default(&some("Mine"), &None, false));
+        assert!(!asks_for_default(&some(""), &None, false));
+        // A template named: the server is asked for that one, not for the default.
+        assert!(!asks_for_default(&None, &some("Scenario"), false));
+        // --no-template: ask for none.
+        assert!(!asks_for_default(&None, &None, true));
+    }
 }
