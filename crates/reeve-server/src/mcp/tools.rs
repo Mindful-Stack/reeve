@@ -782,7 +782,7 @@ mod tests {
     /// sentences a reviewer or the owner asked for by name. One row per sentence; the text is compared whole.
     #[test]
     fn a_description_says_what_only_it_can_tell_the_model() {
-        const SAID: [(&str, &str); 8] = [
+        const SAID: [(&str, &str); 9] = [
             (
                 "edit_epic",
                 "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
@@ -809,6 +809,11 @@ mod tests {
             (
                 "add_item_link",
                 "Never record another tool's \"blocks\" or \"depends on\" as an item link, under any name: leave it out and tell the person that a blocker is added by a person, in the CLI or the web client.",
+            ),
+            // The same for the person's own words: a dependency is a blocker, never an item link in its place.
+            (
+                "add_item_link",
+                "When the person says that one item blocks, depends on or must wait for another, do not add an item link in its place: tell them the same.",
             ),
             // A title and a URL are read by everyone signed in and stay in the activity log.
             (
