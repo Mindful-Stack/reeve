@@ -296,20 +296,18 @@
 	article summary {
 		cursor: pointer;
 	}
+	/* One column: the summary, then the admin's buttons on a row of their own, then the body at the row's full
+	   width. A column of buttons beside the summary took its width first: a name broke letter by letter on a phone
+	   and an opened table lost that width on a desktop. */
 	article {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		gap: 8px 12px;
-		align-items: start;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
 		margin: 0 0 8px;
 		padding: 8px 12px;
 		border: 1px solid var(--line);
 		border-radius: 6px;
 		min-width: 0;
-	}
-	article > form,
-	article > .confirm {
-		grid-column: 1 / -1;
 	}
 	article details {
 		min-width: 0;
