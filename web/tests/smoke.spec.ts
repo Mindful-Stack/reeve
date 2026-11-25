@@ -2008,7 +2008,9 @@ test('a new initiative starts from the default brief template, which is made on 
 		const left = page.locator('article', { hasText: name });
 		await left.getByRole('button', { name: 'Remove', exact: true }).click();
 		await expect(left.getByRole('alert')).toContainText('New initiatives will then start with an empty brief.');
-		await left.getByRole('button', { name: 'Remove template' }).click();
+		// Confirmed from the keyboard: focus goes to a surviving row's first control or to "New template", never to the page.
+		await left.getByRole('button', { name: 'Remove template' }).press('Enter');
 		await expect(page.locator('article', { hasText: name })).toHaveCount(0);
+		await expect(page.locator('summary:focus')).toHaveCount(1);
 	}
 });
