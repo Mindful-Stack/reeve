@@ -4,6 +4,7 @@
 import type {
 	ActivityEntry,
 	AffectedStory,
+	BriefTemplate,
 	DecisionQueue,
 	DecisionQueueEntry,
 	DiscoveryEntry,
@@ -331,6 +332,10 @@ export function itemLink(over: Partial<ItemLink> = {}): ItemLink {
 
 export function webLink(over: Partial<WebLink> = {}): WebLink {
 	return { id: 1, title: 'Scenario page', url: 'https://example.com/wiki/scenario', ...over };
+}
+
+export function briefTemplate(over: Partial<BriefTemplate> = {}): BriefTemplate {
+	return { id: 1, level: 'initiative', name: 'Scenario', body: '# Scenario\n', is_default: false, version: 1, ...over };
 }
 
 /** A `GET /search` hit: a story matched by its title, not named exactly. */

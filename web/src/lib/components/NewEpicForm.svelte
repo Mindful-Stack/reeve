@@ -11,6 +11,7 @@
 	import { session } from '#lib/me.svelte.ts';
 	import { planningOrder } from '#lib/planning.ts';
 	import ImageUploadsRow from '#lib/components/ImageUploadsRow.svelte';
+	import TemplatePicker from '#lib/components/TemplatePicker.svelte';
 	import { ImageUploads, attachable } from '#lib/attach.svelte.ts';
 
 	// Creates an epic. On the initiative page the parent is fixed (`initiative`); on the backlog a picker of
@@ -36,6 +37,13 @@
 	 *  double submit. */
 	const cycle = new CreateCycle();
 	let error = $state<string | null>(null);
+	/** Counts the drafts of this form instance: the template picker is mounted anew for each, so a new draft starts
+	 *  from the default template again. */
+	let round = $state(0);
+	/** The picker of this draft has its templates (or failed to get them). The form is not sent before: the picker
+	 *  changes the brief when the list arrives, and a draft that changed after it was sent would be retried under a
+	 *  new idempotency key. */
+	let templatesReady = $state(false);
 	let briefEl = $state<HTMLTextAreaElement | null>(null);
 	const uploads = new ImageUploads(
 		() => draft.brief,
@@ -60,7 +68,7 @@
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
-		if (cycle.inFlight || uploads.busy) return;
+		if (cycle.inFlight || uploads.busy || !templatesReady) return;
 		// The callback of the parent this submit belongs to: once this form is unmounted (its dialog closed while the create
 		// was in flight), reading the prop again may give the callback of whatever the parent shows now.
 		const done = oncreated;
@@ -79,6 +87,8 @@
 		busy = false;
 		if (out.kind === 'sent') {
 			draft = { title: '', brief: '', initiative: draft.initiative };
+			templatesReady = false;
+			round += 1;
 			uploads.reset();
 			refocus();
 			await done(out.value);
@@ -97,18 +107,24 @@
 			<Picker label="Initiative" options={keyed(ordered)} bind:value={draft.initiative} empty="No initiative" disabled={busy} />
 		</label>
 	{/if}
+	{#key round}<TemplatePicker level="epic" bind:text={draft.brief} bind:ready={templatesReady} disabled={busy} />{/key}
 	<div class="field">
-		<label class="field">Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="3" disabled={busy} {@attach attachable(uploads)}></textarea></label>
+		<label class="field">Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="12" disabled={busy} {@attach attachable(uploads)}></textarea></label>
 		<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
 	</div>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	<button type="submit" class="primary" disabled={busy || uploads.busy || !draft.title.trim()}>{uploads.busy ? 'Uploading…' : 'Create epic'}</button>
+	<button type="submit" class="primary" disabled={busy || uploads.busy || !templatesReady || !draft.title.trim()}
+		>{!templatesReady ? 'Loading templates…' : uploads.busy ? 'Uploading…' : 'Create epic'}</button
+	>
 </form>
 
 <style>
 	.create-form {
 		display: grid;
 		gap: 12px;
+		/* The full width a dialog allows (app.css): room to write a brief in and to read a template, and the dialog
+		   keeps its width when the template picker appears. */
+		min-width: min(520px, 80vw);
 	}
 	.create-form button {
 		justify-self: start;

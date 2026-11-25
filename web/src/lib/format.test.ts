@@ -136,6 +136,23 @@ describe('actionLabel', () => {
 		expect(actionLabel('web_link_added', null)).toBe('added web link');
 		expect(actionLabel('web_link_removed', { title: '' })).toBe('removed web link');
 	});
+	it('says what happened to which brief template', async () => {
+		const { actionLabel } = await import('./format.ts');
+		const t = { level: 'initiative', name: 'Scenario' };
+		expect(actionLabel('brief_template_created', t)).toBe('created the initiative brief template Scenario');
+		expect(actionLabel('brief_template_edited', { ...t, fields: ['body'] })).toBe('edited the initiative brief template Scenario');
+		expect(actionLabel('brief_template_edited', { ...t, fields: ['name'], from: 'Old name' })).toBe(
+			'edited the initiative brief template Scenario (was Old name)'
+		);
+		expect(actionLabel('brief_template_removed', { ...t, was_default: true })).toBe('removed the initiative brief template Scenario');
+		expect(actionLabel('brief_template_default_set', { level: 'epic', name: 'Tech debt', replaced: 3 })).toBe(
+			'made the epic brief template Tech debt the default'
+		);
+		expect(actionLabel('brief_template_default_cleared', t)).toBe('stopped using the initiative brief template Scenario as the default');
+		// An entry from a server that sent less still reads as a sentence.
+		expect(actionLabel('brief_template_created', {})).toBe('created the brief template');
+		expect(actionLabel('brief_template_default_cleared', {})).toBe('stopped using the brief template as the default');
+	});
 	it('has no words for any other action, which reads as plainAction', async () => {
 		const { actionLabel, plainAction } = await import('./format.ts');
 		for (const a of ['moved', 'goal_linked', 'override']) expect(actionLabel(a, null, 'ABC-12')).toBeNull();

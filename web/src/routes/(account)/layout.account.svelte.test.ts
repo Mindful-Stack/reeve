@@ -40,13 +40,13 @@ const links = () => [...document.body.querySelectorAll('nav[aria-label="Account"
 describe('account menu', () => {
 	it('hides Users from non-admins', () => {
 		open('/tokens');
-		expect(links().map((a) => a.textContent)).toEqual(['Tokens', 'Activity']);
+		expect(links().map((a) => a.textContent)).toEqual(['Tokens', 'Activity', 'Templates']);
 	});
 
 	it('shows Users to admins', () => {
 		route.role = 'admin';
 		open('/tokens');
-		expect(links().map((a) => a.textContent)).toEqual(['Tokens', 'Activity', 'Users', 'Access']);
+		expect(links().map((a) => a.textContent)).toEqual(['Tokens', 'Activity', 'Templates', 'Users', 'Access']);
 	});
 
 	it('marks only the active item', () => {

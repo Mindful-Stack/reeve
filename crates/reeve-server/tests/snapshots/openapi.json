@@ -407,7 +407,7 @@
             "type": "integer"
           },
           "is_default": {
-            "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`), and what the web form shows first.",
+            "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`). The web create form preselects it and puts its text in the brief, which\nit then sends as the brief.",
             "type": "boolean"
           },
           "level": {
@@ -4775,7 +4775,7 @@
                     "type": "integer"
                   },
                   "is_default": {
-                    "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`), and what the web form shows first.",
+                    "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`). The web create form preselects it and puts its text in the brief, which\nit then sends as the brief.",
                     "type": "boolean"
                   },
                   "level": {
@@ -8351,7 +8351,7 @@
                       "type": "integer"
                     },
                     "is_default": {
-                      "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`), and what the web form shows first.",
+                      "description": "At most one template per level is the default: what a new brief starts from when its create asks for the\nlevel's default (`default_template`). The web create form preselects it and puts its text in the brief, which\nit then sends as the brief.",
                       "type": "boolean"
                     },
                     "level": {

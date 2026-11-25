@@ -84,6 +84,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			return { ...s.ini, key: 'ABC-2', title: 'Other' };
 		}
 		if (method === 'GET' && path === '/api/v1/epics') return s.epics;
+		if (method === 'GET' && path === '/api/v1/brief-templates') return [];
 		if (method === 'GET' && path === '/api/v1/stories') return s.stories;
 		if (method === 'GET' && path === '/api/v1/activity') return s.activity;
 		if (method === 'GET' && path === '/api/v1/decisions') {
@@ -419,6 +420,14 @@ describe('initiative page: edit details', () => {
 	});
 });
 
+/** The "New epic" form's templates have loaded: its submit button no longer says so, and the form can be sent. */
+async function templatesLoaded(form: HTMLFormElement) {
+	await vi.waitFor(() => {
+		flushSync();
+		expect(form.querySelector('button[type="submit"]')!.textContent).not.toContain('Loading templates');
+	});
+}
+
 describe('initiative page: new epic', () => {
 	it('creates an epic under this initiative from the dialog, closes it and lists the epic after the refetch', async () => {
 		await open();
@@ -426,6 +435,7 @@ describe('initiative page: new epic', () => {
 		btn('New epic').click();
 		flushSync();
 		const f = document.body.querySelector('dialog form[aria-label="New epic"]') as HTMLFormElement;
+		await templatesLoaded(f);
 		const title = [...f.querySelectorAll('label')].find((l) => l.textContent?.startsWith('Title'))!.querySelector('input')!;
 		title.value = 'Fresh epic';
 		title.dispatchEvent(new Event('input', { bubbles: true }));
@@ -994,6 +1004,7 @@ describe('initiative page: New epic across a page change', () => {
 	async function startCreate(text: string) {
 		btn('New epic').click();
 		flushSync();
+		await templatesLoaded(form()!);
 		type(titleInput(), text);
 		form()!.requestSubmit();
 	}

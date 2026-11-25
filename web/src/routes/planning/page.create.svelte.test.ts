@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Page from './+page.svelte';
 import { session } from '#lib/me.svelte.ts';
 import type { Initiative } from '#lib/api/types.ts';
-import { config, initiative, me } from '#lib/test/fixtures.ts';
+import { briefTemplate, config, initiative, me } from '#lib/test/fixtures.ts';
 import type { FakePage } from '#lib/test/net.ts';
 
 const route = vi.hoisted(() => ({ fake: null as null | FakePage }));
@@ -30,7 +30,17 @@ type Posted = {
 const net = vi.hoisted(() => ({
 	posts: [] as Posted[],
 	urgent: [] as { method: string; path: string; body: unknown }[],
-	state: { failNext: 0, rejectNext: 0, initiatives: [] as Initiative[], hold: null as Promise<void> | null, refuse: false }
+	state: {
+		failNext: 0,
+		rejectNext: 0,
+		initiatives: [] as Initiative[],
+		hold: null as Promise<void> | null,
+		refuse: false,
+		templates: [] as unknown[],
+		templatesFail: false,
+		/** While set, the templates are not answered: the request waits on it. */
+		templatesGate: null as Promise<void> | null
+	}
 }));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
@@ -41,6 +51,10 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		if (method === 'GET' && path === '/api/v1/initiatives') return state.initiatives;
 		if (method === 'GET' && path === '/api/v1/decisions') return [];
 		if (method === 'GET' && path === '/api/v1/war-room') return [];
+		if (method === 'GET' && path === '/api/v1/brief-templates') {
+			if (state.templatesGate) await state.templatesGate;
+			return state.templatesFail ? failure('no templates today') : state.templates;
+		}
 		const urgent = path.match(/^\/api\/v1\/initiatives\/([^/]+)\/urgent$/);
 		if (urgent) {
 			net.urgent.push({ method, path, body });
@@ -91,6 +105,9 @@ afterEach(() => {
 	net.state.initiatives = [];
 	net.state.hold = null;
 	net.state.refuse = false;
+	net.state.templates = [];
+	net.state.templatesFail = false;
+	net.state.templatesGate = null;
 	route.fake!.reset();
 	session.me = null;
 	goto.mockClear();
@@ -113,7 +130,24 @@ function submit() {
 	q<HTMLFormElement>('form[aria-label="New initiative"]').requestSubmit();
 }
 
-async function open() {
+const submitButton = () => q<HTMLButtonElement>('form[aria-label="New initiative"] button[type="submit"]');
+/** The open dialog's templates have loaded (or failed to): its submit button no longer says so. */
+async function templatesLoaded() {
+	await vi.waitFor(() => {
+		flushSync();
+		expect(submitButton().textContent).not.toContain('Loading templates');
+	});
+}
+/** Cancels the dialog and opens it again, with the draft it keeps. */
+async function reopen() {
+	[...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click();
+	flushSync();
+	newButton().click();
+	flushSync();
+	await templatesLoaded();
+}
+
+async function open(wait = true) {
 	session.config = config({ horizon_buckets: ['Now', 'Next'] });
 	app = mount(Page, { target: document.body });
 	await vi.waitFor(() => {
@@ -123,6 +157,7 @@ async function open() {
 	newButton().click();
 	flushSync();
 	expect(document.body.querySelector('dialog form[aria-label="New initiative"]')).not.toBeNull();
+	if (wait) await templatesLoaded();
 }
 
 function newButton(): HTMLButtonElement {
@@ -130,6 +165,11 @@ function newButton(): HTMLButtonElement {
 }
 
 describe('planning page: new initiative', () => {
+	it('gives the brief the room a template needs, as the brief editor of an initiative does', async () => {
+		await open();
+		expect((field('Brief') as unknown as HTMLTextAreaElement).rows).toBe(12);
+	});
+
 	it('defaults the horizon to the first configured bucket', async () => {
 		await open();
 		expect(field('Horizon').value).toBe('Now');
@@ -178,6 +218,7 @@ describe('planning page: new initiative', () => {
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
 		newButton().click();
 		flushSync();
+		await templatesLoaded();
 		type(field('Title'), 'Created');
 		submit();
 		await vi.waitFor(() => expect(net.posts).toHaveLength(2));
@@ -192,6 +233,7 @@ describe('planning page: new initiative', () => {
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledTimes(1));
 		newButton().click();
 		flushSync();
+		await templatesLoaded();
 		expect(field('Title').value).toBe('');
 		expect(field('Horizon').value).toBe('Now');
 	});
@@ -272,7 +314,158 @@ describe('planning page: new initiative', () => {
 		await vi.waitFor(() => expect(document.activeElement).toBe(toggle));
 		toggle.click();
 		flushSync();
+		await templatesLoaded();
 		expect(document.body.querySelector('form[aria-label="New initiative"] [role="alert"]')).toBeNull();
+	});
+
+	const scenario = () => briefTemplate({ id: 3, level: 'initiative', name: 'Scenario', body: '# Scenario\n', is_default: true });
+	const alertText = () => q('form[aria-label="New initiative"] [role="alert"]')?.textContent ?? '';
+
+	it('starts a new initiative from the default template and sends what the author made of it, and nothing else', async () => {
+		net.state.templates = [scenario()];
+		await open();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		expect(field('Template').value).toBe('3');
+		type(field('Title'), 'Created');
+		type(field('Brief'), '# Scenario\nWho books what.');
+		submit();
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/initiatives/SMK-7'));
+		expect(net.posts[0]).toEqual({
+			idempotency_key: expect.any(String),
+			title: 'Created',
+			horizon: 'Now',
+			target_month: null,
+			brief: '# Scenario\nWho books what.',
+			owner: null
+		});
+	});
+
+	it('cannot be sent before the templates have loaded', async () => {
+		const { settle } = await import('#lib/test/net.ts');
+		let release!: () => void;
+		net.state.templatesGate = new Promise<void>((r) => (release = r));
+		net.state.templates = [scenario()];
+		await open(false);
+		type(field('Title'), 'Early');
+		expect(submitButton().disabled).toBe(true);
+		expect(submitButton().textContent).toContain('Loading templates');
+		submit();
+		await settle();
+		flushSync();
+		expect(net.posts).toHaveLength(0);
+		release();
+		await templatesLoaded();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		submit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(1));
+		expect(net.posts[0].brief).toBe('# Scenario\n');
+	});
+
+	it('retries a lost answer as the same create, also after Cancel and reopen: the default does not come back into a sent draft', async () => {
+		net.state.templates = [scenario()];
+		await open();
+		type(field('Title'), 'Created');
+		type(field('Brief'), ''); // the author wants none of the template
+		net.state.rejectNext = 1; // the server stores the initiative; the answer is lost
+		submit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertText()).toContain('Failed to fetch');
+		});
+		await reopen();
+		// The draft is as it was sent. A fresh picker with a blank brief would have put the default in.
+		expect(field('Title').value).toBe('Created');
+		expect(field('Brief').value).toBe('');
+		expect(field('Template').value).toBe('');
+		submit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(2));
+		expect(net.posts[1]).toEqual(net.posts[0]);
+	});
+
+	it('does not bring the default back after the author chose No template and cancelled', async () => {
+		net.state.templates = [scenario()];
+		await open();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		type(field('Title'), 'Bare');
+		type(field('Template'), ''); // the text is the template's own, so this empties it without a question
+		expect(field('Brief').value).toBe('');
+		await reopen();
+		// Never sent, and still as the author left it: a reopened picker does not prefill this draft again.
+		expect(field('Title').value).toBe('Bare');
+		expect(field('Brief').value).toBe('');
+		expect(field('Template').value).toBe('');
+	});
+
+	it('does not bring the default back after the author emptied the brief and cancelled', async () => {
+		net.state.templates = [scenario()];
+		await open();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		type(field('Title'), 'Bare');
+		type(field('Brief'), '');
+		await reopen();
+		expect(field('Title').value).toBe('Bare');
+		expect(field('Brief').value).toBe('');
+		expect(field('Template').value).toBe('');
+	});
+
+	it("keeps a cancelled draft and still knows the default's text as the template's own", async () => {
+		net.state.templates = [scenario(), briefTemplate({ id: 4, level: 'initiative', name: 'Tech debt', body: '## Debt\n' })];
+		await open();
+		type(field('Title'), 'Kept');
+		await reopen();
+		expect(field('Title').value).toBe('Kept');
+		expect(field('Brief').value).toBe('# Scenario\n');
+		// Not "No template" over the template's own text:
+		expect(field('Template').value).toBe('3');
+		// and so another entry replaces it without a question.
+		type(field('Template'), '4');
+		expect(alertText()).toBe('');
+		expect(field('Brief').value).toBe('## Debt\n');
+	});
+
+	// Catches ownership inferred from the template list: the author edited the default's text until it was exactly
+	// another template's body, and a reopened picker took that text for the other template's own and emptied it
+	// for "No template" without asking.
+	it("never takes the author's edit for a template's text after Cancel and reopen, even when it equals one", async () => {
+		net.state.templates = [scenario(), briefTemplate({ id: 4, level: 'initiative', name: 'Tech debt', body: '## Debt\n' })];
+		await open();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		type(field('Title'), 'Edited');
+		type(field('Brief'), '## Debt\n'); // typed by the author, not applied by the picker
+		await reopen();
+		expect(field('Brief').value).toBe('## Debt\n');
+		// The text is the author's now: the select shows No template, not Tech debt, whose body it happens to be.
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '3');
+		expect(alertText()).toContain('Replace what you have written with the template "Scenario"?');
+		expect(field('Brief').value).toBe('## Debt\n');
+	});
+
+	// Catches the same inference for text typed before the list arrived: it equals a listed template's body, and the
+	// picker took it for that template's own, so choosing another replaced it without asking.
+	it("never takes text typed before the templates arrived for a template's, even when it equals one", async () => {
+		let release!: () => void;
+		net.state.templatesGate = new Promise<void>((r) => (release = r));
+		net.state.templates = [scenario(), briefTemplate({ id: 4, level: 'initiative', name: 'Tech debt', body: '## Debt\n' })];
+		await open(false);
+		type(field('Brief'), '## Debt\n');
+		release();
+		await templatesLoaded();
+		expect(field('Brief').value).toBe('## Debt\n');
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '3');
+		expect(alertText()).toContain('Replace what you have written with the template "Scenario"?');
+		expect(field('Brief').value).toBe('## Debt\n');
+	});
+
+	it('works as before when the templates cannot be loaded', async () => {
+		net.state.templatesFail = true;
+		await open();
+		expect(q('form[aria-label="New initiative"]').textContent).toContain('Templates could not be loaded');
+		type(field('Title'), 'Created');
+		submit();
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/initiatives/SMK-7'));
+		expect(net.posts[0].brief).toBeNull();
 	});
 });
 

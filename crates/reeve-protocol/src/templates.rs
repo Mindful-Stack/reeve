@@ -40,7 +40,8 @@ pub struct BriefTemplateDto {
     /// Markdown, as it was written.
     pub body: String,
     /// At most one template per level is the default: what a new brief starts from when its create asks for the
-    /// level's default (`default_template`), and what the web form shows first.
+    /// level's default (`default_template`). The web create form preselects it and puts its text in the brief, which
+    /// it then sends as the brief.
     pub is_default: bool,
     pub version: i64,
 }

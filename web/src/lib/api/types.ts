@@ -76,3 +76,6 @@ export type ItemLinkType = S['ItemLinkType'];
 export type ItemLink = S['ItemLinkDto'];
 export type LinkedItem = S['LinkedItemDto'];
 export type WebLink = S['WebLinkDto'];
+export type BriefTemplate = S['BriefTemplateDto'];
+export type BriefTemplateLevel = S['BriefTemplateLevel'];
+export type EditBriefTemplate = S['EditBriefTemplate'];
