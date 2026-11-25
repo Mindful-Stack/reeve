@@ -69,12 +69,29 @@
 		editNotice = null;
 	}
 
+	/** A create is on its way: the new-template form holds the draft it sent, until its answer has been dealt with. */
+	let sending = false;
+	/** A removed editor's text that arrived while a create was on its way, waiting for `placeRescued`. */
+	let rescued: ({ level: BriefTemplateLevel } & TemplateFields) | null = null;
+
 	/** The template being edited is gone. What its admin typed is not: it moves into the form for a new template,
 	 *  which opens. A new template that was half written there keeps its level and its name, and the editor's text
-	 *  follows its own. */
+	 *  follows its own. While a create is on its way the text waits (`rescued`) and moves in once the create's answer
+	 *  has emptied or kept the draft it sent: it is never part of that create, and never emptied with it. */
 	function keepRemoved(level: BriefTemplateLevel) {
-		const mine = { ...edit };
+		const mine = { level, ...edit };
 		closeEdit();
+		if (sending) rescued = mine;
+		else place(mine);
+	}
+
+	function placeRescued() {
+		const waiting = rescued;
+		rescued = null;
+		if (waiting) place(waiting);
+	}
+
+	function place({ level, ...mine }: { level: BriefTemplateLevel } & TemplateFields) {
 		const begun = draft.name.trim() !== '' || draft.body.trim() !== '';
 		draft = begun
 			? {
@@ -166,17 +183,29 @@
 		e.preventDefault();
 		const form = e.currentTarget as HTMLFormElement;
 		const had = focusNow();
+		if (busy) return;
 		const body = { level: draft.level, name: draft.name, body: draft.body };
-		const out = await write(
-			() => unwrap(api.POST('/api/v1/brief-templates', { body })),
-			(m) => (createNotice = m),
-			// The sent draft is emptied and the form folds before the reload: a removed editor's text the reload moves
-			// into the form then stays there, and the form stays open for it.
-			() => {
-				draft = { level: draft.level, name: '', body: '' };
-				adding = false;
-			}
-		);
+		// Until the answer, a removed editor's text waits instead of joining the draft being sent (`keepRemoved`).
+		sending = true;
+		let out: Outcome;
+		try {
+			out = await write(
+				() => unwrap(api.POST('/api/v1/brief-templates', { body })),
+				(m) => (createNotice = m),
+				// The sent draft is emptied and the form folds before the reload: a removed editor's text that waited,
+				// or that the reload moves in, then goes into an empty form, which opens for it.
+				() => {
+					draft = { level: draft.level, name: '', body: '' };
+					adding = false;
+					sending = false;
+					placeRescued();
+				}
+			);
+		} finally {
+			// A failed create keeps its draft: a text that waited joins it, as it would with no create on its way.
+			sending = false;
+			placeRescued();
+		}
 		if (out.kind === 'done') {
 			// The form folded: focus goes to its summary, which opens it again. A form the reload opened again for a
 			// removed editor's text keeps focus, on its name.

@@ -21,7 +21,9 @@ const { calls, db, liveFns } = vi.hoisted(() => ({
 		fail: null as null | 'network' | 'forbidden' | { refuse: string },
 		/** A list request takes its snapshot of the rows when it is made, then waits on the next gate, if any: an
 		 *  answer that is already old when it arrives. */
-		gates: [] as Promise<void>[]
+		gates: [] as Promise<void>[],
+		/** A write is applied when it arrives, and its answer then waits on the next of these, if any: a slow answer. */
+		answers: [] as Promise<void>[]
 	},
 	liveFns: [] as (() => unknown)[]
 }));
@@ -54,6 +56,16 @@ vi.mock('#lib/api/client.ts', () => {
 			)
 			.map(copy);
 	const respond = (method: string) => async (path: string, init: Init) => {
+		if (method === 'GET') return judge(method, path, init);
+		const answer = db.answers.shift();
+		const out = judge(method, path, init);
+		out.catch(() => {}); // a refusal is awaited below; this keeps it from counting as unhandled meanwhile
+		if (answer) {
+			await answer;
+		}
+		return out;
+	};
+	const judge = async (method: string, path: string, init: Init) => {
 		calls.push({ method, path, init });
 		if (method === 'GET') {
 			const snapshot = listed();
@@ -130,6 +142,7 @@ afterEach(() => {
 	db.meanwhile = null;
 	db.fail = null;
 	db.gates.length = 0;
+	db.answers.length = 0;
 	me.setRole('admin');
 });
 
@@ -422,6 +435,64 @@ describe('templates page', () => {
 		expect(textOf(newForm()!).value).toBe(mine);
 		expect(pageNotices()).toEqual([REMOVED]);
 		await vi.waitFor(() => expect(document.activeElement).toBe(nameOf(newForm()!)));
+	});
+
+	// Catches the create's reset emptying text that a live reload moved into New template while the create was on
+	// its way: the reset took the draft that was there when the answer came, not the one that was sent.
+	it("keeps a removed editor's text that a live reload rescued while a create was on its way", async () => {
+		await open('admin');
+		const mine = 'One slice, rewritten.\n';
+		const form = startEdit(3);
+		type(nameOf(form), 'Thin slice');
+		type(textOf(form), mine);
+		const fresh = newForm()!;
+		fresh.closest('details')!.open = true;
+		type(nameOf(fresh), 'Spike');
+		type(textOf(fresh), '## Question\n');
+		let release!: () => void;
+		db.answers.push(new Promise<void>((r) => (release = r)));
+		fresh.requestSubmit();
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		// Another admin removes the edited template; the live reload lands before the create's answer.
+		db.rows = db.rows.filter((r) => r.id !== 3);
+		await liveFns[0]();
+		flushSync();
+		expect(editForm(3)).toBeFalsy();
+		release();
+		await written(1);
+		// The create is the draft that was sent, alone.
+		expect(stored(10)).toMatchObject({ level: 'initiative', name: 'Spike', body: '## Question\n' });
+		expect(writes()).toHaveLength(1);
+		// The rescued text is in the form, open, at the removed template's level, and the notice says so.
+		expect(newForm()!.closest('details')!.open).toBe(true);
+		expect(newForm()!.querySelector('select')!.value).toBe('epic');
+		expect(nameOf(newForm()!).value).toBe('Thin slice');
+		expect(textOf(newForm()!).value).toBe(mine);
+		expect(pageNotices()).toEqual([REMOVED]);
+	});
+
+	// A guard, green before the fix: with a create that fails, the sent draft stays for a retry and the rescued text
+	// joins it, as it does when no create is on its way.
+	it("keeps both texts when a live reload rescues an editor's text while a create that then fails was on its way", async () => {
+		await open('admin');
+		type(textOf(startEdit(3)), 'One slice, rewritten.\n');
+		const fresh = newForm()!;
+		fresh.closest('details')!.open = true;
+		type(nameOf(fresh), 'Spike');
+		type(textOf(fresh), '## Question\n');
+		let release!: () => void;
+		db.answers.push(new Promise<void>((r) => (release = r)));
+		db.fail = 'network';
+		fresh.requestSubmit();
+		await vi.waitFor(() => expect(writes()).toHaveLength(1));
+		db.rows = db.rows.filter((r) => r.id !== 3);
+		await liveFns[0]();
+		flushSync();
+		release();
+		await written(1);
+		expect(nameOf(newForm()!).value).toBe('Spike');
+		expect(textOf(newForm()!).value).toBe('## Question\n\nOne slice, rewritten.\n');
+		expect(pageNotices()).toEqual([REMOVED]);
 	});
 
 	it('shows a rendered preview of the text while it is edited', async () => {
