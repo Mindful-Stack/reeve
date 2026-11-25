@@ -56,6 +56,13 @@
 		return null;
 	}
 
+	/** An entity that is shown as a link to the page that lists its kind, in place of its type and key: a brief
+	 *  template's key is a row id nobody knows it by, and its name is in the action's words. */
+	function entityPage(e: ActivityEntry): { href: string; label: string } | null {
+		if (e.entity_type === 'brief_template') return { href: '/templates', label: 'Templates' };
+		return null;
+	}
+
 	/** The free-text reason an override carries in its payload, if any. */
 	function reason(e: ActivityEntry): string | null {
 		const p = e.payload;
@@ -95,6 +102,7 @@
 	<ol class="rows">
 		{#each entries as e (e.id)}
 			{@const href = entityHref(e)}
+			{@const listed = entityPage(e)}
 			{@const why = e.action === 'override' ? reason(e) : null}
 			<li data-testid="activity-{e.id}">
 				<span class="age" title={e.at}>{age(e.at)}</span>
@@ -102,11 +110,15 @@
 				<span class="via via-{e.via}" title="via {e.via}">{e.via}</span>
 				<span class="action">{label(e)}</span>
 				<span class="entity">
-					{e.entity_type}
-					{#if href}
-						<a {href}>{e.entity_key}</a>
+					{#if listed}
+						<a href={listed.href}>{listed.label}</a>
 					{:else}
-						{e.entity_key}
+						{e.entity_type}
+						{#if href}
+							<a {href}>{e.entity_key}</a>
+						{:else}
+							{e.entity_key}
+						{/if}
 					{/if}
 				</span>
 				{#if why}
