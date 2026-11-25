@@ -7,7 +7,8 @@
 //!
 //! It answers what its route sends, and beside it what its tool's receipt needs when that is more. A create
 //! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
-//! the DTO, and the receipt needs the flag. A comment action answers the comment's id and whether this call wrote
+//! the DTO, and the receipt needs the flag. An edit whose receipt needs the item as its write left it answers an
+//! `Edited` (`edit_epic`, `edit_initiative`). A comment action answers the comment's id and whether this call wrote
 //! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that.
 //!
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
@@ -28,8 +29,10 @@ pub(crate) use comments::{add_decision_comment, add_item_comment};
 pub(crate) use decisions::{
     DecisionQuery, decision_dto, decision_scope, list_decisions, resolve_on,
 };
-pub(crate) use epics::{EpicQuery, get_epic, list_epics};
-pub(crate) use initiatives::{get_initiative, list_initiatives};
+pub(crate) use epics::{EpicQuery, create_epic, edit_epic, get_epic, list_epics};
+pub(crate) use initiatives::{
+    create_initiative, edit_initiative, get_initiative, list_initiatives,
+};
 pub(crate) use links::{
     add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
 };
@@ -40,6 +43,16 @@ pub(crate) use sprints::{get_sprint, list_sprints};
 pub(crate) use stories::{
     StoryQuery, create_story, edit_story, list_stories, move_story, read_story, story_context,
 };
+
+/// What an edit answers when its tool's receipt needs more than the route sends: `read`, the item as a read after the
+/// commit shows it, with what only a read adds (urgency, promise, links), which the route sends; and `written`, the
+/// item as this call's write left it. The two differ when another writer lands between the commit and the read, so a
+/// receipt takes what the write decided (title, version, place) from `written`: it never reports another caller's
+/// change, or the version after it, as this call's.
+pub(crate) struct Edited<D, I> {
+    pub(crate) read: D,
+    pub(crate) written: I,
+}
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
 /// timestamp, and the client when the call came through MCP) and the access policy the request was authenticated
@@ -127,6 +140,38 @@ impl Acting<'_> {
             ));
         }
         Ok(())
+    }
+}
+
+/// An owner (a story's, an initiative's) must be an allowed user (allowed by the floor or a database entry): an
+/// owner nobody can sign in as would hold work no one can pick up. The refusal repeats the owner bounded
+/// (`text::echo`), so however long it is, the words after it are still said.
+pub(super) fn allowed_owner(
+    policy: &AccessPolicy,
+    owner: Option<String>,
+) -> Result<Option<String>, AppError> {
+    match owner {
+        Some(o) if !policy.is_allowed(&o) => {
+            Err(reeve_planning::HandlerError::Validation(format!(
+                "{} is not an allowed user",
+                crate::text::echo(&reeve_protocol::normalise_email(&o))
+            ))
+            .into())
+        }
+        other => Ok(other),
+    }
+}
+
+/// A target month a request names must be a month (`reeve_protocol::is_target_month`): any other text would be
+/// stored and then silently count as no month in the Now ranking. Like `allowed_owner`, it judges only what the
+/// request names; a stored month is never passed here.
+pub(super) fn named_target_month(month: Option<String>) -> Result<Option<String>, AppError> {
+    match month {
+        Some(m) if !reeve_protocol::is_target_month(&m) => Err(AppError::Validation(format!(
+            "target month must be YYYY-MM, for example 2027-03, not {:?}",
+            crate::text::echo(&m)
+        ))),
+        other => Ok(other),
     }
 }
 

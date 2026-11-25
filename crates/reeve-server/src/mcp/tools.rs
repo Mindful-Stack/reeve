@@ -3,7 +3,11 @@
 //! kb/ADR-0029 R10 needs an observation on that record first.
 mod add_comment;
 mod bound;
+mod create_epic;
+mod create_initiative;
 mod create_story;
+mod edit_epic;
+mod edit_initiative;
 mod edit_story;
 mod get_epic;
 mod get_initiative;
@@ -101,8 +105,9 @@ impl Tool {
     }
 }
 
-/// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions.
-pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
+/// Every tool, in a fixed order. `key_prefix` is the instance's, for the examples in descriptions; `horizons` are
+/// its horizon buckets, which the initiative tools list for the `horizon` argument.
+pub(crate) fn registry(key_prefix: &str, horizons: &[String]) -> Vec<Tool> {
     vec![
         search_items::tool(key_prefix),
         list_stories::tool(),
@@ -117,6 +122,10 @@ pub(crate) fn registry(key_prefix: &str) -> Vec<Tool> {
         edit_story::tool(key_prefix),
         add_comment::tool(key_prefix),
         move_story::tool(key_prefix),
+        create_epic::tool(key_prefix),
+        edit_epic::tool(key_prefix),
+        create_initiative::tool(horizons),
+        edit_initiative::tool(key_prefix, horizons),
     ]
 }
 
@@ -199,6 +208,15 @@ pub(crate) fn bounded(mut message: String) -> String {
     message
 }
 
+/// Whether `text` ends with what `bound::cut` appends, `[cut: <n> more characters]`: a text a read tool
+/// (`get_story`, `get_epic`, `get_initiative`) shortened. Written back, it would replace the real text with the cut one.
+fn looks_cut(text: &str) -> bool {
+    text.trim_end()
+        .strip_suffix(" more characters]")
+        .and_then(|rest| rest.rsplit_once("[cut: "))
+        .is_some_and(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// How much of a refusal its list of reasons may take, the count of those left out included: the rest of
 /// `bound::MAX_OWN_TEXT` is room for the sentences around it (a key repeated with `text::echo` and a few lines).
 const MAX_REASONS: usize = bound::MAX_OWN_TEXT - 2_000;
@@ -260,11 +278,19 @@ fn not_found(e: AppError, what: &str, key: &str, key_prefix: &str) -> ToolError 
     }
 }
 
-/// What a write to a story by version failed with: a stale version is told with the version to read (when the
-/// planner could give one) and what to do about it; a missing story as `not_found` tells it; anything else in
-/// `told`'s words.
-fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
-    let advice = "Read it again with get_story, check what changed, and send only the change the person asked for";
+/// What a write to an item by version failed with: a stale version is told with the version to read (when the
+/// planner could give one) and what to do about it; a missing item as `not_found` tells it; anything else in
+/// `told`'s words. `what` is "story", "epic" or "initiative", and `reader` the tool that reads one.
+fn item_write_failed(
+    e: AppError,
+    what: &str,
+    reader: &str,
+    key: &str,
+    key_prefix: &str,
+) -> ToolError {
+    let advice = format!(
+        "Read it again with {reader}, check what changed, and send only the change the person asked for"
+    );
     match e {
         AppError::Conflict { current } if current >= 0 => ToolError::Told(format!(
             "{} changed since you read it and is now at version {current}. {advice}, with version {current}.",
@@ -275,8 +301,13 @@ fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
             "{} changed while this ran. {advice}.",
             bound::echo(key)
         )),
-        other => not_found(other, "story", key, key_prefix),
+        other => not_found(other, what, key, key_prefix),
     }
+}
+
+/// `item_write_failed` for a story.
+fn write_failed(e: AppError, key: &str, key_prefix: &str) -> ToolError {
+    item_write_failed(e, "story", "get_story", key, key_prefix)
 }
 
 /// What an action failed with, as the model reads it: everything the planner said (not found, a validation error, a
@@ -327,6 +358,11 @@ mod tests {
         Box::pin(async { Ok(json!({})) })
     }
 
+    /// The registry as an instance with two horizon buckets builds it.
+    fn tools() -> Vec<Tool> {
+        registry("TST", &["Now".to_string(), "Later".to_string()])
+    }
+
     /// A tool that takes nothing and does nothing, read-only or not: for the scope rule alone.
     fn a_tool(name: &'static str, read_only: bool) -> Tool {
         Tool {
@@ -369,10 +405,10 @@ mod tests {
         assert_eq!(names(Write), vec![json!("reads"), json!("writes")]);
     }
 
-    /// kb/ADR-0029 R10: the tools are these thirteen and no others, and each is knowingly on one side of the scope
-    /// rule. A tool outside R10's set needs an observation on the record first.
+    /// kb/ADR-0029 R10 and the observation for GRA-901 on it: the tools are exactly these and no others, and each is
+    /// knowingly on one side of the scope rule. A tool outside this list needs an observation on the record first.
     #[test]
-    fn the_registry_is_the_nine_read_tools_and_the_four_write_tools() {
+    fn the_registry_is_exactly_the_read_tools_and_the_write_tools_the_record_names() {
         const READ: [&str; 9] = [
             "search_items",
             "list_stories",
@@ -384,8 +420,17 @@ mod tests {
             "list_decisions",
             "get_sprint",
         ];
-        const WRITE: [&str; 4] = ["create_story", "edit_story", "add_comment", "move_story"];
-        let tools = registry("TST");
+        const WRITE: [&str; 8] = [
+            "create_story",
+            "edit_story",
+            "add_comment",
+            "move_story",
+            "create_epic",
+            "edit_epic",
+            "create_initiative",
+            "edit_initiative",
+        ];
+        let tools = tools();
         let named = |read_only: bool| -> Vec<&str> {
             tools
                 .iter()
@@ -397,11 +442,12 @@ mod tests {
         assert_eq!(named(false), WRITE);
     }
 
-    /// kb/ADR-0029 R10 and R12: no tool's input has a way to override the gate, to rank, to set an external
-    /// reference or to attach, and every tool's input refuses what it does not list.
+    /// kb/ADR-0029 R10 and R12, and the owner's rule of 2026-11-24: no tool's input has a way to override the
+    /// gate, to rank, to set an external reference, to attach, to mark discovery or to add or remove a blocker,
+    /// and every tool's input refuses what it does not list.
     #[test]
     fn no_tool_takes_an_override_reason_or_another_withheld_field() {
-        for tool in registry("TST") {
+        for tool in tools() {
             let properties = tool
                 .input_schema
                 .get("properties")
@@ -412,6 +458,12 @@ mod tests {
                 "rank",
                 "external_ref",
                 "attachments",
+                "discovery_complete",
+                "discovery",
+                "complete",
+                "blocked_by",
+                "blocker",
+                "blocks",
             ] {
                 assert!(
                     properties.is_none_or(|p| !p.contains_key(withheld)),
@@ -429,7 +481,7 @@ mod tests {
 
     #[test]
     fn every_tool_has_a_title_and_a_description_and_describes_every_input() {
-        for tool in registry("TST") {
+        for tool in tools() {
             assert!(!tool.title.is_empty(), "{}", tool.name);
             assert!(!tool.description.is_empty(), "{}", tool.name);
             let properties = tool
@@ -670,5 +722,83 @@ mod tests {
         ] {
             assert_eq!(said(e), None);
         }
+    }
+
+    #[test]
+    fn a_text_that_ends_with_the_cut_marker_is_recognised() {
+        let mut cut = "å".repeat(bound::MAX_OTHER_TEXT + 5);
+        bound::cut(&mut cut, bound::MAX_OTHER_TEXT);
+        assert!(
+            looks_cut(&cut),
+            "what `bound::cut` really appends: {}",
+            &cut[cut.len() - 30..]
+        );
+        assert!(looks_cut("text[cut: 1 more characters]  "));
+        for whole in [
+            "",
+            "a description",
+            "see [cut: 5 more characters] above",
+            "[cut: many more characters]",
+        ] {
+            assert!(!looks_cut(whole), "{whole}");
+        }
+    }
+
+    /// What a description must say because nothing else can: the server cannot ask the person, and these are the
+    /// sentences a reviewer or the owner asked for by name. One row per sentence; the text is compared whole.
+    #[test]
+    fn a_description_says_what_only_it_can_tell_the_model() {
+        const SAID: [(&str, &str); 1] = [(
+            "edit_epic",
+            "Moving an epic to another initiative, or out of one, changes which discovery mark and required decisions its stories wait on: do it only when the person asked for that move, and when you report the edit, say that the epic moved and that what its stories wait on has changed.",
+        )];
+        let tools = tools();
+        for (name, sentence) in SAID {
+            let tool = tools.iter().find(|t| t.name == name).unwrap();
+            assert!(
+                tool.description.contains(sentence),
+                "{name}: {}",
+                tool.description
+            );
+        }
+    }
+
+    /// The horizon is required to create an initiative, and only its description can say what it is and which
+    /// values this planner takes; an owner is an address a model must not invent. The texts are compared whole.
+    #[test]
+    fn the_initiative_tools_explain_the_horizon_and_the_owner() {
+        let described = |tools: &[Tool], name: &str, property: &str| {
+            let tool = tools.iter().find(|t| t.name == name).unwrap();
+            tool.input_schema["properties"][property]["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let tools = tools();
+        assert_eq!(
+            described(&tools, "create_initiative", "horizon"),
+            "The horizon: how far off the team plans this initiative. Exactly one of, in this planner's order: Now, Later. When the person has not said which, ask; do not pick one."
+        );
+        assert_eq!(
+            described(&tools, "edit_initiative", "horizon"),
+            "A new horizon (how far off the team plans this initiative), exactly one of: Now, Later."
+        );
+        let none = registry("TST", &[]);
+        assert_eq!(
+            described(&none, "create_initiative", "horizon"),
+            "The horizon: how far off the team plans this initiative. This planner has no horizons configured, so an initiative cannot be created here: tell the person."
+        );
+        assert_eq!(
+            described(&none, "edit_initiative", "horizon"),
+            "A new horizon (how far off the team plans this initiative). This planner has no horizons configured."
+        );
+        assert_eq!(
+            described(&tools, "create_initiative", "owner"),
+            "The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person."
+        );
+        assert_eq!(
+            described(&tools, "edit_initiative", "owner"),
+            "A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`."
+        );
     }
 }

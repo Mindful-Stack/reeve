@@ -84,6 +84,26 @@ describe('actionLabel', () => {
 		expect(actionLabel('attachment_removed', null)).toBe('deleted attachment');
 	});
 
+	// Catches an epic's move between initiatives read as a bare "edited" (decision A of 2026-11-24: the move changes what
+	// the epic's stories wait on, so the log says it and the views read it).
+	it('says which initiative an edited epic left and joined', async () => {
+		const { actionLabel, entryAction } = await import('./format.ts');
+		const moved = (from: string | null, to: string | null) => ({ fields: ['initiative'], from: { initiative: from }, to: { initiative: to } });
+		expect(actionLabel('edited', moved('ABC-3', 'ABC-9'))).toBe('edited and moved from initiative ABC-3 to ABC-9');
+		expect(actionLabel('edited', moved(null, 'ABC-9'))).toBe('edited and moved to initiative ABC-9');
+		expect(actionLabel('edited', moved('ABC-3', null))).toBe('edited and taken out of initiative ABC-3');
+		expect(entryAction('edited', { ...moved(null, 'ABC-9'), client: 'claude.ai' })).toBe('edited and moved to initiative ABC-9 via claude.ai');
+		// A move that also changed the title says the move: `fields` names every changed field.
+		expect(actionLabel('edited', { ...moved('ABC-3', 'ABC-9'), fields: ['title', 'initiative'] })).toBe('edited and moved from initiative ABC-3 to ABC-9');
+		// Every other edit has no words of its own and reads as "edited": no payload, another item's edit, an epic's
+		// retitle or new brief, a required decision's edit (the same shape, other fields), and a payload that is not
+		// the shape at all.
+		const decision = { fields: ['decider'], from: { decider: 'dan@example.com' }, to: { decider: 'bob@example.com' } };
+		for (const plain of [null, {}, { client: 'claude.ai' }, { fields: ['title', 'brief'] }, decision, moved(null, null), { fields: 'initiative' }, { fields: ['initiative'] }, { fields: ['initiative'], from: 7, to: 'ABC-9' }]) {
+			expect(actionLabel('edited', plain)).toBeNull();
+		}
+	});
+
 	// The account activity page's label() delegates to actionLabel, so these are its words too (it has no test file). The
 	// rows live in promise.fixture.json, which the TUI ticker's tests (crates/reeve/src/promise.rs) read too.
 	const activityRows = words.activity as { label: string; action: string; payload: unknown; plain: string; keyed: string }[];

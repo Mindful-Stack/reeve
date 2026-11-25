@@ -495,3 +495,43 @@ pub async fn post(h: &Harness, path: &str, body: Value) -> Value {
 pub fn key(item: &Value) -> String {
     item["key"].as_str().unwrap().to_string()
 }
+
+/// How many rows `table` has.
+pub async fn rows(h: &Harness, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+        .fetch_one(&h.state.pool)
+        .await
+        .unwrap()
+}
+
+/// The activity entries about `key`, oldest first, as the feed's route answers them.
+pub async fn entries(h: &Harness, key: &str) -> Vec<Value> {
+    let mut entries = api(
+        h,
+        &h.admin_token,
+        &format!("/api/v1/activity?entity_key={key}"),
+    )
+    .await
+    .as_array()
+    .unwrap()
+    .clone();
+    entries.sort_by_key(|entry| entry["id"].as_i64());
+    entries
+}
+
+/// `(action, actor, via, client)` of each entry about `key`.
+pub async fn trail(h: &Harness, key: &str) -> Vec<(String, String, String, Value)> {
+    entries(h, key)
+        .await
+        .iter()
+        .map(|e| {
+            let text = |name: &str| e[name].as_str().unwrap().to_string();
+            (
+                text("action"),
+                text("actor"),
+                text("via"),
+                e["payload"]["client"].clone(),
+            )
+        })
+        .collect()
+}

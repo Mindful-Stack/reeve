@@ -27,6 +27,7 @@ pub use dto::{
     attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_promise_dto, sprint_view_dto,
     story_promise_field,
 };
+pub use epics::EpicMove;
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;
 pub use sprints::{SprintView, Sprints};

@@ -459,8 +459,8 @@ fn now_cmp(a: &NowFacts, b: &NowFacts) -> Ordering {
         .then_with(|| b.held.cmp(&a.held))
 }
 
-/// The target month of `key`'s initiative when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12
-/// (text order then sorts by date); any other value ranks as none.
+/// The target month of `key`'s initiative when it is a target month (`reeve_protocol::is_target_month`); any other
+/// value ranks as none.
 fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
     let m = inp
         .lineage
@@ -468,11 +468,7 @@ fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
         .first()?
         .initiative_target_month
         .as_deref()?;
-    let b = m.as_bytes();
-    let real = b.len() == 7
-        && b[..4].iter().all(u8::is_ascii_digit)
-        && b[4] == b'-'
-        && matches!(&b[5..], [b'0', b'1'..=b'9'] | [b'1', b'0'..=b'2']);
+    let real = reeve_protocol::is_target_month(m);
     real.then(|| m.to_string())
 }
 

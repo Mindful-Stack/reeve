@@ -11939,3 +11939,459 @@ async fn a_replayed_plan_reads_its_links_once_and_sends_no_insert_for_one_that_e
         "the web links are read once by the validation and once before the link phase"
     );
 }
+
+/// Waits until `edit` has answered or waits on a lock (the test's open transaction holds it).
+async fn answered_or_waiting<T>(pool: &sqlx::PgPool, edit: &tokio::task::JoinHandle<T>) {
+    for _ in 0..250 {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if edit.is_finished() || waiting >= 1 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the edit neither answered nor waited on the lock");
+}
+
+/// An edit that names a version ahead of the stored one is a conflict carrying the stored version, like a stale one:
+/// the row it read is not the row its version names.
+#[tokio::test]
+async fn an_edit_at_a_version_ahead_of_the_stored_one_is_a_conflict() {
+    let (_db, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "s",
+            "S",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let entries = sink.0.lock().unwrap().len();
+    let title = || Some("Ahead".to_string());
+    assert!(matches!(
+        h.edit_initiative(&dan, i.key(), 2, title(), None, None, None, None, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert!(matches!(
+        h.edit_epic(&dan, e.key(), 2, title(), None, None, None)
+            .await
+            .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert!(matches!(
+        h.edit_story(
+            &dan,
+            s.key(),
+            2,
+            title(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .await
+        .unwrap_err(),
+        HandlerError::Conflict { current: 1 }
+    ));
+    assert_eq!(
+        h.ports.initiatives.get_initiative(i.key()).await.unwrap(),
+        i
+    );
+    assert_eq!(h.ports.epics.get_epic(e.key()).await.unwrap(), e);
+    assert_eq!(h.get_story(s.key()).await.unwrap(), s);
+    assert_eq!(sink.0.lock().unwrap().len(), entries, "no entry");
+}
+
+/// An unmarked item is at version 1. An edit names version 2 and reads version 1; before it writes, another
+/// transaction marks discovery complete, which makes version 2. The edit must not then write the unmarked row it
+/// read over the mark: it is refused at its read. The edit is held between its read and its update on the lock of
+/// the external reference it sets, which it takes after the read (`set_ref`); the test's transaction holds that
+/// lock and writes the mark. Goes red if an edit handler stops comparing the version it was given with the row it
+/// read: the conditional update alone lets the edit through once the mark has committed.
+#[tokio::test]
+async fn an_edit_ahead_of_its_read_never_undoes_a_concurrent_discovery_mark() {
+    let (_db, pool) = common::pg().await;
+    let (h, _) = mk(pool.clone());
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    for (table, key, reference) in [
+        ("initiatives", i.key().clone(), "JPD-1"),
+        ("epics", e.key().clone(), "JPD-2"),
+    ] {
+        let mut mark = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_import:' || $1))")
+            .bind(reference)
+            .execute(&mut *mark)
+            .await
+            .unwrap();
+        let edit = tokio::spawn({
+            let (h, dan, key) = (h.clone(), dan.clone(), key.clone());
+            async move {
+                let (title, r) = (Some("Ahead".to_string()), Some(reference.to_string()));
+                if table == "epics" {
+                    h.edit_epic(&dan, &key, 2, title, None, None, r)
+                        .await
+                        .map(|_| ())
+                } else {
+                    h.edit_initiative(&dan, &key, 2, title, None, None, None, None, r)
+                        .await
+                        .map(|_| ())
+                }
+            }
+        });
+        answered_or_waiting(&pool, &edit).await;
+        // The mark, as `mark_discovery` writes it; committing it lets the edit go on.
+        sqlx::query(&format!(
+            "UPDATE {table} SET discovery_at = now(), discovery_by = 'ann', version = version + 1 WHERE key = $1 AND version = 1"
+        ))
+        .bind(key.to_string())
+        .execute(&mut *mark)
+        .await
+        .unwrap();
+        mark.commit().await.unwrap();
+        let answer = edit.await.unwrap();
+        let (marked, title): (bool, String) = sqlx::query_as(&format!(
+            "SELECT discovery_at IS NOT NULL, title FROM {table} WHERE key = $1"
+        ))
+        .bind(key.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(marked, "{table}: the edit undid the discovery mark");
+        assert_ne!(title, "Ahead", "{table}: the edit was written");
+        assert!(
+            matches!(answer, Err(HandlerError::Conflict { current: 1 })),
+            "{table}: {answer:?}"
+        );
+    }
+}
+
+/// The story form of the test above. A story is at version 1, with no owner, under its epic. An edit names version
+/// 2 and reads version 1; before it writes, another caller makes version 2: a move to in progress, which makes the
+/// mover its owner, or an edit that moves it to another epic. The story edit rebuilds the whole row from its read
+/// (owner and epic included), so it must be refused at its read rather than write the stale owner or epic back. It
+/// is held between its read and its update on the external reference lock `set_ref` takes, as above. Goes red if the
+/// story edit handler stops comparing the version it was given with the row it read: the conditional update alone
+/// lets the edit through at version 2, and it clears the mover's ownership or puts the story back under its epic.
+#[tokio::test]
+async fn a_story_edit_ahead_of_its_read_never_undoes_a_concurrent_owner_or_epic() {
+    let (_db, pool) = common::pg().await;
+    let (h, _) = mk(pool.clone());
+    let (dan, ann) = (ctx("dan", false), ctx("ann@example.com", false));
+    let epic = ready_epic(&h, &dan).await;
+    let other = h
+        .create_epic(&dan, "other", "Other", None, "", None)
+        .await
+        .unwrap();
+    for (case, reference) in [("owner", "JPD-3"), ("epic", "JPD-4")] {
+        let s = h
+            .create_story(
+                &dan,
+                case,
+                "S",
+                Kind::Story,
+                Some(epic.clone()),
+                "",
+                vec!["works".into()],
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!((s.version(), s.owner()), (1, None));
+        let key = s.key().clone();
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_import:' || $1))")
+            .bind(reference)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let edit = tokio::spawn({
+            let (h, dan, key) = (h.clone(), dan.clone(), key.clone());
+            async move {
+                h.edit_story(
+                    &dan,
+                    &key,
+                    2,
+                    Some("Ahead".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(reference.into()),
+                )
+                .await
+            }
+        });
+        answered_or_waiting(&pool, &edit).await;
+        // The concurrent write, through its own handler: it takes no reference lock, so it is not held.
+        let theirs = if case == "owner" {
+            h.move_story(&ann, &key, 1, DeliveryState::InProgress, None, None)
+                .await
+                .unwrap()
+        } else {
+            h.edit_story(
+                &ann,
+                &key,
+                1,
+                None,
+                None,
+                None,
+                Some(Some(other.key().clone())),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+        };
+        assert_eq!(theirs.version(), 2, "{case}");
+        lock.commit().await.unwrap();
+        let answer = edit.await.unwrap();
+        let now = h.get_story(&key).await.unwrap();
+        if case == "owner" {
+            assert_eq!(
+                now.owner(),
+                Some("ann@example.com"),
+                "owner: the edit undid the mover's ownership"
+            );
+        } else {
+            assert_eq!(
+                now.epic(),
+                Some(other.key()),
+                "epic: the edit put the story back under its epic"
+            );
+        }
+        assert_ne!(now.title(), "Ahead", "{case}: the edit was written");
+        assert!(
+            matches!(answer, Err(HandlerError::Conflict { current: 1 })),
+            "{case}: {answer:?}"
+        );
+    }
+}
+
+/// The real initiative rows, with one write of another caller's let in: the first read after an update (the
+/// handler's read after its commit, when it makes one) first retitles the row on another connection, as a second
+/// writer landing between the edit's commit and that read would.
+struct RetitledAfterUpdate {
+    real: Arc<dyn InitiativeRepo>,
+    pool: sqlx::PgPool,
+    armed: Mutex<bool>,
+}
+#[async_trait]
+impl InitiativeRepo for RetitledAfterUpdate {
+    async fn insert_initiative(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        i: &Initiative,
+        idem: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<bool, RepoError> {
+        self.real.insert_initiative(tx, i, idem, now).await
+    }
+    async fn get_initiative(&self, key: &Key) -> Result<Initiative, RepoError> {
+        let armed = std::mem::take(&mut *self.armed.lock().unwrap());
+        if armed {
+            sqlx::query(
+                "UPDATE initiatives SET title = 'Theirs', version = version + 1 WHERE key = $1",
+            )
+            .bind(key.to_string())
+            .execute(&self.pool)
+            .await?;
+        }
+        self.real.get_initiative(key).await
+    }
+    async fn get_initiative_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        key: &Key,
+    ) -> Result<Initiative, RepoError> {
+        self.real.get_initiative_in(tx, key).await
+    }
+    async fn list_initiatives_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<Vec<Initiative>, RepoError> {
+        self.real.list_initiatives_in(tx).await
+    }
+    async fn update_initiative(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        i: &Initiative,
+        expected_version: i64,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<(), RepoError> {
+        self.real
+            .update_initiative(tx, i, expected_version, now)
+            .await?;
+        *self.armed.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
+/// The handler that writes an initiative edit answers the row that write left, never a read made after its commit:
+/// another caller's write can land between the two, and the MCP receipt built from the answer would then report that
+/// caller's title and version as this edit's. A chat sending that version next would overwrite a change it never
+/// saw. Goes red if the handler answers a read after its commit: it then answers "Theirs" at version 3.
+#[tokio::test]
+async fn an_initiative_edit_answers_the_row_it_wrote_not_a_later_one() {
+    let (_db, pool) = common::pg().await;
+    let (mut h, _) = mk(pool.clone());
+    h.ports.initiatives = Arc::new(RetitledAfterUpdate {
+        real: h.ports.initiatives.clone(),
+        pool: pool.clone(),
+        armed: Mutex::new(false),
+    });
+    let dan = ctx("dan", false);
+    let i = h
+        .create_initiative(&dan, "i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let edited = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (edited.title(), edited.version()),
+        ("Mine", 2),
+        "the edit answered another writer's row"
+    );
+    // The other writer did land after the edit: the row now is theirs.
+    let now = h.ports.initiatives.get_initiative(i.key()).await.unwrap();
+    assert_eq!((now.title(), now.version()), ("Theirs", 3));
+}
+
+/// The handler that writes an epic edit answers the move it wrote: the initiative left and the one joined, `None`
+/// when the edit did not change the initiative. It is the move its `edited` entry names, and the epic it answers
+/// is the row that write left.
+#[tokio::test]
+async fn an_epic_edit_answers_the_move_it_wrote() {
+    let (_db, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan", false);
+    let a = h
+        .create_initiative(&dan, "a", "A", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let b = h
+        .create_initiative(&dan, "b", "B", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let (a, b) = (a.key().clone(), b.key().clone());
+    let e = h.create_epic(&dan, "e", "E", None, "", None).await.unwrap();
+    let key = e.key().clone();
+    let name =
+        |k: &Option<Key>| serde_json::json!({"initiative": k.as_ref().map(ToString::to_string)});
+    // (the title sent, the initiative sent, the move expected)
+    type Step = (Option<&'static str>, Option<Option<Key>>, Option<EpicMove>);
+    let steps: Vec<Step> = vec![
+        (
+            None,
+            Some(Some(a.clone())),
+            Some(EpicMove {
+                from: None,
+                to: Some(a.clone()),
+            }),
+        ),
+        (Some("Retitled"), None, None),
+        (Some("Same place"), Some(Some(a.clone())), None),
+        (
+            Some("Moved and retitled"),
+            Some(Some(b.clone())),
+            Some(EpicMove {
+                from: Some(a.clone()),
+                to: Some(b.clone()),
+            }),
+        ),
+        (
+            None,
+            Some(None),
+            Some(EpicMove {
+                from: Some(b.clone()),
+                to: None,
+            }),
+        ),
+        (None, Some(None), None),
+    ];
+    let mut version = e.version();
+    for (n, (title, initiative, expected)) in steps.into_iter().enumerate() {
+        let (edited, moved) = h
+            .edit_epic_reporting(
+                &dan,
+                &key,
+                version,
+                title.map(String::from),
+                None,
+                initiative,
+                None,
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(moved, expected, "step {n}");
+        let entry = sink.0.lock().unwrap().last().unwrap().clone();
+        assert_eq!(entry.action, "edited", "step {n}");
+        match &moved {
+            Some(m) => {
+                assert_eq!(entry.payload["from"], name(&m.from), "step {n}");
+                assert_eq!(entry.payload["to"], name(&m.to), "step {n}");
+                assert_eq!(edited.initiative(), m.to.as_ref(), "step {n}");
+            }
+            None => {
+                assert!(entry.payload.get("from").is_none(), "step {n}");
+                assert!(entry.payload.get("to").is_none(), "step {n}");
+            }
+        }
+        version += 1;
+        assert_eq!(edited.version(), version, "step {n}");
+        assert_eq!(
+            edited,
+            h.ports.epics.get_epic(&key).await.unwrap(),
+            "step {n}: the epic answered is the stored one"
+        );
+    }
+}
