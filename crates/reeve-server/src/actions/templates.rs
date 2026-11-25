@@ -5,7 +5,7 @@
 //! gets the brief it sent. Plan apply and the import call the planning handlers themselves and never come through
 //! here.
 use crate::{error::AppError, state::AppState};
-use reeve_protocol::BriefTemplateLevel;
+use reeve_protocol::{BriefTemplateLevel, ItemType, Key};
 
 /// Where the brief comes from.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,34 +46,64 @@ fn brief_source<'a>(
     }
 }
 
+/// What a create starts from.
+#[derive(Debug)]
+pub(super) enum Start {
+    /// Create (or replay) with this brief.
+    Brief(String),
+    /// The create's idempotency key already made this item, and the template it names is gone: answer the item,
+    /// `created = false`, without calling the handler.
+    Made(Key),
+}
+
 /// The brief a new item of `level` is created with, from what its create sent. Nothing about the template is kept:
 /// the answer is plain text, and the item is created exactly as if the caller had typed it. With neither `template`
 /// nor `default_template` it reads nothing and answers `brief.unwrap_or("")`.
+///
+/// `idem` is the key as stored (`Acting::write_key`). It is read only when `template` names a template the level
+/// has none of: when the key already made an item of this level, that item is the answer (`Start::Made`), so a
+/// retry is answered whatever happened to the template since; otherwise the create is refused. An item answered so
+/// is answered here and never by the handler with a stand-in brief, so a lookup and a handler that disagreed could
+/// not create an item with an empty brief. A key that made an item of the other level only is not this level's:
+/// the create handlers look a key up in their own level alone, and so does this, so the refusal stands.
 pub(super) async fn starting_brief(
     state: &AppState,
     level: BriefTemplateLevel,
+    idem: &str,
     brief: Option<&str>,
     template: Option<&str>,
     default_template: bool,
-) -> Result<String, AppError> {
+) -> Result<Start, AppError> {
     match brief_source(brief, template, default_template)? {
-        BriefSource::AsSent(b) => Ok(b.to_string()),
-        BriefSource::Named(name) => state
-            .handlers
-            .brief_template_body(level, Some(name))
-            .await?
-            .ok_or_else(|| {
-                AppError::Validation(format!(
+        BriefSource::AsSent(b) => Ok(Start::Brief(b.to_string())),
+        BriefSource::Named(name) => {
+            if let Some(body) = state
+                .handlers
+                .brief_template_body(level, Some(name))
+                .await?
+            {
+                return Ok(Start::Brief(body));
+            }
+            let item = match level {
+                BriefTemplateLevel::Initiative => ItemType::Initiative,
+                BriefTemplateLevel::Epic => ItemType::Epic,
+            };
+            match state.handlers.made_under(item, idem).await? {
+                Some(k) => Ok(Start::Made(k)),
+                None => Err(AppError::Validation(format!(
                     "no {level} brief template is named {:?}: `reeve template ls --level {level}` lists them",
                     crate::text::echo(name),
                     level = level.wire()
-                ))
-            }),
-        BriefSource::LevelDefault => Ok(state
-            .handlers
-            .brief_template_body(level, None)
-            .await?
-            .unwrap_or_default()),
+                ))),
+            }
+        }
+        BriefSource::LevelDefault => Ok(Start::Brief(
+            state
+                .handlers
+                .brief_template_body(level, None)
+                .await?
+                .unwrap_or_default(),
+        )),
     }
 }
 
@@ -126,6 +156,112 @@ mod tests {
             match brief_source(b, t, d) {
                 Err(AppError::Validation(m)) => assert!(m.contains(says), "{b:?} {t:?} {d}: {m}"),
                 other => panic!("{b:?} {t:?} {d}: {other:?}"),
+            }
+        }
+    }
+
+    /// A state on a fresh database, with no sign-in provider, and the access policy its callers are built with.
+    async fn state() -> (reeve_testdb::TestDb, AppState, reeve_identity::AccessPolicy) {
+        use crate::state::{build_state, composed_migrator, pool_options, run_migrations};
+        let db = reeve_testdb::database(&composed_migrator()).await;
+        let pool = pool_options().connect(&db.url).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let config = crate::config::ServerConfig::parse(&format!(
+            r#"database_url = "{}"
+key_prefix = "TST"
+public_url = "http://127.0.0.1:7474"
+allowed_domains = ["example.com"]
+admins = ["dan@example.com"]"#,
+            db.url
+        ))
+        .unwrap();
+        let policy = reeve_identity::AccessPolicy::floor_only(&config.identity());
+        let state = build_state(config, pool).await.unwrap();
+        (db, state, policy)
+    }
+
+    /// The create actions answer a retry whose named template was removed since with the item its key made, and
+    /// say that this call did not create it (`created = false`, what an MCP receipt reports), for both levels and
+    /// for an API caller and an MCP caller alike. Catches a refusal on the retry, a second item, and a lookup made
+    /// with the key as sent rather than as stored: an MCP caller's key is stored in its own space
+    /// (`Acting::write_key`), so looking up the raw key would find nothing and refuse.
+    #[tokio::test]
+    async fn a_retry_naming_a_removed_template_is_answered_not_created() {
+        use crate::actions::{Acting, create_epic, create_initiative};
+        use reeve_protocol::{CreateEpic, CreateInitiative, Via};
+        let (_db, state, policy) = state().await;
+        let now = chrono::Utc::now();
+        for client in [None, Some("chat".to_string())] {
+            let who = Acting::new(
+                "dan@example.com",
+                Via::Interactive,
+                now,
+                &policy,
+                client.clone(),
+            );
+            for level in BriefTemplateLevel::ALL {
+                let t = state
+                    .handlers
+                    .create_brief_template(&who.ctx, level, "Scenario", "# Scenario\n")
+                    .await
+                    .unwrap();
+                let idem = format!("{}-{}", level.wire(), client.is_some());
+                let create = || async {
+                    match level {
+                        BriefTemplateLevel::Initiative => create_initiative(
+                            &state,
+                            &who,
+                            CreateInitiative {
+                                idempotency_key: idem.clone(),
+                                title: "T".into(),
+                                brief: None,
+                                horizon: "Now".into(),
+                                target_month: None,
+                                owner: None,
+                                external_ref: None,
+                                template: Some("Scenario".into()),
+                                default_template: false,
+                                attachments: vec![],
+                            },
+                        )
+                        .await
+                        .map(|(d, c)| (d.key.to_string(), d.brief, c)),
+                        BriefTemplateLevel::Epic => create_epic(
+                            &state,
+                            &who,
+                            CreateEpic {
+                                idempotency_key: idem.clone(),
+                                title: "T".into(),
+                                initiative: None,
+                                brief: None,
+                                external_ref: None,
+                                template: Some("Scenario".into()),
+                                default_template: false,
+                                attachments: vec![],
+                            },
+                        )
+                        .await
+                        .map(|(d, c)| (d.key.to_string(), d.brief, c)),
+                    }
+                };
+                let (key, brief, created) = create().await.unwrap();
+                assert_eq!(
+                    (brief.as_str(), created),
+                    ("# Scenario\n", true),
+                    "the control"
+                );
+                state
+                    .handlers
+                    .remove_brief_template(&who.ctx, t.id)
+                    .await
+                    .unwrap();
+                let again = create().await.unwrap();
+                assert_eq!(
+                    again,
+                    (key, brief, false),
+                    "{level:?} through MCP {}: the first item, not created by the retry",
+                    client.is_some()
+                );
             }
         }
     }

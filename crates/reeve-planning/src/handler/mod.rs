@@ -218,6 +218,17 @@ impl Handlers {
             .map(|(_, k)| k)
     }
 
+    /// The key of the item of type `item` that a create under the stored idempotency key `idem` made, if one did:
+    /// the lookup each create handler makes first. Public for the server's create actions, which answer a retry
+    /// whose named brief template is gone since the first attempt with that item rather than a refusal.
+    pub async fn made_under(
+        &self,
+        item: ItemType,
+        idem: &str,
+    ) -> Result<Option<Key>, HandlerError> {
+        Ok(self.ports.keys.find_by_idempotency(item, idem).await?)
+    }
+
     /// The type of the item that has `key` as its native key, checked across every type; NotFound when none has it.
     pub(crate) async fn item_type_of(&self, key: &Key) -> Result<ItemType, HandlerError> {
         self.resolve(&key.to_string(), Scope::Any, false)

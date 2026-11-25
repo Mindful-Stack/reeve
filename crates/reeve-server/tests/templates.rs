@@ -488,58 +488,91 @@ async fn a_new_brief_starts_from_a_template_only_when_the_create_asks() {
     }
 }
 
-/// The one retry the rule does not carry: a create that names a template is looked up by that name before its
-/// idempotency key is. When the template was removed or renamed since the first attempt, the same request is
-/// refused; the same key without the name answers the item the first attempt made.
+/// A retry is answered the item its key already has, also when it names a template removed or renamed since the
+/// first attempt: the same request again answers the first attempt's item (key, brief and version) and writes
+/// nothing. Catches a create that looks the template up and refuses before it asks whether its idempotency key
+/// already made an item, for each level and each way a name stops naming a template. The control beside it: the
+/// same gone name under a fresh key is still refused and makes nothing, so the replay is not a refusal relaxed.
 #[tokio::test]
-async fn a_retry_that_names_a_template_gone_since_is_refused_and_recovers_without_the_name() {
+async fn a_retry_that_names_a_template_gone_since_answers_the_item_its_key_made() {
     let h = harness().await;
-    for (level, how) in [("initiative", "removed"), ("epic", "renamed")] {
-        let t = template(&h, level, "Scenario", SCENARIO).await;
-        let idem = format!("{level}-{how}");
-        let (st, first) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
-        assert_eq!(st, 200, "{first}");
-        let first = first["value"].clone();
-        assert_eq!(
-            first["brief"], SCENARIO,
-            "the control: the first attempt started from the template"
-        );
+    for level in ["initiative", "epic"] {
+        for how in ["removed", "renamed"] {
+            let t = template(&h, level, "Scenario", SCENARIO).await;
+            let idem = format!("{level}-{how}");
+            let (st, first) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
+            assert_eq!(st, 200, "{level} {how}: {first}");
+            let first = first["value"].clone();
+            assert_eq!(
+                first["brief"], SCENARIO,
+                "the control: the first attempt started from the template"
+            );
 
-        let (st, b) = if how == "removed" {
-            admin(&h, "DELETE", &one(&t), None).await
-        } else {
-            admin(
+            let (st, b) = if how == "removed" {
+                admin(&h, "DELETE", &one(&t), None).await
+            } else {
+                admin(
+                    &h,
+                    "PATCH",
+                    &one(&t),
+                    Some(json!({"version": 1, "name": format!("Story map {level}")})),
+                )
+                .await
+            };
+            assert_eq!(st, 200, "{level} {how}: {b}");
+            let before = items(&h, level).await;
+
+            // The same request again: the first attempt's item, as it was.
+            let (st, again) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
+            assert_eq!(st, 200, "{level} {how}: the retry is answered: {again}");
+            assert_eq!(
+                again["value"], first,
+                "{level} {how}: the first item, brief and version intact"
+            );
+
+            // The control: the name is nobody's now, so a fresh key is refused.
+            let (st, b) = create(
                 &h,
-                "PATCH",
-                &one(&t),
-                Some(json!({"version": 1, "name": "Story map"})),
+                level,
+                &format!("{idem}-fresh"),
+                json!({"template": "Scenario"}),
             )
-            .await
-        };
-        assert_eq!(st, 200, "{how}: {b}");
-        let before = items(&h, level).await;
-
-        // The same request again: refused, because the name is nobody's now. Nothing is made.
-        let (st, b) = create(&h, level, &idem, json!({"template": "Scenario"})).await;
-        assert_eq!((st, &b["code"]), (400, &json!("validation")), "{how}: {b}");
-        assert!(
-            b["message"]
-                .as_str()
+            .await;
+            assert_eq!(
+                (st, &b["code"]),
+                (400, &json!("validation")),
+                "{level} {how}: {b}"
+            );
+            assert!(
+                b["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("no {level} brief template is named")),
+                "{level} {how}: {b}"
+            );
+            assert_eq!(
+                items(&h, level).await,
+                before,
+                "{level} {how}: neither the retry nor the refusal made an item"
+            );
+            let log = api(
+                &h,
+                &h.admin_token,
+                &format!("/api/v1/activity?entity_key={}", key(&first)),
+            )
+            .await;
+            let actions: Vec<&str> = log
+                .as_array()
                 .unwrap()
-                .contains(&format!("no {level} brief template is named")),
-            "{how}: {b}"
-        );
-        // The recovery: the same key without the name answers the first attempt's item, brief and version.
-        let (st, again) = create(&h, level, &idem, json!({})).await;
-        assert_eq!(st, 200, "{how}: {again}");
-        for field in ["key", "brief", "version"] {
-            assert_eq!(again["value"][field], first[field], "{how}: {field}");
+                .iter()
+                .map(|e| e["action"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                actions,
+                ["created"],
+                "{level} {how}: the retry wrote nothing: {log}"
+            );
         }
-        assert_eq!(
-            items(&h, level).await,
-            before,
-            "{how}: neither the refusal nor the recovery made an item"
-        );
     }
 }
 

@@ -1,4 +1,4 @@
-use super::templates::starting_brief;
+use super::templates::{Start, starting_brief};
 use super::{Acting, Edited, allowed_owner, named_target_month};
 use crate::{error::AppError, state::AppState};
 use reeve_planning::Initiative;
@@ -40,34 +40,39 @@ pub(crate) async fn create_initiative(
     let owner = allowed_owner(who.policy, b.owner)?;
     let target_month = named_target_month(b.target_month)?;
     // The brief the caller sent, or the template it asked for (`template`, `default_template`). A caller that asks
-    // for neither, an MCP tool among them, gets exactly what it sent.
-    let brief = starting_brief(
+    // for neither, an MCP tool among them, gets exactly what it sent. A retry whose named template is gone since
+    // is answered the item its key made (`Start::Made`), as the handler answers every other retry.
+    let (key, created) = match starting_brief(
         state,
         BriefTemplateLevel::Initiative,
+        &idem,
         b.brief.as_deref(),
         b.template.as_deref(),
         b.default_template,
     )
-    .await?;
-    let (initiative, created) = state
-        .handlers
-        .create_initiative_reporting(
-            &who.ctx,
-            &idem,
-            &b.title,
-            &brief,
-            &b.horizon,
-            target_month,
-            owner,
-            b.external_ref,
-            &b.attachments,
-        )
-        .await?;
+    .await?
+    {
+        Start::Made(key) => (key, false),
+        Start::Brief(brief) => {
+            let (initiative, created) = state
+                .handlers
+                .create_initiative_reporting(
+                    &who.ctx,
+                    &idem,
+                    &b.title,
+                    &brief,
+                    &b.horizon,
+                    target_month,
+                    owner,
+                    b.external_ref,
+                    &b.attachments,
+                )
+                .await?;
+            (initiative.key().clone(), created)
+        }
+    };
     Ok((
-        state
-            .handlers
-            .initiative_dto(initiative.key(), who.ctx.now)
-            .await?,
+        state.handlers.initiative_dto(&key, who.ctx.now).await?,
         created,
     ))
 }
