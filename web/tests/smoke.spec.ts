@@ -1951,3 +1951,64 @@ test('an app asks to connect: sign in, approve, and land on the app with a code'
 		await new Promise((resolve) => stand.close(resolve));
 	}
 });
+
+test('a new initiative starts from the default brief template, which is made on the templates page', async ({ page }) => {
+	const name = `Smoke scenario ${Date.now()}`;
+	const body = `# Smoke scenario\n\n${WIDE_TABLE}`;
+	await page.goto('/templates');
+	await expect(page).toHaveTitle('Brief templates · Reeve');
+	await expect(page.getByRole('heading', { name: 'Initiative templates' })).toBeVisible();
+	// "New template" sits above the lists, folded until it is wanted; an instance without a template shows it open.
+	const form = page.getByRole('form', { name: 'New template' });
+	if (!(await form.isVisible())) await page.locator('summary', { hasText: 'New template' }).click();
+	await form.getByLabel('Name').fill(name);
+	await form.getByLabel('Template text (Markdown)').fill(body);
+	// The admin sees the text rendered before saving it.
+	await expect(form.getByRole('group', { name: 'Preview' }).getByRole('table')).toBeVisible();
+	await form.getByRole('button', { name: 'Create template' }).click();
+	const row = page.locator('article', { hasText: name });
+	// The body is inside the row's details: folded first, rendered as a brief is when opened.
+	await expect(row.getByRole('table')).toBeHidden();
+	await row.locator('summary').click();
+	await expect(row.getByRole('table')).toBeVisible();
+	await row.getByRole('button', { name: 'Use as default' }).click();
+	await expect(row.getByText('Default', { exact: true })).toBeVisible();
+	await expect(row.getByRole('button', { name: 'Stop using as default' })).toBeVisible();
+	try {
+		// On a phone the opened row's wide table scrolls inside the row: the page keeps its width, and the name and the
+		// row's buttons stay inside it.
+		await page.setViewportSize({ width: 360, height: 800 });
+		const id = await row.getAttribute('data-template');
+		await expectTablesScrollInside(page, `article[data-template="${id}"]`, 1);
+		await expectTextInside(page, `article[data-template="${id}"] summary .name`);
+		for (const b of await row.getByRole('button').all()) expect(await rightEdge(b)).toBeLessThanOrEqual(360);
+		await page.setViewportSize({ width: 1280, height: 720 });
+
+		await page.goto('/planning');
+		await page.getByRole('button', { name: 'New initiative' }).click();
+		const create = page.getByRole('dialog').getByRole('form', { name: 'New initiative' });
+		await expect(create.getByLabel('Template').locator('option:checked')).toHaveText(`${name} (default)`);
+		await expect(create.getByLabel('Brief (Markdown)')).toHaveValue(body);
+		await create.getByLabel('Title').fill('Smoke templated initiative');
+		// The form sends the text the author saw as the brief, and never asks the server to apply a template.
+		const sent = page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/v1/initiatives');
+		await create.getByRole('button', { name: 'Create initiative' }).click();
+		const data = (await sent).postDataJSON() as Record<string, unknown>;
+		expect(data.brief).toBe(body);
+		expect(data).not.toHaveProperty('template');
+		expect(data).not.toHaveProperty('default_template');
+		await expect(page).toHaveURL(/\/initiatives\/SMK-\d+$/);
+		await expect(page.getByRole('heading', { name: 'Smoke scenario' })).toBeVisible();
+		await expect(page.getByRole('cell', { name: 'Buzz' }).first()).toBeVisible();
+	} finally {
+		// The smoke shares one database and runs its tests in order (one worker): leave no default behind for
+		// the tests that create initiatives after this one.
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await page.goto('/templates');
+		const left = page.locator('article', { hasText: name });
+		await left.getByRole('button', { name: 'Remove', exact: true }).click();
+		await expect(left.getByRole('alert')).toContainText('New initiatives will then start with an empty brief.');
+		await left.getByRole('button', { name: 'Remove template' }).click();
+		await expect(page.locator('article', { hasText: name })).toHaveCount(0);
+	}
+});
