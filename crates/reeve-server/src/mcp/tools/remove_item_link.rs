@@ -40,7 +40,7 @@ fn run<'a>(
     args: Value,
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
-        let input: RemoveItemLinkInput = super::arguments(args)?;
+        let input: RemoveItemLinkInput = super::item_link_arguments(args)?;
         let prefix = &state.config.key_prefix;
         // The same check and the same message as `add_item_link`, before the action; the action takes the route's
         // three path segments.

@@ -136,6 +136,17 @@ pub fn follows_is_informational(
         .then(|| format!("Informational: this does not hold {story} back."))
 }
 
+/// The words people try for blocking where an item link name goes (kb/ADR-0031 R2), in the command line's spelling
+/// and the wire's. The one list: the CLI's name parser of `reeve link`, `reeve apply`'s reading of a plan file and
+/// the two MCP item link tools all ask here, and each answers one of these words with where blocking lives for its
+/// own reader. No item link name is among them, and a test holds that.
+pub fn is_blocking_word(s: &str) -> bool {
+    matches!(
+        s,
+        "blocks" | "blocked-by" | "blocked_by" | "depends-on" | "depends_on"
+    )
+}
+
 /// The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
 /// reading the link as a gate (kb/ADR-0031 R3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -204,6 +215,28 @@ mod tests {
     use ItemLinkDirection::{In, Out};
     use ItemLinkType::{Duplicates, Follows, RelatesTo};
     use serde_json::json;
+
+    /// The five words, each spelling written out, and nothing near them: the list is exact, as the command line has
+    /// always read it. No item link name is a blocking word, in either spelling.
+    #[test]
+    fn the_blocking_words_are_these_five_and_no_item_link_name() {
+        for word in [
+            "blocks",
+            "blocked-by",
+            "blocked_by",
+            "depends-on",
+            "depends_on",
+        ] {
+            assert!(is_blocking_word(word), "{word}");
+        }
+        for other in ["Blocks", "block", "depends on", "precedes", " blocks", ""] {
+            assert!(!is_blocking_word(other), "{other:?}");
+        }
+        for name in ItemLinkType::ALL {
+            assert!(!is_blocking_word(name.wire()), "{}", name.wire());
+            assert!(!is_blocking_word(name.cli()), "{}", name.cli());
+        }
+    }
 
     /// The whole table written out by hand, not read back through `NAMES`.
     #[test]

@@ -207,6 +207,26 @@ fn arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError
     })
 }
 
+/// What the two item link tools answer when a call sends a word for blocking as `type` (kb/ADR-0031 R2): where
+/// blocking lives, and that it is not to be recorded under another name. The CLI answers the same words with its
+/// own pointer (`reeve story block`); a chat has no tool that adds a blocker, so this one names the person.
+const BLOCKING_IS_NOT_AN_ITEM_LINK: &str = "Blocking is not an item link. Do not add it under another name: tell the person that a blocker is added by a person, in the CLI or the web client.";
+
+/// The arguments of `add_item_link` and `remove_item_link` as the tool's input type. The type is not loosened: a
+/// `type` outside the closed enum fails as any other argument does, with the deserializer's message and the
+/// schema. Only one of the words people try for blocking (`reeve_protocol::is_blocking_word`, the list the CLI
+/// asks too) is told with the pointer instead, since the enum's refusal names the three item link names and so
+/// invites picking one of them.
+fn item_link_arguments<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, ToolError> {
+    if args["type"]
+        .as_str()
+        .is_some_and(reeve_protocol::is_blocking_word)
+    {
+        return Err(ToolError::Told(BLOCKING_IS_NOT_AN_ITEM_LINK.into()));
+    }
+    arguments(args)
+}
+
 /// The last guard on a refusal, whatever said it, which `call_tool` puts every refusal through. Each refusal bounds
 /// what it repeats where it formats it (a caller's value with `text::echo`, a refused move's reasons with
 /// `listed`), so a refusal is within `bound::MAX_OWN_TEXT` and told as it is, closing sentences and all. A longer

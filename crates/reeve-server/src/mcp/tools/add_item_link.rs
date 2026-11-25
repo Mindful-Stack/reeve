@@ -49,7 +49,7 @@ fn run<'a>(
     args: Value,
 ) -> BoxFuture<'a, Result<Value, ToolError>> {
     Box::pin(async move {
-        let input: AddItemLinkInput = super::arguments(args)?;
+        let input: AddItemLinkInput = super::item_link_arguments(args)?;
         let prefix = &state.config.key_prefix;
         // The route's body, every field written out.
         let body = AddItemLink {

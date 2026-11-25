@@ -252,14 +252,6 @@ async fn the_item_link_tools_tell_the_model_what_the_planner_refused() {
             "to must be a key such as TST-12, not \"bookings\".",
             "{name}"
         );
-        // kb/ADR-0031 R2: no name means holding work back.
-        for blocking in ["blocks", "depends_on"] {
-            let said = said(json!({"key": it.b, "type": blocking, "to": it.a})).await;
-            assert!(
-                said.starts_with("Invalid arguments: unknown variant"),
-                "{name} {blocking}: {said}"
-            );
-        }
         for extra in ["blocker", "url", "override_reason"] {
             let mut arguments = json!({"key": it.b, "type": "follows", "to": it.a});
             arguments[extra] = json!("x");
@@ -267,6 +259,52 @@ async fn the_item_link_tools_tell_the_model_what_the_planner_refused() {
             assert!(
                 said.starts_with("Invalid arguments: unknown field"),
                 "{name} {extra}: {said}"
+            );
+        }
+    }
+    assert_eq!(rows(h, "item_links").await, 0, "nothing was written");
+}
+
+/// A word for blocking sent as `type` is not only refused by the closed enum: both item link tools say where
+/// blocking lives, so the model does not pick one of the three names in its place.
+#[tokio::test]
+async fn a_blocking_word_as_the_type_is_answered_with_where_blocking_lives() {
+    let f = flow().await;
+    let h = &f.h;
+    let dan = token(&f, &h.admin_token, "write").await;
+    let it = items(h).await;
+    for name in ["add_item_link", "remove_item_link"] {
+        let said = |arguments: Value| refusal(h, &dan, name, arguments);
+        // kb/ADR-0031 R2: no name means holding work back. A word for blocking is answered with where blocking
+        // lives, in every spelling the CLI's list has; the enum's refusal alone would name the three item link
+        // names and invite picking one.
+        for blocking in [
+            "blocks",
+            "blocked_by",
+            "blocked-by",
+            "depends_on",
+            "depends-on",
+        ] {
+            assert_eq!(
+                said(json!({"key": it.b, "type": blocking, "to": it.a})).await,
+                "Blocking is not an item link. Do not add it under another name: tell the person that a blocker is added by a person, in the CLI or the web client.",
+                "{name} {blocking}"
+            );
+            // The pointer is the answer whatever else the call got wrong.
+            assert_eq!(
+                said(json!({"key": it.b, "type": blocking})).await,
+                "Blocking is not an item link. Do not add it under another name: tell the person that a blocker is added by a person, in the CLI or the web client.",
+                "{name} {blocking}, no `to`"
+            );
+        }
+        // Any other name outside the three gets the ordinary refusal, with the schema: the input type is as closed
+        // as it was.
+        for unknown in ["precedes", "relates-to", "Blocks", ""] {
+            let said = said(json!({"key": it.b, "type": unknown, "to": it.a})).await;
+            assert!(
+                said.starts_with("Invalid arguments: unknown variant")
+                    && said.contains("The arguments must match this schema:"),
+                "{name} {unknown}: {said}"
             );
         }
     }
@@ -798,10 +836,13 @@ async fn the_link_tools_gate_nothing_and_no_tool_touches_a_blocker() {
         "what was added here is gone, and nothing else"
     );
 
-    // No name means blocking (kb/ADR-0031 R2): refused with the schema, on both item link tools.
+    // No name means blocking (kb/ADR-0031 R2): refused on both item link tools, with where blocking lives.
     for tool in ["add_item_link", "remove_item_link"] {
         let said = refusal(h, &dan, tool, json!({"key": c, "type": "blocks", "to": d})).await;
-        assert!(said.starts_with("Invalid arguments:"), "{tool}: {said}");
+        assert!(
+            said.starts_with("Blocking is not an item link."),
+            "{tool}: {said}"
+        );
     }
     assert_eq!(
         blockers_and_state(h, &[&c, &d]).await,
