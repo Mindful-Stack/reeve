@@ -2,13 +2,13 @@
 //! input has no such field, and the edit the action runs carries the stored mark over.
 use super::{Annotations, Tool, ToolError, bound};
 use crate::{
-    actions::{self, Acting},
+    actions::{self, Acting, Edited},
     error::AppError,
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_planning::EpicMove;
-use reeve_protocol::{EditEpicInput, EditItem, EpicReceipt};
+use reeve_planning::{Epic, EpicMove};
+use reeve_protocol::{EditEpicInput, EditItem, EpicDto, EpicReceipt};
 use serde_json::{Value, json};
 
 /// The receipt's note when the edit moved the epic (decision A): where it was moved from and to, and whose
@@ -28,6 +28,15 @@ fn moved_note(moved: &EpicMove) -> Option<String> {
         )),
         (None, None) => None,
     }
+}
+
+/// The receipt of an edit: the epic as this call wrote it (its title, initiative and version), never as the read
+/// after the commit shows it, which another writer may have changed since: a chat that sent that later version with
+/// the brief it read before would overwrite a change it never saw. And the note of the move this call wrote.
+fn receipt(edited: Edited<EpicDto, Epic>, moved: Option<&EpicMove>) -> EpicReceipt {
+    let mut receipt = EpicReceipt::from(EpicDto::from(&edited.written));
+    receipt.note = moved.and_then(moved_note);
+    receipt
 }
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
@@ -95,7 +104,7 @@ fn run<'a>(
             },
             ..EditItem::default()
         };
-        let (epic, moved) = actions::edit_epic(state, who, &input.key, body)
+        let (edited, moved) = actions::edit_epic(state, who, &input.key, body)
             .await
             .map_err(|e| match (e, &named) {
                 // With an initiative named, a missing item may be either.
@@ -108,9 +117,55 @@ fn run<'a>(
                     super::item_write_failed(other, "epic", "get_epic", &input.key, prefix)
                 }
             })?;
-        let note = moved.as_ref().and_then(moved_note);
-        let mut receipt = EpicReceipt::from(epic);
-        receipt.note = note;
-        super::sent(receipt)
+        super::sent(receipt(edited, moved.as_ref()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reeve_protocol::Key;
+
+    fn key(k: &str) -> Key {
+        k.parse().unwrap()
+    }
+
+    /// Another caller retitles the epic and moves it on to TST-3 between this edit's commit and the read after it:
+    /// the read shows their title, initiative and version. The receipt must report this edit's (version 2, TST-2,
+    /// "Mine"), the ones its move note speaks for. Catches a receipt built from the read after the commit.
+    #[test]
+    fn the_receipt_reports_the_epic_this_edit_wrote_not_a_later_read() {
+        let written = Epic::from_persisted(
+            key("TST-20"),
+            "Mine".into(),
+            Some(key("TST-2")),
+            "brief".into(),
+            None,
+            None,
+            2,
+        );
+        let later = Epic::from_persisted(
+            key("TST-20"),
+            "Theirs".into(),
+            Some(key("TST-3")),
+            "their brief".into(),
+            None,
+            None,
+            3,
+        );
+        let edited = Edited {
+            read: EpicDto::from(&later),
+            written,
+        };
+        let moved = EpicMove {
+            from: Some(key("TST-1")),
+            to: Some(key("TST-2")),
+        };
+        let r = receipt(edited, Some(&moved));
+        assert_eq!(
+            (r.key, r.title.as_str(), r.initiative, r.version),
+            (key("TST-20"), "Mine", Some(key("TST-2")), 2)
+        );
+        assert!(r.note.unwrap().starts_with("Moved from TST-1 to TST-2"));
+    }
 }

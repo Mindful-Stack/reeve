@@ -2,12 +2,20 @@
 //! mark: the input has no such field, and the edit the action runs carries the stored mark over.
 use super::{Annotations, Tool, ToolError};
 use crate::{
-    actions::{self, Acting},
+    actions::{self, Acting, Edited},
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{EditInitiativeInput, EditItem, InitiativeReceipt};
+use reeve_planning::Initiative;
+use reeve_protocol::{EditInitiativeInput, EditItem, InitiativeDto, InitiativeReceipt};
 use serde_json::{Value, json};
+
+/// The receipt of an edit: the initiative as this call wrote it (its title and version), never as the read after
+/// the commit shows it, which another writer may have changed since: a chat that sent that later version with the
+/// brief it read before would overwrite a change it never saw.
+fn receipt(edited: Edited<InitiativeDto, Initiative>) -> InitiativeReceipt {
+    InitiativeReceipt::from(InitiativeDto::from(&edited.written))
+}
 
 pub(super) fn tool(key_prefix: &str, horizons: &[String]) -> Tool {
     let mut input_schema = super::input_schema::<EditInitiativeInput>();
@@ -91,11 +99,43 @@ fn run<'a>(
             },
             ..EditItem::default()
         };
-        let initiative = actions::edit_initiative(state, who, &input.key, body)
+        let edited = actions::edit_initiative(state, who, &input.key, body)
             .await
             .map_err(|e| {
                 super::item_write_failed(e, "initiative", "get_initiative", &input.key, prefix)
             })?;
-        super::sent(InitiativeReceipt::from(initiative))
+        super::sent(receipt(edited))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reeve_protocol::Key;
+
+    /// Another caller retitles the initiative between this edit's commit and the read after it: the read shows their
+    /// title and version. The receipt must report this edit's ("Mine", version 2). Catches a receipt built from the
+    /// read after the commit.
+    #[test]
+    fn the_receipt_reports_the_initiative_this_edit_wrote_not_a_later_read() {
+        let at = |title: &str, version| {
+            Initiative::from_persisted(
+                "TST-1".parse::<Key>().unwrap(),
+                title.into(),
+                "brief".into(),
+                "Now".into(),
+                None,
+                None,
+                None,
+                None,
+                version,
+            )
+        };
+        let edited = Edited {
+            read: InitiativeDto::from(&at("Theirs", 3)),
+            written: at("Mine", 2),
+        };
+        let r = receipt(edited);
+        assert_eq!((r.title.as_str(), r.version), ("Mine", 2));
+    }
 }

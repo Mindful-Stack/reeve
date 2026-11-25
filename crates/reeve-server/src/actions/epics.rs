@@ -1,6 +1,6 @@
-use super::{Acting, FilterRef, resolve_edit, resolve_filter, resolve_opt};
+use super::{Acting, Edited, FilterRef, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
-use reeve_planning::EpicMove;
+use reeve_planning::{Epic, EpicMove};
 use reeve_protocol::{CreateEpic, EditItem, EpicDto, ItemType, KeyRef};
 use serde::Deserialize;
 
@@ -74,19 +74,20 @@ pub(crate) async fn create_epic(
 
 /// `reeve epic edit <KEY>`. Shared by `PATCH /api/v1/epics/{key}` and the MCP tool `edit_epic`. `key` and `b` are
 /// what the route takes: its path parameter and its body. An edit never reads or writes the discovery mark: the
-/// handler carries the stored mark over (`POST …/discovery` is the only way to it). Answers the epic as edited and
-/// the move this edit wrote (`None`: it did not change the initiative), which `edit_epic`'s receipt says
-/// (decision A). The move is the handler's: the one its `edited` entry names, never one worked out here from reads
+/// handler carries the stored mark over (`POST …/discovery` is the only way to it). Answers the epic as a read after
+/// the commit shows it (the route's answer) and as this edit wrote it (the receipt's), and the move this edit wrote
+/// (`None`: it did not change the initiative), which `edit_epic`'s receipt says (decision A). The written epic and
+/// the move are the handler's: the move is the one its `edited` entry names, never one worked out here from reads
 /// around the write, which another edit could fall between.
 pub(crate) async fn edit_epic(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,
     b: EditItem,
-) -> Result<(EpicDto, Option<EpicMove>), AppError> {
+) -> Result<(Edited<EpicDto, Epic>, Option<EpicMove>), AppError> {
     let key = state.handlers.resolve_ref(key, ItemType::Epic).await?;
     let initiative = resolve_edit(&state.handlers, b.initiative, ItemType::Initiative).await?;
-    let (epic, moved) = state
+    let (written, moved) = state
         .handlers
         .edit_epic_reporting(
             &who.ctx,
@@ -99,8 +100,6 @@ pub(crate) async fn edit_epic(
             &b.attachments,
         )
         .await?;
-    Ok((
-        state.handlers.epic_dto(epic.key(), who.ctx.now).await?,
-        moved,
-    ))
+    let read = state.handlers.epic_dto(written.key(), who.ctx.now).await?;
+    Ok((Edited { read, written }, moved))
 }

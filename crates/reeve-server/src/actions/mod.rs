@@ -7,7 +7,8 @@
 //!
 //! It answers what its route sends, and beside it what its tool's receipt needs when that is more. A create
 //! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
-//! the DTO, and the receipt needs the flag. A comment action answers the comment's id and whether this call wrote
+//! the DTO, and the receipt needs the flag. An edit whose receipt needs the item as its write left it answers an
+//! `Edited` (`edit_epic`, `edit_initiative`). A comment action answers the comment's id and whether this call wrote
 //! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that.
 //!
 //! The input is what the route takes (its path, its query struct or its body), not the tool's type: the route
@@ -42,6 +43,16 @@ pub(crate) use sprints::{get_sprint, list_sprints};
 pub(crate) use stories::{
     StoryQuery, create_story, edit_story, list_stories, move_story, read_story, story_context,
 };
+
+/// What an edit answers when its tool's receipt needs more than the route sends: `read`, the item as a read after the
+/// commit shows it, with what only a read adds (urgency, promise, links), which the route sends; and `written`, the
+/// item as this call's write left it. The two differ when another writer lands between the commit and the read, so a
+/// receipt takes what the write decided (title, version, place) from `written`: it never reports another caller's
+/// change, or the version after it, as this call's.
+pub(crate) struct Edited<D, I> {
+    pub(crate) read: D,
+    pub(crate) written: I,
+}
 
 /// What an action may need to know about the caller: planning's context (actor, channel, the request's one
 /// timestamp, and the client when the call came through MCP) and the access policy the request was authenticated

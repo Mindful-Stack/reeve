@@ -1,5 +1,6 @@
-use super::{Acting, allowed_owner, named_target_month};
+use super::{Acting, Edited, allowed_owner, named_target_month};
 use crate::{error::AppError, state::AppState};
+use reeve_planning::Initiative;
 use reeve_protocol::{CreateInitiative, EditItem, InitiativeDto, ItemType};
 
 /// `reeve initiative ls`: every initiative with its progress. Shared by `GET /api/v1/initiatives` and the MCP tool
@@ -63,13 +64,14 @@ pub(crate) async fn create_initiative(
 /// `edit_initiative`. `key` and `b` are what the route takes. An owner the edit names must be an allowed user and a
 /// target month it names must be a month; an edit that leaves either alone or clears it is not judged, so a stored
 /// owner who is no longer allowed and a stored month in another shape never stand in the way of another change.
-/// An edit never reads or writes the discovery mark.
+/// An edit never reads or writes the discovery mark. Answers the initiative as a read after the commit shows it (the
+/// route's answer) and as this edit wrote it (the receipt's).
 pub(crate) async fn edit_initiative(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,
     b: EditItem,
-) -> Result<InitiativeDto, AppError> {
+) -> Result<Edited<InitiativeDto, Initiative>, AppError> {
     let key = state
         .handlers
         .resolve_ref(key, ItemType::Initiative)
@@ -84,7 +86,7 @@ pub(crate) async fn edit_initiative(
         Some(Some(m)) => Some(named_target_month(Some(m))?),
         other => other,
     };
-    state
+    let written = state
         .handlers
         .edit_initiative_attaching(
             &who.ctx,
@@ -99,5 +101,6 @@ pub(crate) async fn edit_initiative(
             &b.attachments,
         )
         .await?;
-    Ok(state.handlers.initiative_dto(&key, who.ctx.now).await?)
+    let read = state.handlers.initiative_dto(&key, who.ctx.now).await?;
+    Ok(Edited { read, written })
 }
