@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // The sprint page: this sprint and the next side by side as one-line goals that open in place, the kb/ADR-0014 R2
-// rule line, confidence recorded by a person (a suggestion pre-fills the form, never shows as recorded), the draft's
-// goals, ticks and links, "+ goal" under each sprint and in the first bucket's rows, the close step that ends in
-// "Open next sprint", and the history, where a closed sprint shows its counts at close beside the derived ones only
-// when they differ (kb/ADR-0014 R6).
+// rule line above both columns, confidence recorded by a person (a suggestion pre-fills the form, never shows as
+// recorded), the draft's goals, ticks and links, "+ goal" under each sprint and in the first bucket's rows, the close
+// step that ends in "Open next sprint", and the history, where a closed sprint shows its counts at close beside the
+// derived ones only when they differ (kb/ADR-0014 R6).
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry, Goal, Sprint, SprintCounts, SprintPlanning, Sprints, SprintView } from '#lib/api/types.ts';
@@ -167,9 +167,11 @@ describe('the active sprint', () => {
 		await open();
 		const panel = q('[data-testid="active-sprint"]')!;
 		expect(text(panel)).toContain('2026-11-02 – 2026-11-13');
-		const rule = [...panel.querySelectorAll('p')].find((p) => text(p) === RULE)!;
+		const rule = [...document.querySelectorAll('p')].find((p) => text(p) === RULE)!;
 		const card = q('[data-testid="goal-1"]', panel)!;
-		// The rule line is above the counts (kb/ADR-0014 R2).
+		// The rule line heads both columns, above the counts (kb/ADR-0014 R2): before the columns container, not inside it.
+		expect(rule.compareDocumentPosition(q('[data-testid="columns"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(q('[data-testid="columns"]')!.contains(rule)).toBe(false);
 		expect(rule.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		const t = text(card);
 		for (const s of ['Ana can book a room', 'one real booking', 'ana@example.com', 'pairs with the calendar work', 'calendar API slow'])
@@ -253,7 +255,7 @@ describe('the next sprint (draft)', () => {
 	it('adds a goal with a fresh idempotency key', async () => {
 		net.sprints!.draft = draft();
 		await open();
-		const form = q<HTMLFormElement>('form[aria-label="New goal"]')!;
+		const form = q<HTMLFormElement>('form[aria-label="New goal for next sprint"]')!;
 		const outcome = q<HTMLInputElement>('input[name="outcome"]', form)!;
 		expect(outcome.placeholder).toBe('By 2026-11-27, <who> can <outcome>');
 		type(outcome, 'By Friday, Ana can book a room');
@@ -761,12 +763,14 @@ describe('gates, the first bucket and its "+ goal"', () => {
 		expect(text(q('[data-testid="goal-2"] [data-testid="gates"]'))).toContain('No linked items yet');
 	});
 
-	it('states the rule on the active panel only, and dates each draft goal "Waiting since"', async () => {
+	it('states the rule once above the columns while a sprint is active, and dates each draft goal "Waiting since"', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1 })]);
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, created_at: '2026-11-03T12:00:00Z' })]);
 		await open();
 		const hasRule = (sel: string) => [...q(sel)!.querySelectorAll('p')].some((p) => text(p) === RULE);
-		expect(hasRule('[data-testid="active-sprint"]')).toBe(true);
+		expect([...document.querySelectorAll('p')].filter((p) => text(p) === RULE).length).toBe(1);
+		expect(hasRule('[data-testid="columns"]')).toBe(false);
+		expect(hasRule('[data-testid="active-sprint"]')).toBe(false);
 		expect(hasRule('[data-testid="next-sprint"]')).toBe(false);
 		expect(text(q('[data-testid="goal-5"]'))).toContain('Waiting since 3 Nov');
 	});
@@ -793,7 +797,7 @@ describe('gates, the first bucket and its "+ goal"', () => {
 		withBucketRow();
 		await open();
 		const row = q('[data-testid="bucket-ABC-7"]')!;
-		button('+ goal', row)!.click();
+		button('+ goal for ABC-7', row)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form', row)!;
 		// The form is named by its title (aria-label), which also heads it.
@@ -812,7 +816,7 @@ describe('gates, the first bucket and its "+ goal"', () => {
 		withBucketRow();
 		await open();
 		const row = q('[data-testid="bucket-ABC-7"]')!;
-		button('+ goal', row)!.click();
+		button('+ goal for ABC-7', row)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form', row)!;
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'By 27 Nov, Ana can book');
@@ -829,17 +833,17 @@ describe('gates, the first bucket and its "+ goal"', () => {
 		withBucketRow();
 		await open();
 		const row = q('[data-testid="bucket-ABC-7"]')!;
-		button('+ goal', row)!.click();
+		button('+ goal for ABC-7', row)!.click();
 		await settle(() => expect(document.activeElement).toBe(q('input[name="outcome"]', row)));
 		button('Cancel', row)!.click();
-		await settle(() => expect(document.activeElement).toBe(button('+ goal', row)));
+		await settle(() => expect(document.activeElement).toBe(button('+ goal for ABC-7', row)));
 	});
 
 	it('closes the "+ goal" form when a reload brings a different draft', async () => {
 		withBucketRow();
 		await open();
 		const row = q('[data-testid="bucket-ABC-7"]')!;
-		button('+ goal', row)!.click();
+		button('+ goal for ABC-7', row)!.click();
 		flushSync();
 		expect(q('form', row)).not.toBeNull();
 		net.sprints!.draft = { ...draft([]), id: 9 };
@@ -891,7 +895,7 @@ describe('goal rows and the two columns', () => {
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2 }), goal({ id: 6, sprint_id: 2 })]);
 		await open({ closed: true });
 		q<HTMLInputElement>('input[aria-label="Goes in at open: outcome 6"]')!.click();
-		button('+ goal', q('[data-testid="active-sprint"]')!)!.click();
+		button('+ goal to this sprint', q('[data-testid="active-sprint"]')!)!.click();
 		flushSync();
 		type(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]')!, 'half');
 		onLiveHandler!();
@@ -913,9 +917,11 @@ describe('goal rows and the two columns', () => {
 		net.sprints!.draft = draft();
 		await open();
 		const column = q('[data-testid="active-sprint"]')!;
-		button('+ goal', column)!.click();
+		button('+ goal to this sprint', column)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
+		// A goal can only be removed from a draft, so the form says this one stays.
+		expect(text(q('.note', form))).toBe('A goal added to an open sprint stays until the sprint closes.');
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'A late goal');
 		type(q<HTMLInputElement>('input[name="check"]', form)!, 'it is done');
 		form.requestSubmit();
@@ -928,7 +934,7 @@ describe('goal rows and the two columns', () => {
 		net.answer = () => refused([{ reason: 'sprint_not_active' }]);
 		await open();
 		const column = q('[data-testid="active-sprint"]')!;
-		button('+ goal', column)!.click();
+		button('+ goal to this sprint', column)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'A late goal');
@@ -945,18 +951,18 @@ describe('goal rows and the two columns', () => {
 		const column = q('[data-testid="active-sprint"]')!;
 		button('Edit', q('[data-testid="goal-1"]')!)!.click();
 		flushSync();
-		button('+ goal', column)!.click();
+		button('+ goal to this sprint', column)!.click();
 		await settle(() => expect(document.activeElement).toBe(q('form[aria-label="New goal for this sprint"] input[name="outcome"]', column)));
 		expect(q<HTMLInputElement>('form[aria-label="New goal for this sprint"] input[name="outcome"]', column)!.placeholder).toBe('By 2026-11-13, <who> can <outcome>');
 		button('Cancel', q('form[aria-label="New goal for this sprint"]', column)!)!.click();
-		await settle(() => expect(document.activeElement).toBe(button('+ goal', column)));
+		await settle(() => expect(document.activeElement).toBe(button('+ goal to this sprint', column)));
 	});
 
 	it('focuses the new goal\'s row after an add to this sprint', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1 })]);
 		await open();
 		const column = q('[data-testid="active-sprint"]')!;
-		button('+ goal', column)!.click();
+		button('+ goal to this sprint', column)!.click();
 		flushSync();
 		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'New one');
@@ -969,7 +975,7 @@ describe('goal rows and the two columns', () => {
 	it('adds to the next sprint without the active flag', async () => {
 		net.sprints!.draft = draft();
 		await open();
-		const form = q<HTMLFormElement>('[data-testid="next-sprint"] form[aria-label="New goal"]')!;
+		const form = q<HTMLFormElement>('[data-testid="next-sprint"] form[aria-label="New goal for next sprint"]')!;
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'Later');
 		type(q<HTMLInputElement>('input[name="check"]', form)!, 'c');
 		form.requestSubmit();
@@ -983,7 +989,7 @@ describe('goal rows and the two columns', () => {
 		const column = q('[data-testid="active-sprint"]')!;
 		expect(text(column)).toContain('No active sprint');
 		expect(button('Close…', column)).toBeUndefined();
-		expect(button('+ goal', column)).toBeUndefined();
+		expect(button('+ goal to this sprint', column)).toBeUndefined();
 		expect(button(/^Open sprint with 1 goal$/)).toBeDefined();
 	});
 
@@ -1032,7 +1038,7 @@ describe('goal rows and the two columns', () => {
 		const second = q('[data-testid="bucket-ABC-7"]')!;
 		expect(text(second)).toContain('no goal');
 		expect(text(second)).not.toContain('in discovery');
-		expect(button('+ goal', second)).toBeDefined();
+		expect(button('+ goal for ABC-7', second)).toBeDefined();
 	});
 
 	it('shows no bucket section when the server names no bucket', async () => {

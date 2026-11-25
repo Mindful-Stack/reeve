@@ -279,6 +279,8 @@
 		<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>
 	{/if}
 
+	<!-- kb/ADR-0014 R2: every view that shows counts states the membership rule: once, above both columns. -->
+	{#if active}<p class="rule">{RULE}</p>{/if}
 	<div class="columns" data-testid="columns">
 		<section class="panel" data-testid="active-sprint" aria-labelledby="active-title">
 			{#if active}
@@ -289,8 +291,6 @@
 					</h2>
 					<button type="button" disabled={busy} onclick={() => (closing = active)}>Close…</button>
 				</div>
-				<!-- kb/ADR-0014 R2: every view that shows counts states the membership rule. -->
-				<p class="rule">{RULE}</p>
 				<p class="upkeep">{upkeepText(active.counts, active.upkeep_line)}</p>
 				{#if active.sprint.warnings.length}
 					<p class="warn">Warning: {active.sprint.warnings.map((w) => warningText(w)).join('; ')}</p>
@@ -306,13 +306,14 @@
 					{#if goalFor === 'active'}
 						<GoalForm
 							title="New goal for this sprint"
+							note="A goal added to an open sprint stays until the sprint closes."
 							active
 							endsOn={active.sprint.ends_on}
 							oncreated={({ goal }) => added(goal.id)}
 							oncancel={() => closeGoal('active')}
 						/>
 					{:else}
-						<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('active')}>+ goal</button>
+						<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('active')}>+ goal to this sprint</button>
 					{/if}
 				</div>
 			{:else}
@@ -354,7 +355,7 @@
 				</GoalRow>
 			{/each}
 			{#key draft?.id}
-				<GoalForm endsOn={draft?.ends_on ?? null} oncreated={() => reload()} />
+				<GoalForm title="New goal for next sprint" endsOn={draft?.ends_on ?? null} oncreated={() => reload()} />
 			{/key}
 		</section>
 	</div>
@@ -370,10 +371,10 @@
 						{#if !i.discovery_complete}<span class="muted">in discovery</span>{/if}
 						{#each i.goals as id (id)}
 							{@const x = everyGoal.get(id)}
-							{#if x}<a class="goal-chip" href="#goal-{id}" title={x.goal.outcome}>{x.goal.outcome} · {x.where}</a>{/if}
+							{#if x}<a class="goal-chip" href="#goal-{id}" title="{x.goal.outcome} · {x.where}"><span class="chip-outcome">{x.goal.outcome}</span><span class="chip-where">{' '}· {x.where}</span></a>{/if}
 						{:else}
 							<span class="muted">no goal</span>
-							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
+							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" aria-label="+ goal for {i.key}" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 						{/each}
 						{#if i.goals.some((id) => !everyGoal.has(id))}
 							<span class="muted" data-testid="not-shown">{plural(i.goals.filter((id) => !everyGoal.has(id)).length, 'goal', 'goals')} not shown</span>
@@ -521,17 +522,26 @@
 		grid-template-columns: minmax(0, 1fr);
 		gap: 8px;
 	}
-	/* One line however long the outcome (the full text is the title); never a multi-line pill. */
+	/* One line however long the outcome: the outcome takes the ellipsis, the sprint it is in never does. */
 	.goal-chip {
+		display: inline-flex;
 		box-sizing: border-box;
 		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 		padding: 1px 8px;
 		border: 1px solid var(--line);
 		border-radius: 999px;
 		font-size: 13px;
+		white-space: nowrap;
+		text-decoration: none;
+	}
+	.chip-outcome {
+		max-width: 32ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chip-where {
+		flex: none;
+		margin-left: 0.35ch;
 	}
 	summary {
 		cursor: pointer;

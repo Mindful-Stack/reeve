@@ -12,6 +12,7 @@
 	let {
 		endsOn = null,
 		title,
+		note,
 		links = [],
 		active = false,
 		goal,
@@ -24,6 +25,8 @@
 		endsOn?: string | null;
 		/** Heads the form and names it (default "New goal", or "Edit goal" when editing). */
 		title?: string;
+		/** One muted line under the title (what the add means beyond its name). */
+		note?: string;
 		/** Add only, ignored when editing: items the new goal links in its create; none by default. */
 		links?: string[];
 		/** Add only: the goal goes into the active sprint instead of the draft (`CreateGoal.active`; the server refuses
@@ -114,6 +117,7 @@
 	onsubmit={submit}
 >
 	{#if title}<h3 class="title">{title}</h3>{/if}
+	{#if note}<p class="note muted">{note}</p>{/if}
 	<label class="field"
 		>Outcome <input name="outcome" bind:value={outcome} required disabled={busy} placeholder="By {endsOn ?? '<ends_on>'}, <who> can <outcome>" /></label
 	>
@@ -131,6 +135,9 @@
 	.title {
 		margin: 0;
 		font-size: 15px;
+	}
+	.note {
+		margin: 0;
 	}
 	.goal-form {
 		display: grid;
