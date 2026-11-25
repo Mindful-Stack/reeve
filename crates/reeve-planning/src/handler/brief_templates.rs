@@ -35,12 +35,14 @@ fn named<'a>(
         .find(|r| r.template.level() == level && r.template.name_key() == key)
 }
 
+/// The refusal of a name another template of the level has, on a create and on a rename alike. It is shown as it
+/// is to the admin who typed the name, so it names the template that has it and says what to do.
 fn taken(there: &StoredBriefTemplate) -> HandlerError {
     HandlerError::Validation(format!(
-        "a brief template named {:?} already exists for {} (id {}): edit that one, or remove it first",
-        there.template.name(),
+        "the {} brief template #{} is already named {:?}: edit that one, or choose another name",
         there.template.level().wire(),
-        there.id
+        there.id,
+        there.template.name()
     ))
 }
 

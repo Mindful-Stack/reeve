@@ -12426,8 +12426,10 @@ async fn brief_template_writes_log_who_changed_what_and_never_the_body() {
         .await
         .unwrap_err();
     assert!(
-        matches!(&err, HandlerError::Validation(m)
-            if m.contains("already exists") && m.contains(&format!("id {}", t.id))),
+        matches!(&err, HandlerError::Validation(m) if *m == format!(
+            "the initiative brief template #{} is already named \"Scenario\": edit that one, or choose another name",
+            t.id
+        )),
         "{err:?}"
     );
 
@@ -12599,7 +12601,10 @@ async fn brief_template_names_and_the_default_are_one_per_level() {
         .await
         .unwrap_err();
     assert!(
-        matches!(&err, HandlerError::Validation(m) if m.contains("already exists")),
+        matches!(&err, HandlerError::Validation(m) if *m == format!(
+            "the initiative brief template #{} is already named \"Scenario\": edit that one, or choose another name",
+            a.id
+        )),
         "{err:?}"
     );
     let recased = h
@@ -12857,7 +12862,7 @@ async fn overlapping_brief_template_writes_are_serialised() {
         other => panic!("wanted one template and one refusal, got {other:?}"),
     };
     assert!(
-        matches!(&lost, HandlerError::Validation(m) if m.contains("already exists")),
+        matches!(&lost, HandlerError::Validation(m) if m.contains("is already named")),
         "{lost:?}"
     );
     let named: Vec<BriefTemplateDto> = h

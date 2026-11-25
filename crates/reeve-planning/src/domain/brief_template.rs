@@ -7,10 +7,13 @@ pub const MAX_NAME: usize = 100;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BriefTemplateError {
-    #[error("a template's name must be 1 to 100 characters on one line")]
+    #[error("a brief template's name must be 1 to 100 characters on one line")]
     Name,
-    #[error("a template's body must not be blank and must hold no NUL character")]
-    Body,
+    /// Its own message: someone who left the text empty is not told about NUL characters.
+    #[error("a brief template's text must not be blank")]
+    Blank,
+    #[error("a brief template's text must hold no NUL character")]
+    Nul,
 }
 
 /// How names are compared: trimmed and lowercased (Unicode, `str::to_lowercase`). Computed here, never by the
@@ -44,8 +47,11 @@ impl BriefTemplate {
         if !(1..=MAX_NAME).contains(&name.chars().count()) || name.chars().any(off_the_line) {
             return Err(BriefTemplateError::Name);
         }
-        if body.trim().is_empty() || body.contains('\0') {
-            return Err(BriefTemplateError::Body);
+        if body.trim().is_empty() {
+            return Err(BriefTemplateError::Blank);
+        }
+        if body.contains('\0') {
+            return Err(BriefTemplateError::Nul);
         }
         Ok(Self {
             level,
@@ -124,12 +130,34 @@ mod tests {
             body,
             "not trimmed: a brief is stored as written, and so is what prefills it"
         );
-        for bad in ["", " \n\t", "a\0b"] {
+        for (bad, why) in [
+            ("", BriefTemplateError::Blank),
+            (" \n\t", BriefTemplateError::Blank),
+            ("a\0b", BriefTemplateError::Nul),
+            // Blank is said first: a text of nothing but NUL and spaces is not blank, it holds a NUL.
+            (" \0 ", BriefTemplateError::Nul),
+        ] {
             assert_eq!(
                 BriefTemplate::new(Initiative, "S", bad),
-                Err(BriefTemplateError::Body),
+                Err(why),
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn each_refusal_says_one_thing() {
+        assert_eq!(
+            BriefTemplateError::Name.to_string(),
+            "a brief template's name must be 1 to 100 characters on one line"
+        );
+        assert_eq!(
+            BriefTemplateError::Blank.to_string(),
+            "a brief template's text must not be blank"
+        );
+        assert_eq!(
+            BriefTemplateError::Nul.to_string(),
+            "a brief template's text must hold no NUL character"
+        );
     }
 }

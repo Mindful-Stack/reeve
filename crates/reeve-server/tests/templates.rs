@@ -109,7 +109,7 @@ async fn a_brief_template_is_created_edited_marked_and_removed() {
         "POST",
         LIST,
         json!({"level": "initiative", "name": "SCENARIO", "body": "other"}),
-        "already exists",
+        "is already named",
     )
     .await;
     assert_eq!(api(&h, &h.admin_token, LIST).await, json!([t]));
@@ -132,7 +132,7 @@ async fn a_brief_template_is_created_edited_marked_and_removed() {
         ),
         (
             json!({"level": "epic", "name": "S", "body": " \n"}),
-            "body must not be blank",
+            "a brief template's text must not be blank",
         ),
         (
             json!({"level": "epic", "name": "S", "body": "b", "is_default": true}),
@@ -206,7 +206,7 @@ async fn a_brief_template_is_created_edited_marked_and_removed() {
         "PATCH",
         &one(&debt),
         json!({"version": 1, "name": " scenario"}),
-        "already exists",
+        "is already named",
     )
     .await;
 
