@@ -397,6 +397,33 @@ describe('templates page', () => {
 		expect(pageNotices()).toEqual([REMOVED]);
 	});
 
+	// Catches the create's reset running after its reload: the reload moved the removed editor's text into the
+	// new-template draft, and the create then emptied that draft and folded the form under a notice saying it was kept.
+	it("keeps a removed editor's text that its create's reload moved into New template, and clears only the draft sent", async () => {
+		await open('admin');
+		const mine = 'One slice, rewritten.\n';
+		const form = startEdit(3);
+		type(nameOf(form), 'Thin slice');
+		type(textOf(form), mine);
+		const fresh = newForm()!;
+		fresh.closest('details')!.open = true;
+		type(nameOf(fresh), 'Spike');
+		type(textOf(fresh), '## Question\n');
+		// Another admin removes the edited template while the create is on its way: the reload after it finds it gone.
+		db.meanwhile = () => (db.rows = db.rows.filter((r) => r.id !== 3));
+		fresh.requestSubmit();
+		await written(1);
+		expect(stored(10)).toMatchObject({ level: 'initiative', name: 'Spike', body: '## Question\n' });
+		expect(row(3)).toBeNull();
+		// The sent draft is gone; the rescued text is in the form, open, at the removed template's level.
+		expect(newForm()!.closest('details')!.open).toBe(true);
+		expect(newForm()!.querySelector('select')!.value).toBe('epic');
+		expect(nameOf(newForm()!).value).toBe('Thin slice');
+		expect(textOf(newForm()!).value).toBe(mine);
+		expect(pageNotices()).toEqual([REMOVED]);
+		await vi.waitFor(() => expect(document.activeElement).toBe(nameOf(newForm()!)));
+	});
+
 	it('shows a rendered preview of the text while it is edited', async () => {
 		await open('admin');
 		const form = startEdit(2);

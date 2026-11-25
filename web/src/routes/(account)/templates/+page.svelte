@@ -140,8 +140,10 @@
 
 	/** One write, then the list again whether it worked or not (a refusal may mean the list is stale). A failure is
 	 *  handed to `say`, which puts it where the write was made: in its form, or on the page. The server's own words
-	 *  are shown as they come. The caller is told how it ended, because only a conflict may move an editor's base. */
-	async function write(what: () => Promise<unknown>, say: (message: string | null) => void): Promise<Outcome> {
+	 *  are shown as they come. The caller is told how it ended, because only a conflict may move an editor's base.
+	 *  `applied` runs once the write has worked and before the reload, which may put a removed editor's text into
+	 *  the page's state: what a write resets is reset there, so the reset never takes that text with it. */
+	async function write(what: () => Promise<unknown>, say: (message: string | null) => void, applied?: () => void): Promise<Outcome> {
 		if (busy || !isAdmin()) return { kind: 'busy' };
 		busy = true;
 		notice = null;
@@ -149,6 +151,7 @@
 		let out: Outcome = { kind: 'done' };
 		try {
 			await what();
+			applied?.();
 		} catch (e) {
 			out = e instanceof Conflict ? { kind: 'conflict', fresh: false } : { kind: 'failed' };
 			say(failure(e));
@@ -166,13 +169,18 @@
 		const body = { level: draft.level, name: draft.name, body: draft.body };
 		const out = await write(
 			() => unwrap(api.POST('/api/v1/brief-templates', { body })),
-			(m) => (createNotice = m)
+			(m) => (createNotice = m),
+			// The sent draft is emptied and the form folds before the reload: a removed editor's text the reload moves
+			// into the form then stays there, and the form stays open for it.
+			() => {
+				draft = { level: draft.level, name: '', body: '' };
+				adding = false;
+			}
 		);
 		if (out.kind === 'done') {
-			draft = { level: draft.level, name: '', body: '' };
-			adding = false;
-			// The form folds: focus goes to its summary, which opens it again.
-			void refocus(form, () => form.closest('details')?.querySelector<HTMLElement>('summary'));
+			// The form folded: focus goes to its summary, which opens it again. A form the reload opened again for a
+			// removed editor's text keeps focus, on its name.
+			void refocus(form, () => (adding ? newName() : form.closest('details')?.querySelector<HTMLElement>('summary')));
 		} else if (out.kind !== 'busy') {
 			void refocus(form, () => had);
 		}
