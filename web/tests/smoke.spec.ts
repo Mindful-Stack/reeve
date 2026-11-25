@@ -902,7 +902,7 @@ test('the header goal picker links an initiative and, after navigating by click,
 	await form.getByLabel("We'll know when").fill('the smoke links it');
 	await form.getByRole('button', { name: 'Add goal', exact: true }).click();
 
-	await dialog.getByRole('button', { name: outcome, exact: true }).click();
+	await dialog.getByRole('button', { name: outcome }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('button', { name: `Linking to: ${outcome}` })).toBeVisible();
 
