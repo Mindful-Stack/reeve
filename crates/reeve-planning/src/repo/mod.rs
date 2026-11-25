@@ -20,6 +20,7 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 use std::{collections::HashMap, sync::Arc};
 
 mod attachments;
+mod brief_templates;
 mod comments;
 mod decisions;
 mod epics;
@@ -58,6 +59,7 @@ pub fn make_planning_ports(pool: PgPool) -> PlanningPorts {
         promises: r.clone(),
         item_links: r.clone(),
         web_links: r.clone(),
+        brief_templates: r.clone(),
         reads: r,
     }
 }

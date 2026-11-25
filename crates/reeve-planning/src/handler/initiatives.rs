@@ -88,13 +88,10 @@ impl Handlers {
         external_ref: Option<String>,
         attachments: &[Uuid],
     ) -> Result<(Initiative, bool), HandlerError> {
-        let attachments = attachment_ids(attachments)?;
-        if let Some(k) = self
-            .ports
-            .keys
-            .find_by_idempotency(ItemType::Initiative, idem)
-            .await?
-        {
+        let (attachments, made) = self
+            .before_create(ItemType::Initiative, idem, attachments)
+            .await?;
+        if let Some(k) = made {
             return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
         let mut tx = self.pool.begin().await?;

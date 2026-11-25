@@ -48,7 +48,7 @@ fn run<'a>(
     Box::pin(async move {
         let input: CreateInitiativeInput = super::arguments(args)?;
         // Every field of the route's body is written out, with no `..` (kb/ADR-0029 R12). The tool withholds the
-        // external reference and attachments. A create looks nothing up, so nothing here can be "not found".
+        // external reference, attachments and brief templates. A create looks nothing up, so nothing here can be "not found".
         let body = CreateInitiative {
             idempotency_key: input.idempotency_key,
             title: input.title,
@@ -57,6 +57,11 @@ fn run<'a>(
             target_month: input.target_month,
             owner: input.owner,
             external_ref: None,
+            // A chat's create starts from no template (GRA-903): the tool's input has no such field, and a
+            // template is applied only when the caller asks. Whether a tool should offer templates is a
+            // follow-up, to be decided with an observation on kb/ADR-0029.
+            template: None,
+            default_template: false,
             attachments: Vec::new(),
         };
         let (initiative, created) = actions::create_initiative(state, who, body)

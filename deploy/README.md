@@ -625,6 +625,13 @@ next upload after that.
 
 ### Releases and rollback
 
+Migration 1015 adds the `brief_templates` table. As for 1013, a rollback past this release restores the pre-release
+backup (see "Restore after an incident"), and every brief template created or changed since that backup is lost; a
+brief that was started from one is an item's text and is kept or lost with its item. From this release the `reeve`
+CLI asks for the level's default template when `reeve initiative create` or `reeve epic create` is given no brief
+(`--no-template` starts empty); an older CLI, a script that calls the API and a web tab opened before the deploy ask
+for none and start empty, as before.
+
 Migration 1014 adds the `web_links` table (kb/ADR-0031). As for 1013, a rollback past this release restores the
 pre-release backup (see "Restore after an incident"), and every web link added since that backup is lost.
 

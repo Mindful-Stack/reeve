@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
 use reeve_planning::*;
 use reeve_protocol::{
-    CheckResult, ClosureKind, DeliveryState, DoneFilter, ItemType, Key, Kind, Reason, Resolution,
-    Reversibility, TokenKind, Via,
+    BriefTemplateDto, BriefTemplateLevel, CheckResult, ClosureKind, DeliveryState, DoneFilter,
+    ItemType, Key, Kind, Reason, Resolution, Reversibility, TokenKind, Via,
 };
 use std::sync::{Arc, Mutex};
 
@@ -12479,5 +12479,598 @@ async fn an_epic_edit_answers_the_move_it_wrote() {
             h.ports.epics.get_epic(&key).await.unwrap(),
             "step {n}: the epic answered is the stored one"
         );
+    }
+}
+
+#[tokio::test]
+async fn brief_template_writes_log_who_changed_what_and_never_the_body() {
+    use BriefTemplateLevel::Initiative;
+    use serde_json::json;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let body = "# Scenario\n\n| Step | Who |\n|---|---|\n";
+
+    let t = h
+        .create_brief_template(&dan, Initiative, "  Scenario ", body)
+        .await
+        .unwrap();
+    assert_eq!(
+        (t.name.as_str(), t.body.as_str(), t.is_default, t.version),
+        ("Scenario", body, false, 1)
+    );
+    // The same content again, the name in another case: the same template, and nothing is written.
+    assert_eq!(
+        h.create_brief_template(&dan, Initiative, "scenario", body)
+            .await
+            .unwrap(),
+        t
+    );
+    // The same name with another body is not an edit.
+    let err = h
+        .create_brief_template(&dan, Initiative, "SCENARIO", "other")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, HandlerError::Validation(m) if *m == format!(
+            "the initiative brief template #{} is already named \"Scenario\": edit that one, or choose another name",
+            t.id
+        )),
+        "{err:?}"
+    );
+
+    // An edit names the version it read.
+    let stale = h
+        .edit_brief_template(&dan, t.id, 7, Some("X".into()), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(stale, HandlerError::Conflict { current: 1 }),
+        "{stale:?}"
+    );
+    // An edit that changes nothing writes nothing and keeps the version.
+    let same = h
+        .edit_brief_template(&dan, t.id, 1, Some(" Scenario ".into()), Some(body.into()))
+        .await
+        .unwrap();
+    assert_eq!(same, t);
+    let edited = h
+        .edit_brief_template(
+            &dan,
+            t.id,
+            1,
+            Some("User scenario".into()),
+            Some("SECRET BODY".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (edited.name.as_str(), edited.body.as_str(), edited.version),
+        ("User scenario", "SECRET BODY", 2)
+    );
+    let body_only = h
+        .edit_brief_template(&dan, t.id, 2, None, Some("SECRET BODY 2".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        (body_only.name.as_str(), body_only.version),
+        ("User scenario", 3)
+    );
+
+    // The mark: set, set again (nothing), clear, clear again (nothing), set. It changes no version.
+    let on = h
+        .mark_brief_template_default(&dan, t.id, true)
+        .await
+        .unwrap();
+    assert_eq!((on.is_default, on.version), (true, 3));
+    assert_eq!(
+        h.mark_brief_template_default(&dan, t.id, true)
+            .await
+            .unwrap(),
+        on
+    );
+    let off = h
+        .mark_brief_template_default(&dan, t.id, false)
+        .await
+        .unwrap();
+    assert!(!off.is_default);
+    assert_eq!(
+        h.mark_brief_template_default(&dan, t.id, false)
+            .await
+            .unwrap(),
+        off
+    );
+    h.mark_brief_template_default(&dan, t.id, true)
+        .await
+        .unwrap();
+
+    h.remove_brief_template(&dan, t.id).await.unwrap();
+    // A template that is gone is not found, by every path.
+    assert!(matches!(
+        h.remove_brief_template(&dan, t.id).await,
+        Err(HandlerError::NotFound)
+    ));
+    assert!(matches!(
+        h.brief_template(t.id).await,
+        Err(HandlerError::NotFound)
+    ));
+    assert!(matches!(
+        h.edit_brief_template(&dan, t.id, 3, None, Some("x".into()))
+            .await,
+        Err(HandlerError::NotFound)
+    ));
+    assert!(matches!(
+        h.mark_brief_template_default(&dan, t.id, true).await,
+        Err(HandlerError::NotFound)
+    ));
+
+    let log = sink.0.lock().unwrap();
+    let id = t.id.to_string();
+    let seen: Vec<(&str, &str, &str, serde_json::Value)> = log
+        .iter()
+        .map(|r| {
+            (
+                r.entity_type,
+                r.entity_key.as_str(),
+                r.action,
+                r.payload.clone(),
+            )
+        })
+        .collect();
+    let entry = |action: &'static str, payload: serde_json::Value| {
+        ("brief_template", id.as_str(), action, payload)
+    };
+    let named = json!({"level": "initiative", "name": "User scenario"});
+    let with = |extra: serde_json::Value| {
+        let mut p = named.clone();
+        p.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        p
+    };
+    assert_eq!(
+        seen,
+        vec![
+            entry(
+                "brief_template_created",
+                json!({"level": "initiative", "name": "Scenario"})
+            ),
+            entry(
+                "brief_template_edited",
+                with(json!({"fields": ["name", "body"], "from": "Scenario"}))
+            ),
+            entry("brief_template_edited", with(json!({"fields": ["body"]}))),
+            entry(
+                "brief_template_default_set",
+                with(json!({"replaced": null}))
+            ),
+            entry("brief_template_default_cleared", named.clone()),
+            entry(
+                "brief_template_default_set",
+                with(json!({"replaced": null}))
+            ),
+            entry("brief_template_removed", with(json!({"was_default": true}))),
+        ]
+    );
+    assert!(log.iter().all(|r| r.actor == "dan@example.com"));
+    let text = format!("{:?}", *log);
+    assert!(
+        !text.contains("SECRET BODY") && !text.contains("| Step |"),
+        "no entry copies a body: {text}"
+    );
+}
+
+#[tokio::test]
+async fn brief_template_names_and_the_default_are_one_per_level() {
+    use BriefTemplateLevel::{Epic, Initiative};
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let a = h
+        .create_brief_template(&dan, Initiative, "Scenario", "A")
+        .await
+        .unwrap();
+    let b = h
+        .create_brief_template(&dan, Initiative, "Tech debt", "B")
+        .await
+        .unwrap();
+    // The same name at the other level is another template.
+    let e = h
+        .create_brief_template(&dan, Epic, "Scenario", "E")
+        .await
+        .unwrap();
+    assert_ne!(a.id, e.id);
+
+    // A rename onto a name the level has is refused, in any case; a template may change the case of its own name.
+    let err = h
+        .edit_brief_template(&dan, b.id, 1, Some(" scenario".into()), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, HandlerError::Validation(m) if *m == format!(
+            "the initiative brief template #{} is already named \"Scenario\": edit that one, or choose another name",
+            a.id
+        )),
+        "{err:?}"
+    );
+    let recased = h
+        .edit_brief_template(&dan, b.id, 1, Some("TECH DEBT".into()), None)
+        .await
+        .unwrap();
+    assert_eq!((recased.name.as_str(), recased.version), ("TECH DEBT", 2));
+
+    // Listed initiative first, then by name as names compare (lowercased), whatever the ids and whatever the
+    // bytes: "Zulu" is created before "alpha" and sorts before it byte for byte ('Z' is 0x5A, 'a' is 0x61), so
+    // the order by id and the order by the raw name both put "Zulu" ahead of "alpha", and only the order by the
+    // name key gives the list below.
+    let listed = |ts: &[BriefTemplateDto]| -> Vec<(BriefTemplateLevel, String, bool)> {
+        ts.iter()
+            .map(|t| (t.level, t.name.clone(), t.is_default))
+            .collect()
+    };
+    let zulu = h
+        .create_brief_template(&dan, Initiative, "Zulu", "Z")
+        .await
+        .unwrap();
+    let alpha = h
+        .create_brief_template(&dan, Initiative, "alpha", "A2")
+        .await
+        .unwrap();
+    assert!(
+        e.id < zulu.id && zulu.id < alpha.id,
+        "the control: by id (as by raw name), Zulu comes before alpha"
+    );
+    assert_eq!(
+        listed(&h.brief_templates(None).await.unwrap()),
+        vec![
+            (Initiative, "alpha".to_string(), false),
+            (Initiative, "Scenario".to_string(), false),
+            (Initiative, "TECH DEBT".to_string(), false),
+            (Initiative, "Zulu".to_string(), false),
+            (Epic, "Scenario".to_string(), false),
+        ]
+    );
+    assert_eq!(
+        h.brief_templates(Some(Epic)).await.unwrap(),
+        vec![e.clone()]
+    );
+    assert_eq!(h.brief_template(a.id).await.unwrap(), a);
+
+    // What a create reads: a named template at its level only, and the level's default.
+    assert_eq!(h.brief_template_body(Initiative, None).await.unwrap(), None);
+    assert_eq!(
+        h.brief_template_body(Initiative, Some(" tech debt "))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        h.brief_template_body(Epic, Some("tech debt"))
+            .await
+            .unwrap(),
+        None,
+        "a name is looked up at its level only"
+    );
+
+    // The mark moves within a level, says what it replaced, and leaves the other level alone.
+    h.mark_brief_template_default(&dan, a.id, true)
+        .await
+        .unwrap();
+    h.mark_brief_template_default(&dan, e.id, true)
+        .await
+        .unwrap();
+    h.mark_brief_template_default(&dan, b.id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        listed(&h.brief_templates(None).await.unwrap())
+            .into_iter()
+            .filter(|(_, _, d)| *d)
+            .map(|(l, n, _)| (l, n))
+            .collect::<Vec<_>>(),
+        vec![
+            (Initiative, "TECH DEBT".to_string()),
+            (Epic, "Scenario".to_string())
+        ]
+    );
+    assert_eq!(
+        h.brief_template_body(Initiative, None)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        h.brief_template_body(Epic, None).await.unwrap().as_deref(),
+        Some("E")
+    );
+    let replaced: Vec<serde_json::Value> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.action == "brief_template_default_set")
+        .map(|r| r.payload["replaced"].clone())
+        .collect();
+    assert_eq!(
+        replaced,
+        vec![
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+            serde_json::json!(a.id)
+        ]
+    );
+
+    // Removing the default leaves its level without one, and the other level as it was.
+    h.remove_brief_template(&dan, b.id).await.unwrap();
+    assert_eq!(h.brief_template_body(Initiative, None).await.unwrap(), None);
+    assert_eq!(
+        h.brief_template_body(Epic, None).await.unwrap().as_deref(),
+        Some("E")
+    );
+
+    // The domain's rules reach the caller as validation errors.
+    for (name, body) in [(" ", "x"), ("N", " \n")] {
+        assert!(matches!(
+            h.create_brief_template(&dan, Epic, name, body).await,
+            Err(HandlerError::Validation(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn a_brief_template_and_its_entry_commit_together() {
+    let (_c, pool) = common::pg().await;
+    // The probe answers the template's name by the entry's key: null while no committed or visible row has it.
+    let (h, probe) = mk_probe(
+        pool,
+        "SELECT (SELECT name FROM brief_templates WHERE id::text = $1)",
+    );
+    let dan = ctx("dan@example.com", false);
+    let t = h
+        .create_brief_template(&dan, BriefTemplateLevel::Epic, "Tech debt", "## Debt\n")
+        .await
+        .unwrap();
+    let seen = probe.entries("brief_template_created");
+    assert_eq!(seen.len(), 1);
+    let (_, inside, outside) = &seen[0];
+    assert_eq!(
+        inside.as_deref(),
+        Some("Tech debt"),
+        "the row was written before its entry, in the entry's transaction"
+    );
+    assert_eq!(
+        outside, &None,
+        "and nothing was committed before the entry was recorded"
+    );
+    assert_eq!(h.brief_template(t.id).await.unwrap().name, "Tech debt");
+}
+
+/// Holds the brief template lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once
+/// both are seen waiting on an advisory lock in `pg_locks`, or after five seconds when they never are. The holder takes
+/// the exact lock the adapter takes (its SQL, not the port, so a no-op adapter cannot also make the holder a no-op).
+/// Answers both results and whether both writers waited. The holder is released whether or not they waited, so a run
+/// without the lock ends in a failed assertion, not a hang. pg_locks is server-wide and every test has a database of
+/// its own on one server, so the count is scoped to this database; `mk`'s memory sink takes no lock of its own, so the
+/// only advisory locks in this database are the template lock's.
+async fn while_both_wait<A, B>(
+    pool: &sqlx::PgPool,
+    a: impl std::future::Future<Output = A>,
+    b: impl std::future::Future<Output = B>,
+) -> (A, B, bool) {
+    use std::time::Duration;
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let release = async {
+        let mut waited = false;
+        {
+            let mut conn = pool.acquire().await.unwrap();
+            for _ in 0..250 {
+                let n: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+                     AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+                )
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+                if n >= 2 {
+                    waited = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        holder.commit().await.unwrap();
+        waited
+    };
+    tokio::join!(a, b, release)
+}
+
+/// Template writes that overlap are serialised by the advisory lock: each reads what the other committed. Each pair
+/// below is made to overlap, not hoped to: a holder takes the lock first, both writers are seen queued on it, and only
+/// then is it released, so they run one after the other in whichever order Postgres grants the lock. Every assertion
+/// after `waited` is one that only the lock makes true: without it the same calls end in a unique-constraint error
+/// (the two creates, the two marks) or in a lost update with no conflict (the two edits).
+#[tokio::test]
+async fn overlapping_brief_template_writes_are_serialised() {
+    use BriefTemplateLevel::Initiative;
+    let (_c, pool) = common::pg().await;
+    let (h, sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let erin = ctx("erin@example.com", false);
+    // The entries of one action so far, in the order they were recorded: (the template's id, the payload).
+    let entries = |action: &str| -> Vec<(String, serde_json::Value)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.action == action)
+            .map(|r| (r.entity_key.clone(), r.payload.clone()))
+            .collect()
+    };
+    let of = |all: &[(String, serde_json::Value)], id: i64| -> usize {
+        all.iter().filter(|(key, _)| *key == id.to_string()).count()
+    };
+
+    // 1. The same create twice at once: one row, one entry, and both callers are answered the same template.
+    let (a, b, waited) = while_both_wait(
+        &pool,
+        h.create_brief_template(&dan, Initiative, "Same", "body"),
+        h.create_brief_template(&erin, Initiative, "Same", "body"),
+    )
+    .await;
+    assert!(
+        waited,
+        "the two creates never both waited on the template lock"
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a, b, "both creates answer the one template");
+    assert_eq!(of(&entries("brief_template_created"), a.id), 1);
+
+    // 2. One name with two bodies at once: one is stored and the other is told the name is taken. Never a database
+    //    error.
+    let (one, two, waited) = while_both_wait(
+        &pool,
+        h.create_brief_template(&dan, Initiative, "Clash", "one"),
+        h.create_brief_template(&erin, Initiative, "Clash", "two"),
+    )
+    .await;
+    assert!(
+        waited,
+        "the two clashing creates never both waited on the template lock"
+    );
+    let (won, lost) = match (one, two) {
+        (Ok(won), Err(lost)) | (Err(lost), Ok(won)) => (won, lost),
+        other => panic!("wanted one template and one refusal, got {other:?}"),
+    };
+    assert!(
+        matches!(&lost, HandlerError::Validation(m) if m.contains("is already named")),
+        "{lost:?}"
+    );
+    let named: Vec<BriefTemplateDto> = h
+        .brief_templates(Some(Initiative))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.name == "Same" || t.name == "Clash")
+        .collect();
+    assert_eq!(named.len(), 2, "one row per name: {named:?}");
+
+    // 3. Two edits that both read version 1: one is saved and the other conflicts with the version that is current
+    //    now. Without the lock both would be saved, the second over the first.
+    let (first, second, waited) = while_both_wait(
+        &pool,
+        h.edit_brief_template(&dan, won.id, 1, None, Some("dan's".into())),
+        h.edit_brief_template(&erin, won.id, 1, None, Some("erin's".into())),
+    )
+    .await;
+    assert!(
+        waited,
+        "the two edits never both waited on the template lock"
+    );
+    let (saved, stale) = match (first, second) {
+        (Ok(saved), Err(stale)) | (Err(stale), Ok(saved)) => (saved, stale),
+        other => panic!("wanted one save and one conflict, got {other:?}"),
+    };
+    assert_eq!(saved.version, 2);
+    assert!(
+        matches!(stale, HandlerError::Conflict { current: 2 }),
+        "{stale:?}"
+    );
+    assert_eq!(
+        h.brief_template(won.id).await.unwrap(),
+        saved,
+        "the stored row is the saved edit, not the refused one"
+    );
+    assert_eq!(of(&entries("brief_template_edited"), won.id), 1);
+
+    // 4. Two templates of one level marked default at once: both calls succeed, one mark stands, and the entry
+    //    recorded last is the one that stands and names the other as what it replaced.
+    let (x, y, waited) = while_both_wait(
+        &pool,
+        h.mark_brief_template_default(&dan, a.id, true),
+        h.mark_brief_template_default(&erin, won.id, true),
+    )
+    .await;
+    assert!(
+        waited,
+        "the two marks never both waited on the template lock"
+    );
+    x.unwrap();
+    y.unwrap();
+    let marked: Vec<i64> = h
+        .brief_templates(Some(Initiative))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.is_default)
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(marked.len(), 1, "one default per level");
+    let sets = entries("brief_template_default_set");
+    assert_eq!(sets.len(), 2, "each mark is logged once");
+    let (earlier, later) = (&sets[0], &sets[1]);
+    assert_eq!(
+        later.0,
+        marked[0].to_string(),
+        "the last entry is the mark that stands"
+    );
+    assert_eq!(
+        later.1["replaced"],
+        serde_json::json!(earlier.0.parse::<i64>().unwrap()),
+        "and it names the mark it replaced"
+    );
+}
+
+/// `made_under` refuses exactly what a create handler refuses before its own idempotency lookup, with the handler's
+/// message, and otherwise answers the item the key made. Catches a lookup that skips the handlers' pre-replay checks
+/// (more than `MAX_CLAIM` distinct attachment ids), which would let the server's create actions answer a retry the
+/// handler would refuse.
+#[tokio::test]
+async fn made_under_refuses_what_a_create_replay_refuses() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let too_many: Vec<uuid::Uuid> = (0..=MAX_CLAIM).map(|_| uuid::Uuid::new_v4()).collect();
+    let i = h
+        .create_initiative(&dan, "mu-i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "mu-e", "E", None, "", None)
+        .await
+        .unwrap();
+    let by_handler = [
+        h.create_initiative_reporting(&dan, "mu-i", "I", "", "Now", None, None, None, &too_many)
+            .await
+            .map(|_| ()),
+        h.create_epic_reporting(&dan, "mu-e", "E", None, "", None, &too_many)
+            .await
+            .map(|_| ()),
+    ];
+    for ((item, idem, key), handler) in [
+        (ItemType::Initiative, "mu-i", i.key()),
+        (ItemType::Epic, "mu-e", e.key()),
+    ]
+    .into_iter()
+    .zip(by_handler)
+    {
+        let Err(HandlerError::Validation(want)) = handler else {
+            panic!("{item:?}: the control: the handler's replay is refused: {handler:?}")
+        };
+        match h.made_under(item, idem, &too_many).await {
+            Err(HandlerError::Validation(m)) => assert_eq!(m, want, "{item:?}"),
+            other => panic!("{item:?}: {other:?}"),
+        }
+        assert_eq!(
+            h.made_under(item, idem, &[]).await.unwrap().as_ref(),
+            Some(key),
+            "{item:?}"
+        );
+        assert_eq!(h.made_under(item, "mu-none", &[]).await.unwrap(), None);
     }
 }

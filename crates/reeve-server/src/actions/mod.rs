@@ -24,6 +24,7 @@ mod links;
 mod search;
 mod sprints;
 mod stories;
+mod templates;
 
 use crate::{error::AppError, state::AppState};
 use chrono::{DateTime, Utc};

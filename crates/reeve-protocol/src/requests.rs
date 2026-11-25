@@ -20,6 +20,16 @@ pub struct CreateInitiative {
     /// three types, and a later import of the same reference finds this item instead of creating another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_ref: Option<String>,
+    /// The name of an initiative brief template to start the brief from (`GET /brief-templates?level=initiative`),
+    /// compared as template names are. Refused together with a brief that is not blank, and together with
+    /// `default_template`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    /// Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+    /// empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+    /// template is applied: a create that names neither gets the brief it sent, or an empty one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_template: bool,
     /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
     /// that is gone is ignored; one that belongs to another item or person refuses the write.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -36,6 +46,16 @@ pub struct CreateEpic {
     /// three types, and a later import of the same reference finds this item instead of creating another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_ref: Option<String>,
+    /// The name of an epic brief template to start the brief from (`GET /brief-templates?level=epic`),
+    /// compared as template names are. Refused together with a brief that is not blank, and together with
+    /// `default_template`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    /// Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+    /// empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+    /// template is applied: a create that names neither gets the brief it sent, or an empty one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_template: bool,
     /// Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
     /// that is gone is ignored; one that belongs to another item or person refuses the write.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

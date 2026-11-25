@@ -135,6 +135,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/brief-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every brief template with its body, or one level's: initiative templates first, then by name. */
+        get: operations["list_brief_templates"];
+        put?: never;
+        /**
+         * Creates a brief template: a name of 1 to 100 characters on one line, unique at its level whatever its case, and
+         *     a Markdown body that is not blank. Creating one that exists with the same body answers it and changes nothing;
+         *     with another body it is a validation error (edit it instead). It is not the default until it is marked.
+         */
+        post: operations["create_brief_template"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/brief-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_brief_template"];
+        put?: never;
+        post?: never;
+        /**
+         * Removes the template. Briefs already made from it do not change; if it was its level's default, the level has
+         *     none.
+         */
+        delete: operations["remove_brief_template"];
+        options?: never;
+        head?: never;
+        /**
+         * Changes the name, the body or both, under the version last read (409 with the current one otherwise). Briefs
+         *     already made from the template do not change.
+         */
+        patch: operations["edit_brief_template"];
+        trace?: never;
+    };
+    "/api/v1/brief-templates/{id}/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Makes the template its level's default, taking the mark from the level's previous default. A create that asks
+         *     for the level's default (`default_template`) starts from it; a create that asks for nothing starts empty.
+         */
+        post: operations["set_default_brief_template"];
+        /** Takes the default mark off the template; its level then has no default. */
+        delete: operations["clear_default_brief_template"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/config": {
         parameters: {
             query?: never;
@@ -1526,6 +1593,29 @@ export interface components {
         BlockEdge: {
             blocker: components["schemas"]["KeyRef"];
         };
+        /** @description A brief template as every member reads it. `version` is what an edit must name; the default mark changes none. */
+        BriefTemplateDto: {
+            /** @description Markdown, as it was written. */
+            body: string;
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description At most one template per level is the default: what a new brief starts from when its create asks for the
+             *     level's default (`default_template`), and what the web form shows first.
+             */
+            is_default: boolean;
+            level: components["schemas"]["BriefTemplateLevel"];
+            /** @description Unique per level, compared trimmed and lowercased. */
+            name: string;
+            /** Format: int64 */
+            version: number;
+        };
+        /**
+         * @description The levels that have a brief. A type of its own, so a story (which has a description, not a brief) cannot be
+         *     named. Declared in list order: initiative templates come before epic templates.
+         * @enum {string}
+         */
+        BriefTemplateLevel: "initiative" | "epic";
         /** @description The outcome of the last record check on a required decision. */
         CheckResult: {
             /** @enum {string} */
@@ -1640,6 +1730,17 @@ export interface components {
             /** Format: date-time */
             requested_at: string;
         };
+        /**
+         * @description `POST /brief-templates` (admins only). Creating one that exists (same level, same name, same body) answers it and
+         *     changes nothing; the same name with another body is a validation error.
+         */
+        CreateBriefTemplate: {
+            /** @description Markdown; not blank. */
+            body: string;
+            level: components["schemas"]["BriefTemplateLevel"];
+            /** @description 1 to 100 characters on one line, with no tab or other control character. */
+            name: string;
+        };
         CreateEpic: {
             /**
              * @description Uploads made while writing this text and still shown in it: they become this item's (kb/ADR-0022 R2). An id
@@ -1648,12 +1749,24 @@ export interface components {
             attachments?: string[];
             brief?: string | null;
             /**
+             * @description Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+             *     empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+             *     template is applied: a create that names neither gets the brief it sent, or an empty one.
+             */
+            default_template?: boolean;
+            /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
              *     three types, and a later import of the same reference finds this item instead of creating another.
              */
             external_ref?: string | null;
             idempotency_key: string;
             initiative?: null | components["schemas"]["KeyRef"];
+            /**
+             * @description The name of an epic brief template to start the brief from (`GET /brief-templates?level=epic`),
+             *     compared as template names are. Refused together with a brief that is not blank, and together with
+             *     `default_template`.
+             */
+            template?: string | null;
             title: string;
         };
         /** @description Adds a goal to the draft, or to the active sprint with `active`. The owner defaults to the caller. */
@@ -1680,6 +1793,12 @@ export interface components {
             attachments?: string[];
             brief?: string | null;
             /**
+             * @description Start the brief from the level's default template, when an admin has marked one (none marked: the brief is
+             *     empty). Refused together with a brief that is not blank, and together with `template`. Left out, no
+             *     template is applied: a create that names neither gets the brief it sent, or an empty one.
+             */
+            default_template?: boolean;
+            /**
              * @description The item's origin elsewhere, e.g. the Jira key it was migrated from (`JPD-30`). It names one item across all
              *     three types, and a later import of the same reference finds this item instead of creating another.
              */
@@ -1688,6 +1807,12 @@ export interface components {
             idempotency_key: string;
             owner?: string | null;
             target_month?: string | null;
+            /**
+             * @description The name of an initiative brief template to start the brief from (`GET /brief-templates?level=initiative`),
+             *     compared as template names are. Refused together with a brief that is not blank, and together with
+             *     `default_template`.
+             */
+            template?: string | null;
             title: string;
         };
         CreateStory: {
@@ -1835,6 +1960,16 @@ export interface components {
          */
         DoneFilter: "recent" | "all" | "none";
         /**
+         * @description `PATCH /brief-templates/{id}` (admins only): the fields given change; `version` is the one last read. The level
+         *     of a template never changes.
+         */
+        EditBriefTemplate: {
+            body?: string | null;
+            name?: string | null;
+            /** Format: int64 */
+            version: number;
+        };
+        /**
          * @description Edits a required decision's planner-side fields (kb/ADR-0004 R2). The record reference is set with `link`, the check
          *     result by the checker; neither is accepted here, and any field not listed is refused rather than ignored.
          */
@@ -1937,7 +2072,7 @@ export interface components {
         /**
          * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
          *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
-         *     and web links by their item's key.
+         *     and web links by their item's key. Brief templates order by level, then name.
          *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
          */
         ExportDto: {
@@ -1947,6 +2082,11 @@ export interface components {
              *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
              */
             attachments?: components["schemas"]["AttachmentDto"][];
+            /**
+             * @description Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name
+             *     (compared lowercased), then by id. An export written before brief templates existed has no such field.
+             */
+            brief_templates?: components["schemas"]["BriefTemplateDto"][];
             comments: components["schemas"]["CommentDto"][];
             decisions: components["schemas"]["RequiredDecisionDto"][];
             epics: components["schemas"]["EpicDto"][];
@@ -2813,6 +2953,48 @@ export interface components {
             outcome: "error";
         };
         /** @description Every API response body is one of these three shapes. */
+        Response_BriefTemplateDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            /** @description A brief template as every member reads it. `version` is what an edit must name; the default mark changes none. */
+            value: {
+                /** @description Markdown, as it was written. */
+                body: string;
+                /** Format: int64 */
+                id: number;
+                /**
+                 * @description At most one template per level is the default: what a new brief starts from when its create asks for the
+                 *     level's default (`default_template`), and what the web form shows first.
+                 */
+                is_default: boolean;
+                level: components["schemas"]["BriefTemplateLevel"];
+                /** @description Unique per level, compared trimmed and lowercased. */
+                name: string;
+                /** Format: int64 */
+                version: number;
+            };
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
         Response_ConnectionAnswerDto: {
             /** @enum {string} */
             outcome: "ok";
@@ -3104,7 +3286,7 @@ export interface components {
             /**
              * @description The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
              *     `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
-             *     and web links by their item's key.
+             *     and web links by their item's key. Brief templates order by level, then name.
              *     Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
              */
             value: {
@@ -3114,6 +3296,11 @@ export interface components {
                  *     (kb/ADR-0022 R5). Uploads not yet saved with any text are left out.
                  */
                 attachments?: components["schemas"]["AttachmentDto"][];
+                /**
+                 * @description Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name
+                 *     (compared lowercased), then by id. An export written before brief templates existed has no such field.
+                 */
+                brief_templates?: components["schemas"]["BriefTemplateDto"][];
                 comments: components["schemas"]["CommentDto"][];
                 decisions: components["schemas"]["RequiredDecisionDto"][];
                 epics: components["schemas"]["EpicDto"][];
@@ -3897,6 +4084,47 @@ export interface components {
                 uploaded_by: string;
                 /** @description Where the image is served; the one source of its path. */
                 url: string;
+            }[];
+        } | {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description True when there is at least one reason and every one is a readiness fact: an interactive caller may retry
+             *     with an override reason. False when any reason is a delivery rule. Absent (an older server) reads as false.
+             */
+            overridable: boolean;
+            reasons: components["schemas"]["Reason"][];
+        } | {
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Format: int64
+             * @description On a `conflict`: the row's version now, or -1 for a concurrent update with no version to give (a retried
+             *     serialisation failure, or a goal an opening moved); re-read and retry. Absent otherwise.
+             */
+            current?: number | null;
+            message: string;
+            /** @enum {string} */
+            outcome: "error";
+        };
+        /** @description Every API response body is one of these three shapes. */
+        Response_Vec_BriefTemplateDto: {
+            /** @enum {string} */
+            outcome: "ok";
+            value: {
+                /** @description Markdown, as it was written. */
+                body: string;
+                /** Format: int64 */
+                id: number;
+                /**
+                 * @description At most one template per level is the default: what a new brief starts from when its create asks for the
+                 *     level's default (`default_template`), and what the web form shows first.
+                 */
+                is_default: boolean;
+                level: components["schemas"]["BriefTemplateLevel"];
+                /** @description Unique per level, compared trimmed and lowercased. */
+                name: string;
+                /** Format: int64 */
+                version: number;
             }[];
         } | {
             /** @enum {string} */
@@ -5495,6 +5723,510 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Response_Empty"];
                 };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    list_brief_templates: {
+        parameters: {
+            query?: {
+                /** @description Only this level's templates. */
+                level?: components["schemas"]["BriefTemplateLevel"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Vec_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    create_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBriefTemplate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    get_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    remove_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    edit_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditBriefTemplate"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    set_default_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description refused with reasons */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+        };
+    };
+    clear_default_brief_template: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_BriefTemplateDto"];
+                };
+            };
+            /** @description validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Response_Empty"];
+                };
+            };
+            /** @description admins only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description not found */
             404: {

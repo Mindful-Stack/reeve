@@ -54,13 +54,10 @@ impl Handlers {
         external_ref: Option<String>,
         attachments: &[Uuid],
     ) -> Result<(Epic, bool), HandlerError> {
-        let attachments = attachment_ids(attachments)?;
-        if let Some(k) = self
-            .ports
-            .keys
-            .find_by_idempotency(ItemType::Epic, idem)
-            .await?
-        {
+        let (attachments, made) = self
+            .before_create(ItemType::Epic, idem, attachments)
+            .await?;
+        if let Some(k) = made {
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
         if let Some(ik) = &initiative {

@@ -8,16 +8,17 @@ use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalGates, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
-use crate::ports::{ItemHead, StoredWebLink};
+use crate::ports::{ItemHead, StoredBriefTemplate, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
-    AffectedStoryDto, ClosedDto, CriterionDto, DecisionGateDto, DecisionQueueEntryDto,
-    DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto,
-    EpicDto, EpicPromiseDto, EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto,
-    GoalGatesDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType,
-    Key, LinkedItemDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter,
-    PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
-    SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
+    AffectedStoryDto, BriefTemplateDto, ClosedDto, CriterionDto, DecisionGateDto,
+    DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto,
+    DiscoveryGateDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto,
+    ExportItemLinkDto, ExportWebLinkDto, GoalDto, GoalGatesDto, GoalProgressDto, InitiativeDto,
+    ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue, PromiseFactDto,
+    PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto,
+    SprintCountsDto, SprintDto, SprintPromiseDto, SprintState, SprintViewDto, StoryDto,
+    StoryPromiseDto, WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -591,5 +592,17 @@ pub(crate) fn export_web_link_dto(w: &StoredWebLink) -> ExportWebLinkDto {
         item: w.item.clone(),
         title: w.link.title().to_owned(),
         url: w.link.url().to_owned(),
+    }
+}
+
+/// A stored brief template as every member reads it.
+pub(crate) fn brief_template_dto(t: &StoredBriefTemplate) -> BriefTemplateDto {
+    BriefTemplateDto {
+        id: t.id,
+        level: t.template.level(),
+        name: t.template.name().to_owned(),
+        body: t.template.body().to_owned(),
+        is_default: t.is_default,
+        version: t.version,
     }
 }
