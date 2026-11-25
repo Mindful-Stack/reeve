@@ -1,7 +1,9 @@
 // Brief templates in the create forms: when choosing a template may replace what the brief field holds. Pure; the
 // picker (#lib/components/TemplatePicker.svelte) holds the state. The forms show a template's text to the author in
 // the brief field and send only the brief: they never ask the server to apply a template (`template`,
-// `default_template`), so nothing here copies the server's rule (actions::starting_brief).
+// `default_template`), so nothing here copies the server's rule (actions::starting_brief). One thing here does rely
+// on a rule of the server's: `startedFrom` takes a blank text for no template's, because the server refuses a
+// template whose body is blank.
 import type { BriefTemplate } from '#lib/api/types.ts';
 
 /** The brief field's text, and the body the picker last put there ('' before any, and for "No template"). */
