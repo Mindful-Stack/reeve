@@ -423,6 +423,41 @@ describe('planning page: new initiative', () => {
 		expect(field('Brief').value).toBe('## Debt\n');
 	});
 
+	// Catches ownership inferred from the template list: the author edited the default's text until it was exactly
+	// another template's body, and a reopened picker took that text for the other template's own and emptied it
+	// for "No template" without asking.
+	it("never takes the author's edit for a template's text after Cancel and reopen, even when it equals one", async () => {
+		net.state.templates = [scenario(), briefTemplate({ id: 4, level: 'initiative', name: 'Tech debt', body: '## Debt\n' })];
+		await open();
+		expect(field('Brief').value).toBe('# Scenario\n');
+		type(field('Title'), 'Edited');
+		type(field('Brief'), '## Debt\n'); // typed by the author, not applied by the picker
+		await reopen();
+		expect(field('Brief').value).toBe('## Debt\n');
+		// The text is the author's now: the select shows No template, not Tech debt, whose body it happens to be.
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '3');
+		expect(alertText()).toContain('Replace what you have written with the template "Scenario"?');
+		expect(field('Brief').value).toBe('## Debt\n');
+	});
+
+	// Catches the same inference for text typed before the list arrived: it equals a listed template's body, and the
+	// picker took it for that template's own, so choosing another replaced it without asking.
+	it("never takes text typed before the templates arrived for a template's, even when it equals one", async () => {
+		let release!: () => void;
+		net.state.templatesGate = new Promise<void>((r) => (release = r));
+		net.state.templates = [scenario(), briefTemplate({ id: 4, level: 'initiative', name: 'Tech debt', body: '## Debt\n' })];
+		await open(false);
+		type(field('Brief'), '## Debt\n');
+		release();
+		await templatesLoaded();
+		expect(field('Brief').value).toBe('## Debt\n');
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '3');
+		expect(alertText()).toContain('Replace what you have written with the template "Scenario"?');
+		expect(field('Brief').value).toBe('## Debt\n');
+	});
+
 	it('works as before when the templates cannot be loaded', async () => {
 		net.state.templatesFail = true;
 		await open();

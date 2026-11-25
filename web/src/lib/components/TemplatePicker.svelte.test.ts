@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The template picker of the create forms: the default is preselected and in the field, choosing another replaces
-// an untouched field, text the author changed is never replaced without an answer, a draft that is still a
-// template's own text is known as that template, and the form is told when the list has arrived.
+// an untouched field, text the author changed is never replaced without an answer, a kept draft is known by what the
+// picker last applied to it (never by matching the list), and the form is told when the list has arrived.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { briefTemplate } from '#lib/test/fixtures.ts';
@@ -61,13 +61,14 @@ function type(v: string) {
 	brief().dispatchEvent(new Event('input', { bubbles: true }));
 	flushSync();
 }
-function start(start = '', prefill = true) {
-	app = mount(Harness, { target: document.body, props: { level: 'epic', start, prefill } });
+function start(start = '', prefill = true, kept?: { id: string; body: string }) {
+	app = mount(Harness, { target: document.body, props: { level: 'epic', start, prefill, kept } });
 	flushSync();
 }
-/** Mounts the picker and waits until it says the list has arrived (or failed to). */
-async function open(text = '', prefill = true) {
-	start(text, prefill);
+/** Mounts the picker and waits until it says the list has arrived (or failed to). `kept` is what the picker last
+ *  applied to a kept draft, as the form remembers it. */
+async function open(text = '', prefill = true, kept?: { id: string; body: string }) {
+	start(text, prefill, kept);
 	await vi.waitFor(() => {
 		flushSync();
 		expect(state()).toBe('ready');
@@ -195,9 +196,9 @@ describe('TemplatePicker', () => {
 		expect(select()!.value).toBe('');
 	});
 
-	it("knows a kept draft that is still the default's text: shows the default and replaces without asking", async () => {
+	it('knows a kept draft that is still what the picker applied: shows that entry and replaces without asking', async () => {
 		net.templates = two();
-		await open(DEBT);
+		await open(DEBT, false, { id: '2', body: DEBT });
 		expect(brief().value).toBe(DEBT);
 		expect(select()!.value).toBe('2');
 		choose('1');
@@ -205,19 +206,26 @@ describe('TemplatePicker', () => {
 		expect(brief().value).toBe(SCENARIO);
 	});
 
-	it("knows a kept draft that is another template's text, and prefers the default when two share a body", async () => {
+	// Catches ownership guessed from the list: a kept draft the author changed until it equals another template's
+	// body is the author's text, shown as No template, and No template or another entry asks before replacing it.
+	it("takes a kept draft the author changed for the author's, even when it equals a template's body", async () => {
+		net.templates = two();
+		await open(SCENARIO, false, { id: '2', body: DEBT });
+		expect(select()!.value).toBe('');
+		choose('2');
+		expect(ask()!.textContent).toContain('Replace what you have written with the template "Tech debt"?');
+		expect(brief().value).toBe(SCENARIO);
+	});
+
+	// Catches the same guess for a fresh picker: text there before the list arrived is the author's, whatever it equals.
+	it("takes text that equals a template's body, there before the list arrived, for the author's", async () => {
 		net.templates = two();
 		await open(SCENARIO);
-		expect(select()!.value).toBe('1');
-		choose('');
-		expect(ask()).toBeNull();
-		expect(brief().value).toBe('');
-		unmount(app!);
-		document.body.innerHTML = '';
-		// A twin of the default, listed before it: the default is still the one shown.
-		net.templates = [briefTemplate({ id: 7, level: 'epic', name: 'Also debt', body: DEBT }), ...two()];
-		await open(DEBT);
-		expect(select()!.value).toBe('2');
+		expect(brief().value).toBe(SCENARIO);
+		expect(select()!.value).toBe('');
+		choose('2');
+		expect(ask()).not.toBeNull();
+		expect(brief().value).toBe(SCENARIO);
 	});
 
 	it('is not ready until the list has arrived, and then is', async () => {

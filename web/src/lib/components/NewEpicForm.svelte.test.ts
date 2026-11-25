@@ -306,6 +306,23 @@ describe('NewEpicForm', () => {
 		expect(net.posts[1]).toEqual(net.posts[0]);
 	});
 
+	// Catches ownership inferred from the template list: text typed before the list arrived equals a listed
+	// template's body, and the picker took it for that template's own, so choosing another replaced it without asking.
+	it("never takes text typed before the templates arrived for a template's, even when it equals one", async () => {
+		let release!: () => void;
+		net.gate = new Promise<void>((r) => (release = r));
+		net.templates = [briefTemplate({ id: 6, level: 'epic', name: 'Spike', body: '## Question\n' }), ...debt()];
+		mountOnly({ initiative: 'ABC-1' });
+		type(field('Brief'), '## Question\n');
+		release();
+		await loaded();
+		expect(field('Brief').value).toBe('## Question\n');
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '5');
+		expect(alertText()).toContain('Replace what you have written with the template "Tech debt"?');
+		expect(field('Brief').value).toBe('## Question\n');
+	});
+
 	it('works as before when the templates cannot be loaded', async () => {
 		net.templatesFail = true;
 		await mountForm({ initiative: 'ABC-1' });

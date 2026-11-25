@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultOf, pick, startedFrom, untouched } from './templates.ts';
+import { defaultOf, pick, untouched } from './templates.ts';
 import { briefTemplate } from '#lib/test/fixtures.ts';
 
 describe('untouched', () => {
@@ -35,28 +35,5 @@ describe('defaultOf', () => {
 		expect(defaultOf([briefTemplate(), marked])).toBe(marked);
 		expect(defaultOf([briefTemplate()])).toBeUndefined();
 		expect(defaultOf([])).toBeUndefined();
-	});
-});
-
-describe('startedFrom', () => {
-	const scenario = briefTemplate({ id: 1, name: 'Scenario', body: '# Scenario\n' });
-	const debt = briefTemplate({ id: 2, name: 'Tech debt', body: '## Debt\n', is_default: true });
-	it('is the template whose body the text is, exactly', () => {
-		expect(startedFrom([scenario, debt], '# Scenario\n')).toBe(scenario);
-		expect(startedFrom([scenario, debt], '## Debt\n')).toBe(debt);
-	});
-	it('is none for text the author changed, for a blank text and for no templates', () => {
-		expect(startedFrom([scenario, debt], '# Scenario\nmine')).toBeUndefined();
-		expect(startedFrom([scenario, debt], '# Scenario')).toBeUndefined(); // one character short
-		expect(startedFrom([scenario, debt], '')).toBeUndefined();
-		expect(startedFrom([], '# Scenario\n')).toBeUndefined();
-	});
-	it('is the default when two templates share the body, wherever it is listed', () => {
-		const twin = briefTemplate({ id: 3, name: 'Also debt', body: '## Debt\n' });
-		expect(startedFrom([twin, debt], '## Debt\n')).toBe(debt);
-		expect(startedFrom([debt, twin], '## Debt\n')).toBe(debt);
-		// No default among the twins: the first listed.
-		const other = briefTemplate({ id: 4, name: 'Third', body: '# Scenario\n' });
-		expect(startedFrom([scenario, other], '# Scenario\n')).toBe(scenario);
 	});
 });

@@ -1,8 +1,10 @@
 <!-- web/src/lib/components/TemplatePicker.svelte: the "Template" select of a create form. It loads its level's
 	brief templates, preselects the one the server marked as default and puts its body in the bound brief text.
 	Choosing another entry replaces the text only while it is untouched (#lib/templates.ts); otherwise it asks, and
-	typed text is never discarded without that answer. A draft that is still exactly a template's body is known as
-	that template. It renders nothing when the level has no template. `ready` tells the form that the list has
+	typed text is never discarded without that answer. What the picker last applied is `last`: a form whose draft
+	outlives the picker (kept across Cancel and reopen) binds it and keeps it with the draft, so a reopened picker
+	knows its own text from the author's; nothing is inferred from a text matching a listed template. It renders
+	nothing when the level has no template. `ready` tells the form that the list has
 	arrived or failed: the form must not be sent before, because this component changes the text when it does. The
 	form sends the text as the brief and nothing about templates (#lib/forms.ts). Mount it anew for each new draft. -->
 <script lang="ts">
@@ -10,14 +12,15 @@
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { BriefTemplate, BriefTemplateLevel } from '#lib/api/types.ts';
 	import { focusIsFree } from '#lib/focus.ts';
-	import { defaultOf, pick, startedFrom } from '#lib/templates.ts';
+	import { NOTHING_APPLIED, defaultOf, pick, type Applied } from '#lib/templates.ts';
 
 	let {
 		level,
 		text = $bindable(),
 		ready = $bindable(false),
 		prefill = true,
-		disabled = false
+		disabled = false,
+		last = $bindable(NOTHING_APPLIED)
 	}: {
 		level: BriefTemplateLevel;
 		text: string;
@@ -29,15 +32,20 @@
 		 *  sent draft is the same create. */
 		prefill?: boolean;
 		disabled?: boolean;
+		/** What the picker last put in the text, and from which entry. Bind it with the draft when the draft outlives
+		 *  this picker, and reset it to NOTHING_APPLIED with the draft. */
+		last?: Applied;
 	} = $props();
 
 	const id = $props.id();
 	let templates = $state<BriefTemplate[]>([]);
 	let failed = $state(false);
-	/** The entry the text came from: a template's id as text, or '' for "No template". */
+	/** The entry the select shows: a template's id as text, or '' for "No template". Set by each fill; when the list
+	 *  arrives, it is the entry the picker last applied while the text is still exactly that entry's text, and "No
+	 *  template" otherwise: a reopened draft the author changed is not shown as a template's. */
 	let chosen = $state('');
-	/** The body the picker last put in the field (or found there, for a kept draft). */
-	let applied = $state('');
+	/** The body the picker last put in the field. */
+	const applied = $derived(last.body);
 	/** The entry the author asked for while the field held text of their own. */
 	let asking = $state<{ id: string; name: string | null; body: string } | null>(null);
 
@@ -48,7 +56,7 @@
 	function fill(id: string, body: string) {
 		chosen = id;
 		text = body;
-		applied = body;
+		last = { id, body };
 		asking = null;
 	}
 
@@ -70,14 +78,11 @@
 				if (!live) return;
 				clearTimeout(giveUp);
 				templates = list;
-				const from = startedFrom(list, text);
 				const d = defaultOf(list);
-				if (from) {
-					// A draft kept from a cancelled dialog whose text is still a template's own: it is that
-					// template, untouched. Nothing is written to the text.
-					chosen = String(from.id);
-					applied = from.body;
-				} else if (prefill && d && pick({ text, applied }, d.body).kind === 'fill') {
+				// The text is the picker's own only if it is exactly what the picker last put there. Nothing is
+				// written to the text here.
+				if (text === last.body && list.some((t) => String(t.id) === last.id)) chosen = last.id;
+				if (prefill && d && pick({ text, applied }, d.body).kind === 'fill') {
 					// Only an untouched field takes the default: text of the author's stays.
 					fill(String(d.id), d.body);
 				}

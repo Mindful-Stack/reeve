@@ -1,13 +1,18 @@
 // Brief templates in the create forms: when choosing a template may replace what the brief field holds. Pure; the
 // picker (#lib/components/TemplatePicker.svelte) holds the state. The forms show a template's text to the author in
 // the brief field and send only the brief: they never ask the server to apply a template (`template`,
-// `default_template`), so nothing here copies the server's rule (actions::starting_brief). One thing here does rely
-// on a rule of the server's: `startedFrom` takes a blank text for no template's, because the server refuses a
-// template whose body is blank.
+// `default_template`), so nothing here copies the server's rule (actions::starting_brief).
 import type { BriefTemplate } from '#lib/api/types.ts';
 
 /** The brief field's text, and the body the picker last put there ('' before any, and for "No template"). */
 export type Filled = { text: string; applied: string };
+
+/** What the picker last put in a draft's brief: the entry (a template's id as text, '' for "No template") and the
+ *  body it wrote. It is kept with the draft, so a reopened picker knows its own text from the author's: ownership is
+ *  never guessed from the template list, where a text the author typed can equal a template's body. */
+export type Applied = { id: string; body: string };
+/** A draft the picker has not written to. */
+export const NOTHING_APPLIED: Applied = Object.freeze({ id: '', body: '' });
 
 /** Nothing of the author's would be lost by replacing the text: it is blank, or still exactly what the picker put
  *  there. Exact on purpose: one changed character is the author's work. */
@@ -26,13 +31,4 @@ export function pick(f: Filled, body: string): Pick {
 /** The template the server marked as its level's default, if any. `templates` are one level's. */
 export function defaultOf(templates: readonly BriefTemplate[]): BriefTemplate | undefined {
 	return templates.find((t) => t.is_default);
-}
-
-/** The template a draft's text came from, when the text is still exactly a listed template's body: the default
- *  when it is one of them, else the first listed. For a draft kept from a cancelled dialog: the picker then shows
- *  that entry and treats the text as untouched, instead of taking the template's own text for the author's. A
- *  template's body is never blank (the server refuses one), so a blank text is from none. */
-export function startedFrom(templates: readonly BriefTemplate[], text: string): BriefTemplate | undefined {
-	const same = templates.filter((t) => t.body === text);
-	return same.find((t) => t.is_default) ?? same[0];
 }

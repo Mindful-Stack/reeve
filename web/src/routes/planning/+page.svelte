@@ -8,6 +8,7 @@
 	import InitiativeCard from '#lib/components/InitiativeCard.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
 	import TemplatePicker from '#lib/components/TemplatePicker.svelte';
+	import { NOTHING_APPLIED, type Applied } from '#lib/templates.ts';
 	import WarRoom from '#lib/components/WarRoom.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { initiativeCreate, type InitiativeDraft } from '#lib/forms.ts';
@@ -44,6 +45,9 @@
 	 *  goes into a draft once, a brief the author emptied or set to "No template" stays so, and the retry of a sent
 	 *  draft is the same create. Reset when a create succeeds and the next draft begins. */
 	let loadedForDraft = $state(false);
+	/** What the template picker last put in this draft's brief. Kept with the draft across Cancel and reopen, so a
+	 *  reopened picker knows its own text from the author's; reset with the draft. */
+	let applied = $state<Applied>(NOTHING_APPLIED);
 	let createError = $state<string | null>(null);
 	let newButton: HTMLButtonElement | undefined;
 	let lastToggle: HTMLButtonElement | undefined = $state();
@@ -228,6 +232,7 @@
 		if (out.kind === 'sent') {
 			draft = { title: '', horizon: configured[0] ?? '', target_month: '', brief: '' };
 			loadedForDraft = false;
+			applied = NOTHING_APPLIED;
 			uploads.reset();
 			creating = false;
 			await goto(`/initiatives/${encodeURIComponent(out.value.key)}`);
@@ -278,6 +283,7 @@
 			<TemplatePicker
 				level="initiative"
 				bind:text={draft.brief}
+				bind:last={applied}
 				bind:ready={
 					() => templatesReady,
 					(on) => {
