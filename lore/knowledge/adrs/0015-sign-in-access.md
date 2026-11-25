@@ -81,7 +81,7 @@ We decided that sign-in access is the union of the instance configuration, as a 
 - 2026-11-09 (https://github.com/Mindful-Stack/reeve/pull/13): F3 ("`AppState.identity` built once from config") and F5 ("validation checks neither that an admin is named nor that a named admin is allowed") describe the code before this decision was implemented. The policy is now loaded on every request and every event-stream batch from the floor and the tables (`AccessStore`, `crates/reeve-identity/src/access_repo.rs`), and `ServerConfig::validate` refuses a configuration without an allowed admin. No trigger fired; the decision holds.
 - 2026-11-12 (kb/ADR-0025 R2): R7's interactive-only actions grow by setting, changing and clearing a promise. No trigger fired; the decision holds.
 - 2026-11-14 (GRA-666): F2's source, `authenticate` in `crates/reeve-identity/src/handler.rs`, is now `authenticate_api` and `authenticate_mcp` over one private `resolve` in the same file; the check on every request is unchanged. No trigger fired; the decision holds.
-- 2026-11-25 (GRA-903, <pull request URL>): the server now also checks the admin role on the five routes that write brief templates (`routes/templates.rs`), with either token kind; every member reads them. R5 and R7's interactive-only list are unchanged. No trigger fired; the decision holds.
+- 2026-11-25 (GRA-903, https://github.com/Mindful-Stack/reeve/pull/83): the server now also checks the admin role on the five routes that write brief templates (`routes/templates.rs`), with either token kind; every member reads them. R5 and R7's interactive-only list are unchanged. No trigger fired; the decision holds.
 
 ## See also
 - kb/ADR-0008 (superseded by this record).
