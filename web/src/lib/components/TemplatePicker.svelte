@@ -31,6 +31,7 @@
 		disabled?: boolean;
 	} = $props();
 
+	const id = $props.id();
 	let templates = $state<BriefTemplate[]>([]);
 	let failed = $state(false);
 	/** The entry the text came from: a template's id as text, or '' for "No template". */
@@ -126,13 +127,19 @@
 {#if templates.length}
 	<label class="field">
 		Template
-		<select bind:this={selectEl} value={chosen} {onchange} {disabled}>
+		<select bind:this={selectEl} value={chosen} {onchange} {disabled} aria-describedby={chosen ? `${id}-own` : undefined}>
 			<option value="">No template</option>
 			{#each templates as t (t.id)}
 				<option value={String(t.id)}>{t.name}{t.is_default ? ' (default)' : ''}</option>
 			{/each}
 		</select>
 	</label>
+	{#if chosen}
+		<p class="muted own" id="{id}-own">
+			The template's text is in the brief below. Change it as you like; choosing another template never replaces what
+			you have written without asking.
+		</p>
+	{/if}
 	{#if asking}
 		<p class="ask" role="alert" bind:this={askEl}>
 			{#if asking.name === null}
@@ -160,5 +167,8 @@
 	.muted {
 		margin: 0;
 		color: var(--muted);
+	}
+	.own {
+		font-size: 13px;
 	}
 </style>

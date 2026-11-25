@@ -171,6 +171,23 @@ describe('TemplatePicker', () => {
 		expect(document.activeElement).toBe(brief());
 	});
 
+	it("says, while a template is chosen, that its text is the author's to change, and ties the line to the select", async () => {
+		net.templates = two();
+		await open();
+		const OWN = "The template's text is in the brief below. Change it as you like; choosing another template never replaces what you have written without asking.";
+		const described = () => {
+			const id = select()!.getAttribute('aria-describedby');
+			return id ? document.getElementById(id)!.textContent!.replace(/\s+/g, ' ').trim() : null;
+		};
+		expect(described()).toBe(OWN);
+		// "No template": there is no template's text to speak of.
+		choose('');
+		expect(described()).toBeNull();
+		expect(document.body.textContent).not.toContain('Change it as you like');
+		choose('1');
+		expect(described()).toBe(OWN);
+	});
+
 	it('leaves text of the author that was there before the templates arrived, and shows No template', async () => {
 		net.templates = two();
 		await open('Typed before');
