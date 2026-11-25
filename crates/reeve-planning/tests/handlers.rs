@@ -12939,3 +12939,52 @@ async fn overlapping_brief_template_writes_are_serialised() {
         "and it names the mark it replaced"
     );
 }
+
+/// `made_under` refuses exactly what a create handler refuses before its own idempotency lookup, with the handler's
+/// message, and otherwise answers the item the key made. Catches a lookup that skips the handlers' pre-replay checks
+/// (more than `MAX_CLAIM` distinct attachment ids), which would let the server's create actions answer a retry the
+/// handler would refuse.
+#[tokio::test]
+async fn made_under_refuses_what_a_create_replay_refuses() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let too_many: Vec<uuid::Uuid> = (0..=MAX_CLAIM).map(|_| uuid::Uuid::new_v4()).collect();
+    let i = h
+        .create_initiative(&dan, "mu-i", "I", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let e = h
+        .create_epic(&dan, "mu-e", "E", None, "", None)
+        .await
+        .unwrap();
+    let by_handler = [
+        h.create_initiative_reporting(&dan, "mu-i", "I", "", "Now", None, None, None, &too_many)
+            .await
+            .map(|_| ()),
+        h.create_epic_reporting(&dan, "mu-e", "E", None, "", None, &too_many)
+            .await
+            .map(|_| ()),
+    ];
+    for ((item, idem, key), handler) in [
+        (ItemType::Initiative, "mu-i", i.key()),
+        (ItemType::Epic, "mu-e", e.key()),
+    ]
+    .into_iter()
+    .zip(by_handler)
+    {
+        let Err(HandlerError::Validation(want)) = handler else {
+            panic!("{item:?}: the control: the handler's replay is refused: {handler:?}")
+        };
+        match h.made_under(item, idem, &too_many).await {
+            Err(HandlerError::Validation(m)) => assert_eq!(m, want, "{item:?}"),
+            other => panic!("{item:?}: {other:?}"),
+        }
+        assert_eq!(
+            h.made_under(item, idem, &[]).await.unwrap().as_ref(),
+            Some(key),
+            "{item:?}"
+        );
+        assert_eq!(h.made_under(item, "mu-none", &[]).await.unwrap(), None);
+    }
+}

@@ -63,6 +63,7 @@ pub(crate) async fn create_epic(
         state,
         BriefTemplateLevel::Epic,
         &idem,
+        &b.attachments,
         b.brief.as_deref(),
         b.template.as_deref(),
         b.default_template,

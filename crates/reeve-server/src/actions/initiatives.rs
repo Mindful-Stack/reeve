@@ -46,6 +46,7 @@ pub(crate) async fn create_initiative(
         state,
         BriefTemplateLevel::Initiative,
         &idem,
+        &b.attachments,
         b.brief.as_deref(),
         b.template.as_deref(),
         b.default_template,

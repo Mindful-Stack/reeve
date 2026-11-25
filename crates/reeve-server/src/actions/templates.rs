@@ -64,12 +64,16 @@ pub(super) enum Start {
 /// has none of: when the key already made an item of this level, that item is the answer (`Start::Made`), so a
 /// retry is answered whatever happened to the template since; otherwise the create is refused. An item answered so
 /// is answered here and never by the handler with a stand-in brief, so a lookup and a handler that disagreed could
-/// not create an item with an empty brief. A key that made an item of the other level only is not this level's:
-/// the create handlers look a key up in their own level alone, and so does this, so the refusal stands.
+/// not create an item with an empty brief. The lookup is the handler's own (`Handlers::made_under`): what the
+/// handler checks before its lookup, the create's `attachments` among it, is checked there too, so a retry the
+/// handler would refuse is refused here with the same message whether or not the template still exists. A key that
+/// made an item of the other level only is not this level's: the create handlers look a key up in their own level
+/// alone, and so does this, so the refusal stands.
 pub(super) async fn starting_brief(
     state: &AppState,
     level: BriefTemplateLevel,
     idem: &str,
+    attachments: &[uuid::Uuid],
     brief: Option<&str>,
     template: Option<&str>,
     default_template: bool,
@@ -88,7 +92,7 @@ pub(super) async fn starting_brief(
                 BriefTemplateLevel::Initiative => ItemType::Initiative,
                 BriefTemplateLevel::Epic => ItemType::Epic,
             };
-            match state.handlers.made_under(item, idem).await? {
+            match state.handlers.made_under(item, idem, attachments).await? {
                 Some(k) => Ok(Start::Made(k)),
                 None => Err(AppError::Validation(format!(
                     "no {level} brief template is named {:?}: `reeve template ls --level {level}` lists them",
@@ -263,6 +267,103 @@ admins = ["dan@example.com"]"#,
                     client.is_some()
                 );
             }
+        }
+    }
+
+    /// A retry naming a template removed since is judged as the handler judges every other retry: what the create
+    /// handlers check before their own idempotency lookup (at most `MAX_CLAIM` distinct attachment ids) applies
+    /// whether or not the template still exists. Catches the shortcut answering a payload the handler's replay
+    /// refuses: the same retry is refused with the handler's own message while the template exists (the control)
+    /// and after it is gone, and with a valid payload it is still answered the item its key made, for both levels.
+    #[tokio::test]
+    async fn a_retry_naming_a_removed_template_is_judged_as_the_handler_judges_a_retry() {
+        use crate::actions::{Acting, create_epic, create_initiative};
+        use reeve_protocol::{CreateEpic, CreateInitiative, Via};
+        let (_db, state, policy) = state().await;
+        let who = Acting::new(
+            "dan@example.com",
+            Via::Interactive,
+            chrono::Utc::now(),
+            &policy,
+            None,
+        );
+        let too_many: Vec<uuid::Uuid> = (0..=reeve_planning::MAX_CLAIM)
+            .map(|_| uuid::Uuid::new_v4())
+            .collect();
+        for level in BriefTemplateLevel::ALL {
+            let t = state
+                .handlers
+                .create_brief_template(&who.ctx, level, "Scenario", "# Scenario\n")
+                .await
+                .unwrap();
+            let idem = format!("judged-{}", level.wire());
+            let create = |attachments: Vec<uuid::Uuid>| {
+                let (state, who, idem) = (&state, &who, idem.clone());
+                async move {
+                    match level {
+                        BriefTemplateLevel::Initiative => create_initiative(
+                            state,
+                            who,
+                            CreateInitiative {
+                                idempotency_key: idem,
+                                title: "T".into(),
+                                brief: None,
+                                horizon: "Now".into(),
+                                target_month: None,
+                                owner: None,
+                                external_ref: None,
+                                template: Some("Scenario".into()),
+                                default_template: false,
+                                attachments,
+                            },
+                        )
+                        .await
+                        .map(|(d, c)| (d.key.to_string(), c)),
+                        BriefTemplateLevel::Epic => create_epic(
+                            state,
+                            who,
+                            CreateEpic {
+                                idempotency_key: idem,
+                                title: "T".into(),
+                                initiative: None,
+                                brief: None,
+                                external_ref: None,
+                                template: Some("Scenario".into()),
+                                default_template: false,
+                                attachments,
+                            },
+                        )
+                        .await
+                        .map(|(d, c)| (d.key.to_string(), c)),
+                    }
+                }
+            };
+            let refused = |r: Result<(String, bool), AppError>| match r {
+                Err(AppError::Validation(m)) => m,
+                other => panic!("{level:?}: {other:?}"),
+            };
+            let (key, created) = create(vec![]).await.unwrap();
+            assert!(created, "{level:?}: the first create");
+            let by_handler = refused(create(too_many.clone()).await);
+            assert!(
+                by_handler.contains("at most 50 images"),
+                "{level:?}: the control: {by_handler}"
+            );
+            state
+                .handlers
+                .remove_brief_template(&who.ctx, t.id)
+                .await
+                .unwrap();
+            assert_eq!(
+                refused(create(too_many.clone()).await),
+                by_handler,
+                "{level:?}: the retry after the template is gone"
+            );
+            assert_eq!(
+                create(vec![]).await.unwrap(),
+                (key, false),
+                "{level:?}: a valid retry is still answered its item"
+            );
         }
     }
 }

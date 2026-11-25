@@ -218,15 +218,36 @@ impl Handlers {
             .map(|(_, k)| k)
     }
 
-    /// The key of the item of type `item` that a create under the stored idempotency key `idem` made, if one did:
-    /// the lookup each create handler makes first. Public for the server's create actions, which answer a retry
+    /// What a create of an initiative or an epic does before it writes anything, in this order: its checks that come
+    /// before the idempotency lookup (the attachment ids: deduplicated, at most `MAX_CLAIM`), then the lookup of
+    /// `idem` in `item`'s own table. Answers the ids to claim and the key a create under `idem` already made, if one
+    /// did. The one place that sequence is written: both create handlers and `made_under` call it, so a replay is
+    /// refused for the same reasons whichever of them answers it.
+    pub(super) async fn before_create(
+        &self,
+        item: ItemType,
+        idem: &str,
+        attachments: &[Uuid],
+    ) -> Result<(Vec<Uuid>, Option<Key>), HandlerError> {
+        let attachments = attachment_ids(attachments)?;
+        let made = self.ports.keys.find_by_idempotency(item, idem).await?;
+        Ok((attachments, made))
+    }
+
+    /// The key of the item of type `item` (an initiative or an epic) that a create under the stored idempotency key
+    /// `idem` made, if one did, judged as the create handler judges a replay: what it checks before its lookup
+    /// (`before_create`) refuses here too, with the same message, so a request the handler's replay refuses is
+    /// refused whoever answers it. Writes nothing. Public for the server's create actions, which answer a retry
     /// whose named brief template is gone since the first attempt with that item rather than a refusal.
     pub async fn made_under(
         &self,
         item: ItemType,
         idem: &str,
+        attachments: &[Uuid],
     ) -> Result<Option<Key>, HandlerError> {
-        Ok(self.ports.keys.find_by_idempotency(item, idem).await?)
+        self.before_create(item, idem, attachments)
+            .await
+            .map(|(_, made)| made)
     }
 
     /// The type of the item that has `key` as its native key, checked across every type; NotFound when none has it.
