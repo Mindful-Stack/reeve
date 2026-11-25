@@ -165,6 +165,11 @@ function newButton(): HTMLButtonElement {
 }
 
 describe('planning page: new initiative', () => {
+	it('gives the brief the room a template needs, as the brief editor of an initiative does', async () => {
+		await open();
+		expect((field('Brief') as unknown as HTMLTextAreaElement).rows).toBe(12);
+	});
+
 	it('defaults the horizon to the first configured bucket', async () => {
 		await open();
 		expect(field('Horizon').value).toBe('Now');

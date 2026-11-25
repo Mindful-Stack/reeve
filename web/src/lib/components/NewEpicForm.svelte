@@ -109,7 +109,7 @@
 	{/if}
 	{#key round}<TemplatePicker level="epic" bind:text={draft.brief} bind:ready={templatesReady} disabled={busy} />{/key}
 	<div class="field">
-		<label class="field">Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="3" disabled={busy} {@attach attachable(uploads)}></textarea></label>
+		<label class="field">Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="12" disabled={busy} {@attach attachable(uploads)}></textarea></label>
 		<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
 	</div>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}

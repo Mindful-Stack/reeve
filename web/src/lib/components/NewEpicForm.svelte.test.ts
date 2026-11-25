@@ -93,6 +93,11 @@ async function mountForm(props: Omit<ComponentProps<typeof NewEpicForm>, 'oncrea
 const alertText = () => form().querySelector('[role="alert"]')?.textContent ?? '';
 
 describe('NewEpicForm', () => {
+	it('gives the brief the room a template needs, as the brief editor of an epic does', async () => {
+		await mountForm();
+		expect((field('Brief') as unknown as HTMLTextAreaElement).rows).toBe(12);
+	});
+
 	it('returns focus to Title after a create and after a failed one', async () => {
 		await mountForm();
 		type(field('Title'), 'Billing');

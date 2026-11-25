@@ -290,7 +290,7 @@
 			/>
 			<div class="field">
 				<label class="field"
-					>Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="4" disabled={busy} {@attach attachable(uploads)}></textarea></label
+					>Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="12" disabled={busy} {@attach attachable(uploads)}></textarea></label
 				>
 				<ImageUploadsRow {uploads} field={briefEl} disabled={busy} />
 			</div>
