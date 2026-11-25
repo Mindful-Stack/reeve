@@ -302,6 +302,37 @@ describe('templates page', () => {
 		expect(editForm(2)).toBeNull();
 	});
 
+	it("does not let a second Edit, or a new template, discard the editor that is open", async () => {
+		await open('admin');
+		// The control: with no editor open, every row can be edited.
+		expect(button(row(1)!, 'Edit')!.disabled).toBe(false);
+		type(textOf(startEdit(2)), 'half typed');
+		// Every other row's Edit is off while this editor is open, and says why.
+		for (const id of [1, 3]) {
+			expect(button(row(id)!, 'Edit')!.disabled).toBe(true);
+			expect(button(row(id)!, 'Edit')!.title).toBe('Save or cancel the template you are editing first.');
+		}
+		button(row(1)!, 'Edit')!.click();
+		flushSync();
+		expect(editForm(1)).toBeNull();
+		expect(textOf(editForm(2)!).value).toBe('half typed');
+		// A template made meanwhile leaves the editor and its text as they are.
+		const form = newForm()!;
+		form.closest('details')!.open = true;
+		type(nameOf(form), 'Spike');
+		type(textOf(form), '## Question\n');
+		form.requestSubmit();
+		await written(1);
+		expect(row(10)).not.toBeNull();
+		expect(textOf(editForm(2)!).value).toBe('half typed');
+		expect(stored(2)!.body).toBe('## Debt\n');
+		// Once the editor is closed the other rows can be edited again.
+		button(editForm(2)!, 'Cancel')!.click();
+		flushSync();
+		expect(button(row(1)!, 'Edit')!.disabled).toBe(false);
+		expect(button(row(1)!, 'Edit')!.title).toBe('');
+	});
+
 	it('shows a rendered preview of the text while it is edited', async () => {
 		await open('admin');
 		const form = startEdit(2);

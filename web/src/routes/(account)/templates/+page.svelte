@@ -128,6 +128,7 @@
 	}
 
 	function startEdit(t: BriefTemplate) {
+		if (editing) return; // one editor at a time: its text is not discarded for another row's
 		const from = templateFields(t);
 		editing = { id: t.id, version: t.version, from };
 		edit = { ...from };
@@ -266,7 +267,13 @@
 									{:else}
 										<button type="button" disabled={busy} onclick={() => mark(t, true)}>Use as default</button>
 									{/if}
-									<button type="button" disabled={busy} onclick={() => startEdit(t)}>Edit</button>
+									<!-- One editor at a time: a second "Edit" would discard what the first holds. -->
+									<button
+										type="button"
+										disabled={busy || editing !== null}
+										title={editing !== null ? 'Save or cancel the template you are editing first.' : undefined}
+										onclick={() => startEdit(t)}>Edit</button
+									>
 									<button type="button" disabled={busy} onclick={() => (removing = t.id)}>Remove</button>
 								</div>
 								{#if removing === t.id}
