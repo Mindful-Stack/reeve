@@ -36,7 +36,7 @@ pub(crate) use initiatives::{
     create_initiative, edit_initiative, get_initiative, list_initiatives,
 };
 pub(crate) use links::{
-    add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
+    WebLinkWritten, add_item_link, add_web_link, list_item_links, remove_item_link, remove_web_link,
 };
 use reeve_identity::AccessPolicy;
 use reeve_protocol::{RequiredDecisionDto, Via};

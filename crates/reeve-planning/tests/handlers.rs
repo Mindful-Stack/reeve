@@ -11166,11 +11166,13 @@ async fn adding_a_web_link_reports_its_id_and_whether_it_was_added() {
         .await
         .unwrap();
     assert!(added);
+    let first = first.id;
     let (second, added) = h
         .add_web_link_reporting(&dan, &e, "Board", "https://example.com/board")
         .await
         .unwrap();
     assert!(added);
+    let second = second.id;
     // The ids are the listing's own, in its order.
     let listed: Vec<(i64, String)> = h
         .link_listing(&e)
@@ -11185,14 +11187,51 @@ async fn adding_a_web_link_reports_its_id_and_whether_it_was_added() {
         vec![(first, "Spec".to_string()), (second, "Board".to_string())]
     );
     // A repeat, in another spelling of the URL: the id of the one that is there, and nothing added.
-    assert_eq!(
-        h.add_web_link_reporting(&dan, &e, "Spec", "HTTPS://Example.com/spec")
-            .await
-            .unwrap(),
-        (first, false)
-    );
+    let (again, added) = h
+        .add_web_link_reporting(&dan, &e, "Spec", "HTTPS://Example.com/spec")
+        .await
+        .unwrap();
+    assert_eq!((again.id, added), (first, false));
     // And that id removes it.
     assert!(h.remove_web_link(&dan, &e, first).await.unwrap());
+}
+
+/// `add_web_link_reporting` answers the web link as stored, not as sent: the trimmed title and the URL as the URL
+/// parser writes it, for the add (the row it wrote) and for a repeat sent in another spelling (the row it matched).
+/// The MCP receipt is built from this answer, never from a read after the commit. Catches an answer that echoes
+/// the title and URL as sent, and one whose title or URL is not the stored row's (the listing is the stored rows).
+#[tokio::test]
+async fn adding_a_web_link_reports_it_as_stored_for_the_add_and_the_repeat() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let e = h
+        .create_epic(&dan, "ws-e", "Invoices", None, "", None)
+        .await
+        .unwrap()
+        .key()
+        .clone();
+    let (added, changed) = h
+        .add_web_link_reporting(&dan, &e, "  Spec  ", "HTTPS://Example.com")
+        .await
+        .unwrap();
+    assert!(changed);
+    let listed = h.web_links_of(&e).await.unwrap();
+    assert_eq!(
+        listed,
+        vec![added.clone()],
+        "the add answers the row it wrote"
+    );
+    assert_eq!(
+        (added.title.as_str(), added.url.as_str()),
+        ("Spec", "https://example.com/")
+    );
+    let (again, changed) = h
+        .add_web_link_reporting(&dan, &e, "Spec ", "https://EXAMPLE.com/")
+        .await
+        .unwrap();
+    assert!(!changed);
+    assert_eq!(again, added, "the repeat answers the row it matched");
 }
 
 /// What plan apply (GRA-879) relies on when it calls the `_in` forms in a transaction it opens per link: they write

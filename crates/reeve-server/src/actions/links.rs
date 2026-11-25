@@ -27,7 +27,11 @@ pub(crate) struct WebLinkWritten {
     pub(crate) id: i64,
     /// Whether this call added or removed it.
     pub(crate) changed: bool,
-    /// The item's web links after the write.
+    /// For an add, the web link as stored (`Handlers::add_web_link_reporting`'s answer): the row this call wrote,
+    /// or the one it repeated. A receipt reports its title and URL from this, never from `web_links`, which is read
+    /// after the commit and may no longer hold it. None for a removal.
+    pub(crate) added: Option<WebLinkDto>,
+    /// The item's web links after the write: the route's answer.
     pub(crate) web_links: Vec<WebLinkDto>,
 }
 
@@ -111,15 +115,16 @@ pub(crate) async fn add_web_link(
     b: AddWebLink,
 ) -> Result<WebLinkWritten, AppError> {
     let (_, item) = state.handlers.resolve_any(key).await?;
-    let (id, changed) = state
+    let (added, changed) = state
         .handlers
         .add_web_link_reporting(&who.ctx, &item, &b.title, &b.url)
         .await?;
     let web_links = state.handlers.web_links_of(&item).await?;
     Ok(WebLinkWritten {
         item,
-        id,
+        id: added.id,
         changed,
+        added: Some(added),
         web_links,
     })
 }
@@ -140,6 +145,7 @@ pub(crate) async fn remove_web_link(
         item,
         id,
         changed,
+        added: None,
         web_links,
     })
 }
