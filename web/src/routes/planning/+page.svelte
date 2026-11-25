@@ -7,6 +7,7 @@
 	import type { Initiative, RequiredDecision } from '#lib/api/types.ts';
 	import InitiativeCard from '#lib/components/InitiativeCard.svelte';
 	import MarkUrgentDialog from '#lib/components/MarkUrgentDialog.svelte';
+	import TemplatePicker from '#lib/components/TemplatePicker.svelte';
 	import WarRoom from '#lib/components/WarRoom.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { initiativeCreate, type InitiativeDraft } from '#lib/forms.ts';
@@ -35,6 +36,14 @@
 	);
 	/** The form's sends: its key survives cancel and reopen and is replaced only after a successful create. */
 	const cycle = new CreateCycle();
+	/** The open dialog's template picker has its templates (or failed to get them). The form is not sent before:
+	 *  the picker changes the brief when the list arrives. */
+	let templatesReady = $state(false);
+	/** This draft's templates have loaded once (or failed to, or the picker gave up). The draft survives Cancel and
+	 *  reopen with its idempotency key; once this is set, a reopened picker leaves the brief alone: the default
+	 *  goes into a draft once, a brief the author emptied or set to "No template" stays so, and the retry of a sent
+	 *  draft is the same create. Reset when a create succeeds and the next draft begins. */
+	let loadedForDraft = $state(false);
 	let createError = $state<string | null>(null);
 	let newButton: HTMLButtonElement | undefined;
 	let lastToggle: HTMLButtonElement | undefined = $state();
@@ -186,6 +195,7 @@
 	function startCreate() {
 		if (!draft.horizon) draft.horizon = configured[0] ?? '';
 		createError = null;
+		templatesReady = false;
 		creating = true;
 	}
 
@@ -203,7 +213,7 @@
 
 	async function createInitiative(e: SubmitEvent) {
 		e.preventDefault();
-		if (busy || uploads.busy) return;
+		if (busy || uploads.busy || !templatesReady) return;
 		const p = initiativeCreate(draft, configured);
 		if (!p.ok) {
 			createError = p.error;
@@ -217,6 +227,7 @@
 		busy = false;
 		if (out.kind === 'sent') {
 			draft = { title: '', horizon: configured[0] ?? '', target_month: '', brief: '' };
+			loadedForDraft = false;
 			uploads.reset();
 			creating = false;
 			await goto(`/initiatives/${encodeURIComponent(out.value.key)}`);
@@ -264,6 +275,19 @@
 				</select>
 			</label>
 			<label class="field">Target month <input bind:value={draft.target_month} placeholder="YYYY-MM" disabled={busy} /></label>
+			<TemplatePicker
+				level="initiative"
+				bind:text={draft.brief}
+				bind:ready={
+					() => templatesReady,
+					(on) => {
+						templatesReady = on;
+						if (on) loadedForDraft = true;
+					}
+				}
+				prefill={!loadedForDraft}
+				disabled={busy}
+			/>
 			<div class="field">
 				<label class="field"
 					>Brief (Markdown) <textarea bind:this={briefEl} bind:value={draft.brief} rows="4" disabled={busy} {@attach attachable(uploads)}></textarea></label
@@ -273,8 +297,8 @@
 			{#if createError}<p class="error" role="alert">{createError}</p>{/if}
 			<div class="actions">
 				<button type="button" onclick={cancelCreate} disabled={busy}>Cancel</button>
-				<button type="submit" class="primary" disabled={busy || uploads.busy || !draft.title.trim()}
-					>{uploads.busy ? 'Uploading…' : 'Create initiative'}</button
+				<button type="submit" class="primary" disabled={busy || uploads.busy || !templatesReady || !draft.title.trim()}
+					>{!templatesReady ? 'Loading templates…' : uploads.busy ? 'Uploading…' : 'Create initiative'}</button
 				>
 			</div>
 		</form>
