@@ -430,6 +430,21 @@ describe('templates page', () => {
 		expect(document.body.querySelectorAll('[data-template]')).toHaveLength(2);
 	});
 
+	it('says what removing a default template does to new items, at its level, and not for another template', async () => {
+		const rows = seed();
+		rows[2].is_default = true;
+		await open('admin', rows);
+		const confirmOf = (id: number) => {
+			button(row(id)!, 'Remove')!.click();
+			flushSync();
+			return row(id)!.querySelector('.confirm')!.firstChild!.textContent!.trim();
+		};
+		expect(confirmOf(1)).toBe('Remove the template "Scenario"? Briefs already made from it stay as they are. New initiatives will then start with an empty brief.');
+		expect(confirmOf(3)).toBe('Remove the template "Slice"? Briefs already made from it stay as they are. New epics will then start with an empty brief.');
+		// The control: a template that is not the default.
+		expect(confirmOf(2)).toBe('Remove the template "Tech debt"? Briefs already made from it stay as they are.');
+	});
+
 	it('takes every control from a viewer who stops being an admin, whatever is open', async () => {
 		await open('admin');
 		// The form for a new template.

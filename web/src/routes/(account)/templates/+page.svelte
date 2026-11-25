@@ -15,9 +15,9 @@
 	import Notice from '#lib/ui/Notice.svelte';
 	import PageHeader from '#lib/ui/PageHeader.svelte';
 
-	const LEVELS: { level: BriefTemplateLevel; heading: string; none: string }[] = [
-		{ level: 'initiative', heading: 'Initiative templates', none: 'No initiative templates yet.' },
-		{ level: 'epic', heading: 'Epic templates', none: 'No epic templates yet.' }
+	const LEVELS: { level: BriefTemplateLevel; heading: string; none: string; items: string }[] = [
+		{ level: 'initiative', heading: 'Initiative templates', none: 'No initiative templates yet.', items: 'initiatives' },
+		{ level: 'epic', heading: 'Epic templates', none: 'No epic templates yet.', items: 'epics' }
 	];
 	/** The planner raises the advisory finding `brief_cites_without_decision` on a brief that says one of these
 	 *  words (reeve-planning, domain/findings.rs), so a template that says one raises it on every item made from it
@@ -311,7 +311,7 @@
 			</details>
 		{/if}
 
-		{#each LEVELS as { level, heading, none } (level)}
+		{#each LEVELS as { level, heading, none, items } (level)}
 			{@const mine = templates.filter((t) => t.level === level)}
 			<section aria-label={heading}>
 				<h2>{heading}</h2>
@@ -362,7 +362,10 @@
 								</div>
 								{#if removing === t.id}
 									<p class="confirm" role="alert">
-										Remove the template "{t.name}"? Briefs already made from it stay as they are.
+										<span>
+											Remove the template "{t.name}"? Briefs already made from it stay as they are.{#if t.is_default}
+												{' '}New {items} will then start with an empty brief.{/if}
+										</span>
 										<button type="button" disabled={busy} onclick={(e) => cancelRemove(t.id, e.currentTarget.closest('.confirm'))}>Cancel</button>
 										<button type="button" class="danger" disabled={busy} onclick={() => remove(t.id)}>Remove template</button>
 									</p>
