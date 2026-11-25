@@ -26,7 +26,11 @@
 
 	let templates = $state<BriefTemplate[] | null>(null);
 	let loadError = $state<string | null>(null);
+	/** The page's own notice: what a default, a removal or a template removed under its editor has to say. A save's
+	 *  notice is shown in the form it belongs to (`editNotice`, `createNotice`), where its admin is looking. */
 	let notice = $state<string | null>(null);
+	let editNotice = $state<string | null>(null);
+	let createNotice = $state<string | null>(null);
 	let busy = $state(false);
 	/** The "New template" form is open. */
 	let adding = $state(false);
@@ -47,6 +51,7 @@
 	function closeEdit() {
 		editing = null;
 		edit = { name: '', body: '' };
+		editNotice = null;
 	}
 
 	/** The template being edited is gone. What its admin typed is not: it moves into the form for a new template,
@@ -110,6 +115,7 @@
 			closeEdit();
 			removing = null;
 			adding = false;
+			createNotice = null;
 		}
 	});
 
@@ -117,17 +123,19 @@
 	type Outcome = { kind: 'done' } | { kind: 'conflict'; fresh: boolean } | { kind: 'failed' } | { kind: 'busy' };
 
 	/** One write, then the list again whether it worked or not (a refusal may mean the list is stale). A failure is
-	 *  shown. The caller is told how it ended, because only a conflict may move an editor's base. */
-	async function write(what: () => Promise<unknown>): Promise<Outcome> {
+	 *  handed to `say`, which puts it where the write was made: in its form, or on the page. The server's own words
+	 *  are shown as they come. The caller is told how it ended, because only a conflict may move an editor's base. */
+	async function write(what: () => Promise<unknown>, say: (message: string | null) => void): Promise<Outcome> {
 		if (busy || !isAdmin()) return { kind: 'busy' };
 		busy = true;
 		notice = null;
+		say(null);
 		let out: Outcome = { kind: 'done' };
 		try {
 			await what();
 		} catch (e) {
 			out = e instanceof Conflict ? { kind: 'conflict', fresh: false } : { kind: 'failed' };
-			notice = failure(e);
+			say(failure(e));
 		}
 		const fresh = await reload();
 		if (out.kind === 'conflict') out = { kind: 'conflict', fresh };
@@ -138,7 +146,10 @@
 	async function create(e: SubmitEvent) {
 		e.preventDefault();
 		const body = { level: draft.level, name: draft.name, body: draft.body };
-		const out = await write(() => unwrap(api.POST('/api/v1/brief-templates', { body })));
+		const out = await write(
+			() => unwrap(api.POST('/api/v1/brief-templates', { body })),
+			(m) => (createNotice = m)
+		);
 		if (out.kind === 'done') {
 			draft = { level: draft.level, name: '', body: '' };
 			adding = false;
@@ -164,10 +175,14 @@
 			return;
 		}
 		if (change.kind === 'invalid') {
-			notice = change.error;
+			editNotice = change.error;
 			return;
 		}
-		const out = await write(() => unwrap(api.PATCH('/api/v1/brief-templates/{id}', { params: { path: { id } }, body: { version, ...change.body } })));
+		const out = await write(
+			() => unwrap(api.PATCH('/api/v1/brief-templates/{id}', { params: { path: { id } }, body: { version, ...change.body } })),
+			// The editor may be gone by now (the template was removed: `reload` moved its text and said so).
+			(m) => (editNotice = editing?.id === id ? m : null)
+		);
 		if (out.kind === 'done') {
 			closeEdit();
 			return;
@@ -177,7 +192,7 @@
 		// then judged by the server against the version this editor read.
 		if (out.kind !== 'conflict') return;
 		if (!out.fresh) {
-			notice = `${CHANGED} The list could not be reloaded; save again to try once more.`;
+			editNotice = `${CHANGED} The list could not be reloaded; save again to try once more.`;
 			return;
 		}
 		// A conflict, and the list now shown was read after it: the fields the admin changed stay, every other field
@@ -188,20 +203,24 @@
 		const server = templateFields(now);
 		edit = mergeDraft(TEMPLATE_SAME, from, edit, server);
 		editing = { id, level, version: now.version, from: server };
-		notice = `${CHANGED} What you changed is still here; everything else now shows their version. Where you both changed the same thing, saving again replaces their change.`;
+		editNotice = `${CHANGED} What you changed is still here; everything else now shows their version. Where you both changed the same thing, saving again replaces their change.`;
 	}
 
+	const onPage = (m: string | null) => (notice = m);
+
 	const mark = (t: BriefTemplate, on: boolean) =>
-		write(() =>
-			unwrap(
-				on
-					? api.POST('/api/v1/brief-templates/{id}/default', { params: { path: { id: t.id } } })
-					: api.DELETE('/api/v1/brief-templates/{id}/default', { params: { path: { id: t.id } } })
-			)
+		write(
+			() =>
+				unwrap(
+					on
+						? api.POST('/api/v1/brief-templates/{id}/default', { params: { path: { id: t.id } } })
+						: api.DELETE('/api/v1/brief-templates/{id}/default', { params: { path: { id: t.id } } })
+				),
+			onPage
 		);
 
 	async function remove(id: number) {
-		const out = await write(() => unwrap(api.DELETE('/api/v1/brief-templates/{id}', { params: { path: { id } } })));
+		const out = await write(() => unwrap(api.DELETE('/api/v1/brief-templates/{id}', { params: { path: { id } } })), onPage);
 		if (out.kind !== 'busy') removing = null;
 	}
 </script>
@@ -242,6 +261,7 @@
 							<Brief markdown={draft.body} />
 						</div>
 					{/if}
+					{#if createNotice}<Notice tone="error">{createNotice}</Notice>{/if}
 					<button type="submit" class="primary" disabled={busy || !draft.name.trim() || !draft.body.trim()}>Create template</button>
 				</form>
 			</details>
@@ -265,6 +285,7 @@
 										<Brief markdown={edit.body} />
 									</div>
 								{/if}
+								{#if editNotice}<Notice tone="error">{editNotice}</Notice>{/if}
 								<div class="actions">
 									<button type="button" disabled={busy} onclick={closeEdit}>Cancel</button>
 									<button type="submit" class="primary" disabled={busy}>Save</button>

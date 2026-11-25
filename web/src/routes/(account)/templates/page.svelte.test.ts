@@ -18,7 +18,7 @@ const { calls, db, liveFns } = vi.hoisted(() => ({
 		/** Runs once, just before the next write is judged: another admin's change that landed first. */
 		meanwhile: null as null | (() => void),
 		/** The next write fails this way instead of being applied. */
-		fail: null as null | 'network' | 'forbidden',
+		fail: null as null | 'network' | 'forbidden' | { refuse: string },
 		/** A list request takes its snapshot of the rows when it is made, then waits on the next gate, if any: an
 		 *  answer that is already old when it arrives. */
 		gates: [] as Promise<void>[]
@@ -67,6 +67,8 @@ vi.mock('#lib/api/client.ts', () => {
 		db.fail = null;
 		if (fail === 'network') throw new TypeError('Failed to fetch');
 		if (fail === 'forbidden') throw new ApiError('forbidden', 'forbidden');
+		// A refusal in the server's own words, whatever they are: the page shows them as they come.
+		if (fail) throw new ApiError(fail.refuse, 'validation');
 		if (method === 'POST' && path === '/api/v1/brief-templates') {
 			const b = init!.body as { level: Row['level']; name: string; body: string };
 			const row: Row = { id: db.nextId++, level: b.level, name: b.name.trim(), body: b.body, is_default: false, version: 1 };
@@ -158,6 +160,14 @@ const marks = () =>
 const controls = () => document.body.querySelectorAll('article > .actions button, .confirm button, form');
 /** The notices of the page itself: the ones that are in no form. */
 const pageNotices = () => [...document.body.querySelectorAll('.notice .text')].filter((n) => !n.closest('form')).map((n) => n.textContent!.trim());
+/** The notices inside a form, and whether they stand above the form's buttons. */
+const noticesIn = (form: HTMLFormElement) => [...form.querySelectorAll('.notice .text')].map((n) => n.textContent!.trim());
+const noticeIsAboveButtons = (form: HTMLFormElement) => {
+	const last = [...form.querySelectorAll('button')].at(-1)!;
+	return !!(form.querySelector('.notice')!.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING);
+};
+const CONFLICT =
+	'Someone else changed this template while you were editing. What you changed is still here; everything else now shows their version. Where you both changed the same thing, saving again replaces their change.';
 const newForm = () => document.body.querySelector('form[aria-label="New template"]') as HTMLFormElement | null;
 const editForm = (id: number) => row(id)?.querySelector('form[aria-label="Edit template"]') as HTMLFormElement | null | undefined;
 const nameOf = (form: HTMLFormElement) => form.querySelector('input') as HTMLInputElement;
@@ -266,7 +276,10 @@ describe('templates page', () => {
 		// not change is the colleague's now; and the notice says what saving again does.
 		expect(textOf(editForm(2)!).value).toBe(mine);
 		expect(nameOf(editForm(2)!).value).toBe('Debt');
-		expect(document.body.textContent).toContain('saving again replaces their change');
+		// The notice is in the form that was saved, above its buttons, and not at the top of the page.
+		expect(noticesIn(editForm(2)!)).toEqual([CONFLICT]);
+		expect(noticeIsAboveButtons(editForm(2)!)).toBe(true);
+		expect(pageNotices()).toEqual([]);
 		editForm(2)!.requestSubmit();
 		await written(2);
 		expect(writes()[1].init!.body).toStrictEqual({ version: 2, body: mine });
@@ -286,8 +299,8 @@ describe('templates page', () => {
 		db.fail = 'network';
 		editForm(2)!.requestSubmit();
 		await written(1);
-		expect(document.body.textContent).toContain('Failed to fetch');
-		expect(document.body.textContent).not.toContain('saving again replaces their change');
+		expect(noticesIn(editForm(2)!)).toEqual(['Failed to fetch']);
+		expect(pageNotices()).toEqual([]);
 		expect(textOf(editForm(2)!).value).toBe(mine);
 		// The page reloaded and knows version 2. The editor must still save against the version it read.
 		editForm(2)!.requestSubmit();
@@ -295,7 +308,7 @@ describe('templates page', () => {
 		expect(writes()[1].init!.body).toStrictEqual({ version: 1, body: mine });
 		// So the server refused it and their text is still stored. Only now is the admin told, and offered to replace it.
 		expect(stored(2)).toMatchObject({ body: theirs, version: 2 });
-		expect(document.body.textContent).toContain('saving again replaces their change');
+		expect(noticesIn(editForm(2)!)).toEqual([CONFLICT]);
 		expect(textOf(editForm(2)!).value).toBe(mine);
 		editForm(2)!.requestSubmit();
 		await written(3);
@@ -469,7 +482,82 @@ describe('templates page', () => {
 		db.fail = 'forbidden';
 		button(row(2)!, 'Use as default')!.click();
 		await written(1);
-		expect(document.body.textContent).toContain('Only an admin can change templates.');
+		// A default's notice is the page's: no form is open for it.
+		expect(pageNotices()).toEqual(['Only an admin can change templates.']);
 		expect(marks()).toEqual([1]);
+	});
+
+	it("shows a failed removal's notice on the page", async () => {
+		await open('admin');
+		button(row(3)!, 'Remove')!.click();
+		flushSync();
+		db.fail = 'network';
+		button(row(3)!, 'Remove template')!.click();
+		await written(1);
+		expect(pageNotices()).toEqual(['Failed to fetch']);
+		expect(row(3)).not.toBeNull();
+	});
+
+	it('says in the edit form that a name or a text must not be blank, and sends nothing', async () => {
+		await open('admin');
+		const form = startEdit(2);
+		type(nameOf(form), '  ');
+		form.requestSubmit();
+		flushSync();
+		expect(noticesIn(editForm(2)!)).toEqual(['Name must not be blank.']);
+		expect(noticeIsAboveButtons(editForm(2)!)).toBe(true);
+		type(nameOf(form), 'Debt');
+		type(textOf(form), ' \n');
+		form.requestSubmit();
+		flushSync();
+		expect(noticesIn(editForm(2)!)).toEqual(['Template text must not be blank.']);
+		expect(pageNotices()).toEqual([]);
+		expect(writes()).toHaveLength(0);
+		// A notice goes with its editor: cancelling and opening another shows none.
+		button(editForm(2)!, 'Cancel')!.click();
+		flushSync();
+		expect(noticesIn(startEdit(1))).toEqual([]);
+	});
+
+	it("shows the server's refusal of a save in the edit form, in the server's words", async () => {
+		await open('admin');
+		const form = startEdit(2);
+		type(nameOf(form), 'Scenario');
+		db.fail = { refuse: 'whatever the server says about that name' };
+		form.requestSubmit();
+		await written(1);
+		expect(noticesIn(editForm(2)!)).toEqual(['whatever the server says about that name']);
+		expect(noticeIsAboveButtons(editForm(2)!)).toBe(true);
+		expect(pageNotices()).toEqual([]);
+		// The editor keeps what was typed, and a save that works takes the notice away with the form.
+		expect(nameOf(editForm(2)!).value).toBe('Scenario');
+		type(nameOf(editForm(2)!), 'Debt');
+		editForm(2)!.requestSubmit();
+		await written(2);
+		expect(editForm(2)).toBeNull();
+		expect(document.body.querySelector('.notice')).toBeNull();
+	});
+
+	it("shows the server's refusal of a new template in its form, in the server's words, and keeps the draft", async () => {
+		await open('admin');
+		const form = newForm()!;
+		form.closest('details')!.open = true;
+		type(nameOf(form), 'Scenario');
+		type(textOf(form), '## Again\n');
+		db.fail = { refuse: 'whatever the server says about that name' };
+		form.requestSubmit();
+		await written(1);
+		expect(noticesIn(newForm()!)).toEqual(['whatever the server says about that name']);
+		expect(noticeIsAboveButtons(newForm()!)).toBe(true);
+		expect(pageNotices()).toEqual([]);
+		expect(newForm()!.closest('details')!.open).toBe(true);
+		expect(nameOf(newForm()!).value).toBe('Scenario');
+		expect(textOf(newForm()!).value).toBe('## Again\n');
+		// The next create that works leaves no notice behind.
+		type(nameOf(newForm()!), 'Again');
+		newForm()!.requestSubmit();
+		await written(2);
+		expect(row(10)).not.toBeNull();
+		expect(document.body.querySelector('.notice')).toBeNull();
 	});
 });
