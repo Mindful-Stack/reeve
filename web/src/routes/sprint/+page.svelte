@@ -435,6 +435,8 @@
 	}
 	.panel-head {
 		display: flex;
+		/* The Close and Open buttons are taller than a bare heading: both columns' heads take the same height. */
+		min-height: 34px;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px 12px;
