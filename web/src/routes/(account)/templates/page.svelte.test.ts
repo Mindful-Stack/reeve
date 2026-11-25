@@ -561,3 +561,91 @@ describe('templates page', () => {
 		expect(document.body.querySelector('.notice')).toBeNull();
 	});
 });
+describe('templates page: focus', () => {
+	const active = () => document.activeElement;
+	/** Presses a button as a person does: focus goes to it first. */
+	function press(b: HTMLButtonElement) {
+		b.focus();
+		b.click();
+		flushSync();
+	}
+	const focused = (el: () => Element | null | undefined) => vi.waitFor(() => expect(active()).toBe(el()));
+
+	it('puts focus on the name when Edit opens the editor, and back on Edit when it is cancelled', async () => {
+		await open('admin');
+		press(button(row(2)!, 'Edit')!);
+		await focused(() => nameOf(editForm(2)!));
+		press(button(editForm(2)!, 'Cancel')!);
+		await focused(() => button(row(2)!, 'Edit'));
+	});
+
+	it('puts focus back on Edit after a save, also one that changed nothing', async () => {
+		await open('admin');
+		press(button(row(2)!, 'Edit')!);
+		await focused(() => nameOf(editForm(2)!));
+		type(nameOf(editForm(2)!), 'Debt');
+		button(editForm(2)!, 'Save')!.focus();
+		editForm(2)!.requestSubmit();
+		await written(1);
+		await focused(() => button(row(2)!, 'Edit'));
+		press(button(row(2)!, 'Edit')!);
+		button(editForm(2)!, 'Save')!.focus();
+		editForm(2)!.requestSubmit();
+		flushSync();
+		expect(writes()).toHaveLength(1);
+		await focused(() => button(row(2)!, 'Edit'));
+	});
+
+	it('leaves focus where the admin moved it while a save was on its way', async () => {
+		await open('admin');
+		press(button(row(2)!, 'Edit')!);
+		type(nameOf(editForm(2)!), 'Debt');
+		editForm(2)!.requestSubmit();
+		// The admin goes on to another row before the answer is there.
+		const elsewhere = document.body.appendChild(document.createElement('button'));
+		elsewhere.focus();
+		expect(active()).toBe(elsewhere);
+		await written(1);
+		await new Promise((r) => setTimeout(r));
+		expect(editForm(2)).toBeNull();
+		expect(active()).toBe(elsewhere);
+	});
+
+	// Green before the page restored any focus: jsdom leaves focus on a control that is disabled, where a browser
+	// drops it. It guards the restoring code against moving focus out of an editor that stays open.
+	it('keeps focus in the editor when a save is refused', async () => {
+		await open('admin');
+		press(button(row(2)!, 'Edit')!);
+		type(nameOf(editForm(2)!), 'Scenario');
+		button(editForm(2)!, 'Save')!.focus();
+		db.fail = { refuse: 'no' };
+		editForm(2)!.requestSubmit();
+		await written(1);
+		await focused(() => button(editForm(2)!, 'Save'));
+	});
+
+	it("puts focus back on Remove when the removal's confirmation is cancelled", async () => {
+		await open('admin');
+		press(button(row(3)!, 'Remove')!);
+		press(button(row(3)!, 'Cancel')!);
+		await focused(() => button(row(3)!, 'Remove'));
+	});
+
+	it('keeps focus on the default button, which is replaced by its opposite', async () => {
+		await open('admin');
+		press(button(row(2)!, 'Use as default')!);
+		await written(1);
+		await focused(() => button(row(2)!, 'Stop using as default'));
+	});
+
+	it('puts focus on the name of the new template that took the text of a removed one', async () => {
+		await open('admin');
+		press(button(row(3)!, 'Edit')!);
+		await focused(() => nameOf(editForm(3)!));
+		db.rows = db.rows.filter((r) => r.id !== 3);
+		await liveFns[0]();
+		flushSync();
+		await focused(() => nameOf(newForm()!));
+	});
+});
+

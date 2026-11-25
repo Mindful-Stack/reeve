@@ -3,11 +3,13 @@
 	read), removes and marks the default; every control follows isAdmin() and the server decides. A template only
 	prefills a new brief: nothing here touches an existing one. -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { api, ApiError, Conflict, unwrap } from '#lib/api/client.ts';
 	import type { BriefTemplate, BriefTemplateLevel } from '#lib/api/types.ts';
 	import Brief from '#lib/components/Brief.svelte';
 	import { onLive } from '#lib/events.svelte.ts';
 	import { mergeDraft, templateEdit, templateFields, TEMPLATE_SAME, type TemplateFields } from '#lib/forms.ts';
+	import { focusIsFree } from '#lib/focus.ts';
 	import { errorMessage } from '#lib/format.ts';
 	import { isAdmin } from '#lib/me.svelte.ts';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -48,6 +50,19 @@
 		return errorMessage(e);
 	}
 
+	// Focus. A control that opens something hands focus to it, and what closes hands it back to the control that
+	// opened it; a write disables the controls meanwhile, so the one that was pressed gets focus back. Always only
+	// while focus is free (#lib/focus.ts): focus the person moved elsewhere is theirs.
+	const rowOf = (id: number) => document.querySelector<HTMLElement>(`article[data-template="${id}"]`);
+	/** Focus goes to `to()` once the page is redrawn, if it is still inside `from` or on no control. */
+	async function refocus(from: Element | null | undefined, to: () => HTMLElement | null | undefined) {
+		await tick();
+		if (focusIsFree(from)) to()?.focus();
+	}
+	/** The control that has focus now, to give it back after a write (it is disabled while the write runs). */
+	const focusNow = () => (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+	const newName = () => document.querySelector<HTMLElement>('form[aria-label="New template"] input');
+
 	function closeEdit() {
 		editing = null;
 		edit = { name: '', body: '' };
@@ -70,6 +85,7 @@
 			: { level, ...mine };
 		adding = true;
 		notice = REMOVED;
+		void refocus(null, newName);
 	}
 
 	let latest = 0;
@@ -145,6 +161,8 @@
 
 	async function create(e: SubmitEvent) {
 		e.preventDefault();
+		const form = e.currentTarget as HTMLFormElement;
+		const had = focusNow();
 		const body = { level: draft.level, name: draft.name, body: draft.body };
 		const out = await write(
 			() => unwrap(api.POST('/api/v1/brief-templates', { body })),
@@ -153,6 +171,10 @@
 		if (out.kind === 'done') {
 			draft = { level: draft.level, name: '', body: '' };
 			adding = false;
+			// The form folds: focus goes to its summary, which opens it again.
+			void refocus(form, () => form.closest('details')?.querySelector<HTMLElement>('summary'));
+		} else if (out.kind !== 'busy') {
+			void refocus(form, () => had);
 		}
 	}
 
@@ -162,16 +184,25 @@
 		editing = { id: t.id, level: t.level, version: t.version, from };
 		edit = { ...from };
 		removing = null;
+		void refocus(rowOf(t.id), () => rowOf(t.id)?.querySelector<HTMLElement>('form input'));
+	}
+
+	/** Closes the editor and gives focus back to its row's "Edit". */
+	function leaveEdit(id: number, form: Element | null) {
+		closeEdit();
+		void refocus(form, () => rowOf(id)?.querySelector<HTMLElement>('[data-action="edit"]'));
 	}
 
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
 		if (!editing) return;
 		const { id, level, version, from } = editing;
+		const form = e.currentTarget as HTMLFormElement;
+		const had = focusNow();
 		// Only the fields changed since the editor took them from the server are sent.
 		const change = templateEdit(from, edit);
 		if (change.kind === 'unchanged') {
-			closeEdit();
+			leaveEdit(id, form);
 			return;
 		}
 		if (change.kind === 'invalid') {
@@ -184,9 +215,11 @@
 			(m) => (editNotice = editing?.id === id ? m : null)
 		);
 		if (out.kind === 'done') {
-			closeEdit();
+			leaveEdit(id, form);
 			return;
 		}
+		// The editor stays open: focus goes back to where it was when the save was sent.
+		if (out.kind !== 'busy' && editing) void refocus(form, () => (had?.isConnected ? had : null));
 		// Any failure that is not a conflict (the network, a refused name, a lost role) leaves the editor exactly as
 		// it was: the same base version and the same opening fields, although the list was reloaded. A retry is
 		// then judged by the server against the version this editor read.
@@ -208,7 +241,12 @@
 
 	const onPage = (m: string | null) => (notice = m);
 
-	const mark = (t: BriefTemplate, on: boolean) =>
+	/** Sets or clears the default mark. The button that was pressed is replaced by its opposite, which gets focus. */
+	async function mark(t: BriefTemplate, on: boolean) {
+		await markWrite(t, on);
+		void refocus(null, () => rowOf(t.id)?.querySelector<HTMLElement>('[data-action="default"]'));
+	}
+	const markWrite = (t: BriefTemplate, on: boolean) =>
 		write(
 			() =>
 				unwrap(
@@ -222,6 +260,12 @@
 	async function remove(id: number) {
 		const out = await write(() => unwrap(api.DELETE('/api/v1/brief-templates/{id}', { params: { path: { id } } })), onPage);
 		if (out.kind !== 'busy') removing = null;
+	}
+
+	/** Closes the removal's confirmation and gives focus back to its row's "Remove". */
+	function cancelRemove(id: number, confirm: Element | null) {
+		removing = null;
+		void refocus(confirm, () => rowOf(id)?.querySelector<HTMLElement>('[data-action="remove"]'));
 	}
 </script>
 
@@ -287,7 +331,7 @@
 								{/if}
 								{#if editNotice}<Notice tone="error">{editNotice}</Notice>{/if}
 								<div class="actions">
-									<button type="button" disabled={busy} onclick={closeEdit}>Cancel</button>
+									<button type="button" disabled={busy} onclick={(e) => leaveEdit(t.id, e.currentTarget.closest('form'))}>Cancel</button>
 									<button type="submit" class="primary" disabled={busy}>Save</button>
 								</div>
 							</form>
@@ -302,23 +346,24 @@
 							{#if isAdmin()}
 								<div class="actions">
 									{#if t.is_default}
-										<button type="button" disabled={busy} onclick={() => mark(t, false)}>Stop using as default</button>
+										<button type="button" data-action="default" disabled={busy} onclick={() => mark(t, false)}>Stop using as default</button>
 									{:else}
-										<button type="button" disabled={busy} onclick={() => mark(t, true)}>Use as default</button>
+										<button type="button" data-action="default" disabled={busy} onclick={() => mark(t, true)}>Use as default</button>
 									{/if}
 									<!-- One editor at a time: a second "Edit" would discard what the first holds. -->
 									<button
 										type="button"
+										data-action="edit"
 										disabled={busy || editing !== null}
 										title={editing !== null ? 'Save or cancel the template you are editing first.' : undefined}
 										onclick={() => startEdit(t)}>Edit</button
 									>
-									<button type="button" disabled={busy} onclick={() => (removing = t.id)}>Remove</button>
+									<button type="button" data-action="remove" disabled={busy} onclick={() => (removing = t.id)}>Remove</button>
 								</div>
 								{#if removing === t.id}
 									<p class="confirm" role="alert">
 										Remove the template "{t.name}"? Briefs already made from it stay as they are.
-										<button type="button" disabled={busy} onclick={() => (removing = null)}>Cancel</button>
+										<button type="button" disabled={busy} onclick={(e) => cancelRemove(t.id, e.currentTarget.closest('.confirm'))}>Cancel</button>
 										<button type="button" class="danger" disabled={busy} onclick={() => remove(t.id)}>Remove template</button>
 									</p>
 								{/if}

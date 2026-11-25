@@ -6,8 +6,10 @@
 	arrived or failed: the form must not be sent before, because this component changes the text when it does. The
 	form sends the text as the brief and nothing about templates (#lib/forms.ts). Mount it anew for each new draft. -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { api, unwrap } from '#lib/api/client.ts';
 	import type { BriefTemplate, BriefTemplateLevel } from '#lib/api/types.ts';
+	import { focusIsFree } from '#lib/focus.ts';
 	import { defaultOf, pick, startedFrom } from '#lib/templates.ts';
 
 	let {
@@ -94,6 +96,18 @@
 		};
 	});
 
+	let selectEl = $state<HTMLSelectElement | null>(null);
+	let askEl = $state<HTMLElement | null>(null);
+
+	/** The author answered the question: `then` is done, the question goes, and focus returns to the select it came
+	 *  from, unless the author moved it elsewhere meanwhile. */
+	async function answer(then: () => void) {
+		const from = askEl;
+		then();
+		await tick();
+		if (focusIsFree(from)) selectEl?.focus();
+	}
+
 	function onchange(e: Event) {
 		const el = e.currentTarget as HTMLSelectElement;
 		const id = el.value;
@@ -112,7 +126,7 @@
 {#if templates.length}
 	<label class="field">
 		Template
-		<select value={chosen} {onchange} {disabled}>
+		<select bind:this={selectEl} value={chosen} {onchange} {disabled}>
 			<option value="">No template</option>
 			{#each templates as t (t.id)}
 				<option value={String(t.id)}>{t.name}{t.is_default ? ' (default)' : ''}</option>
@@ -120,15 +134,15 @@
 		</select>
 	</label>
 	{#if asking}
-		<p class="ask" role="alert">
+		<p class="ask" role="alert" bind:this={askEl}>
 			{#if asking.name === null}
 				Remove what you have written?
-				<button type="button" {disabled} onclick={() => asking && fill(asking.id, asking.body)}>Remove my text</button>
+				<button type="button" {disabled} onclick={() => answer(() => asking && fill(asking.id, asking.body))}>Remove my text</button>
 			{:else}
 				Replace what you have written with the template "{asking.name}"?
-				<button type="button" {disabled} onclick={() => asking && fill(asking.id, asking.body)}>Replace</button>
+				<button type="button" {disabled} onclick={() => answer(() => asking && fill(asking.id, asking.body))}>Replace</button>
 			{/if}
-			<button type="button" {disabled} onclick={() => (asking = null)}>Keep my text</button>
+			<button type="button" {disabled} onclick={() => answer(() => (asking = null))}>Keep my text</button>
 		</p>
 	{/if}
 {:else if failed}

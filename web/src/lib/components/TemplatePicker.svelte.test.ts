@@ -141,6 +141,36 @@ describe('TemplatePicker', () => {
 		expect(select()!.value).toBe('');
 	});
 
+	it('puts focus back on the select when the question is answered, unless the author moved it', async () => {
+		net.templates = two();
+		await open();
+		const answer = (name: string) => {
+			button(name).focus();
+			button(name).click();
+			flushSync();
+		};
+		type('Mine');
+		choose('1');
+		answer('Keep my text');
+		await vi.waitFor(() => expect(document.activeElement).toBe(select()));
+		choose('1');
+		answer('Replace');
+		await vi.waitFor(() => expect(document.activeElement).toBe(select()));
+		type('Mine again');
+		choose('');
+		answer('Remove my text');
+		await vi.waitFor(() => expect(document.activeElement).toBe(select()));
+		// Focus the author moved to the brief while the question was open stays there.
+		type('Mine once more');
+		choose('1');
+		button('Keep my text').click();
+		brief().focus();
+		flushSync();
+		await new Promise((r) => setTimeout(r));
+		expect(ask()).toBeNull();
+		expect(document.activeElement).toBe(brief());
+	});
+
 	it('leaves text of the author that was there before the templates arrived, and shows No template', async () => {
 		net.templates = two();
 		await open('Typed before');
