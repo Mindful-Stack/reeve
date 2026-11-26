@@ -82,6 +82,8 @@ pub async fn run(c: &Client, cmd: Link, json: bool) -> anyhow::Result<i32> {
                 )
                 .await?;
             let note = match &out {
+                // The name check saves the read; whether the line is said is
+                // `reeve_protocol::follows_is_informational`'s to answer.
                 Outcome::Ok(links) if !json && name == ItemLinkType::Follows => {
                     not_a_blocker(c, &key, &other, links).await
                 }
@@ -196,6 +198,8 @@ async fn not_a_blocker(
     links: &[ItemLinkDto],
 ) -> Option<String> {
     let to = followed_end(links, ItemLinkDirection::Out, other)?;
+    // Saves the read; whether the line is said is `reeve_protocol::follows_is_informational`'s to answer. If
+    // another name or level ever earns a sentence there, this shortcut and the one in `run` are the places to look.
     if to.level != ItemType::Story {
         return None;
     }
@@ -205,7 +209,11 @@ async fn not_a_blocker(
         return None;
     };
     let from = followed_end(&listing.links, ItemLinkDirection::In, key)?;
-    (from.level == ItemType::Story).then(|| crate::relations::not_a_blocker(&from.key, &to.key))
+    crate::relations::not_a_blocker(
+        ItemLinkType::Follows,
+        (from.level, &from.key),
+        (to.level, &to.key),
+    )
 }
 
 /// The item at the other end of the `follows` link that was just written, among one item's links read from

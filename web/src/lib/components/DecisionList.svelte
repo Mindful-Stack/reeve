@@ -920,6 +920,8 @@
 		border: 1px solid var(--line);
 		border-radius: 6px;
 		background: var(--raised);
+		/* For the scroll shadows of a table in a comment (app.css). */
+		--table-surface: var(--raised);
 	}
 	.closed .title {
 		color: var(--muted);
@@ -1035,12 +1037,18 @@
 	.unblocks p {
 		margin: 0;
 	}
+	/* Beside a column bounded for wide tables (.body, .thread), a long unbroken word (a path, a pasted identifier) breaks
+	   instead of crossing the row's border. */
 	.outcome {
 		margin: 0;
+		overflow-wrap: anywhere;
 	}
 	.body {
 		display: grid;
 		grid-column: 1 / -1;
+		/* It spans the row's tracks (or is a flex item in a narrow list) and must not widen them: see .thread. */
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
 		gap: 0.5rem;
 		padding: 4px 0;
 	}
@@ -1049,6 +1057,7 @@
 		margin: 0;
 		font-size: 14px;
 		color: var(--muted);
+		overflow-wrap: anywhere;
 	}
 	.lines {
 		display: grid;
@@ -1063,15 +1072,20 @@
 	}
 	.discussion-panel {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
 	}
 	.thread {
 		display: grid;
+		/* A column no wider than the thread: a comment's wide table scrolls in its own wrapper instead of widening it. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.4rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
 		font-size: 14px;
+		/* The author line; a comment's own text breaks the same way (CommentBody), a table's cells on words (app.css). */
+		overflow-wrap: anywhere;
 	}
 	form {
 		display: flex;

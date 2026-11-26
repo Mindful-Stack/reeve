@@ -6,6 +6,7 @@ use crate::context::StoryContextDto;
 use crate::enums::{DeliveryState, Kind, Resolution};
 use crate::ids::Key;
 use crate::items::{EpicDto, InitiativeDto, RequiredDecisionDto, SearchHit, StoryDto};
+use crate::links::ItemLinkType;
 use crate::promise::PromisedFilter;
 use crate::readiness::Reason;
 use chrono::NaiveDate;
@@ -349,7 +350,7 @@ pub struct CreateStoryInput {
     /// Labels.
     #[serde(default)]
     pub labels: Vec<String>,
-    /// The owner's email address. Set it only when the person names an owner, and use the exact address.
+    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.
     pub owner: Option<String>,
 }
 
@@ -376,7 +377,7 @@ pub struct EditStoryInput {
     pub description: Option<String>,
     /// The story's acceptance criteria, replacing the list: send every criterion the story should have, not only a new one. A criterion keeps its done mark when its text and position are unchanged. Cannot be empty.
     pub criteria: Option<Vec<String>>,
-    /// A new owner's email address. Set it only when the person names an owner. Not together with `clear_owner`.
+    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.
     pub owner: Option<String>,
     /// True removes the owner. Not together with `owner`.
     #[serde(default)]
@@ -473,6 +474,248 @@ pub struct MoveStoryInput {
     /// Required when `to` is `done`, and only then: `completed` (only from in progress, in review or testing) or `dropped`.
     #[schema(inline)]
     pub resolution: Option<Resolution>,
+}
+
+// `create_epic` (`reeve epic create`). The doc comment is the schema's root description. There is no external
+// reference, no attachment and nothing about discovery: a new epic's discovery is not complete, and only a person
+// marks it.
+/// A new epic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateEpicInput {
+    /// A key you make up for this one create, 1 to 100 characters, for example `checkout-epic-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Send the same key again only to retry the same create: a repeat writes nothing and answers the epic the key already made.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// A short title, at most 200 characters.
+    pub title: String,
+    /// The initiative the epic belongs to: the initiative's key. Left out, the epic belongs to none.
+    pub initiative: Option<String>,
+    /// The brief, in Markdown: what this epic delivers.
+    pub brief: Option<String>,
+}
+
+// `edit_epic` (`reeve epic edit`). The doc comment is the schema's root description.
+/// A change to one epic: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditEpicInput {
+    /// The epic's key.
+    pub key: String,
+    /// The epic's `version` as you last read it (get_epic or list_epics). If the epic changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new brief, in Markdown, replacing the whole text: to change a part, send the brief exactly as get_epic gave it with only that part changed. Never send a text that ends with `[cut: N more characters]`.
+    pub brief: Option<String>,
+    /// Move the epic to this initiative: the initiative's key. Only when the person asked for the move: it changes what the epic's stories wait on. Not together with `detach_initiative`.
+    pub initiative: Option<String>,
+    /// True takes the epic out of its initiative. Only when the person asked for that: it changes what the epic's stories wait on. Not together with `initiative`.
+    #[serde(default)]
+    pub detach_initiative: bool,
+}
+
+/// What a tool that changes an epic answers: enough to see that the change happened and to make the next one (the
+/// key and the new version), and nothing whose size a person controls except the title, which the planner limits
+/// to 200 characters. Reading the epic whole is `get_epic`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EpicReceipt {
+    pub key: Key,
+    pub title: String,
+    pub initiative: Option<Key>,
+    pub version: i64,
+    /// `create_epic` only: whether this call created the epic. False: its idempotency key had already made this
+    /// epic, and nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<bool>,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl From<EpicDto> for EpicReceipt {
+    fn from(epic: EpicDto) -> Self {
+        Self {
+            key: epic.key,
+            title: epic.title,
+            initiative: epic.initiative,
+            version: epic.version,
+            created: None,
+            note: None,
+        }
+    }
+}
+
+// `create_initiative` (`reeve initiative create`). The doc comment is the schema's root description.
+/// A new initiative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInitiativeInput {
+    /// A key you make up for this one create, 1 to 100 characters, for example `bookings-initiative-7f3k9`: end it with a few random characters so it never equals a key from an earlier conversation. Send the same key again only to retry the same create: a repeat writes nothing and answers the initiative the key already made.
+    #[schema(min_length = 1, max_length = 100)]
+    pub idempotency_key: String,
+    /// A short title, at most 200 characters.
+    pub title: String,
+    /// The horizon: how far off the team plans this initiative, one of this planner's horizons. The tool's schema lists them.
+    pub horizon: String,
+    /// The brief, in Markdown: why this initiative exists.
+    pub brief: Option<String>,
+    /// The target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused.
+    pub target_month: Option<String>,
+    /// The owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person.
+    pub owner: Option<String>,
+}
+
+// `edit_initiative` (`reeve initiative edit`). The doc comment is the schema's root description.
+/// A change to one initiative: only the fields sent are changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditInitiativeInput {
+    /// The initiative's key.
+    pub key: String,
+    /// The initiative's `version` as you last read it (get_initiative or list_initiatives). If the initiative changed since, the edit is refused and nothing is overwritten.
+    pub version: i64,
+    /// A new title.
+    pub title: Option<String>,
+    /// A new brief, in Markdown, replacing the whole text: to change a part, send the brief exactly as get_initiative gave it with only that part changed. Never send a text that ends with `[cut: N more characters]`.
+    pub brief: Option<String>,
+    /// A new horizon (how far off the team plans this initiative), one of this planner's horizons. The tool's schema lists them.
+    pub horizon: Option<String>,
+    /// A new target month, exactly as `YYYY-MM`, for example `2027-03` for March 2027. Any other form is refused. Not together with `clear_target_month`.
+    pub target_month: Option<String>,
+    /// True removes the target month. Not together with `target_month`.
+    #[serde(default)]
+    pub clear_target_month: bool,
+    /// A new owner: the email of someone who can sign in here. Set it only when the person names an owner, and use the exact address. Do not make up an address from a name: ask the person. Not together with `clear_owner`.
+    pub owner: Option<String>,
+    /// True removes the owner. Not together with `owner`.
+    #[serde(default)]
+    pub clear_owner: bool,
+}
+
+/// What a tool that changes an initiative answers: the key and the new version, and the title, which the planner
+/// limits to 200 characters. Nothing else an initiative holds is in it, because nothing else has a length bound:
+/// not the brief, not the owner, not the target month (a row from before the month was checked may hold any text),
+/// and not the horizon (a configured bucket has no maximum length, and an initiative keeps a horizon that is no
+/// longer configured). A receipt is sent after its write is committed, so it must never be too large to send.
+/// Reading the initiative whole is `get_initiative`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InitiativeReceipt {
+    pub key: Key,
+    pub title: String,
+    pub version: i64,
+    /// `create_initiative` only: whether this call created the initiative. False: its idempotency key had
+    /// already made this initiative, and nothing was written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<bool>,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl From<InitiativeDto> for InitiativeReceipt {
+    fn from(initiative: InitiativeDto) -> Self {
+        Self {
+            key: initiative.key,
+            title: initiative.title,
+            version: initiative.version,
+            created: None,
+            note: None,
+        }
+    }
+}
+
+// `add_item_link` (`reeve link add <KEY> <name> <OTHER>`). The doc comment is the schema's root description. One
+// shape: a web link has a tool of its own.
+/// An item link: `key` follows, duplicates or relates to `to`. Informational: it holds nothing back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddItemLinkInput {
+    /// The item that follows, duplicates or relates: the key of a story, an epic or an initiative. To say the reverse ("A is followed by B"), this is B.
+    pub key: String,
+    /// The item link's name. `follows`: `key` comes after `to` in a sequence; it does not make `key` wait for `to`. `duplicates`: `key` covers the same work as `to`; it only records that, and neither item is closed, dropped, moved or merged. `relates_to`: the two are related, the same from both sides.
+    #[serde(rename = "type")]
+    #[schema(inline)]
+    pub link_type: ItemLinkType,
+    /// The other item: the key of a story, an epic or an initiative. To say the reverse ("A is followed by B"), this is A.
+    pub to: String,
+}
+
+// `remove_item_link` (`reeve link rm <KEY> <name> <OTHER>`). The doc comment is the schema's root description.
+/// The item link to remove, named as it was added: `key` follows, duplicates or relates to `to`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveItemLinkInput {
+    /// The item that follows, duplicates or relates. For an item link an item shows with `direction: in`, this is the other item.
+    pub key: String,
+    /// The item link's name: `follows`, `duplicates` or `relates_to`; for `relates_to` either order of `key` and `to` names the same item link.
+    #[serde(rename = "type")]
+    #[schema(inline)]
+    pub link_type: ItemLinkType,
+    /// The other item: the key of a story, an epic or an initiative.
+    pub to: String,
+}
+
+/// What a tool that adds or removes an item link answers: the item link as it was named, under the input's own
+/// three names (`key`, `type`, `to`), with each key as the planner resolved it, and whether this call changed
+/// anything. Nothing a person wrote is in it. Reading an item's item links is `get_story`'s, `get_epic`'s and
+/// `get_initiative`'s.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ItemLinkReceipt {
+    /// The item that follows, duplicates or relates: the input's `key`, as resolved.
+    pub key: Key,
+    #[serde(rename = "type")]
+    pub link_type: ItemLinkType,
+    /// The other item: the input's `to`, as resolved.
+    pub to: Key,
+    /// Whether this call added or removed the item link. False: it was already there, or was not there.
+    pub changed: bool,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+// `add_web_link` (`reeve link add <KEY> --url <URL> --title <TITLE>`). The doc comment is the schema's root
+// description.
+/// A web link on one item: a title and a URL. Informational: it holds nothing back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddWebLinkInput {
+    /// The item to attach it to: the key of a story, an epic or an initiative.
+    pub key: String,
+    /// The web link's title, 1 to 200 characters on one line.
+    pub title: String,
+    /// An `http` or `https` URL, at most 1000 characters, with no user name or password in it. Use the address exactly as the person gave it.
+    pub url: String,
+}
+
+// `remove_web_link` (`reeve link rm <KEY> --url <URL>`; the CLI finds the id by the URL, the tool is given it).
+// The doc comment is the schema's root description.
+/// The web link to remove from one item, by its id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveWebLinkInput {
+    /// The item the web link is on: the key of a story, an epic or an initiative.
+    pub key: String,
+    /// The web link's `id`, a number, as get_story, get_epic and get_initiative show it in `web_links`.
+    pub id: i64,
+}
+
+/// What a tool that adds or removes a web link answers: the item, the web link's id, and whether this call
+/// changed anything. After an add, also the title and the URL as stored (the title trimmed, the URL in its
+/// normalised form): at most 200 characters and 1 000, so the answer is small, and a URL is never cut.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WebLinkReceipt {
+    pub item: Key,
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Whether this call added or removed the web link. False: it was already there, or was not there.
+    pub changed: bool,
+    /// What the model should know about this answer, when there is something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[cfg(test)]
@@ -724,6 +967,266 @@ mod tests {
                 json!({"version": 3, "to": "in_progress", "resolution": null, "override_reason": "x"})
             )
             .is_ok()
+        );
+    }
+
+    /// A receipt's field names, pinned as literal JSON: `created` and `note` are sent only when set.
+    #[test]
+    fn an_epic_receipt_is_these_fields() {
+        let epic: EpicDto = serde_json::from_value(json!({
+            "key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "brief": "A long brief.",
+            "discovery_complete": {"at": "2026-11-01T10:00:00Z", "by": "dan@example.com"},
+            "external_ref": "JPD-7", "version": 3
+        }))
+        .unwrap();
+        let mut receipt = EpicReceipt::from(epic);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "version": 3})
+        );
+        receipt.created = Some(false);
+        receipt.note = Some("Nothing was written.".into());
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "title": "Booking flow", "initiative": "TST-1", "version": 3,
+                   "created": false, "note": "Nothing was written."})
+        );
+    }
+
+    /// kb/ADR-0029 R12 and the owner's rule for GRA-901: the epic inputs have no way to an external reference,
+    /// an attachment or the discovery mark, and refuse each by name.
+    #[test]
+    fn the_epic_inputs_refuse_what_the_tools_withhold() {
+        let ok: CreateEpicInput =
+            serde_json::from_value(json!({"idempotency_key": "k1", "title": "Checkout"})).unwrap();
+        assert_eq!((ok.initiative, ok.brief), (None, None));
+        let edit: EditEpicInput =
+            serde_json::from_value(json!({"key": "TST-2", "version": 3})).unwrap();
+        assert!(!edit.detach_initiative);
+        for withheld in [
+            "external_ref",
+            "attachments",
+            "discovery_complete",
+            "complete",
+            "owner",
+            "rank",
+        ] {
+            let mut create = json!({"idempotency_key": "k1", "title": "Checkout"});
+            create[withheld] = json!(true);
+            let e = serde_json::from_value::<CreateEpicInput>(create)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "create: {e}");
+            let mut edit = json!({"key": "TST-2", "version": 3});
+            edit[withheld] = json!(true);
+            let e = serde_json::from_value::<EditEpicInput>(edit)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "edit: {e}");
+        }
+    }
+
+    /// An initiative's receipt carries nothing whose size the planner does not limit: no brief, and no horizon,
+    /// target month or owner either (a stored horizon and a stored target month have no length bound).
+    #[test]
+    fn an_initiative_receipt_is_these_fields() {
+        let initiative: InitiativeDto = serde_json::from_value(json!({
+            "key": "TST-1", "title": "Bookings", "brief": "A long brief.", "horizon": "Now",
+            "target_month": "2027-01", "owner": "dan@example.com", "discovery_complete": null,
+            "progress": 0.5, "external_ref": "JPD-30", "version": 2
+        }))
+        .unwrap();
+        let mut receipt = InitiativeReceipt::from(initiative);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-1", "title": "Bookings", "version": 2})
+        );
+        receipt.created = Some(true);
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-1", "title": "Bookings", "version": 2, "created": true})
+        );
+    }
+
+    #[test]
+    fn the_initiative_inputs_refuse_what_the_tools_withhold() {
+        let base = json!({"idempotency_key": "k1", "title": "Bookings", "horizon": "Now"});
+        let ok: CreateInitiativeInput = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!((ok.brief, ok.target_month, ok.owner), (None, None, None));
+        // The horizon is required, as `reeve initiative create --horizon` is.
+        let e = serde_json::from_value::<CreateInitiativeInput>(
+            json!({"idempotency_key": "k1", "title": "Bookings"}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("horizon"), "{e}");
+        let edit: EditInitiativeInput =
+            serde_json::from_value(json!({"key": "TST-1", "version": 2})).unwrap();
+        assert_eq!((edit.clear_owner, edit.clear_target_month), (false, false));
+        for withheld in [
+            "external_ref",
+            "attachments",
+            "discovery_complete",
+            "complete",
+            "progress",
+            "urgent",
+        ] {
+            let mut create = base.clone();
+            create[withheld] = json!(true);
+            let e = serde_json::from_value::<CreateInitiativeInput>(create)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "create: {e}");
+            let mut edit = json!({"key": "TST-1", "version": 2});
+            edit[withheld] = json!(true);
+            let e = serde_json::from_value::<EditInitiativeInput>(edit)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(withheld), "edit: {e}");
+        }
+    }
+
+    /// Each link tool has exactly one input shape: the three fields, all required, nothing else. kb/ADR-0031 R2:
+    /// no name that means holding work back is accepted.
+    #[test]
+    fn the_item_link_inputs_are_one_shape_and_take_only_the_three_names() {
+        let call = json!({"key": "TST-2", "type": "follows", "to": "TST-1"});
+        let add: AddItemLinkInput = serde_json::from_value(call.clone()).unwrap();
+        assert_eq!(
+            (add.key.as_str(), add.link_type, add.to.as_str()),
+            ("TST-2", ItemLinkType::Follows, "TST-1")
+        );
+        let remove: RemoveItemLinkInput = serde_json::from_value(call.clone()).unwrap();
+        assert_eq!(
+            (remove.key.as_str(), remove.link_type, remove.to.as_str()),
+            ("TST-2", ItemLinkType::Follows, "TST-1")
+        );
+        let refused = |sent: serde_json::Value| {
+            let add = serde_json::from_value::<AddItemLinkInput>(sent.clone())
+                .unwrap_err()
+                .to_string();
+            let remove = serde_json::from_value::<RemoveItemLinkInput>(sent)
+                .unwrap_err()
+                .to_string();
+            (add, remove)
+        };
+        for name in ["blocks", "depends_on", "relates-to", ""] {
+            let mut sent = call.clone();
+            sent["type"] = json!(name);
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains("unknown variant") && remove.contains("unknown variant"),
+                "{name}: {add}"
+            );
+        }
+        for missing in ["key", "type", "to"] {
+            let mut sent = call.clone();
+            sent.as_object_mut().unwrap().remove(missing);
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains(missing) && remove.contains(missing),
+                "{missing}: {add}"
+            );
+        }
+        for extra in ["url", "title", "id", "blocker", "from"] {
+            let mut sent = call.clone();
+            sent[extra] = json!("x");
+            let (add, remove) = refused(sent);
+            assert!(
+                add.contains(extra) && remove.contains(extra),
+                "{extra}: {add}"
+            );
+        }
+    }
+
+    /// The receipt names the item link as the input does (`key`, `type`, `to`), so a model reads back what it
+    /// sent; `from`, the word the activity entry uses, is not an argument and not a receipt field.
+    #[test]
+    fn an_item_link_receipt_is_these_fields() {
+        let mut receipt = ItemLinkReceipt {
+            key: "TST-2".parse().unwrap(),
+            link_type: ItemLinkType::RelatesTo,
+            to: "TST-1".parse().unwrap(),
+            changed: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "type": "relates_to", "to": "TST-1", "changed": true})
+        );
+        receipt.changed = false;
+        receipt.note = Some("n".into());
+        assert_eq!(
+            serde_json::to_value(&receipt).unwrap(),
+            json!({"key": "TST-2", "type": "relates_to", "to": "TST-1", "changed": false, "note": "n"})
+        );
+        // The same three names are the input's, in both tools.
+        let sent = json!({"key": "TST-2", "type": "relates_to", "to": "TST-1"});
+        assert!(serde_json::from_value::<AddItemLinkInput>(sent.clone()).is_ok());
+        assert!(serde_json::from_value::<RemoveItemLinkInput>(sent).is_ok());
+    }
+
+    #[test]
+    fn the_web_link_inputs_are_one_shape_each() {
+        let add: AddWebLinkInput = serde_json::from_value(
+            json!({"key": "TST-2", "title": "Spec", "url": "https://example.com/spec"}),
+        )
+        .unwrap();
+        assert_eq!(
+            (add.key.as_str(), add.title.as_str(), add.url.as_str()),
+            ("TST-2", "Spec", "https://example.com/spec")
+        );
+        let remove: RemoveWebLinkInput =
+            serde_json::from_value(json!({"key": "TST-2", "id": 7})).unwrap();
+        assert_eq!((remove.key.as_str(), remove.id), ("TST-2", 7));
+        // A web link is removed by id only: no URL, no title.
+        for extra in ["url", "title", "type", "to"] {
+            let e = serde_json::from_value::<RemoveWebLinkInput>(
+                json!({"key": "TST-2", "id": 7, extra: "x"}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains(extra), "{e}");
+        }
+        for extra in ["id", "type", "to"] {
+            let e = serde_json::from_value::<AddWebLinkInput>(
+                json!({"key": "TST-2", "title": "Spec", "url": "https://example.com/spec", extra: "x"}),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(e.contains(extra), "{e}");
+        }
+        assert!(serde_json::from_value::<RemoveWebLinkInput>(json!({"key": "TST-2"})).is_err());
+        assert!(
+            serde_json::from_value::<AddWebLinkInput>(
+                json!({"key": "TST-2", "url": "https://example.com/"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_web_link_receipt_is_these_fields() {
+        let added = WebLinkReceipt {
+            item: "TST-2".parse().unwrap(),
+            id: 7,
+            title: Some("Spec".into()),
+            url: Some("https://example.com/spec".into()),
+            changed: true,
+            note: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&added).unwrap(),
+            json!({"item": "TST-2", "id": 7, "title": "Spec", "url": "https://example.com/spec", "changed": true})
+        );
+        let removed = WebLinkReceipt {
+            title: None,
+            url: None,
+            ..added
+        };
+        assert_eq!(
+            serde_json::to_value(&removed).unwrap(),
+            json!({"item": "TST-2", "id": 7, "changed": true})
         );
     }
 }

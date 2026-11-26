@@ -1,9 +1,9 @@
-use super::{Acting, FilterRef, resolve_edit, resolve_filter, resolve_opt};
+use super::{Acting, FilterRef, allowed_owner, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
 use reeve_planning::{GoalFilter, StoryFilter};
 use reeve_protocol::{
     CreateStory, DeliveryState, DoneFilter, EditItem, ItemType, KeyRef, Kind, MoveStory,
-    PromisedFilter, StoryContextDto, StoryDto, StorySort, StoryWithReadiness, normalise_email,
+    PromisedFilter, StoryContextDto, StoryDto, StorySort, StoryWithReadiness,
 };
 use serde::Deserialize;
 
@@ -161,25 +161,6 @@ pub(crate) async fn story_context(
         super::browse(state, d);
     }
     Ok(context)
-}
-
-/// A story's owner must be an allowed user (allowed by the floor or a database entry): an owner nobody can sign
-/// in as would hold work no one can pick up. The refusal repeats the owner bounded (`text::echo`), so however long
-/// it is, the words after it are still said.
-fn allowed_owner(
-    policy: &reeve_identity::AccessPolicy,
-    owner: Option<String>,
-) -> Result<Option<String>, AppError> {
-    match owner {
-        Some(o) if !policy.is_allowed(&o) => {
-            Err(reeve_planning::HandlerError::Validation(format!(
-                "{} is not an allowed user",
-                crate::text::echo(&normalise_email(&o))
-            ))
-            .into())
-        }
-        other => Ok(other),
-    }
 }
 
 /// `reeve story create`. Shared by `POST /api/v1/stories` and the MCP tool `create_story`. `b` is what the route

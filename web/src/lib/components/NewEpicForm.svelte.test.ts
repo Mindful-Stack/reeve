@@ -3,19 +3,30 @@
 // and replaces the key, Cancel-free; the parent is fixed on an initiative page and picked on the epics index.
 import { flushSync, mount, unmount, type ComponentProps } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { config, initiative } from '#lib/test/fixtures.ts';
+import { briefTemplate, config, initiative } from '#lib/test/fixtures.ts';
 import { choose, offered, picker } from '#lib/test/picker.ts';
 import { session } from '#lib/me.svelte.ts';
 import NewEpicForm from './NewEpicForm.svelte';
 
 type Posted = { idempotency_key: string; title: string; brief: string | null; initiative: string | null };
 
-const net = vi.hoisted(() => ({ posts: [] as Posted[], state: { failNext: 0, rejectNext: 0 } }));
+const net = vi.hoisted(() => ({
+	posts: [] as Posted[],
+	templates: [] as unknown[],
+	templatesFail: false,
+	/** While set, the templates are not answered: the request waits on it. */
+	gate: null as Promise<void> | null,
+	state: { failNext: 0, rejectNext: 0 }
+}));
 // The client captures `fetch` when it is created, so the fake goes in before the real module loads (#lib/test/net.ts).
 vi.mock('#lib/api/client.ts', async (orig) => {
 	const { installFetch, failure } = await import('#lib/test/net.ts');
 	const { epic } = await import('#lib/test/fixtures.ts');
 	installFetch(async ({ method, path, body }) => {
+		if (method === 'GET' && path === '/api/v1/brief-templates') {
+			if (net.gate) await net.gate;
+			return net.templatesFail ? failure('no templates today') : net.templates;
+		}
 		if (method === 'POST' && path === '/api/v1/attachments')
 			return { id: 'img-e', url: '/api/v1/attachments/img-e', filename: 'shot.png', content_type: 'image/png', byte_size: 4, uploaded_by: 'dan@example.com', uploaded_at: '2026-11-10T09:00:00Z' };
 		if (method !== 'POST' || path !== '/api/v1/epics') throw new Error(`unexpected ${method} ${path}`);
@@ -43,6 +54,9 @@ afterEach(() => {
 	net.posts.length = 0;
 	net.state.failNext = 0;
 	net.state.rejectNext = 0;
+	net.templates = [];
+	net.templatesFail = false;
+	net.gate = null;
 	session.config = null;
 });
 
@@ -57,17 +71,35 @@ function type(el: HTMLInputElement, v: string) {
 	el.dispatchEvent(new Event('change', { bubbles: true }));
 	flushSync();
 }
-function mountForm(props: Omit<ComponentProps<typeof NewEpicForm>, 'oncreated'> = {}) {
+function mountOnly(props: Omit<ComponentProps<typeof NewEpicForm>, 'oncreated'> = {}) {
 	const oncreated = vi.fn(async () => {});
 	app = mount(NewEpicForm, { target: document.body, props: { oncreated, ...props } });
 	flushSync();
 	return oncreated;
 }
+const submitButton = () => form().querySelector('button[type="submit"]') as HTMLButtonElement;
+/** The form's templates have loaded (or failed to): its submit button no longer says so. */
+async function loaded() {
+	await vi.waitFor(() => {
+		flushSync();
+		expect(submitButton().textContent).not.toContain('Loading templates');
+	});
+}
+async function mountForm(props: Omit<ComponentProps<typeof NewEpicForm>, 'oncreated'> = {}) {
+	const oncreated = mountOnly(props);
+	await loaded();
+	return oncreated;
+}
 const alertText = () => form().querySelector('[role="alert"]')?.textContent ?? '';
 
 describe('NewEpicForm', () => {
+	it('gives the brief the room a template needs, as the brief editor of an epic does', async () => {
+		await mountForm();
+		expect((field('Brief') as unknown as HTMLTextAreaElement).rows).toBe(12);
+	});
+
 	it('returns focus to Title after a create and after a failed one', async () => {
-		mountForm();
+		await mountForm();
 		type(field('Title'), 'Billing');
 		(form().querySelector('button[type="submit"]') as HTMLButtonElement).focus();
 		form().requestSubmit();
@@ -77,6 +109,7 @@ describe('NewEpicForm', () => {
 			expect(document.activeElement).toBe(field('Title'));
 		});
 		net.state.failNext = 1;
+		await loaded();
 		type(field('Title'), 'Again');
 		(form().querySelector('button[type="submit"]') as HTMLButtonElement).focus();
 		form().requestSubmit();
@@ -88,7 +121,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('leaves focus where the user moved it during a slow create', async () => {
-		mountForm();
+		await mountForm();
 		type(field('Title'), 'Billing');
 		form().requestSubmit();
 		const other = document.createElement('input');
@@ -100,7 +133,7 @@ describe('NewEpicForm', () => {
 		expect(document.activeElement).toBe(other);
 	});
 
-	it("lists the initiatives in the planning page's order, not the server's", () => {
+	it("lists the initiatives in the planning page's order, not the server's", async () => {
 		session.config = config({ horizon_buckets: ['Now', 'Next'] });
 		const ini = (key: string, title: string, horizon: string, target_month: string | null) =>
 			initiative({ key, title, horizon, target_month });
@@ -111,12 +144,12 @@ describe('NewEpicForm', () => {
 			ini('ABC-3', 'Beta', 'Now', null),
 			ini('ABC-4', 'Alpha', 'Now', '2026-12')
 		];
-		mountForm({ initiatives });
+		await mountForm({ initiatives });
 		expect(offered(form(), 'Initiative')).toEqual(['No initiative', 'ABC-4 Alpha', 'ABC-3 Beta', 'ABC-1 Later thing', 'ABC-2 Unplanned']);
 	});
 
 	it('sends the fixed initiative and no parent picker on an initiative page', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		expect([...form().querySelectorAll('label')].some((l) => l.textContent?.includes('Initiative'))).toBe(false);
 		type(field('Title'), 'An epic');
 		form().requestSubmit();
@@ -125,7 +158,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('sends one request for a double submit', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		type(field('Title'), 'An epic');
 		form().requestSubmit();
 		form().requestSubmit();
@@ -137,7 +170,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('keeps the draft and the key after a failure, then reuses the key for the retry', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		type(field('Title'), 'An epic');
 		net.state.failNext = 1;
 		form().requestSubmit();
@@ -153,7 +186,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('keeps the key when the request is rejected before an answer', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		type(field('Title'), 'An epic');
 		net.state.rejectNext = 1;
 		form().requestSubmit();
@@ -167,7 +200,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('resets the form and replaces the key after a success', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		type(field('Title'), 'An epic');
 		type(field('Brief'), 'Why');
 		form().requestSubmit();
@@ -175,6 +208,7 @@ describe('NewEpicForm', () => {
 		flushSync();
 		expect(field('Title').value).toBe('');
 		expect(field('Brief').value).toBe('');
+		await loaded();
 		type(field('Title'), 'An epic');
 		form().requestSubmit();
 		await vi.waitFor(() => expect(oncreated).toHaveBeenCalledTimes(2));
@@ -182,7 +216,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('mints a new key when the text changes after a failed send', async () => {
-		const oncreated = mountForm({ initiative: 'ABC-3' });
+		const oncreated = await mountForm({ initiative: 'ABC-3' });
 		type(field('Title'), 'An epic');
 		net.state.failNext = 1;
 		form().requestSubmit();
@@ -197,7 +231,7 @@ describe('NewEpicForm', () => {
 	});
 
 	it('picks the parent from a picker on the epics index, keeping it after a success', async () => {
-		const oncreated = mountForm({ initiatives: [initiative({ key: 'ABC-1', title: 'One' }), initiative({ key: 'ABC-2', title: 'Two' })] });
+		const oncreated = await mountForm({ initiatives: [initiative({ key: 'ABC-1', title: 'One' }), initiative({ key: 'ABC-2', title: 'Two' })] });
 		choose(form(), 'Initiative', 'ABC-2');
 		type(field('Title'), 'An epic');
 		form().requestSubmit();
@@ -206,6 +240,98 @@ describe('NewEpicForm', () => {
 		flushSync();
 		expect(picker(form(), 'Initiative').value).toBe('ABC-2 Two');
 	});
+
+	const debt = () => [briefTemplate({ id: 5, level: 'epic', name: 'Tech debt', body: '## Debt\n', is_default: true })];
+
+	it('starts the brief from the default epic template, sends what the author made of it, and starts over after a create', async () => {
+		net.templates = debt();
+		await mountForm({ initiative: 'ABC-1' });
+		expect(field('Brief').value).toBe('## Debt\n');
+		expect(field('Template').value).toBe('5');
+		type(field('Title'), 'Pay it down');
+		type(field('Brief'), '## Debt\nThe old importer.');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(1));
+		// The brief, and nothing about templates: the server is not asked to apply one.
+		expect(net.posts[0]).toEqual({ idempotency_key: expect.any(String), title: 'Pay it down', brief: '## Debt\nThe old importer.', initiative: 'ABC-1' });
+		// The form is ready for another epic: a fresh draft, with the default in the field again.
+		await vi.waitFor(() => {
+			flushSync();
+			expect(field('Title').value).toBe('');
+			expect(field('Brief').value).toBe('## Debt\n');
+		});
+	});
+
+	it('sends an emptied brief as none, and it stays none: nothing asks the server for the default', async () => {
+		net.templates = debt();
+		await mountForm({ initiative: 'ABC-1' });
+		// The default is in the field first, so what follows removes prefilled text, not nothing.
+		expect(field('Brief').value).toBe('## Debt\n');
+		type(field('Title'), 'Bare');
+		type(field('Brief'), '');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(1));
+		expect(net.posts[0]).toEqual({ idempotency_key: expect.any(String), title: 'Bare', brief: null, initiative: 'ABC-1' });
+	});
+
+	it('cannot be sent before the templates have loaded, and a lost answer is retried as the same create', async () => {
+		const { settle } = await import('#lib/test/net.ts');
+		let release!: () => void;
+		net.gate = new Promise<void>((r) => (release = r));
+		net.templates = debt();
+		mountOnly({ initiative: 'ABC-1' });
+		type(field('Title'), 'Early');
+		// The list has not arrived: the button says so, and a submit by the keyboard is refused as well.
+		expect(submitButton().disabled).toBe(true);
+		expect(submitButton().textContent).toContain('Loading templates');
+		form().requestSubmit();
+		await settle();
+		flushSync();
+		expect(net.posts).toHaveLength(0);
+
+		release();
+		await loaded();
+		expect(field('Brief').value).toBe('## Debt\n');
+		// The server stores the epic and its answer is lost on the way back.
+		net.state.rejectNext = 1;
+		form().requestSubmit();
+		await vi.waitFor(() => {
+			flushSync();
+			expect(alertText()).toContain('Failed to fetch');
+		});
+		// Nothing arrives late to change the draft: the retry has the same content and so the same key.
+		expect(field('Brief').value).toBe('## Debt\n');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(2));
+		expect(net.posts[1]).toEqual(net.posts[0]);
+	});
+
+	// Catches ownership inferred from the template list: text typed before the list arrived equals a listed
+	// template's body, and the picker took it for that template's own, so choosing another replaced it without asking.
+	it("never takes text typed before the templates arrived for a template's, even when it equals one", async () => {
+		let release!: () => void;
+		net.gate = new Promise<void>((r) => (release = r));
+		net.templates = [briefTemplate({ id: 6, level: 'epic', name: 'Spike', body: '## Question\n' }), ...debt()];
+		mountOnly({ initiative: 'ABC-1' });
+		type(field('Brief'), '## Question\n');
+		release();
+		await loaded();
+		expect(field('Brief').value).toBe('## Question\n');
+		expect(field('Template').value).toBe('');
+		type(field('Template'), '5');
+		expect(alertText()).toContain('Replace what you have written with the template "Tech debt"?');
+		expect(field('Brief').value).toBe('## Question\n');
+	});
+
+	it('works as before when the templates cannot be loaded', async () => {
+		net.templatesFail = true;
+		await mountForm({ initiative: 'ABC-1' });
+		expect(form().textContent).toContain('Templates could not be loaded');
+		type(field('Title'), 'Plain');
+		form().requestSubmit();
+		await vi.waitFor(() => expect(net.posts).toHaveLength(1));
+		expect(net.posts[0]).toEqual({ idempotency_key: expect.any(String), title: 'Plain', brief: null, initiative: 'ABC-1' });
+	});
 });
 
 describe('NewEpicForm images', () => {
@@ -213,6 +339,7 @@ describe('NewEpicForm images', () => {
 		const { file } = await import('#lib/test/events.ts');
 		app = mount(NewEpicForm, { target: document.body, props: { initiative: 'ABC-1', oncreated: () => {} } });
 		flushSync();
+		await loaded();
 		const title = document.body.querySelector<HTMLInputElement>('input:not([type=file])')!;
 		title.value = 'An epic';
 		title.dispatchEvent(new Event('input', { bubbles: true }));

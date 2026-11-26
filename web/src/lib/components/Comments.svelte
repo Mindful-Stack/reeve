@@ -95,11 +95,15 @@
 <style>
 	.thread {
 		display: grid;
+		/* A column no wider than the thread: a comment's wide table scrolls in its own wrapper instead of widening it. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
 		margin: 0 0 0.5rem;
 		padding: 0;
 		list-style: none;
 		font-size: 14px;
+		/* The column is bounded, so a long unbroken author name breaks instead of crossing the edge. */
+		overflow-wrap: anywhere;
 	}
 	form {
 		display: grid;

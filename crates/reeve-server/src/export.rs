@@ -116,6 +116,7 @@ pub async fn export_document_in(
     let attachments = src.handlers.export_attachments(&mut tx).await?;
     let item_links = src.handlers.export_item_links(&mut tx).await?;
     let web_links = src.handlers.export_web_links(&mut tx).await?;
+    let brief_templates = src.handlers.export_brief_templates(&mut tx).await?;
     let users = reeve_identity::list_users_in(&mut tx)
         .await?
         .into_iter()
@@ -154,6 +155,7 @@ pub async fn export_document_in(
         attachments,
         item_links,
         web_links,
+        brief_templates,
         activity,
         users,
     })
@@ -325,6 +327,7 @@ mod tests {
             attachments: vec![],
             item_links: vec![],
             web_links: vec![],
+            brief_templates: vec![],
             activity: vec![],
             users: vec![],
         };

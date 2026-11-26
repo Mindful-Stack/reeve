@@ -75,7 +75,8 @@ impl Handlers {
     }
 
     /// `create_initiative`, and whether this call inserted it (false when its idempotency key already had one).
-    pub(crate) async fn create_initiative_reporting(
+    /// Public for the server's create action, whose MCP receipt says whether this call created the item.
+    pub async fn create_initiative_reporting(
         &self,
         c: &Ctx,
         idem: &str,
@@ -87,13 +88,10 @@ impl Handlers {
         external_ref: Option<String>,
         attachments: &[Uuid],
     ) -> Result<(Initiative, bool), HandlerError> {
-        let attachments = attachment_ids(attachments)?;
-        if let Some(k) = self
-            .ports
-            .keys
-            .find_by_idempotency(ItemType::Initiative, idem)
-            .await?
-        {
+        let (attachments, made) = self
+            .before_create(ItemType::Initiative, idem, attachments)
+            .await?;
+        if let Some(k) = made {
             return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
         let mut tx = self.pool.begin().await?;
@@ -199,6 +197,14 @@ impl Handlers {
     ) -> Result<Initiative, HandlerError> {
         let attachments = attachment_ids(attachments)?;
         let cur = self.ports.initiatives.get_initiative(key).await?;
+        // The version the caller read must be the row read here: the row written below is rebuilt from this read (the
+        // discovery mark included), and the conditional update only proves the row is at the caller's version when it
+        // is written, which a concurrent write can make true of a caller ahead of this read.
+        if cur.version() != version {
+            return Err(HandlerError::Conflict {
+                current: cur.version(),
+            });
+        }
         let new_horizon = horizon.as_deref().unwrap_or(cur.horizon());
         check_horizon_change(cur.horizon(), new_horizon, &self.settings.horizon_buckets)?;
         // Validated above, so the constructor sees the chosen horizon as its only bucket.
@@ -248,7 +254,19 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.ports.initiatives.get_initiative(key).await?)
+        // The row as this write left it: the update wrote every field of `next` at `version` (the version read,
+        // checked above) and raised it by one. Never a read after the commit, which another writer can land before.
+        Ok(Initiative::from_persisted(
+            next.key().clone(),
+            next.title().into(),
+            next.brief().into(),
+            next.horizon().into(),
+            next.target_month().map(String::from),
+            next.owner().map(String::from),
+            next.discovery().cloned(),
+            next.external_ref().map(String::from),
+            version + 1,
+        ))
     }
 
     /// One initiative with its progress and urgency, all from one `REPEATABLE READ READ ONLY` snapshot. Its item links

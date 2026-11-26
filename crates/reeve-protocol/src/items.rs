@@ -42,6 +42,17 @@ pub struct InitiativeDto {
     pub web_links: Option<Vec<crate::links::WebLinkDto>>,
 }
 
+/// Whether `month` is a target month as the planner reads one: exactly seven ASCII characters `YYYY-MM` with a
+/// month 01 to 12 (text order then sorts by date). The one shape: the Now ranking counts any other stored value as
+/// no month, and the server's actions refuse any other value a request names.
+pub fn is_target_month(month: &str) -> bool {
+    let b = month.as_bytes();
+    b.len() == 7
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[4] == b'-'
+        && matches!(&b[5..], [b'0', b'1'..=b'9'] | [b'1', b'0'..=b'2'])
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct EpicDto {
     pub key: Key,
@@ -354,4 +365,32 @@ pub struct SimilarStory {
     pub delivery: DeliveryState,
     /// Set when `delivery` is done: completed or dropped.
     pub resolution: Option<Resolution>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The web client's `validMonth` (`web/src/lib/forms.ts`) accepts and refuses the same texts.
+    #[test]
+    fn a_target_month_is_exactly_yyyy_mm_with_a_real_month() {
+        for month in ["2027-03", "2026-12", "2027-01", "0001-10"] {
+            assert!(is_target_month(month), "{month}");
+        }
+        for not_a_month in [
+            "",
+            "2027",
+            "2027-3",
+            "2027-00",
+            "2027-13",
+            "2027-03-01",
+            " 2027-03",
+            "2027-03 ",
+            "2027/03",
+            "March 2027",
+            "２０２７-03",
+        ] {
+            assert!(!is_target_month(not_a_month), "{not_a_month:?}");
+        }
+    }
 }

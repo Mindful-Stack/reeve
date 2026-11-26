@@ -1841,6 +1841,312 @@ async fn a_story_owner_must_be_an_allowed_user() {
     assert_eq!(b["value"]["owner"], serde_json::Value::Null);
 }
 
+/// An initiative's owner is set on create and edit, cleared with null, and must be an allowed user, as a story's
+/// must. Only an owner the request names is judged: a stored owner outside the allowlist is kept by an edit that
+/// does not name the owner, and can be cleared. Import and plan apply do not run the check: they do not go through
+/// the shared actions, and an imported owner is whoever the other tool had.
+#[tokio::test]
+async fn an_initiative_owner_must_be_an_allowed_user() {
+    const EVE: &str = "eve@elsewhere.org";
+    let h = harness_with(|cfg| format!("{cfg}\n[import]\nenabled = true")).await;
+    let send = |method: &'static str, path: String, body: serde_json::Value| {
+        let h = &h;
+        async move { call(&h.app, Some(&h.admin_token), method, &path, Some(body)).await }
+    };
+    let (st, b) = send(
+        "POST",
+        "/api/v1/initiatives".into(),
+        json!({"idempotency_key":"i","title":"Owned","horizon":"Now","owner":"Anna@Example.com"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["owner"], "anna@example.com");
+    let path = format!(
+        "/api/v1/initiatives/{}",
+        b["value"]["key"].as_str().unwrap()
+    );
+
+    let (st, b) = send(
+        "POST",
+        "/api/v1/initiatives".into(),
+        json!({"idempotency_key":"j","title":"Not ours","horizon":"Now","owner":"eve@elsewhere.org"}),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert!(
+        b["message"]
+            .as_str()
+            .unwrap()
+            .contains("eve@elsewhere.org is not an allowed user"),
+        "{b}"
+    );
+    let (_, all) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/initiatives",
+        None,
+    )
+    .await;
+    assert_eq!(
+        all["value"].as_array().map(Vec::len),
+        Some(1),
+        "nothing was created"
+    );
+
+    let (st, b) = send("PATCH", path.clone(), json!({"version":1,"owner":EVE})).await;
+    assert_eq!(st, 400, "{b}");
+    let (st, b) = send(
+        "PATCH",
+        path.clone(),
+        json!({"version":1,"title":"Renamed"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["owner"], "anna@example.com");
+    let (st, b) = send("PATCH", path, json!({"version":2,"owner":null})).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["owner"], serde_json::Value::Null);
+
+    // The two exemptions, which also store what the rest of the test needs: an owner outside the allowlist.
+    let (st, b) = send(
+        "POST",
+        "/api/v1/import/initiatives".into(),
+        json!({"external_ref":"JPD-1","title":"Imported","brief":null,"horizon":"Now",
+               "target_month":null,"owner":"Eve@Elsewhere.org","discovery_complete":false}),
+    )
+    .await;
+    assert_eq!(st, 200, "import is exempt: {b}");
+    let imported = format!(
+        "/api/v1/initiatives/{}",
+        b["value"]["key"].as_str().unwrap()
+    );
+    let (st, b) = send(
+        "POST",
+        "/api/v1/plans".into(),
+        json!({"id":"owner-plan","initiatives":[{"name":"planned","title":"Planned","horizon":"Now","owner":EVE}]}),
+    )
+    .await;
+    assert_eq!(st, 200, "plan apply is exempt: {b}");
+    let planned = format!(
+        "/api/v1/initiatives/{}",
+        b["value"]["items"][0]["key"].as_str().unwrap()
+    );
+
+    // A stored owner who is not allowed: kept by an edit that does not name the owner, refused when named again,
+    // and removed by a clear.
+    for path in [imported, planned] {
+        let (_, stored) = call(&h.app, Some(&h.admin_token), "GET", &path, None).await;
+        assert_eq!(
+            stored["value"]["owner"], EVE,
+            "the control, {path}: {stored}"
+        );
+        let v = stored["value"]["version"].as_i64().unwrap();
+        let (st, b) = send(
+            "PATCH",
+            path.clone(),
+            json!({"version":v,"title":"Renamed"}),
+        )
+        .await;
+        assert_eq!(st, 200, "{path}: {b}");
+        assert_eq!(
+            b["value"]["owner"], EVE,
+            "a title-only edit keeps the stored owner"
+        );
+        let (st, b) = send("PATCH", path.clone(), json!({"version":v + 1,"owner":EVE})).await;
+        assert_eq!(st, 400, "naming that owner again is judged: {b}");
+        let (st, b) = send("PATCH", path.clone(), json!({"version":v + 1,"owner":null})).await;
+        assert_eq!(st, 200, "{path}: {b}");
+        assert_eq!(b["value"]["owner"], serde_json::Value::Null);
+    }
+}
+
+/// A target month a request names must be `YYYY-MM` with a month 01 to 12, on create and on edit: anything else
+/// would silently count as no month in the Now ranking. A stored month in another shape (an import, or a row from
+/// before this check) is not judged: an edit that does not name the month keeps it, and it can be replaced or
+/// cleared.
+#[tokio::test]
+async fn a_target_month_a_request_names_must_be_a_month() {
+    let h = harness().await;
+    let send = |method: &'static str, path: String, body: serde_json::Value| {
+        let h = &h;
+        async move { call(&h.app, Some(&h.admin_token), method, &path, Some(body)).await }
+    };
+    let create = |idem: &str, month: &str| {
+        send(
+            "POST",
+            "/api/v1/initiatives".into(),
+            json!({"idempotency_key":idem,"title":"Dated","horizon":"Now","target_month":month}),
+        )
+    };
+    let (st, b) = create("m-ok", "2027-03").await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["target_month"], "2027-03");
+    let key = b["value"]["key"].as_str().unwrap().to_string();
+    let path = format!("/api/v1/initiatives/{key}");
+
+    let bad = [
+        "March 2027",
+        "2027-3",
+        "2027-13",
+        "2027-00",
+        "2027-03-01",
+        " 2027-03",
+        "2027/03",
+        "",
+    ];
+    for (n, month) in bad.iter().enumerate() {
+        let (st, b) = create(&format!("m-bad-{n}"), month).await;
+        assert_eq!(st, 400, "create with {month:?}: {b}");
+        assert!(
+            b["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("target month must be YYYY-MM"),
+            "{month:?}: {b}"
+        );
+        let (st, b) = send(
+            "PATCH",
+            path.clone(),
+            json!({"version":1,"target_month":month}),
+        )
+        .await;
+        assert_eq!(st, 400, "edit with {month:?}: {b}");
+    }
+    let (_, all) = call(
+        &h.app,
+        Some(&h.admin_token),
+        "GET",
+        "/api/v1/initiatives",
+        None,
+    )
+    .await;
+    assert_eq!(
+        all["value"].as_array().map(Vec::len),
+        Some(1),
+        "nothing was created"
+    );
+
+    // A stored month in another shape, written past the API as an old row or an import would hold it.
+    sqlx::query("UPDATE initiatives SET target_month = 'Q3 2027' WHERE key = $1")
+        .bind(&key)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let (st, b) = send(
+        "PATCH",
+        path.clone(),
+        json!({"version":1,"title":"Renamed"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(
+        b["value"]["target_month"], "Q3 2027",
+        "a title-only edit keeps the stored month"
+    );
+    let (st, b) = send(
+        "PATCH",
+        path.clone(),
+        json!({"version":2,"target_month":"2027-12"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["target_month"], "2027-12");
+    let (st, b) = send("PATCH", path, json!({"version":3,"target_month":null})).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(b["value"]["target_month"], serde_json::Value::Null);
+}
+
+/// Decision A of 2026-11-24: an epic's `edited` entry names every field the edit changed (`fields`: title, brief,
+/// initiative), in the shape a required decision's `edited` entry has, and gives the old and new value (`from`,
+/// `to`; each initiative a key or null) for the initiative alone, because a move changes whose discovery mark and
+/// required decisions the epic's stories wait on. An edit that leaves the initiative where it was gives no values,
+/// and an edit that changes nothing names no field.
+#[tokio::test]
+async fn an_epic_edit_that_moves_it_logs_the_initiative_it_left_and_joined() {
+    let h = harness().await;
+    let create = |path: &'static str, body: serde_json::Value| {
+        let h = &h;
+        async move {
+            let (st, b) = call(&h.app, Some(&h.admin_token), "POST", path, Some(body)).await;
+            assert_eq!(st, 200, "{b}");
+            b["value"]["key"].as_str().unwrap().to_string()
+        }
+    };
+    let a = create(
+        "/api/v1/initiatives",
+        json!({"idempotency_key":"mv-a","title":"A","horizon":"Now"}),
+    )
+    .await;
+    let b = create(
+        "/api/v1/initiatives",
+        json!({"idempotency_key":"mv-b","title":"B","horizon":"Now"}),
+    )
+    .await;
+    let epic = create(
+        "/api/v1/epics",
+        json!({"idempotency_key":"mv-e","title":"Checkout"}),
+    )
+    .await;
+    // Sends one edit at the epic's current version and answers the payload of the `edited` entry it wrote.
+    let edit = |change: serde_json::Value| {
+        let (h, epic) = (&h, &epic);
+        async move {
+            let path = format!("/api/v1/epics/{epic}");
+            let (_, cur) = call(&h.app, Some(&h.admin_token), "GET", &path, None).await;
+            let mut body = change;
+            body["version"] = cur["value"]["version"].clone();
+            let (st, b) = call(&h.app, Some(&h.admin_token), "PATCH", &path, Some(body)).await;
+            assert_eq!(st, 200, "{b}");
+            let (_, log) = call(
+                &h.app,
+                Some(&h.admin_token),
+                "GET",
+                &format!("/api/v1/activity?entity_key={epic}"),
+                None,
+            )
+            .await;
+            let mut edits: Vec<serde_json::Value> = log["value"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["action"] == "edited")
+                .cloned()
+                .collect();
+            edits.sort_by_key(|e| e["id"].as_i64());
+            edits.pop().unwrap()["payload"].clone()
+        }
+    };
+    let moved = |fields: serde_json::Value, from: serde_json::Value, to: serde_json::Value| json!({"fields": fields, "from": {"initiative": from}, "to": {"initiative": to}});
+    assert_eq!(
+        edit(json!({"title":"Checkout flow"})).await,
+        json!({"fields": ["title"]}),
+        "a retitle names the field and gives no values"
+    );
+    assert_eq!(
+        edit(json!({"initiative": a})).await,
+        moved(json!(["initiative"]), json!(null), json!(a))
+    );
+    assert_eq!(
+        edit(json!({"initiative": a, "title": "Checkout"})).await,
+        json!({"fields": ["title"]}),
+        "naming the initiative it is already in is no move"
+    );
+    assert_eq!(
+        edit(json!({"title": "Checkout"})).await,
+        json!({}),
+        "an edit that changes nothing names no field"
+    );
+    assert_eq!(
+        edit(json!({"initiative": b, "brief": "Moved."})).await,
+        moved(json!(["brief", "initiative"]), json!(a), json!(b))
+    );
+    assert_eq!(
+        edit(json!({"initiative": null})).await,
+        moved(json!(["initiative"]), json!(b), json!(null))
+    );
+}
+
 /// Any item takes comments by its key alone (`/items/{key}/comments`); a story's keep working by both routes.
 #[tokio::test]
 async fn any_item_takes_comments_by_its_key() {

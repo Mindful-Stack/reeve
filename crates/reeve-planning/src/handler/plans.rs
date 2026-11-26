@@ -334,9 +334,10 @@ impl Handlers {
                 Some(id) => (id, false),
                 None => {
                     let mut tx = self.pool.begin().await?;
-                    let added = self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
+                    let (added, created) =
+                        self.add_web_link_in(&mut tx, c, level, &on, &link).await?;
                     tx.commit().await?;
-                    added
+                    (added.id, created)
                 }
             };
             web_links.push(PlannedWebLink {
