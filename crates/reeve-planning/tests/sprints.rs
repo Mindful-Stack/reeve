@@ -3404,8 +3404,20 @@ mod planning_gates {
             title: title.into(),
         };
         let planned = h.sprint_planning().await.unwrap();
+        let gates: Vec<GoalGates> = planned
+            .goals
+            .iter()
+            .map(|g| GoalGates {
+                goal_id: g.goal_id,
+                initiatives: g.initiatives.iter().map(|x| x.key.clone()).collect(),
+                discoveries: g.discoveries.clone(),
+                decisions: g.decisions.clone(),
+                discovery_total: g.discovery_total,
+                decisions_total: g.decisions_total,
+            })
+            .collect();
         assert_eq!(
-            planned.gates,
+            gates,
             vec![
                 GoalGates {
                     goal_id: ga.id,
@@ -3444,11 +3456,11 @@ mod planning_gates {
             planned
                 .first_bucket_initiatives
                 .iter()
-                .any(|b| &b.key == i.key() && b.goals.contains(&ga.id)),
+                .any(|b| &b.key == i.key() && b.goals.iter().any(|g| g.id == ga.id)),
             "{:?}",
             planned.first_bucket_initiatives
         );
-        assert!(planned.initiatives.iter().any(|x| x.key() == i.key()));
+        assert!(planned.goals[0].initiatives[0].in_first_bucket);
     }
 
     /// An initiative's goals are the active sprint's first, then the draft's, by id inside each: a draft goal with the
@@ -3506,7 +3518,18 @@ mod planning_gates {
             .iter()
             .find(|b| &b.key == i.key())
             .unwrap();
-        assert_eq!(b.goals, vec![active_goal.id, draft_goal.id]);
+        let got: Vec<(i64, &str, bool)> = b
+            .goals
+            .iter()
+            .map(|g| (g.id, g.outcome.as_str(), g.active))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (active_goal.id, "Active", true),
+                (draft_goal.id, "Draft", false)
+            ]
+        );
     }
 
     /// With no bucket configured there is no first bucket and no list, and the gates are read all the same.
@@ -3550,10 +3573,11 @@ mod planning_gates {
             "{:?}",
             planned.first_bucket_initiatives
         );
-        assert!(planned.initiatives.iter().any(|x| x.key() == i.key()));
-        assert_eq!(planned.gates.len(), 1);
-        assert_eq!(planned.gates[0].goal_id, g.id);
-        assert_eq!(planned.gates[0].initiatives, vec![i.key().clone()]);
+        assert_eq!(planned.goals.len(), 1);
+        assert_eq!(planned.goals[0].goal_id, g.id);
+        assert_eq!(planned.goals[0].initiatives.len(), 1);
+        assert_eq!(&planned.goals[0].initiatives[0].key, i.key());
+        assert!(!planned.goals[0].initiatives[0].in_first_bucket);
     }
 
     /// The first bucket is the configured one, not a name the read knows: an initiative in "Now" is not listed when
@@ -3672,7 +3696,7 @@ mod planning_gates {
             .await
             .unwrap();
         }
-        assert_eq!(h.sprint_planning().await.unwrap().gates.len(), 10);
+        assert_eq!(h.sprint_planning().await.unwrap().goals.len(), 10);
         let ten = super::common::statements(&pool, read).await;
         assert_eq!(one, ten);
     }

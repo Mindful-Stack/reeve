@@ -12,8 +12,8 @@ use crate::domain::urgency::{MarkState, Urgency};
 use crate::ports::{ItemHead, StoredBriefTemplate, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
-    AffectedStoryDto, BriefTemplateDto, BucketInitiativeDto, ClosedDto, CriterionDto,
-    DecisionGateDto, DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto,
+    AffectedStoryDto, BriefTemplateDto, BucketGoalDto, BucketInitiativeDto, ClosedDto,
+    CriterionDto, DecisionGateDto, DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto,
     DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto,
     EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto, GoalGatesDto,
     GoalInitiativeDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto,
@@ -260,27 +260,22 @@ pub fn goal_dto(g: &Goal, links: &[GoalLink]) -> GoalDto {
     }
 }
 
-/// The planning answer on the wire. Titles and horizons come from the snapshot's initiatives; a key the snapshot does
-/// not hold (none can exist inside one snapshot) is left out instead of invented.
+/// The planning answer on the wire: the domain's finished read model, copied field for field.
 pub fn sprint_planning_dto(p: &SprintPlanning) -> SprintPlanningDto {
-    let by_key: std::collections::HashMap<&Key, &Initiative> =
-        p.initiatives.iter().map(|i| (i.key(), i)).collect();
-    let bucket = p.first_bucket.as_deref();
     SprintPlanningDto {
         goals: p
-            .gates
+            .goals
             .iter()
             .map(|g| GoalGatesDto {
                 goal_id: g.goal_id,
                 initiatives: g
                     .initiatives
                     .iter()
-                    .filter_map(|k| by_key.get(k))
                     .map(|i| GoalInitiativeDto {
-                        key: i.key().clone(),
-                        title: i.title().to_owned(),
-                        horizon: i.horizon().to_owned(),
-                        in_first_bucket: bucket == Some(i.horizon()),
+                        key: i.key.clone(),
+                        title: i.title.clone(),
+                        horizon: i.horizon.clone(),
+                        in_first_bucket: i.in_first_bucket,
                     })
                     .collect(),
                 discoveries: g
@@ -308,13 +303,23 @@ pub fn sprint_planning_dto(p: &SprintPlanning) -> SprintPlanningDto {
         first_bucket_initiatives: p
             .first_bucket_initiatives
             .iter()
-            .filter_map(|b| by_key.get(&b.key).map(|i| (b, i)))
-            .map(|(b, i)| BucketInitiativeDto {
+            .map(|b| BucketInitiativeDto {
                 key: b.key.clone(),
-                title: i.title().to_owned(),
-                target_month: i.target_month().map(str::to_owned),
-                discovery_complete: i.discovery().is_some(),
-                goals: b.goals.clone(),
+                title: b.title.clone(),
+                target_month: b.target_month.clone(),
+                discovery_complete: b.discovery.as_ref().map(|d| DiscoveryMarkDto {
+                    at: d.at,
+                    by: d.by.clone(),
+                }),
+                goals: b
+                    .goals
+                    .iter()
+                    .map(|g| BucketGoalDto {
+                        id: g.id,
+                        outcome: g.outcome.clone(),
+                        active: g.active,
+                    })
+                    .collect(),
             })
             .collect(),
     }

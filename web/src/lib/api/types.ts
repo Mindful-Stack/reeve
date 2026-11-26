@@ -48,6 +48,7 @@ export type SprintWarning = S['SprintWarning'];
 export type CreatedGoal = S['CreatedGoalDto'];
 export type GoalGates = S['GoalGatesDto'];
 export type GoalInitiative = S['GoalInitiativeDto'];
+export type BucketGoal = S['BucketGoalDto'];
 export type BucketInitiative = S['BucketInitiativeDto'];
 export type SprintPlanning = S['SprintPlanningDto'];
 export type DiscoveryGate = S['DiscoveryGateDto'];

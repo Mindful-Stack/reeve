@@ -5,6 +5,7 @@ import type {
 	ActivityEntry,
 	AffectedStory,
 	BriefTemplate,
+	BucketGoal,
 	BucketInitiative,
 	DecisionQueue,
 	DecisionQueueEntry,
@@ -205,7 +206,13 @@ export function goalInitiative(key = 'ABC-1', over: Partial<GoalInitiative> = {}
 /** An initiative of the first bucket that no goal reaches. */
 export function bucketInitiative(over: Partial<BucketInitiative> = {}): BucketInitiative {
 	const key = over.key ?? 'ABC-1';
-	return { key, title: `Initiative ${key}`, target_month: null, discovery_complete: false, goals: [], ...over };
+	return { key, title: `Initiative ${key}`, target_month: null, discovery_complete: null, goals: [], ...over };
+}
+
+/** A goal reaching a bucket initiative: in the active sprint unless `active: false`. */
+export function bucketGoal(over: Partial<BucketGoal> = {}): BucketGoal {
+	const id = over.id ?? 1;
+	return { id, outcome: `Goal ${id}`, active: true, ...over };
 }
 
 /** The planning answer: no goals, the bucket "Now" with no initiatives. */

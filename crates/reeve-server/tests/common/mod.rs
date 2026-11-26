@@ -12,8 +12,7 @@ pub mod oauth;
 pub const WEBHOOK_SECRET: &str = "0123456789abcdef0123";
 
 pub struct Harness {
-    /// Shared so that `harness_beside` can serve the same database from a second server.
-    pub db: std::sync::Arc<reeve_testdb::TestDb>,
+    pub db: reeve_testdb::TestDb,
     pub app: axum::Router,
     pub state: AppState,
     pub url: String,
@@ -83,15 +82,7 @@ pub async fn https_harness() -> Harness {
     .await
 }
 
-/// A second server on the same database as `h`, its configuration text edited before it is parsed: for a test that
-/// seeds data through one configuration and reads it through another. Both share the database; `h` stays usable.
-pub async fn harness_beside(h: &Harness, edit: impl FnOnce(String) -> String) -> Harness {
-    build_on(h.db.clone(), edit, |_| {}).await
-}
-
-/// The standard harness with its parsed configuration changed before the state is built. The patch is applied after
-/// the state is built, so it does not reach the planning handlers' settings (horizon buckets, key prefix, ...): use
-/// `harness_with` for those.
+/// The standard harness with its parsed configuration changed before the state is built.
 pub async fn harness_patched(patch: impl FnOnce(&mut ServerConfig)) -> Harness {
     build(|cfg| cfg, patch).await
 }
@@ -101,7 +92,7 @@ async fn build(
     patch: impl FnOnce(&mut ServerConfig),
 ) -> Harness {
     build_on(
-        std::sync::Arc::new(reeve_testdb::database(&composed_migrator()).await),
+        reeve_testdb::database(&composed_migrator()).await,
         edit,
         patch,
     )
@@ -112,14 +103,11 @@ async fn build(
 /// server itself (stop it, run commands inside it with `docker exec`).
 pub async fn harness_in_own_container() -> (ContainerAsync<Postgres>, Harness) {
     let (c, db) = reeve_testdb::own_container(&composed_migrator()).await;
-    (
-        c,
-        build_on(std::sync::Arc::new(db), |cfg| cfg, |_| {}).await,
-    )
+    (c, build_on(db, |cfg| cfg, |_| {}).await)
 }
 
 async fn build_on(
-    db: std::sync::Arc<reeve_testdb::TestDb>,
+    db: reeve_testdb::TestDb,
     edit: impl FnOnce(String) -> String,
     patch: impl FnOnce(&mut ServerConfig),
 ) -> Harness {

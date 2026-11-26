@@ -1005,26 +1005,23 @@ fn unknown_promise_values_decode_to_unknown() {
 
 #[test]
 fn sprint_planning_dto_carries_every_field() {
-    let ini = |key: &str, title: &str, horizon: &str, month: Option<&str>, marked: bool| {
-        Initiative::from_persisted(
-            k(key),
-            title.into(),
-            String::new(),
-            horizon.into(),
-            month.map(str::to_owned),
-            None,
-            marked.then(|| DiscoveryMark {
-                at: chrono::DateTime::UNIX_EPOCH,
-                by: "dan".into(),
-            }),
-            None,
-            1,
-        )
-    };
     let p = SprintPlanning {
-        gates: vec![GoalGates {
+        goals: vec![PlanningGoal {
             goal_id: 3,
-            initiatives: vec![k("ABC-1"), k("ABC-7")],
+            initiatives: vec![
+                ReachedInitiative {
+                    key: k("ABC-1"),
+                    title: "Bookings".into(),
+                    horizon: "Now".into(),
+                    in_first_bucket: true,
+                },
+                ReachedInitiative {
+                    key: k("ABC-7"),
+                    title: "Payments".into(),
+                    horizon: "Later".into(),
+                    in_first_bucket: false,
+                },
+            ],
             discoveries: vec![DiscoveryGate {
                 key: k("ABC-2"),
                 item: ItemType::Epic,
@@ -1040,15 +1037,37 @@ fn sprint_planning_dto_carries_every_field() {
             discovery_total: 4,
             decisions_total: 5,
         }],
-        initiatives: vec![
-            ini("ABC-1", "Bookings", "Now", Some("2026-12"), true),
-            ini("ABC-7", "Payments", "Later", None, false),
-        ],
         first_bucket: Some("Now".into()),
-        first_bucket_initiatives: vec![BucketInitiative {
-            key: k("ABC-1"),
-            goals: vec![3],
-        }],
+        first_bucket_initiatives: vec![
+            BucketInitiative {
+                key: k("ABC-1"),
+                title: "Bookings".into(),
+                target_month: Some("2026-12".into()),
+                discovery: Some(DiscoveryMark {
+                    at: chrono::DateTime::UNIX_EPOCH,
+                    by: "dan".into(),
+                }),
+                goals: vec![
+                    BucketGoal {
+                        id: 3,
+                        outcome: "Book".into(),
+                        active: true,
+                    },
+                    BucketGoal {
+                        id: 4,
+                        outcome: "Pay".into(),
+                        active: false,
+                    },
+                ],
+            },
+            BucketInitiative {
+                key: k("ABC-8"),
+                title: "Reports".into(),
+                target_month: None,
+                discovery: None,
+                goals: vec![],
+            },
+        ],
     };
     assert_eq!(
         v!(sprint_planning_dto(&p)),
@@ -1065,31 +1084,15 @@ fn sprint_planning_dto_carries_every_field() {
             }],
             "first_bucket": "Now",
             "first_bucket_initiatives": [
-                {"key": "ABC-1", "title": "Bookings", "target_month": "2026-12", "discovery_complete": true, "goals": [3]}
+                {"key": "ABC-1", "title": "Bookings", "target_month": "2026-12",
+                 "discovery_complete": {"at": "1970-01-01T00:00:00Z", "by": "dan"},
+                 "goals": [
+                    {"id": 3, "outcome": "Book", "active": true},
+                    {"id": 4, "outcome": "Pay", "active": false}
+                 ]},
+                {"key": "ABC-8", "title": "Reports", "target_month": null,
+                 "discovery_complete": null, "goals": []}
             ]
-        })
-    );
-    // No bucket configured: no initiative is in it, whatever its horizon.
-    let none = SprintPlanning {
-        first_bucket: None,
-        first_bucket_initiatives: vec![],
-        ..p
-    };
-    assert_eq!(
-        v!(sprint_planning_dto(&none)),
-        json!({
-            "goals": [{
-                "goal_id": 3,
-                "initiatives": [
-                    {"key": "ABC-1", "title": "Bookings", "horizon": "Now", "in_first_bucket": false},
-                    {"key": "ABC-7", "title": "Payments", "horizon": "Later", "in_first_bucket": false}
-                ],
-                "discoveries": [{"key": "ABC-2", "item": "epic", "title": "E"}],
-                "decisions": [{"on": "ABC-4", "reason": {"reason": "decision_unchecked", "decision_id": 9, "title": "D"}}],
-                "discovery_total": 4, "decisions_total": 5
-            }],
-            "first_bucket": null,
-            "first_bucket_initiatives": []
         })
     );
 }
