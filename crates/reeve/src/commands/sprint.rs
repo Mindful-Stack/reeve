@@ -14,6 +14,10 @@ pub enum Sprint {
     },
     /// List the active sprint, the draft and the closed sprints (newest first) with their goals and verdicts.
     Ls,
+    /// Show the goals of the active sprint and the next with the initiatives they reach and what they wait on, then the
+    /// first horizon bucket's initiatives with their goals. `!` marks a goal that reaches an initiative outside that
+    /// bucket, or none. --json prints the planning answer alone.
+    Planning,
     /// Open the draft sprint (interactive tokens only); this creates the next draft.
     Open {
         /// Last day of the sprint (YYYY-MM-DD); defaults to one configured sprint length after today.
@@ -216,6 +220,23 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::sprint_list,
         ),
+        // `--json` makes one read, `GET /sprints/planning`, so a failure of `GET /sprints` cannot fail a call that never
+        // needed it; the text also reads `GET /sprints` for the goals' wording and counts.
+        Sprint::Planning if json => finish(
+            c.get::<SprintPlanningDto>("/sprints/planning").await?,
+            json,
+            |_| String::new(),
+        ),
+        Sprint::Planning => match c.get::<SprintsDto>("/sprints").await? {
+            Outcome::Ok(sprints) => finish(
+                c.get::<SprintPlanningDto>("/sprints/planning").await?,
+                json,
+                |p| crate::render::sprint_planning(&sprints, p),
+            ),
+            other => finish(carry::<_, SprintPlanningDto>(other), json, |_| {
+                String::new()
+            }),
+        },
         Sprint::Open { ends } => {
             let draft = match c.get::<SprintsDto>("/sprints").await? {
                 Outcome::Ok(SprintsDto { draft: Some(d), .. }) => d,

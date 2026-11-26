@@ -1150,6 +1150,65 @@ async fn flow() {
         "{serving:?}"
     );
     assert!(!serving.contains(&key.as_str()), "{serving:?}");
+    // `reeve sprint planning`: the goal reaches Orion (story a's epic's initiative), which is in the first bucket.
+    let planned = ok(reeve(&bot).args(["sprint", "planning"]).output().unwrap());
+    assert_eq!(planned["value"]["first_bucket"], "Now", "{planned}");
+    let mine = planned["value"]["goals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["goal_id"].as_i64().unwrap().to_string() == gid)
+        .unwrap_or_else(|| panic!("the goal is in the planning answer: {planned}"));
+    assert_eq!(mine["initiatives"][0]["key"], ini_key.as_str(), "{planned}");
+    assert_eq!(mine["initiatives"][0]["in_first_bucket"], true, "{planned}");
+    assert!(
+        planned["value"]["first_bucket_initiatives"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["key"] == ini_key.as_str()
+                && i["goals"].as_array().unwrap().iter().any(|g| g["id"]
+                    .as_i64()
+                    .map(|g| g.to_string())
+                    .as_deref()
+                    == Some(gid.as_str())
+                    && g["outcome"] == "Customers book sessions")),
+        "{planned}"
+    );
+    assert!(
+        planned["value"].get("sprints").is_none(),
+        "--json is the planning answer alone: {planned}"
+    );
+    assert_eq!(
+        mine["initiatives"].as_array().unwrap().len(),
+        1,
+        "{planned}"
+    );
+    let text = plain(&bot).args(["sprint", "planning"]).output().unwrap();
+    assert_eq!(text.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&text.stdout).to_string();
+    assert!(text.contains("This sprint #"), "{text}");
+    assert!(text.contains("Next sprint #"), "{text}");
+    assert!(text.contains("waits on 2:"), "{text}");
+    let line = format!("initiatives: {ini_key} Now\n");
+    assert!(!text.contains(&format!("{ini_key} Now !")), "{text}");
+    assert!(text.contains(&line), "{text}");
+    assert!(
+        text.contains(&format!(
+            "goal #{gid} Customers book sessions\n    initiatives: {ini_key} Now\n"
+        )),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Counts the work completed in this sprint; work started but not finished shows as in flight."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("Now initiatives\n  {ini_key} ")),
+        "{text}"
+    );
     let mut b_version = 0;
     for s in [&a, &b] {
         let moved = ok(reeve(&human)
