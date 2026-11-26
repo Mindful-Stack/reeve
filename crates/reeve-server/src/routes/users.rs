@@ -10,7 +10,8 @@ use reeve_protocol::*;
 use std::sync::Arc;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-fn require_admin(c: &Caller) -> Result<(), AppError> {
+/// The role check of every admin-only route that takes either kind of token: 403 `forbidden` for a member.
+pub(super) fn require_admin(c: &Caller) -> Result<(), AppError> {
     if c.0.role == Role::Admin {
         Ok(())
     } else {

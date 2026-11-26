@@ -66,16 +66,6 @@ struct Shown {
     changed_since_close: Option<bool>,
 }
 
-/// `sprint planning`'s value: the planning answer, which is what `--json` prints, and, for the text only, the sprints it
-/// needs for the goals' wording and counts (`None` under `--json`, which never reads them).
-#[derive(Serialize)]
-struct Planned {
-    #[serde(flatten)]
-    planning: SprintPlanningDto,
-    #[serde(skip)]
-    sprints: Option<SprintsDto>,
-}
-
 /// An outcome of another type carried through unchanged (a failed read ends the command with its own answer).
 fn carry<A, B>(o: Outcome<A>) -> Outcome<B> {
     match o {
@@ -220,25 +210,6 @@ fn retry_on_conflict<T>(out: Outcome<T>, json: bool) -> Outcome<T> {
     }
 }
 
-/// `--json` makes one read, `GET /sprints/planning`, so a failure of `GET /sprints` cannot fail a call that never needed
-/// it; the text also reads `GET /sprints` for the goals' wording and counts.
-async fn planning(c: &Client, json: bool) -> anyhow::Result<Outcome<Planned>> {
-    let sprints = if json {
-        None
-    } else {
-        match c.get::<SprintsDto>("/sprints").await? {
-            Outcome::Ok(s) => Some(s),
-            other => return Ok(carry(other)),
-        }
-    };
-    Ok(
-        match c.get::<SprintPlanningDto>("/sprints/planning").await? {
-            Outcome::Ok(planning) => Outcome::Ok(Planned { planning, sprints }),
-            other => carry(other),
-        },
-    )
-}
-
 pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
     Ok(match s {
         Sprint::Show { id } => finish(show(c, id).await?, json, |s| {
@@ -249,12 +220,23 @@ pub async fn run(c: &Client, s: Sprint, json: bool) -> anyhow::Result<i32> {
             json,
             crate::render::sprint_list,
         ),
-        Sprint::Planning => finish(planning(c, json).await?, json, |p| {
-            // The empty fallback is unreachable: `--json` is the only mode without sprints and never renders.
-            p.sprints.as_ref().map_or_else(String::new, |sprints| {
-                crate::render::sprint_planning(sprints, &p.planning)
-            })
-        }),
+        // `--json` makes one read, `GET /sprints/planning`, so a failure of `GET /sprints` cannot fail a call that never
+        // needed it; the text also reads `GET /sprints` for the goals' wording and counts.
+        Sprint::Planning if json => finish(
+            c.get::<SprintPlanningDto>("/sprints/planning").await?,
+            json,
+            |_| String::new(),
+        ),
+        Sprint::Planning => match c.get::<SprintsDto>("/sprints").await? {
+            Outcome::Ok(sprints) => finish(
+                c.get::<SprintPlanningDto>("/sprints/planning").await?,
+                json,
+                |p| crate::render::sprint_planning(&sprints, p),
+            ),
+            other => finish(carry::<_, SprintPlanningDto>(other), json, |_| {
+                String::new()
+            }),
+        },
         Sprint::Open { ends } => {
             let draft = match c.get::<SprintsDto>("/sprints").await? {
                 Outcome::Ok(SprintsDto { draft: Some(d), .. }) => d,

@@ -105,6 +105,7 @@ pub struct StoryCounts {
 // DecisionRepo, CommentRepo and SprintRepo each carry `#[allow(clippy::too_many_arguments)]` by design:
 // some methods take the transaction, the key, the version and every field of the item, which is more than seven.
 mod attachments;
+mod brief_templates;
 mod comments;
 mod decisions;
 mod epics;
@@ -121,6 +122,7 @@ mod web_links;
 
 pub use self::{
     attachments::{AttachmentRepo, ClaimOutcome},
+    brief_templates::{BriefTemplateRepo, StoredBriefTemplate},
     comments::CommentRepo,
     decisions::DecisionRepo,
     epics::EpicRepo,
@@ -153,6 +155,7 @@ pub struct PlanningPorts {
     pub promises: Arc<dyn PromiseRepo>,
     pub item_links: Arc<dyn ItemLinkRepo>,
     pub web_links: Arc<dyn WebLinkRepo>,
+    pub brief_templates: Arc<dyn BriefTemplateRepo>,
     pub reads: Arc<dyn PlanningReads>,
 }
 

@@ -8,6 +8,7 @@
 	const items = $derived([
 		{ href: '/tokens', label: 'Tokens' },
 		{ href: '/activity', label: 'Activity' },
+		{ href: '/templates', label: 'Templates' },
 		...(isAdmin() ? [{ href: '/users', label: 'Users' }, { href: '/access', label: 'Access' }] : [])
 	]);
 </script>

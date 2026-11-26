@@ -22,6 +22,25 @@ pub(super) fn repeat_among<'a>(
 }
 
 impl Handlers {
+    /// `add_web_link`, answering the web link as stored as well (its id, its trimmed title and its URL as the URL
+    /// parser writes it): the row this call wrote (true), or the row that was already there under the same title
+    /// (false). Public for the server's action, whose MCP receipt names the web link by the id it is removed with
+    /// and reports its title and URL from this answer, never from a read after the commit.
+    pub async fn add_web_link_reporting(
+        &self,
+        c: &Ctx,
+        item: &Key,
+        title: &str,
+        url: &str,
+    ) -> Result<(WebLinkDto, bool), HandlerError> {
+        let link = WebLink::new(title, url)?;
+        let level = self.item_type_of(item).await?;
+        let mut tx = self.pool.begin().await?;
+        let answer = self.add_web_link_in(&mut tx, c, level, item, &link).await?;
+        tx.commit().await?;
+        Ok(answer)
+    }
+
     /// Attaches a titled URL to an item of any level. A bad title or URL is a validation error; the item must
     /// exist (NotFound otherwise). Answers whether this call added it: the same URL with the same title is already
     /// there and changes nothing; the same URL with another title is a validation error that says to remove it
@@ -34,20 +53,17 @@ impl Handlers {
         title: &str,
         url: &str,
     ) -> Result<bool, HandlerError> {
-        let link = WebLink::new(title, url)?;
-        let level = self.item_type_of(item).await?;
-        let mut tx = self.pool.begin().await?;
-        let (_, added) = self.add_web_link_in(&mut tx, c, level, item, &link).await?;
-        tx.commit().await?;
-        Ok(added)
+        self.add_web_link_reporting(c, item, title, url)
+            .await
+            .map(|(_, added)| added)
     }
 
     /// Inside the caller's transaction: attaches `link` to `item` and, when this call added it, records
     /// `web_link_added` on the item, last. `item` is the item's key and `level` its level; the caller has resolved
     /// both and validated the link (`WebLink::new`). Nothing here reads through the pool, so it also serves a
-    /// caller whose item is not committed yet, and it neither commits nor rolls back. It answers the web link's id
-    /// (how one is removed) and whether this call added it: the same URL with the same title answers the id of the
-    /// one that is there, false, and writes nothing; with another title it is `WebLink::is_new_among`'s refusal as a
+    /// caller whose item is not committed yet, and it neither commits nor rolls back. It answers the web link as
+    /// stored (its id is how one is removed) and whether this call added it: the same URL with the same title
+    /// answers the row that is there, false, and writes nothing; with another title it is `WebLink::is_new_among`'s refusal as a
     /// validation error, and what the caller does with its transaction then is the caller's. It passes
     /// `is_new_among` the item's stored web links; that method takes the web links of one item, whatever their
     /// source. Plan apply (GRA-879) composes it with the plan's other writes.
@@ -58,7 +74,7 @@ impl Handlers {
         level: ItemType,
         item: &Key,
         link: &WebLink,
-    ) -> Result<(i64, bool), HandlerError> {
+    ) -> Result<(WebLinkDto, bool), HandlerError> {
         let Some(id) = self.ports.web_links.add_web_link(tx, item, link).await? else {
             // The item already has this URL: the same title is a repeat, another title is not an edit. The rows
             // read are this one item's, which is what the rule is over.
@@ -67,10 +83,10 @@ impl Handlers {
                 .web_links
                 .web_links_of_in(tx, std::slice::from_ref(item))
                 .await?;
-            // Not refused and a repeat: that row's id is the answer. No repeat when it was removed between the
+            // Not refused and a repeat: that row is the answer. No repeat when it was removed between the
             // insert and the read: nothing was added, so say so.
             return match repeat_among(link, &stored)? {
-                Some(there) => Ok((there.id, false)),
+                Some(there) => Ok((super::dto::web_link_dto(there), false)),
                 None => Err(HandlerError::Conflict { current: -1 }),
             };
         };
@@ -86,7 +102,15 @@ impl Handlers {
                 ),
             )
             .await?;
-        Ok((id, true))
+        // The row as the insert wrote it: the link's own title and URL, already in their stored form.
+        Ok((
+            WebLinkDto {
+                id,
+                title: link.title().to_owned(),
+                url: link.url().to_owned(),
+            },
+            true,
+        ))
     }
 
     /// Removes one web link of an item by its id. The item must exist; an id the item does not have is a no-op

@@ -1,4 +1,5 @@
 pub mod attachment;
+pub mod brief_template;
 pub mod decision;
 pub mod findings;
 pub mod item_link;

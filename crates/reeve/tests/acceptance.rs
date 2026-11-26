@@ -1167,11 +1167,12 @@ async fn flow() {
             .unwrap()
             .iter()
             .any(|i| i["key"] == ini_key.as_str()
-                && i["goals"].as_array().unwrap().iter().any(|g| g
+                && i["goals"].as_array().unwrap().iter().any(|g| g["id"]
                     .as_i64()
                     .map(|g| g.to_string())
                     .as_deref()
-                    == Some(gid.as_str()))),
+                    == Some(gid.as_str())
+                    && g["outcome"] == "Customers book sessions")),
         "{planned}"
     );
     assert!(
@@ -2132,5 +2133,294 @@ async fn link_add_names_only_the_items_it_linked_after_a_prefix_change() {
         format!(
             "{imported} follows {ledger}\nInformational: this does not hold {imported} back. To hold it back: `reeve story block {imported} --by {ledger}`.\n"
         )
+    );
+}
+
+/// Brief templates end to end through the real binary against a real server: an admin loads templates from a file
+/// and from stdin and marks a default; a new initiative starts from the default, from a named template, from
+/// nothing or from the caller's own brief; a member reads and is refused a write; editing and removing a template
+/// leave a brief made from it alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn brief_templates_from_the_cli() {
+    let pg = reeve_testdb::database(&reeve_server::composed_migrator()).await;
+    let pool = pg.pool.clone();
+    let config: reeve_server::ServerConfig = toml::from_str(&format!(
+        "database_url = \"{}\"\nkey_prefix = \"TPL\"\nallowed_domains = [\"example.com\"]\nadmins = [\"dan@example.com\"]\n",
+        pg.url
+    ))
+    .unwrap();
+    let activity = reeve_activity::make_activity_store(pool.clone());
+    let ident_log: std::sync::Arc<dyn reeve_identity::IdentityActivity> = activity.clone();
+    let tokens = reeve_identity::make_token_store(pool.clone());
+    let policy = reeve_identity::AccessPolicy::floor_only(&config.identity());
+    let mut secrets = vec![];
+    for (email, label) in [("dan@example.com", "t"), ("mia@example.com", "m")] {
+        secrets.push(
+            reeve_identity::issue_token(
+                &pool,
+                &*tokens,
+                &*ident_log,
+                &policy,
+                "test",
+                reeve_protocol::Via::Interactive,
+                email,
+                reeve_protocol::TokenKind::Interactive,
+                label,
+                None,
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap()
+            .secret,
+        );
+    }
+    // dan is an admin (named in `admins`); mia is a member (allowed by her domain only).
+    let (admin, member) = (secrets[0].clone(), secrets[1].clone());
+    let state = reeve_server::build_state(config, pool.clone())
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, reeve_server::app(state))
+            .await
+            .unwrap();
+    });
+
+    let cfg_dir = tempfile::tempdir().unwrap();
+    let out = |token: &str, args: &[&str], stdin: Option<&str>| -> std::process::Output {
+        let mut c = reeve_cmd();
+        c.env("REEVE_URL", &base)
+            .env("REEVE_CONFIG_DIR", cfg_dir.path())
+            .env("REEVE_TOKEN", token)
+            .env_remove("REEVE_ASCII")
+            .timeout(std::time::Duration::from_secs(60))
+            .args(args);
+        if let Some(s) = stdin {
+            c.write_stdin(s.to_string());
+        }
+        c.output().unwrap()
+    };
+    let text = |token: &str, args: &[&str]| -> String {
+        let o = out(token, args, None);
+        assert!(
+            o.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let json = |token: &str, args: &[&str]| -> serde_json::Value {
+        serde_json::from_str(&text(token, &[&["--json"][..], args].concat())).unwrap()
+    };
+    let failed = |token: &str, args: &[&str], status: i32, code: &str| {
+        let o = out(token, &[&["--json"][..], args].concat(), None);
+        assert_eq!(
+            o.status.code(),
+            Some(status),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        assert_eq!(v["code"], code, "{args:?}: {v}");
+    };
+
+    // 1. An admin loads two initiative templates: one from a file, one from stdin.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("scenario.md");
+    let scenario = "# Scenario\n\n| Step | Who | Sees |\n|---|---|---|\n| 1 | | |\n\nIt's `quoted` $(not run).\n";
+    std::fs::write(&file, scenario).unwrap();
+    let made = json(
+        &admin,
+        &[
+            "template",
+            "create",
+            "--level",
+            "initiative",
+            "--name",
+            "Scenario",
+            "--body-file",
+            file.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        made["value"]["body"], scenario,
+        "the file reaches the server unchanged"
+    );
+    let id = made["value"]["id"].as_i64().unwrap().to_string();
+    let piped = out(
+        &admin,
+        &[
+            "--json",
+            "template",
+            "create",
+            "--level",
+            "initiative",
+            "--name",
+            "Tech debt",
+            "--body-file",
+            "-",
+        ],
+        Some("## Debt\n"),
+    );
+    assert!(
+        piped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&piped.stderr)
+    );
+    let debt: serde_json::Value = serde_json::from_slice(&piped.stdout).unwrap();
+    assert_eq!(debt["value"]["body"], "## Debt\n");
+    let debt_id = debt["value"]["id"].as_i64().unwrap().to_string();
+
+    // 2. A member lists them, and is refused a write: exit 2.
+    assert_eq!(
+        text(&member, &["template", "ls"]),
+        format!("#{id} initiative Scenario\n#{debt_id} initiative Tech debt\n")
+    );
+    failed(&member, &["template", "rm", &id], 2, "forbidden");
+    failed(&member, &["template", "default", &id], 2, "forbidden");
+
+    // 3. Which brief a new initiative gets.
+    let created = |n: &str, extra: &[&str]| -> serde_json::Value {
+        json(
+            &admin,
+            &[
+                &[
+                    "initiative",
+                    "create",
+                    "--idempotency-key",
+                    n,
+                    "--title",
+                    n,
+                    "--horizon",
+                    "Now",
+                ][..],
+                extra,
+            ]
+            .concat(),
+        )["value"]
+            .clone()
+    };
+    assert_eq!(
+        created("before", &[])["brief"],
+        "",
+        "the control: no default yet"
+    );
+    assert_eq!(
+        text(&admin, &["template", "default", &id]),
+        format!("#{id} initiative Scenario (default)\n")
+    );
+    let from_default = created("from-default", &[]);
+    assert_eq!(from_default["brief"], scenario);
+    assert_eq!(
+        created("named", &["--template", "tech debt"])["brief"],
+        "## Debt\n"
+    );
+    assert_eq!(created("none", &["--no-template"])["brief"], "");
+    assert_eq!(created("mine", &["--brief", "Mine"])["brief"], "Mine");
+    // An empty --brief is a brief given: the default is not asked for.
+    assert_eq!(created("empty", &["--brief", ""])["brief"], "");
+    failed(
+        &admin,
+        &[
+            "initiative",
+            "create",
+            "--idempotency-key",
+            "x",
+            "--title",
+            "X",
+            "--horizon",
+            "Now",
+            "--template",
+            "Nobody",
+        ],
+        1,
+        "validation",
+    );
+    // A member's create gets the default too: who may write templates has nothing to do with who starts from one.
+    let by_member = json(
+        &member,
+        &[
+            "initiative",
+            "create",
+            "--idempotency-key",
+            "by-member",
+            "--title",
+            "M",
+            "--horizon",
+            "Now",
+        ],
+    );
+    assert_eq!(by_member["value"]["brief"], scenario);
+    // Levels are separate: no epic template exists, so a new epic starts empty.
+    let epic = json(
+        &admin,
+        &["epic", "create", "--idempotency-key", "e", "--title", "E"],
+    );
+    assert_eq!(epic["value"]["brief"], "");
+
+    // 4. Editing and removing the template leave the brief made from it alone.
+    failed(
+        &admin,
+        &["template", "edit", &id, "--version", "9", "--body", "x"],
+        1,
+        "conflict",
+    );
+    let edited = json(
+        &admin,
+        &[
+            "template",
+            "edit",
+            &id,
+            "--version",
+            "1",
+            "--body",
+            "# Rewritten\n",
+        ],
+    );
+    assert_eq!(edited["value"]["version"], 2);
+    assert_eq!(
+        text(&member, &["template", "show", &id]),
+        format!("#{id} initiative Scenario (default) (version 2)\n\n# Rewritten\n")
+    );
+    // The line an edit prints carries the version the next edit takes (this one changes nothing and writes nothing).
+    assert_eq!(
+        text(
+            &admin,
+            &[
+                "template",
+                "edit",
+                &id,
+                "--version",
+                "2",
+                "--body",
+                "# Rewritten\n"
+            ]
+        ),
+        format!("#{id} initiative Scenario (default) (version 2)\n")
+    );
+    let key = from_default["key"].as_str().unwrap();
+    let again = json(&admin, &["initiative", "show", key]);
+    assert_eq!(again["value"]["brief"], scenario);
+    assert_eq!(again["value"]["version"], from_default["version"]);
+    assert_eq!(
+        text(&admin, &["template", "default", &id, "--clear"]),
+        format!("#{id} initiative Scenario\n")
+    );
+    assert_eq!(
+        text(&admin, &["template", "rm", &id]),
+        format!("removed: brief template #{id}\n")
+    );
+    assert_eq!(
+        json(&admin, &["initiative", "show", key])["value"]["brief"],
+        scenario
+    );
+    assert_eq!(
+        text(&member, &["template", "ls", "--level", "initiative"]),
+        format!("#{debt_id} initiative Tech debt\n")
+    );
+    assert_eq!(
+        text(&member, &["template", "ls", "--level", "epic"]),
+        "no brief templates\n"
     );
 }

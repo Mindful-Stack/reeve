@@ -1,7 +1,9 @@
 // Pure helpers for the create and edit forms: request bodies (never a hand-written DTO: the types are the generated
 // ones), the text a draft's idempotency key follows, target-month validation, per-field diffs and the per-field merge
 // after a conflict.
-import type { CreateEpic, CreateInitiative, EditDecision, EditItem, Epic, Initiative, RequiredDecision, Reversibility } from '#lib/api/types.ts';
+import type {
+	BriefTemplate, CreateEpic, CreateInitiative, EditBriefTemplate, EditDecision, EditItem, Epic, Initiative, RequiredDecision, Reversibility
+} from '#lib/api/types.ts';
 import { sameEmail } from '#lib/format.ts';
 
 /** `YYYY-MM` with a month 01–12: the shape `month()` in #lib/format.ts renders. */
@@ -105,6 +107,28 @@ export function epicEdit(from: EpicDetails, d: EpicDetails): Edit<Omit<EditItem,
 	for (const k of changed(EPIC_SAME, from, d)) {
 		if (k === 'title') body.title = d.title.trim();
 		if (k === 'initiative') body.initiative = d.initiative || null;
+	}
+	return Object.keys(body).length ? { kind: 'send', body } : { kind: 'unchanged' };
+}
+
+/** The two fields of a brief template an admin edits (#routes/(account)/templates). */
+export type TemplateFields = { name: string; body: string };
+/** A name compares trimmed, as the server stores it; a body exactly, because it is stored as written. */
+export const TEMPLATE_SAME: Same<TemplateFields> = { name: trimmed, body: exact };
+
+export function templateFields(t: BriefTemplate): TemplateFields {
+	return { name: t.name, body: t.body };
+}
+
+/** Only the fields changed since `from` are sent, so saving a body never writes back a name someone else changed
+ *  meanwhile (and the other way round). */
+export function templateEdit(from: TemplateFields, d: TemplateFields): Edit<Omit<EditBriefTemplate, 'version'>> {
+	if (!d.name.trim()) return { kind: 'invalid', error: 'Name must not be blank.' };
+	if (!d.body.trim()) return { kind: 'invalid', error: 'Template text must not be blank.' };
+	const body: Omit<EditBriefTemplate, 'version'> = {};
+	for (const k of changed(TEMPLATE_SAME, from, d)) {
+		if (k === 'name') body.name = d.name.trim();
+		if (k === 'body') body.body = d.body;
 	}
 	return Object.keys(body).length ? { kind: 'send', body } : { kind: 'unchanged' };
 }

@@ -21,6 +21,7 @@ pub mod plans;
 pub mod search;
 pub mod sprints;
 pub mod stories;
+pub mod templates;
 pub mod tokens;
 pub mod users;
 pub mod war_room;
@@ -118,6 +119,7 @@ fn api_router(mcp_enabled: bool) -> OpenApiRouter<AppState> {
     let v1: OpenApiRouter<AppState> = OpenApiRouter::new()
         .merge(initiatives::router())
         .merge(links::router())
+        .merge(templates::router())
         .merge(epics::router())
         .merge(stories::router())
         .merge(decisions::router())

@@ -36,6 +36,17 @@ if [ -d "$planning/domain" ]; then
     exit 1
   fi
 fi
+if [ -d "$planning/repo" ]; then
+  # Brief templates are no readiness fact and name no item: only repo/brief_templates.rs names the table in SQL, so
+  # the readiness loader (repo/reads.rs) and every other statement cannot read it. Judged on the raw text with each
+  # file as one line (-z): SQL lives in string literals, and a statement may continue over a line with a backslash.
+  sql=$(g -rlzE '(FROM|JOIN|INTO|UPDATE)[[:space:]\\]+brief_templates\b' "$planning/repo" --include='*.rs' | tr '\0' '\n' | g -v '/repo/brief_templates\.rs$')
+  if [ -n "$sql" ]; then
+    echo "planning call-site rule violated: the brief_templates table is named outside repo/brief_templates.rs" >&2
+    printf '%s\n' "$sql" >&2
+    exit 1
+  fi
+fi
 if [ -d "$planning/handler" ]; then
   # Judge each file with its string literals blanked (a "https://..." must not hide the rest of its line), then
   # without `//` comments and with its whitespace removed (rustfmt splits call chains over lines).
@@ -87,10 +98,10 @@ if [ -d "$planning/handler" ]; then
     fi
   done <<< "$files"
   # kb/ADR-0014 R4, kb/ADR-0017 R5, kb/ADR-0025 R7, kb/ADR-0031 R3: moving a story never reads sprints, goals, urgency
-  # or the decision queue's windows, and never reads or writes promises, item links or web links.
+  # or the decision queue's windows, and never reads or writes promises, item links, web links or brief templates.
   if [ -f "$moves" ]; then
-    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|all_item_links_in|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b|${lb}ports\.web_links|all_web_links_in|web_links_of|${lb}web_link_dtos_in\b|${lb}(add|remove)_web_link(_in)?\b")
-    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises, item links or web links"$'\n'; fi
+    x=$(flat "$moves" | g -oE "${lb}ports\.sprints|active_goals_of_stories|draft_goals_of_stories|decision_lineage_in|${lb}decision_queue(_in)?\(|${lb}decision_context\(|${lb}ports\.urgency|urgency_lineage_in|${lb}urgency_in\(|${lb}ports\.promises|promise_facts_in|promised_between_in|${lb}promise_clock_in\b|active_and_draft_in|${lb}(set|clear)_promise(_in)?\b|${lb}ports\.item_links|all_item_links_in|item_links_of|${lb}item_link_dtos_in\b|${lb}link_listing\b|${lb}(add|remove)_item_link(_in)?\b|${lb}ports\.web_links|all_web_links_in|web_links_of|${lb}web_link_dtos_in\b|${lb}(add|remove)_web_link(_in)?\b|[Bb]rief_?[Tt]emplate")
+    if [ -n "$x" ]; then bad+="$moves: reads sprints, goals, urgency or the decision queue, or reads or writes promises, item links, web links or brief templates"$'\n'; fi
   fi
   # The webhook path reaches pull requests and story lookup only, and never moves a story: every mention of
   # `ports` in prs.rs must be exactly `ports.pull_requests.<method>` or `ports.stories.get_story`, so an alias

@@ -786,6 +786,8 @@
 		border: 1px solid var(--line);
 		border-radius: 6px;
 		background: var(--raised);
+		/* For the scroll shadows of a table in a comment (app.css). */
+		--table-surface: var(--raised);
 	}
 	.tabpanel {
 		padding: 12px;

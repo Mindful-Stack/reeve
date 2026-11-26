@@ -5,10 +5,9 @@
 //! state under that lock. Activity is each transaction's final work: entries are collected and recorded in order
 //! immediately before commit.
 use super::*;
-use crate::domain::items::Initiative;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::readiness::decision_fact;
-use crate::domain::sprint::{self, Goal, GoalGates, GoalLink, Op, Sprint};
+use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -31,11 +30,8 @@ pub struct Sprints {
 /// What `GET /sprints/planning` is put together from, all from one snapshot and derived on read (kb/ADR-0014 R6).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SprintPlanning {
-    /// Each active and draft goal's gates, by sprint then goal id.
-    pub gates: Vec<GoalGates>,
-    /// Every initiative of the snapshot: the wire assembly takes from it the titles, horizons, target months and
-    /// discovery marks of the ones the gates and the bucket name, and sends nothing else of them.
-    pub initiatives: Vec<Initiative>,
+    /// Each active and draft goal's gates with the initiatives it reaches resolved, by sprint then goal id.
+    pub goals: Vec<sprint::PlanningGoal>,
     /// The first of the configured `horizon_buckets` (kb/ADR-0016 R2); None when no bucket is configured.
     pub first_bucket: Option<String>,
     /// That bucket's initiatives with their goals (`sprint::first_bucket_initiatives`); empty without a bucket.
@@ -763,8 +759,7 @@ impl Handlers {
             .map(|b| sprint::first_bucket_initiatives(b, &initiatives, &gates, &goals, active))
             .unwrap_or_default();
         Ok(SprintPlanning {
-            gates,
-            initiatives,
+            goals: sprint::planning_goals(gates, &initiatives, first_bucket.as_deref()),
             first_bucket,
             first_bucket_initiatives,
         })

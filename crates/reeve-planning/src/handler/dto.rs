@@ -9,17 +9,18 @@ use crate::domain::pull_request::PullRequest;
 use crate::domain::queue::{DiscoveryRow, QueueEntry, QueueStory, QueueSummary};
 use crate::domain::sprint::{Goal, GoalLink, Sprint, SprintCounts, Summary, warnings};
 use crate::domain::urgency::{MarkState, Urgency};
-use crate::ports::{ItemHead, StoredWebLink};
+use crate::ports::{ItemHead, StoredBriefTemplate, StoredWebLink};
 use chrono::NaiveDate;
 use reeve_protocol::{
-    AffectedStoryDto, BucketInitiativeDto, ClosedDto, CriterionDto, DecisionGateDto,
-    DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto, DiscoveryEntryDto,
-    DiscoveryGateDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto, EpicPromiseRefDto,
-    ExportItemLinkDto, ExportWebLinkDto, GoalDto, GoalGatesDto, GoalInitiativeDto, GoalProgressDto,
-    InitiativeDto, ItemLinkDirection, ItemLinkDto, ItemLinkType, Key, LinkedItemDto, PromiseDue,
-    PromiseFactDto, PromiseHolder, PromiseState, PromisedFilter, PullRequestDto, RecordRefDto,
-    RequiredDecisionDto, SprintCountsDto, SprintDto, SprintPlanningDto, SprintPromiseDto,
-    SprintState, SprintViewDto, StoryDto, StoryPromiseDto, WebLinkDto,
+    AffectedStoryDto, BriefTemplateDto, BucketGoalDto, BucketInitiativeDto, ClosedDto,
+    CriterionDto, DecisionGateDto, DecisionQueueEntryDto, DecisionQueueSummaryDto, DemoStoryDto,
+    DiscoveryEntryDto, DiscoveryGateDto, DiscoveryMarkDto, EpicDto, EpicPromiseDto,
+    EpicPromiseRefDto, ExportItemLinkDto, ExportWebLinkDto, GoalDto, GoalGatesDto,
+    GoalInitiativeDto, GoalProgressDto, InitiativeDto, ItemLinkDirection, ItemLinkDto,
+    ItemLinkType, Key, LinkedItemDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState,
+    PromisedFilter, PullRequestDto, RecordRefDto, RequiredDecisionDto, SprintCountsDto, SprintDto,
+    SprintPlanningDto, SprintPromiseDto, SprintState, SprintViewDto, StoryDto, StoryPromiseDto,
+    WebLinkDto,
 };
 
 /// `progress` is None; the handler fills it from story counts.
@@ -259,27 +260,22 @@ pub fn goal_dto(g: &Goal, links: &[GoalLink]) -> GoalDto {
     }
 }
 
-/// The planning answer on the wire. Titles and horizons come from the snapshot's initiatives; a key the snapshot does
-/// not hold (none can exist inside one snapshot) is left out instead of invented.
+/// The planning answer on the wire: the domain's finished read model, copied field for field.
 pub fn sprint_planning_dto(p: &SprintPlanning) -> SprintPlanningDto {
-    let by_key: std::collections::HashMap<&Key, &Initiative> =
-        p.initiatives.iter().map(|i| (i.key(), i)).collect();
-    let bucket = p.first_bucket.as_deref();
     SprintPlanningDto {
         goals: p
-            .gates
+            .goals
             .iter()
             .map(|g| GoalGatesDto {
                 goal_id: g.goal_id,
                 initiatives: g
                     .initiatives
                     .iter()
-                    .filter_map(|k| by_key.get(k))
                     .map(|i| GoalInitiativeDto {
-                        key: i.key().clone(),
-                        title: i.title().to_owned(),
-                        horizon: i.horizon().to_owned(),
-                        in_first_bucket: bucket == Some(i.horizon()),
+                        key: i.key.clone(),
+                        title: i.title.clone(),
+                        horizon: i.horizon.clone(),
+                        in_first_bucket: i.in_first_bucket,
                     })
                     .collect(),
                 discoveries: g
@@ -307,13 +303,23 @@ pub fn sprint_planning_dto(p: &SprintPlanning) -> SprintPlanningDto {
         first_bucket_initiatives: p
             .first_bucket_initiatives
             .iter()
-            .filter_map(|b| by_key.get(&b.key).map(|i| (b, i)))
-            .map(|(b, i)| BucketInitiativeDto {
+            .map(|b| BucketInitiativeDto {
                 key: b.key.clone(),
-                title: i.title().to_owned(),
-                target_month: i.target_month().map(str::to_owned),
-                discovery_complete: i.discovery().is_some(),
-                goals: b.goals.clone(),
+                title: b.title.clone(),
+                target_month: b.target_month.clone(),
+                discovery_complete: b.discovery.as_ref().map(|d| DiscoveryMarkDto {
+                    at: d.at,
+                    by: d.by.clone(),
+                }),
+                goals: b
+                    .goals
+                    .iter()
+                    .map(|g| BucketGoalDto {
+                        id: g.id,
+                        outcome: g.outcome.clone(),
+                        active: g.active,
+                    })
+                    .collect(),
             })
             .collect(),
     }
@@ -625,5 +631,17 @@ pub(crate) fn export_web_link_dto(w: &StoredWebLink) -> ExportWebLinkDto {
         item: w.item.clone(),
         title: w.link.title().to_owned(),
         url: w.link.url().to_owned(),
+    }
+}
+
+/// A stored brief template as every member reads it.
+pub(crate) fn brief_template_dto(t: &StoredBriefTemplate) -> BriefTemplateDto {
+    BriefTemplateDto {
+        id: t.id,
+        level: t.template.level(),
+        name: t.template.name().to_owned(),
+        body: t.template.body().to_owned(),
+        is_default: t.is_default,
+        version: t.version,
     }
 }

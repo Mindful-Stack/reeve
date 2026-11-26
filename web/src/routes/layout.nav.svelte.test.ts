@@ -259,13 +259,13 @@ describe('account menu', () => {
 
 	it('lists Tokens, Activity and Sign out for a member', async () => {
 		await open('/');
-		expect(await labels()).toEqual(['Tokens', 'Activity', 'Sign out']);
+		expect(await labels()).toEqual(['Tokens', 'Activity', 'Templates', 'Sign out']);
 	});
 
 	it('adds Users for an admin', async () => {
 		route.admin = true;
 		await open('/');
-		expect(await labels()).toEqual(['Tokens', 'Activity', 'Users', 'Access', 'Sign out']);
+		expect(await labels()).toEqual(['Tokens', 'Activity', 'Templates', 'Users', 'Access', 'Sign out']);
 	});
 });
 

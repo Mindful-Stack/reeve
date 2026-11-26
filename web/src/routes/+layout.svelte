@@ -35,6 +35,7 @@
 	const accountItems = $derived([
 		{ label: 'Tokens', onselect: () => goto('/tokens') },
 		{ label: 'Activity', onselect: () => goto('/activity') },
+		{ label: 'Templates', onselect: () => goto('/templates') },
 		...(isAdmin() ? [{ label: 'Users', onselect: () => goto('/users') }, { label: 'Access', onselect: () => goto('/access') }] : []),
 		{ label: 'Sign out', onselect: signOut }
 	]);

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-	DECISION_SAME, EPIC_SAME, INITIATIVE_SAME, decisionEdit, epicCreate, epicDetails, epicEdit, fieldsText,
-	decisionDraft, initiativeCreate, initiativeDetails, initiativeEdit, mergeDraft, validMonth
+	DECISION_SAME, EPIC_SAME, INITIATIVE_SAME, TEMPLATE_SAME, decisionEdit, epicCreate, epicDetails, epicEdit, fieldsText,
+	decisionDraft, initiativeCreate, initiativeDetails, initiativeEdit, mergeDraft, templateEdit, templateFields, validMonth
 } from './forms.ts';
 import type { DecisionDraft } from './forms.ts';
-import { decision, epic, initiative } from '#lib/test/fixtures.ts';
+import { briefTemplate, decision, epic, initiative } from '#lib/test/fixtures.ts';
 
 describe('validMonth', () => {
 	it.each([
@@ -104,6 +104,38 @@ describe('epicEdit', () => {
 	});
 	it('starts an epic without an initiative as empty text', () => {
 		expect(epicDetails({ ...e, initiative: null })).toEqual({ title: 'E', initiative: '' });
+	});
+});
+
+describe('templateEdit', () => {
+	const from = { name: 'Scenario', body: '# Scenario\n' };
+	it.each([
+		['nothing changed', {}, { kind: 'unchanged' }],
+		['the name only re-spaced', { name: ' Scenario ' }, { kind: 'unchanged' }],
+		['the body only', { body: '# Scenario\nmore' }, { kind: 'send', body: { body: '# Scenario\nmore' } }],
+		['one line break added to the body', { body: '# Scenario\n\n' }, { kind: 'send', body: { body: '# Scenario\n\n' } }],
+		['the name only, sent trimmed', { name: ' User scenario ' }, { kind: 'send', body: { name: 'User scenario' } }],
+		['both', { name: 'User scenario', body: 'x' }, { kind: 'send', body: { name: 'User scenario', body: 'x' } }],
+		['a blank name', { name: '  ' }, { kind: 'invalid', error: 'Name must not be blank.' }],
+		['a blank text', { body: ' \n' }, { kind: 'invalid', error: 'Template text must not be blank.' }]
+	])('%s', (_what, over, want) => expect(templateEdit(from, { ...from, ...over })).toStrictEqual(want));
+
+	it('reads the two fields of a template', () => {
+		expect(templateFields(briefTemplate({ name: 'Tech debt', body: '## Debt\n', version: 4, is_default: true }))).toStrictEqual({
+			name: 'Tech debt',
+			body: '## Debt\n'
+		});
+	});
+
+	it("never writes back a colleague's rename when only the body was changed", () => {
+		// The admin opened "Tech debt" and changed its body; meanwhile a colleague renamed it to "Debt".
+		const opened = { name: 'Tech debt', body: '## Debt\n' };
+		const draft = { name: 'Tech debt', body: '## Debt\nWhat it costs.\n' };
+		const server = { name: 'Debt', body: '## Debt\n' };
+		const merged = mergeDraft(TEMPLATE_SAME, opened, draft, server);
+		expect(merged).toStrictEqual({ name: 'Debt', body: '## Debt\nWhat it costs.\n' });
+		// The retry is judged against what was reloaded: the body only.
+		expect(templateEdit(server, merged)).toStrictEqual({ kind: 'send', body: { body: '## Debt\nWhat it costs.\n' } });
 	});
 });
 

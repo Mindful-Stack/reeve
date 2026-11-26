@@ -1,6 +1,7 @@
 //! Sprint and goal wire types (kb/ADR-0014): enums, counts, views and requests.
 use crate::enums::ItemType;
 use crate::ids::{Key, KeyRef};
+use crate::items::DiscoveryMarkDto;
 use crate::promise::SprintPromiseDto;
 use crate::readiness::Reason;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -232,6 +233,15 @@ pub struct GoalInitiativeDto {
     pub in_first_bucket: bool,
 }
 
+/// A goal whose links reach a bucket initiative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BucketGoalDto {
+    pub id: i64,
+    pub outcome: String,
+    /// In the active sprint; false when in the draft (the word `POST /goals` uses).
+    pub active: bool,
+}
+
 /// An initiative of the first configured horizon bucket with the goals whose links reach it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BucketInitiativeDto {
@@ -240,10 +250,10 @@ pub struct BucketInitiativeDto {
     #[serde(default)]
     #[schema(required = true)]
     pub target_month: Option<String>,
-    /// A flag here; `InitiativeDto.discovery_complete` carries the mark itself.
-    pub discovery_complete: bool,
-    /// Goal ids: the active sprint's first, then the draft's, by id inside each. Empty when no goal reaches it.
-    pub goals: Vec<i64>,
+    // The mark itself, as `InitiativeDto` sends it (kb/ADR-0002 R3); no doc comment, so the schema is identical.
+    pub discovery_complete: Option<DiscoveryMarkDto>,
+    /// The active sprint's goals first, then the draft's, by id inside each. Empty when no goal reaches it.
+    pub goals: Vec<BucketGoalDto>,
 }
 
 /// `GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives

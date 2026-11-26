@@ -16,17 +16,9 @@ async fn token(f: &Flow, session: &str, scope: &str) -> String {
     connect(f, session, scope).await.access_token
 }
 
-/// How many rows `table` has.
-async fn rows(h: &Harness, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(&h.state.pool)
-        .await
-        .unwrap()
-}
-
-/// The reserved prefix, at the API: the four routes that store a caller's idempotency key in `stories` or
-/// `comments` refuse a key in the MCP callers' space, and write nothing. The control is the same request with a
-/// key outside it.
+/// The reserved prefix, at the API: the six routes that store a caller's idempotency key in `stories`, `comments`,
+/// `epics` or `initiatives` refuse a key in the MCP callers' space, and write nothing. The control is the same
+/// request with a key outside it.
 #[tokio::test]
 async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
     let f = flow().await;
@@ -70,9 +62,27 @@ async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
             comment_body(reserved),
             comment_body("mcpx:k4"),
         ),
+        (
+            "/api/v1/epics".to_string(),
+            json!({"idempotency_key": reserved, "title": "Planted"}),
+            json!({"idempotency_key": "mcpx:k5", "title": "Control"}),
+        ),
+        (
+            "/api/v1/initiatives".to_string(),
+            json!({"idempotency_key": reserved, "title": "Planted", "horizon": "Now"}),
+            json!({"idempotency_key": "mcpx:k6", "title": "Control", "horizon": "Now"}),
+        ),
     ];
+    async fn counts(h: &Harness) -> [i64; 4] {
+        [
+            rows(h, "stories").await,
+            rows(h, "comments").await,
+            rows(h, "epics").await,
+            rows(h, "initiatives").await,
+        ]
+    }
     for (path, refused, control) in routes {
-        let before = (rows(h, "stories").await, rows(h, "comments").await);
+        let before = counts(h).await;
         let (status, body) = call(&h.app, Some(&h.admin_token), "POST", &path, Some(refused)).await;
         assert_eq!(
             (status, body["code"].as_str(), body["message"].as_str()),
@@ -83,46 +93,10 @@ async fn the_api_refuses_an_idempotency_key_in_the_mcp_callers_space() {
             ),
             "{path}"
         );
-        assert_eq!(
-            (rows(h, "stories").await, rows(h, "comments").await),
-            before,
-            "{path}: nothing written"
-        );
+        assert_eq!(counts(h).await, before, "{path}: nothing written");
         let (status, body) = call(&h.app, Some(&h.admin_token), "POST", &path, Some(control)).await;
         assert_eq!(status, 200, "the control on {path}: {body}");
     }
-}
-
-/// The activity entries about `key`, oldest first, as the feed's route answers them.
-async fn entries(h: &Harness, key: &str) -> Vec<Value> {
-    let mut entries = api(
-        h,
-        &h.admin_token,
-        &format!("/api/v1/activity?entity_key={key}"),
-    )
-    .await
-    .as_array()
-    .unwrap()
-    .clone();
-    entries.sort_by_key(|entry| entry["id"].as_i64());
-    entries
-}
-
-/// `(action, actor, via, client)` of each entry about `key`.
-async fn trail(h: &Harness, key: &str) -> Vec<(String, String, String, Value)> {
-    entries(h, key)
-        .await
-        .iter()
-        .map(|e| {
-            let text = |name: &str| e[name].as_str().unwrap().to_string();
-            (
-                text("action"),
-                text("actor"),
-                text("via"),
-                e["payload"]["client"].clone(),
-            )
-        })
-        .collect()
 }
 
 /// A story as the API shows it.
@@ -469,9 +443,23 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
         (&json!("private"), &json!("private"))
     );
     let writes = names(&all, false);
-    assert!(
-        writes.contains(&"create_story".to_string()),
-        "the control: {writes:?}"
+    assert_eq!(
+        writes,
+        [
+            "create_story",
+            "edit_story",
+            "add_comment",
+            "move_story",
+            "create_epic",
+            "edit_epic",
+            "create_initiative",
+            "edit_initiative",
+            "add_item_link",
+            "remove_item_link",
+            "add_web_link",
+            "remove_web_link"
+        ],
+        "every tool that changes anything"
     );
     assert_eq!(names(&shown, true), names(&all, true), "every read tool");
     assert_eq!(names(&shown, false), Vec::<String>::new(), "no write tool");
@@ -486,10 +474,17 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
         shown
     );
 
-    let count = rows(h, "stories").await;
+    let count = [
+        rows(h, "stories").await,
+        rows(h, "epics").await,
+        rows(h, "initiatives").await,
+        rows(h, "item_links").await,
+        rows(h, "web_links").await,
+    ];
     let challenge = "Bearer error=\"insufficient_scope\", scope=\"write\", resource_metadata=\"http://127.0.0.1:7474/.well-known/oauth-protected-resource/mcp\", error_description=\"This tool changes the planner and needs a connection that may read and change\"";
     for name in &writes {
-        // Arguments `create_story` would accept: without the check a story would be made.
+        // Arguments `create_story` and `create_epic` would accept: without the check a story or an epic would be
+        // made.
         let params = json!({"name": name, "arguments": {"idempotency_key": "scope-1", "title": "Not allowed"}});
         for request in [
             mcp_modern(&reader, 7, "tools/call", params.clone()),
@@ -505,7 +500,17 @@ async fn a_read_connection_sees_no_write_tool_and_is_refused_each_with_insuffici
             );
         }
     }
-    assert_eq!(rows(h, "stories").await, count, "nothing was written");
+    assert_eq!(
+        [
+            rows(h, "stories").await,
+            rows(h, "epics").await,
+            rows(h, "initiatives").await,
+            rows(h, "item_links").await,
+            rows(h, "web_links").await,
+        ],
+        count,
+        "nothing was written"
+    );
     // The control: the same call with the write connection creates the story, and a read tool is the reader's.
     assert_eq!(
         answer(
@@ -646,8 +651,8 @@ async fn a_call_is_counted_when_it_is_reserved_not_when_its_caller_was_authentic
     );
 }
 
-/// One quota for all four write tools, checked after the scope: 31 write calls over a read connection are each
-/// 403 and count for nothing, a mix of the four tools then fills the person's thirty, at which each of the four is
+/// One quota for every write tool, checked after the scope: 31 write calls over a read connection are each
+/// 403 and count for nothing, a mix of every write tool then fills the person's thirty, at which every write tool is
 /// refused while the read tools still answer. A limit checked ahead of the scope, or for some tools only, goes red.
 #[tokio::test]
 async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_check() {
@@ -661,6 +666,18 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
         json!({"idempotency_key": "q-s1", "title": "Pick a slot", "kind": "story", "criteria": [], "labels": []}),
     )
     .await);
+    let an_epic = key(&post(
+        h,
+        "/api/v1/epics",
+        json!({"idempotency_key": "q-e1", "title": "Checkout"}),
+    )
+    .await);
+    let an_initiative = key(&post(
+        h,
+        "/api/v1/initiatives",
+        json!({"idempotency_key": "q-i1", "title": "Bookings", "horizon": "Now"}),
+    )
+    .await);
     // Arguments each tool would accept and act on, for call `n`.
     let valid = |name: &str, n: usize| match name {
         "create_story" => {
@@ -671,31 +688,74 @@ async fn every_write_tool_counts_against_one_quota_and_only_after_the_scope_chec
             json!({"idempotency_key": format!("q-{n}"), "item": made, "body": format!("Comment {n}")})
         }
         "move_story" => json!({"key": made, "to": "todo", "version": 1}),
+        "create_epic" => {
+            json!({"idempotency_key": format!("q-{n}"), "title": format!("Epic {n}")})
+        }
+        "edit_epic" => json!({"key": an_epic, "version": 1, "title": format!("Edit {n}")}),
+        "create_initiative" => {
+            json!({"idempotency_key": format!("q-{n}"), "title": format!("Initiative {n}"), "horizon": "Now"})
+        }
+        "edit_initiative" => {
+            json!({"key": an_initiative, "version": 1, "title": format!("Edit {n}")})
+        }
+        "add_item_link" => json!({"key": made, "type": "relates_to", "to": an_epic}),
+        "remove_item_link" => json!({"key": made, "type": "relates_to", "to": an_epic}),
+        "add_web_link" => {
+            json!({"key": made, "title": format!("Page {n}"), "url": format!("https://example.com/{n}")})
+        }
+        "remove_web_link" => json!({"key": made, "id": 1}),
         other => panic!("{other}"),
     };
-    const WRITE: [&str; 4] = ["create_story", "edit_story", "add_comment", "move_story"];
+    const WRITE: [&str; 12] = [
+        "create_story",
+        "edit_story",
+        "add_comment",
+        "move_story",
+        "create_epic",
+        "edit_epic",
+        "create_initiative",
+        "edit_initiative",
+        "add_item_link",
+        "remove_item_link",
+        "add_web_link",
+        "remove_web_link",
+    ];
     let over = "Too many changes:";
 
     for n in 0..31 {
-        let name = WRITE[n % 4];
+        let name = WRITE[n % WRITE.len()];
         let params = json!({"name": name, "arguments": valid(name, n)});
         let (status, _, body) = send(&h.app, mcp_modern(&reader, 1, "tools/call", params)).await;
         assert_eq!(status, 403, "read call {n} ({name}): {body}");
     }
-    // The person's whole thirty, a mix of the four tools; whatever each answers, none is the limit's refusal.
+    // The person's whole thirty, a mix of every write tool; whatever each answers, none is the limit's refusal.
     for n in 0..30 {
-        let name = WRITE[n % 4];
+        let name = WRITE[n % WRITE.len()];
         let result = tool(h, &writer, name, valid(name, n)).await;
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(!text.starts_with(over), "write call {n} ({name}): {text}");
     }
-    let count = (rows(h, "stories").await, rows(h, "comments").await);
+    let count = [
+        rows(h, "stories").await,
+        rows(h, "comments").await,
+        rows(h, "epics").await,
+        rows(h, "initiatives").await,
+        rows(h, "item_links").await,
+        rows(h, "web_links").await,
+    ];
     for name in WRITE {
         let said = refusal(h, &writer, name, valid(name, 99)).await;
         assert!(said.starts_with(over), "{name}: {said}");
     }
     assert_eq!(
-        (rows(h, "stories").await, rows(h, "comments").await),
+        [
+            rows(h, "stories").await,
+            rows(h, "comments").await,
+            rows(h, "epics").await,
+            rows(h, "initiatives").await,
+            rows(h, "item_links").await,
+            rows(h, "web_links").await,
+        ],
         count,
         "nothing was written at exhaustion"
     );
