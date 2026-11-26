@@ -3404,8 +3404,20 @@ mod planning_gates {
             title: title.into(),
         };
         let planned = h.sprint_planning().await.unwrap();
+        let gates: Vec<GoalGates> = planned
+            .goals
+            .iter()
+            .map(|g| GoalGates {
+                goal_id: g.goal_id,
+                initiatives: g.initiatives.iter().map(|x| x.key.clone()).collect(),
+                discoveries: g.discoveries.clone(),
+                decisions: g.decisions.clone(),
+                discovery_total: g.discovery_total,
+                decisions_total: g.decisions_total,
+            })
+            .collect();
         assert_eq!(
-            planned,
+            gates,
             vec![
                 GoalGates {
                     goal_id: ga.id,
@@ -3437,6 +3449,170 @@ mod planning_gates {
                 },
             ]
         );
+        // The harness's settings name one bucket, "Now" (`settings()` in this file); `i` was created in it, and `ga`
+        // links to `e1`, an epic under `i`: the goal reaches the initiative through stored links.
+        assert_eq!(planned.first_bucket.as_deref(), Some("Now"));
+        assert!(
+            planned
+                .first_bucket_initiatives
+                .iter()
+                .any(|b| &b.key == i.key() && b.goals.iter().any(|g| g.id == ga.id)),
+            "{:?}",
+            planned.first_bucket_initiatives
+        );
+        assert!(planned.goals[0].initiatives[0].in_first_bucket);
+    }
+
+    /// An initiative's goals are the active sprint's first, then the draft's, by id inside each: a draft goal with the
+    /// lower id still comes second, so the read must pass the active sprint's id to the domain function.
+    #[tokio::test]
+    async fn the_bucket_lists_the_active_sprints_goals_before_a_lower_drafts() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        let i = h
+            .create_initiative(&me, "i", "Bookings", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        // A goal that links to nothing makes the draft sprint, which is then opened.
+        h.add_goal(&me, "g0", "Open", "c", None, "", false, &[])
+            .await
+            .unwrap();
+        let d = h.sprints(at(2, 0)).await.unwrap().draft.unwrap();
+        h.open_sprint(&ctx(Via::Interactive, 3), d.id, d.version, None)
+            .await
+            .unwrap();
+        // The draft goal is created first, so its id is the lower one.
+        let draft_goal = h
+            .add_goal(
+                &me,
+                "gd",
+                "Draft",
+                "c",
+                None,
+                "",
+                false,
+                std::slice::from_ref(i.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        let active_goal = h
+            .add_goal(
+                &me,
+                "ga",
+                "Active",
+                "c",
+                None,
+                "",
+                true,
+                std::slice::from_ref(i.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        assert!(draft_goal.id < active_goal.id);
+        let planned = h.sprint_planning().await.unwrap();
+        let b = planned
+            .first_bucket_initiatives
+            .iter()
+            .find(|b| &b.key == i.key())
+            .unwrap();
+        let got: Vec<(i64, &str, bool)> = b
+            .goals
+            .iter()
+            .map(|g| (g.id, g.outcome.as_str(), g.active))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (active_goal.id, "Active", true),
+                (draft_goal.id, "Draft", false)
+            ]
+        );
+    }
+
+    /// With no bucket configured there is no first bucket and no list, and the gates are read all the same.
+    #[tokio::test]
+    async fn without_a_configured_bucket_the_read_has_gates_and_no_bucket() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let me = ctx(Via::Interactive, 2);
+        // An initiative in "Now" exists; the read below is made with settings that configure no bucket at all.
+        let i = h
+            .create_initiative(&me, "i", "Bookings", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        let g = h
+            .add_goal(
+                &me,
+                "g",
+                "Book",
+                "c",
+                None,
+                "",
+                false,
+                std::slice::from_ref(i.key()),
+            )
+            .await
+            .unwrap()
+            .0;
+        let bare = Handlers {
+            ports: make_planning_ports(pool.clone()),
+            activity: h.activity.clone(),
+            pool,
+            settings: Settings {
+                horizon_buckets: vec![],
+                ..h.settings.clone()
+            },
+        };
+        let planned = bare.sprint_planning().await.unwrap();
+        assert_eq!(planned.first_bucket, None);
+        assert!(
+            planned.first_bucket_initiatives.is_empty(),
+            "{:?}",
+            planned.first_bucket_initiatives
+        );
+        assert_eq!(planned.goals.len(), 1);
+        assert_eq!(planned.goals[0].goal_id, g.id);
+        assert_eq!(planned.goals[0].initiatives.len(), 1);
+        assert_eq!(&planned.goals[0].initiatives[0].key, i.key());
+        assert!(!planned.goals[0].initiatives[0].in_first_bucket);
+    }
+
+    /// The first bucket is the configured one, not a name the read knows: an initiative in "Now" is not listed when
+    /// "Soon" comes first.
+    #[tokio::test]
+    async fn the_first_bucket_is_read_from_the_settings() {
+        let (_c, pool) = super::common::pg().await;
+        let (h, _) = mk(pool.clone());
+        let h = Handlers {
+            ports: make_planning_ports(pool.clone()),
+            activity: h.activity.clone(),
+            pool,
+            settings: Settings {
+                horizon_buckets: vec!["Soon".into(), "Now".into()],
+                ..h.settings.clone()
+            },
+        };
+        let me = ctx(Via::Interactive, 2);
+        let now = h
+            .create_initiative(&me, "n", "Now one", "", "Now", None, None, None)
+            .await
+            .unwrap();
+        let soon = h
+            .create_initiative(&me, "s", "Soon one", "", "Soon", None, None, None)
+            .await
+            .unwrap();
+        let planned = h.sprint_planning().await.unwrap();
+        assert_eq!(planned.first_bucket.as_deref(), Some("Soon"));
+        let keys: Vec<&Key> = planned
+            .first_bucket_initiatives
+            .iter()
+            .map(|b| &b.key)
+            .collect();
+        assert_eq!(keys, vec![soon.key()]);
+        assert!(!keys.contains(&now.key()));
     }
 
     /// The read costs the same for one goal and for ten over more stories and decisions: whole-table reads filtered in
@@ -3520,7 +3696,7 @@ mod planning_gates {
             .await
             .unwrap();
         }
-        assert_eq!(h.sprint_planning().await.unwrap().len(), 10);
+        assert_eq!(h.sprint_planning().await.unwrap().goals.len(), 10);
         let ten = super::common::statements(&pool, read).await;
         assert_eq!(one, ten);
     }

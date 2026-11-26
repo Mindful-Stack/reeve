@@ -7,7 +7,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry, Goal, GoalGates, Initiative, Sprint, SprintCounts, Sprints, SprintView } from '#lib/api/types.ts';
 import { session } from '#lib/me.svelte.ts';
-import { activity, config, goal, goalGates, initiative, sprint, sprintView } from '#lib/test/fixtures.ts';
+import { activity, config, goal, goalGates, goalInitiative, initiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
@@ -53,7 +53,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 			if (path === '/api/v1/sprints') value = structuredClone(net.sprints);
 			else if (one) value = net.views[Number(one[1])];
 			else if (path === '/api/v1/activity') value = net.closedEntries[Number(url.searchParams.get('entity_key'))] ?? [];
-			else if (path === '/api/v1/sprints/planning') value = structuredClone(net.gates);
+			else if (path === '/api/v1/sprints/planning') value = structuredClone(planning({ goals: net.gates }));
 			else if (path === '/api/v1/initiatives') value = structuredClone(net.initiatives);
 			else throw new Error(`unexpected GET ${path}`);
 			const held = net.gate?.(path);
@@ -719,10 +719,10 @@ describe('planning by goal', () => {
 	it("shows each goal's gates: discovery by level, decisions by what they need, and the counts line", async () => {
 		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-2'] }), goal({ id: 2, links: ['ABC-2'] })]);
 		net.gates = [
-			goalGates({ goal_id: 2, initiatives: ['ABC-1'], decisions_total: 2 }),
+			goalGates({ goal_id: 2, initiatives: [goalInitiative('ABC-1')], decisions_total: 2 }),
 			goalGates({
 				goal_id: 1,
-				initiatives: ['ABC-1'],
+				initiatives: [goalInitiative('ABC-1')],
 				discoveries: [{ key: 'ABC-1', item: 'initiative', title: 'Bookings' }],
 				decisions: [{ on: 'ABC-2', reason: { reason: 'decision_no_record', decision_id: 7, title: 'Which calendar' } }],
 				discovery_total: 2,
@@ -751,9 +751,9 @@ describe('planning by goal', () => {
 		net.initiatives = [initiative({ key: 'ABC-1', title: 'Bookings', horizon: 'Next' }), initiative({ key: 'ABC-5', title: 'Payments', horizon: 'Now' })];
 		net.sprints!.active = activeWith([goal({ id: 1, links: ['ABC-20'] }), goal({ id: 2 }), goal({ id: 3, links: ['ABC-5'] })]);
 		net.gates = [
-			goalGates({ goal_id: 1, initiatives: ['ABC-1'], discovery_total: 1 }),
+			goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-1')], discovery_total: 1 }),
 			goalGates({ goal_id: 2 }),
-			goalGates({ goal_id: 3, initiatives: ['ABC-5', 'ABC-1'] })
+			goalGates({ goal_id: 3, initiatives: [goalInitiative('ABC-5'), goalInitiative('ABC-1')] })
 		];
 		await open();
 		const panel = q('[data-testid="active-sprint"]')!;
@@ -795,7 +795,7 @@ describe('planning by goal', () => {
 		];
 		// Covered through the gates' initiatives, not the goal's links (an epic, ABC-20), on the active sprint.
 		net.sprints!.active = activeWith([goal({ id: 5, links: ['ABC-20'] })]);
-		net.gates = [goalGates({ goal_id: 5, initiatives: ['ABC-11'] })];
+		net.gates = [goalGates({ goal_id: 5, initiatives: [goalInitiative('ABC-11')] })];
 		await open();
 		const section = q('[data-testid="no-goal-yet"]')!;
 		expect(text(q('h2', section))).toBe('Now, no goal yet');
@@ -811,7 +811,7 @@ describe('planning by goal', () => {
 		session.config = config({ horizon_buckets: ['Now'] });
 		net.initiatives = [initiative({ key: 'ABC-11', horizon: 'Now' })];
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, links: ['ABC-11'] })]);
-		net.gates = [goalGates({ goal_id: 5, initiatives: ['ABC-11'] })];
+		net.gates = [goalGates({ goal_id: 5, initiatives: [goalInitiative('ABC-11')] })];
 		await open();
 		expect(text(q('[data-testid="no-goal-yet"]'))).toContain('Every Now initiative has a goal this sprint or next.');
 	});
@@ -870,7 +870,7 @@ describe('planning by goal', () => {
 		flushSync();
 		// What the reload after the add brings.
 		net.sprints!.draft = draft([goal({ id: 99, sprint_id: 2, links: ['ABC-7'] })]);
-		net.gates = [goalGates({ goal_id: 99, initiatives: ['ABC-7'] })];
+		net.gates = [goalGates({ goal_id: 99, initiatives: [goalInitiative('ABC-7')] })];
 		button('Add goal', form)!.click();
 		await settle(() => expect(document.activeElement).toBe(q('[data-testid="goal-99"]')));
 	});

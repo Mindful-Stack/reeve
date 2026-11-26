@@ -1,7 +1,7 @@
 //! Sprints and goals (kb/ADR-0014): pure rules and the summary computation. No I/O and no clock: every instant comes
 //! from the handler's `Ctx.now`.
 use super::decision::RequiredDecision;
-use super::items::{Epic, Initiative, Story};
+use super::items::{DiscoveryMark, Epic, Initiative, Story};
 use super::readiness::{DecisionFact, decision_reason};
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use reeve_protocol::{
@@ -339,6 +339,141 @@ pub fn goal_gates(
                 decisions: gates,
                 discovery_total,
                 decisions_total,
+            }
+        })
+        .collect()
+}
+
+/// Whether an initiative with `horizon` is in the first horizon bucket (kb/ADR-0016 R2): the one rule the queue, the
+/// goals' initiatives and the bucket list all use. Never without a configured bucket.
+pub fn is_first_bucket(first_bucket: Option<&str>, horizon: &str) -> bool {
+    first_bucket == Some(horizon)
+}
+
+/// An initiative a goal reaches, with what a client shows beside the goal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReachedInitiative {
+    pub key: Key,
+    pub title: String,
+    pub horizon: String,
+    pub in_first_bucket: bool,
+}
+
+/// One goal's planning read: its gates with the initiatives it reaches resolved (a view of `GoalGates`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanningGoal {
+    pub goal_id: i64,
+    pub initiatives: Vec<ReachedInitiative>,
+    pub discoveries: Vec<DiscoveryGate>,
+    pub decisions: Vec<DecisionGate>,
+    pub discovery_total: u32,
+    pub decisions_total: u32,
+}
+
+/// `gates` with each reached initiative resolved against `initiatives` (the snapshot `goal_gates` read them from).
+/// `goal_gates` stays horizon-blind; the first-bucket mark is set here.
+pub fn planning_goals(
+    gates: Vec<GoalGates>,
+    initiatives: &[Initiative],
+    first_bucket: Option<&str>,
+) -> Vec<PlanningGoal> {
+    let by_key: std::collections::HashMap<&Key, &Initiative> =
+        initiatives.iter().map(|i| (i.key(), i)).collect();
+    gates
+        .into_iter()
+        .map(|g| PlanningGoal {
+            goal_id: g.goal_id,
+            initiatives: g
+                .initiatives
+                .iter()
+                .map(|k| {
+                    let i = by_key
+                        .get(k)
+                        .expect("goal_gates names only initiatives of the snapshot it was given");
+                    ReachedInitiative {
+                        key: i.key().clone(),
+                        title: i.title().to_owned(),
+                        horizon: i.horizon().to_owned(),
+                        in_first_bucket: is_first_bucket(first_bucket, i.horizon()),
+                    }
+                })
+                .collect(),
+            discoveries: g.discoveries,
+            decisions: g.decisions,
+            discovery_total: g.discovery_total,
+            decisions_total: g.decisions_total,
+        })
+        .collect()
+}
+
+/// A goal that reaches a bucket initiative.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BucketGoal {
+    pub id: i64,
+    pub outcome: String,
+    /// In the active sprint (false: in the draft).
+    pub active: bool,
+}
+
+/// One initiative of the first horizon bucket with what a client shows: title, target month, discovery mark and the
+/// goals whose links reach it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BucketInitiative {
+    pub key: Key,
+    pub title: String,
+    pub target_month: Option<String>,
+    pub discovery: Option<DiscoveryMark>,
+    /// The active sprint's goals first, then the draft's; by id inside each.
+    pub goals: Vec<BucketGoal>,
+}
+
+/// The initiatives whose horizon is `first_bucket`, each with the goals that reach it, for display beside the goals:
+/// goals and horizons do not set each other (kb/ADR-0026, Consequences), so nothing here is a rule about either. The
+/// order is target month, earliest first, none last; then title by code point; then key number. A goal reaches an
+/// initiative when its gates name it (`GoalGates::initiatives`, from `goal_gates`). A month that is not a real
+/// `YYYY-MM` month ranks as none. `goals` is expected to hold the active and the draft sprint's goals (any goal not in
+/// the active sprint sorts after it). `first_bucket` is the configured name (kb/ADR-0016 R2), passed in: this function
+/// knows no configuration. Nothing here reads urgency (kb/ADR-0024 R7).
+pub fn first_bucket_initiatives(
+    first_bucket: &str,
+    initiatives: &[Initiative],
+    gates: &[GoalGates],
+    goals: &[Goal],
+    active_sprint: Option<i64>,
+) -> Vec<BucketInitiative> {
+    let mut bucket: Vec<&Initiative> = initiatives
+        .iter()
+        .filter(|i| is_first_bucket(Some(first_bucket), i.horizon()))
+        .collect();
+    bucket.sort_by_key(|i| {
+        let month = i.target_month().and_then(super::queue::real_month);
+        (month.is_none(), month, i.title(), i.key().number())
+    });
+    bucket
+        .into_iter()
+        .map(|i| {
+            let mut reaching: Vec<&Goal> = goals
+                .iter()
+                .filter(|g| {
+                    gates
+                        .iter()
+                        .any(|x| x.goal_id == g.id && x.initiatives.contains(i.key()))
+                })
+                .collect();
+            reaching.sort_by_key(|g| (Some(g.sprint_id) != active_sprint, g.id));
+            BucketInitiative {
+                key: i.key().clone(),
+                title: i.title().to_owned(),
+                target_month: i.target_month().map(str::to_owned),
+                discovery: i.discovery().cloned(),
+                goals: reaching
+                    .iter()
+                    .map(|g| BucketGoal {
+                        id: g.id,
+                        outcome: g.outcome.clone(),
+                        active: Some(g.sprint_id) == active_sprint,
+                    })
+                    .collect(),
             }
         })
         .collect()
@@ -1320,5 +1455,219 @@ mod tests {
                 decisions_total: 0,
             }]
         );
+    }
+
+    /// An initiative with a title, a horizon and a target month; `ini` takes neither a title, a horizon nor a month.
+    fn ini_in(key: &str, title: &str, horizon: &str, month: Option<&str>) -> Initiative {
+        Initiative::from_persisted(
+            k(key),
+            title.into(),
+            String::new(),
+            horizon.into(),
+            month.map(str::to_owned),
+            None,
+            None,
+            None,
+            1,
+        )
+    }
+    fn goal_in(id: i64, sprint_id: i64) -> Goal {
+        Goal {
+            id,
+            sprint_id,
+            outcome: format!("o{id}"),
+            check: "c".into(),
+            owner: "dan".into(),
+            notes: String::new(),
+            confidence: None,
+            confidence_note: None,
+            confidence_at: None,
+            suggested_confidence: None,
+            suggested_note: None,
+            suggested_at: None,
+            suggested_by: None,
+            verdict: None,
+            verdict_note: None,
+            version: 1,
+            created_at: t(1, 0),
+        }
+    }
+    /// A goal's gates holding only the initiatives its links reach.
+    fn reaches(goal_id: i64, keys: &[&str]) -> GoalGates {
+        GoalGates {
+            goal_id,
+            initiatives: keys.iter().map(|s| k(s)).collect(),
+            discoveries: vec![],
+            decisions: vec![],
+            discovery_total: 0,
+            decisions_total: 0,
+        }
+    }
+    /// A bucket row as (key, the ids of its goals); `active` is asserted where it matters.
+    fn shape(rows: Vec<BucketInitiative>) -> Vec<(String, Vec<i64>)> {
+        rows.into_iter()
+            .map(|b| (b.key.to_string(), b.goals.iter().map(|g| g.id).collect()))
+            .collect()
+    }
+    fn bucket(key: &str, goals: &[i64]) -> (String, Vec<i64>) {
+        (key.to_owned(), goals.to_vec())
+    }
+
+    #[test]
+    fn the_bucket_lists_only_its_own_initiatives_each_with_the_goals_that_reach_it() {
+        let initiatives = [
+            ini_in("ABC-1", "Bookings", "Now", None),
+            ini_in("ABC-2", "Payments", "Later", None),
+            ini_in("ABC-3", "Reports", "Now", None),
+        ];
+        let goals = [goal_in(10, 1), goal_in(11, 1)];
+        let gates = [reaches(10, &["ABC-1", "ABC-2"]), reaches(11, &[])];
+        assert_eq!(
+            shape(first_bucket_initiatives(
+                "Now",
+                &initiatives,
+                &gates,
+                &goals,
+                Some(1)
+            )),
+            vec![bucket("ABC-1", &[10]), bucket("ABC-3", &[])]
+        );
+    }
+
+    #[test]
+    fn the_bucket_orders_by_target_month_then_title_then_key_number() {
+        let initiatives = [
+            ini_in("ABC-10", "Same", "Now", None),
+            ini_in("ABC-4", "Zeta", "Now", Some("2026-12")),
+            ini_in("ABC-5", "alpha", "Now", None),
+            ini_in("ABC-6", "Beta", "Now", Some("2027-01")),
+            ini_in("ABC-9", "Same", "Now", None),
+            ini_in("ABC-7", "Alpha", "Now", Some("2026-12")),
+        ];
+        let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
+            .iter()
+            .map(|b| b.key.to_string())
+            .collect();
+        // Months first, earliest first; then no month. Titles by code point ("Same" before "alpha": upper case
+        // sorts first). Two with the same title by key number, so ABC-9 before ABC-10 (not by text).
+        assert_eq!(
+            keys,
+            ["ABC-7", "ABC-4", "ABC-6", "ABC-9", "ABC-10", "ABC-5"]
+        );
+    }
+
+    #[test]
+    fn a_target_month_that_is_not_a_real_month_ranks_as_none() {
+        let initiatives = [
+            ini_in("ABC-1", "d", "Now", Some("soon")),
+            ini_in("ABC-2", "c", "Now", Some("2026-9")),
+            ini_in("ABC-3", "b", "Now", Some("")),
+            ini_in("ABC-4", "y", "Now", Some("2026-13")),
+            ini_in("ABC-5", "z", "Now", Some("2026-12")),
+        ];
+        let keys: Vec<String> = first_bucket_initiatives("Now", &initiatives, &[], &[], None)
+            .iter()
+            .map(|b| b.key.to_string())
+            .collect();
+        assert_eq!(keys, ["ABC-5", "ABC-3", "ABC-2", "ABC-1", "ABC-4"]);
+    }
+
+    #[test]
+    fn a_bucket_initiatives_goals_are_the_active_sprints_first_then_by_id() {
+        let initiatives = [ini_in("ABC-1", "Bookings", "Now", None)];
+        // Sprint 2 is active, sprint 3 the draft; goal ids do not follow that order.
+        let goals = [
+            goal_in(23, 2),
+            goal_in(20, 3),
+            goal_in(22, 3),
+            goal_in(21, 2),
+        ];
+        let gates = [
+            reaches(20, &["ABC-1"]),
+            reaches(21, &["ABC-1"]),
+            reaches(22, &["ABC-1"]),
+            reaches(23, &["ABC-1"]),
+        ];
+        let with_active = first_bucket_initiatives("Now", &initiatives, &gates, &goals, Some(2));
+        let got: Vec<(i64, &str, bool)> = with_active[0]
+            .goals
+            .iter()
+            .map(|g| (g.id, g.outcome.as_str(), g.active))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (21, "o21", true),
+                (23, "o23", true),
+                (20, "o20", false),
+                (22, "o22", false)
+            ]
+        );
+        // Without an active sprint every goal is the draft's: by id alone.
+        let none_active = first_bucket_initiatives("Now", &initiatives, &gates, &goals, None);
+        assert_eq!(
+            shape(none_active.clone()),
+            vec![bucket("ABC-1", &[20, 21, 22, 23])]
+        );
+        assert!(none_active[0].goals.iter().all(|g| !g.active));
+    }
+
+    #[test]
+    fn a_bucket_row_carries_its_title_target_month_and_discovery_mark() {
+        let marked = Initiative::from_persisted(
+            k("ABC-1"),
+            "Bookings".into(),
+            String::new(),
+            "Now".into(),
+            Some("2026-12".into()),
+            None,
+            Some(DiscoveryMark {
+                at: t(1, 0),
+                by: "dan".into(),
+            }),
+            None,
+            1,
+        );
+        let initiatives = [marked, ini_in("ABC-2", "Reports", "Now", None)];
+        let rows = first_bucket_initiatives("Now", &initiatives, &[], &[], None);
+        assert_eq!(rows[0].title, "Bookings");
+        assert_eq!(rows[0].target_month.as_deref(), Some("2026-12"));
+        assert_eq!(
+            rows[0].discovery.as_ref().map(|d| d.by.as_str()),
+            Some("dan")
+        );
+        assert_eq!(rows[1].target_month, None);
+        assert!(rows[1].discovery.is_none());
+    }
+
+    #[test]
+    fn one_rule_says_which_horizon_is_the_first_bucket() {
+        assert!(is_first_bucket(Some("Now"), "Now"));
+        assert!(!is_first_bucket(Some("Now"), "Later"));
+        assert!(!is_first_bucket(None, "Now"));
+    }
+
+    #[test]
+    fn the_goals_initiatives_are_resolved_and_marked_with_the_same_rule() {
+        let initiatives = [
+            ini_in("ABC-1", "Bookings", "Now", None),
+            ini_in("ABC-2", "Payments", "Later", None),
+        ];
+        let gates = vec![reaches(10, &["ABC-2", "ABC-1"])];
+        let got = planning_goals(gates.clone(), &initiatives, Some("Now"));
+        let seen: Vec<(String, &str, bool)> = got[0]
+            .initiatives
+            .iter()
+            .map(|i| (i.key.to_string(), i.horizon.as_str(), i.in_first_bucket))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("ABC-2".to_owned(), "Later", false),
+                ("ABC-1".to_owned(), "Now", true)
+            ]
+        );
+        let none = planning_goals(gates, &initiatives, None);
+        assert!(none[0].initiatives.iter().all(|i| !i.in_first_bucket));
     }
 }

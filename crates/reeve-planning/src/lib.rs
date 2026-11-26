@@ -26,8 +26,9 @@ pub use domain::{
     queue::{DiscoveryRow, LineageItem, QueueEntry, QueueStory, QueueSummary},
     readiness::{AncestorFact, BlockerFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
-        DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates, GoalLink, GoalProgress, Sprint,
-        SprintCounts, StoryTimes, Summary, goal_gates, summarise,
+        BucketGoal, BucketInitiative, DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates,
+        GoalLink, GoalProgress, PlanningGoal, ReachedInitiative, Sprint, SprintCounts, StoryTimes,
+        Summary, first_bucket_initiatives, goal_gates, is_first_bucket, planning_goals, summarise,
     },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
     web_link::{WebLink, WebLinkError},

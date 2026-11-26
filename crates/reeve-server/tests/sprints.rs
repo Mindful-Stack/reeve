@@ -429,8 +429,9 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
     assert_eq!(g["goal"]["links"], json!([epic]));
     assert!(g["goal"]["created_at"].is_string(), "{g}");
     let gid = g["goal"]["id"].as_i64().unwrap();
+    let planned = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
     assert_eq!(
-        ok_value(&h, "GET", "/api/v1/sprints/planning", None).await,
+        planned["goals"],
         json!([
             {
                 "goal_id": aid, "initiatives": [],
@@ -443,5 +444,133 @@ async fn planning_lists_each_goals_gates_and_a_goal_is_created_linked() {
                 "decisions": [], "discovery_total": 1, "decisions_total": 0
             }
         ])
+    );
+}
+
+async fn new_initiative(h: &Harness, idem: &str, title: &str, horizon: &str) -> String {
+    ok_value(
+        h,
+        "POST",
+        "/api/v1/initiatives",
+        Some(json!({"idempotency_key": idem, "title": title, "horizon": horizon})),
+    )
+    .await["key"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// `GET /sprints/planning` names each goal's initiatives with their horizon and whether it is the first configured
+/// bucket, and lists that bucket's initiatives with the goals that reach them (display only, kb/ADR-0026).
+#[tokio::test]
+async fn planning_compares_goals_with_the_first_horizon_bucket() {
+    let h = harness().await;
+    // The harness keeps the default buckets, which start "Now", "Next" (`default_buckets` in config.rs).
+    // The bucket's two members are created in the reverse of their title order ("No goal reaches it" first, so it has
+    // the lower key), so a bucket list in creation or key order instead of title order would fail.
+    let empty = new_initiative(&h, "i-empty", "No goal reaches it", "Now").await;
+    let outside = new_initiative(&h, "i-out", "Outside it", "Next").await;
+    let inside = new_initiative(&h, "i-in", "In the bucket", "Now").await;
+    let goal = |idem: &'static str, links: serde_json::Value| {
+        let h = &h;
+        async move {
+            ok_value(
+                h,
+                "POST",
+                "/api/v1/goals",
+                Some(
+                    json!({"idempotency_key": idem, "outcome": idem, "check": "c", "links": links}),
+                ),
+            )
+            .await["goal"]["id"]
+                .as_i64()
+                .unwrap()
+        }
+    };
+    // `both` is opened into the active sprint; `later` and `none` land in the next draft.
+    let both = goal("both", json!([inside, outside])).await;
+    let draft = ok_value(&h, "GET", "/api/v1/sprints", None).await["draft"].clone();
+    ok_value(
+        &h,
+        "POST",
+        &format!("/api/v1/sprints/{}/open", draft["id"]),
+        Some(json!({"version": draft["version"]})),
+    )
+    .await;
+    let later = goal("later", json!([inside])).await;
+    let none = goal("none", json!([])).await;
+    // The mark is sent under the name and type `InitiativeDto` uses.
+    let version =
+        ok_value(&h, "GET", &format!("/api/v1/initiatives/{inside}"), None).await["version"]
+            .clone();
+    ok_value(
+        &h,
+        "POST",
+        &format!("/api/v1/initiatives/{inside}/discovery"),
+        Some(json!({"version": version, "complete": true})),
+    )
+    .await;
+    let p = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
+    assert_eq!(p["first_bucket"], "Now", "{p}");
+    assert_eq!(
+        p["goals"][0]["initiatives"],
+        json!([
+            {"key": outside, "title": "Outside it", "horizon": "Next", "in_first_bucket": false},
+            {"key": inside, "title": "In the bucket", "horizon": "Now", "in_first_bucket": true}
+        ]),
+        "{p}"
+    );
+    assert_eq!(p["goals"][0]["goal_id"], both);
+    assert_eq!(p["goals"][1]["goal_id"], later);
+    assert_eq!(p["goals"][2]["goal_id"], none);
+    assert_eq!(p["goals"][2]["initiatives"], json!([]));
+    let rows = &p["first_bucket_initiatives"];
+    assert_eq!(rows[0]["key"], inside, "{p}");
+    assert_eq!(rows[0]["title"], "In the bucket");
+    assert_eq!(rows[0]["target_month"], json!(null));
+    // The active sprint's goal first, whichever id is lower.
+    assert_eq!(
+        rows[0]["goals"],
+        json!([
+            {"id": both, "outcome": "both", "active": true},
+            {"id": later, "outcome": "later", "active": false}
+        ]),
+        "{p}"
+    );
+    let mark = &rows[0]["discovery_complete"];
+    assert!(mark["at"].is_string(), "{p}");
+    assert_eq!(mark["by"], "dan@example.com", "{p}");
+    assert_eq!(
+        rows[1],
+        json!({"key": empty, "title": "No goal reaches it", "target_month": null, "discovery_complete": null, "goals": []}),
+        "{p}"
+    );
+    assert_eq!(rows.as_array().unwrap().len(), 2, "{p}");
+}
+
+/// Without a configured bucket the answer names none and lists none, and no initiative counts as in it. A server
+/// without buckets refuses to create an initiative, so one is seeded first and the buckets are cleared from the
+/// handlers' settings afterwards, on the same database.
+#[tokio::test]
+async fn planning_names_no_bucket_when_none_is_configured() {
+    let mut h = harness().await;
+    let ini = new_initiative(&h, "i-seed", "Seeded", "Now").await;
+    ok_value(
+        &h,
+        "POST",
+        "/api/v1/goals",
+        Some(json!({"idempotency_key": "g", "outcome": "o", "check": "c", "links": [ini]})),
+    )
+    .await;
+    h.state.handlers.settings.horizon_buckets.clear();
+    h.app = reeve_server::app(h.state.clone());
+    let p = ok_value(&h, "GET", "/api/v1/sprints/planning", None).await;
+    assert!(p.as_object().unwrap().contains_key("first_bucket"), "{p}");
+    assert_eq!(p["first_bucket"], json!(null), "{p}");
+    assert_eq!(p["first_bucket_initiatives"], json!([]), "{p}");
+    assert_eq!(
+        p["goals"][0]["initiatives"],
+        json!([{"key": ini, "title": "Seeded", "horizon": "Now", "in_first_bucket": false}]),
+        "{p}"
     );
 }

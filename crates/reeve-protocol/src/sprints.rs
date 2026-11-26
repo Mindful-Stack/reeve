@@ -1,6 +1,7 @@
 //! Sprint and goal wire types (kb/ADR-0014): enums, counts, views and requests.
 use crate::enums::ItemType;
 use crate::ids::{Key, KeyRef};
+use crate::items::DiscoveryMarkDto;
 use crate::promise::SprintPromiseDto;
 use crate::readiness::Reason;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -187,14 +188,15 @@ pub struct CreatedGoalDto {
     pub warnings: Vec<SprintWarning>,
 }
 
-/// What one goal of the active or the draft sprint waits on (`GET /sprints/planning`), derived on read (kb/ADR-0014 R6,
-/// kb/ADR-0027 R1). These are not sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
+/// One goal of the active or the draft sprint in `GET /sprints/planning`, derived on read (kb/ADR-0014 R6,
+/// kb/ADR-0027 R1): the initiatives its links reach, and what its work waits on. The gate numbers are not
+/// sprint-membership counts: the kb/ADR-0014 R2 rule line does not go beside them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct GoalGatesDto {
     pub goal_id: i64,
     /// Each link's initiative (an initiative itself, an epic's, a story's epic's), once, in link order (links come by
-    /// key number); the sprint page groups the goal under the first.
-    pub initiatives: Vec<Key>,
+    /// key number). Empty when the goal's links reach none.
+    pub initiatives: Vec<GoalInitiativeDto>,
     /// Initiatives first, then epics, each by key number.
     pub discoveries: Vec<DiscoveryGateDto>,
     /// By decision id. Each a `Reason::Decision*` variant, which carries the decision's id and title.
@@ -218,6 +220,53 @@ pub struct DiscoveryGateDto {
 pub struct DecisionGateDto {
     pub on: Key,
     pub reason: Reason,
+}
+
+/// An initiative a goal's links reach, with what a client needs to show it beside the goal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct GoalInitiativeDto {
+    pub key: Key,
+    pub title: String,
+    pub horizon: String,
+    /// The initiative's horizon is the first configured bucket. False when no bucket is configured. For display
+    /// only: a goal may link to any initiative or none (kb/ADR-0014 R3).
+    pub in_first_bucket: bool,
+}
+
+/// A goal whose links reach a bucket initiative.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BucketGoalDto {
+    pub id: i64,
+    pub outcome: String,
+    /// In the active sprint; false when in the draft (the word `POST /goals` uses).
+    pub active: bool,
+}
+
+/// An initiative of the first configured horizon bucket with the goals whose links reach it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct BucketInitiativeDto {
+    pub key: Key,
+    pub title: String,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub target_month: Option<String>,
+    // The mark itself, as `InitiativeDto` sends it (kb/ADR-0002 R3); no doc comment, so the schema is identical.
+    pub discovery_complete: Option<DiscoveryMarkDto>,
+    /// The active sprint's goals first, then the draft's, by id inside each. Empty when no goal reaches it.
+    pub goals: Vec<BucketGoalDto>,
+}
+
+/// `GET /sprints/planning`: each goal of the active and the draft sprint, and the first horizon bucket's initiatives
+/// with their goals. Goals and horizons do not set each other (kb/ADR-0026); this compares them for display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SprintPlanningDto {
+    pub goals: Vec<GoalGatesDto>,
+    /// The first configured horizon bucket's name (kb/ADR-0016 R2); null when none is configured.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub first_bucket: Option<String>,
+    /// That bucket's initiatives: by target month (earliest first, none last), then title, then key number.
+    pub first_bucket_initiatives: Vec<BucketInitiativeDto>,
 }
 
 /// Opens the draft; the end defaults to one `[sprints] length_days` after today. `leave_out` names draft goals that stay

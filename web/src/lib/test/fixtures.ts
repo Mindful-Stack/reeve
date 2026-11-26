@@ -5,6 +5,8 @@ import type {
 	ActivityEntry,
 	AffectedStory,
 	BriefTemplate,
+	BucketGoal,
+	BucketInitiative,
 	DecisionQueue,
 	DecisionQueueEntry,
 	DiscoveryEntry,
@@ -14,6 +16,7 @@ import type {
 	Epic,
 	Goal,
 	GoalGates,
+	GoalInitiative,
 	Initiative,
 	InstanceConfig,
 	ItemLink,
@@ -22,6 +25,7 @@ import type {
 	RequiredDecision,
 	SearchHit,
 	Sprint,
+	SprintPlanning,
 	SprintView,
 	Story,
 	StoryWithReadiness,
@@ -192,6 +196,28 @@ export function goal(over: Partial<Goal> = {}): Goal {
 /** A goal's gates with nothing waiting and nothing counted. */
 export function goalGates(over: Partial<GoalGates> = {}): GoalGates {
 	return { goal_id: 1, initiatives: [], discoveries: [], decisions: [], discovery_total: 0, decisions_total: 0, ...over };
+}
+
+/** An initiative a goal's links reach: in the first bucket, "Now", unless said otherwise. */
+export function goalInitiative(key = 'ABC-1', over: Partial<GoalInitiative> = {}): GoalInitiative {
+	return { key, title: `Initiative ${key}`, horizon: 'Now', in_first_bucket: true, ...over };
+}
+
+/** An initiative of the first bucket that no goal reaches. */
+export function bucketInitiative(over: Partial<BucketInitiative> = {}): BucketInitiative {
+	const key = over.key ?? 'ABC-1';
+	return { key, title: `Initiative ${key}`, target_month: null, discovery_complete: null, goals: [], ...over };
+}
+
+/** A goal reaching a bucket initiative: in the active sprint unless `active: false`. */
+export function bucketGoal(over: Partial<BucketGoal> = {}): BucketGoal {
+	const id = over.id ?? 1;
+	return { id, outcome: `Goal ${id}`, active: true, ...over };
+}
+
+/** The planning answer: no goals, the bucket "Now" with no initiatives. */
+export function planning(over: Partial<SprintPlanning> = {}): SprintPlanning {
+	return { goals: [], first_bucket: 'Now', first_bucket_initiatives: [], ...over };
 }
 
 /** The active sprint 1, with no goals unless given. */

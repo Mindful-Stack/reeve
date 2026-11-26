@@ -332,13 +332,11 @@ fn entry_order(a: &QueueEntry, b: &QueueEntry, today: NaiveDate) -> Ordering {
 /// Whether `key`'s lineage (the item itself, or a story's epic) has an initiative in the first configured bucket
 /// (kb/ADR-0016 R2), marked or not. Never without a configured bucket.
 fn in_first_bucket(inp: &ClassifyInputs, key: &Key) -> bool {
-    inp.first_bucket.is_some_and(|b| {
-        inp.lineage
-            .get(key)
-            .and_then(|l| l.first())
-            .and_then(|l| l.initiative_horizon.as_deref())
-            == Some(b)
-    })
+    inp.lineage
+        .get(key)
+        .and_then(|l| l.first())
+        .and_then(|l| l.initiative_horizon.as_deref())
+        .is_some_and(|h| super::sprint::is_first_bucket(inp.first_bucket, h))
 }
 
 /// The discovery rows (spec §1, §2): unfinished stories grouped by their discovery item (the first
@@ -468,8 +466,12 @@ fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
         .first()?
         .initiative_target_month
         .as_deref()?;
-    let real = reeve_protocol::is_target_month(m);
-    real.then(|| m.to_string())
+    real_month(m).map(str::to_owned)
+}
+
+/// `m` when it is a target month (`reeve_protocol::is_target_month`; text order then sorts by date).
+pub(crate) fn real_month(m: &str) -> Option<&str> {
+    reeve_protocol::is_target_month(m).then_some(m)
 }
 
 /// `d`'s due date and id when it is on or before `limit` (overdue included).

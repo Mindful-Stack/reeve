@@ -1004,32 +1004,95 @@ fn unknown_promise_values_decode_to_unknown() {
 }
 
 #[test]
-fn goal_gates_dto_carries_every_field() {
-    let g = GoalGates {
-        goal_id: 3,
-        initiatives: vec![k("ABC-1"), k("ABC-7")],
-        discoveries: vec![DiscoveryGate {
-            key: k("ABC-2"),
-            item: ItemType::Epic,
-            title: "E".into(),
+fn sprint_planning_dto_carries_every_field() {
+    let p = SprintPlanning {
+        goals: vec![PlanningGoal {
+            goal_id: 3,
+            initiatives: vec![
+                ReachedInitiative {
+                    key: k("ABC-1"),
+                    title: "Bookings".into(),
+                    horizon: "Now".into(),
+                    in_first_bucket: true,
+                },
+                ReachedInitiative {
+                    key: k("ABC-7"),
+                    title: "Payments".into(),
+                    horizon: "Later".into(),
+                    in_first_bucket: false,
+                },
+            ],
+            discoveries: vec![DiscoveryGate {
+                key: k("ABC-2"),
+                item: ItemType::Epic,
+                title: "E".into(),
+            }],
+            decisions: vec![DecisionGate {
+                on: k("ABC-4"),
+                reason: Reason::DecisionUnchecked {
+                    decision_id: 9,
+                    title: "D".into(),
+                },
+            }],
+            discovery_total: 4,
+            decisions_total: 5,
         }],
-        decisions: vec![DecisionGate {
-            on: k("ABC-4"),
-            reason: Reason::DecisionUnchecked {
-                decision_id: 9,
-                title: "D".into(),
+        first_bucket: Some("Now".into()),
+        first_bucket_initiatives: vec![
+            BucketInitiative {
+                key: k("ABC-1"),
+                title: "Bookings".into(),
+                target_month: Some("2026-12".into()),
+                discovery: Some(DiscoveryMark {
+                    at: chrono::DateTime::UNIX_EPOCH,
+                    by: "dan".into(),
+                }),
+                goals: vec![
+                    BucketGoal {
+                        id: 3,
+                        outcome: "Book".into(),
+                        active: true,
+                    },
+                    BucketGoal {
+                        id: 4,
+                        outcome: "Pay".into(),
+                        active: false,
+                    },
+                ],
             },
-        }],
-        discovery_total: 4,
-        decisions_total: 5,
+            BucketInitiative {
+                key: k("ABC-8"),
+                title: "Reports".into(),
+                target_month: None,
+                discovery: None,
+                goals: vec![],
+            },
+        ],
     };
     assert_eq!(
-        v!(GoalGatesDto::from(&g)),
+        v!(sprint_planning_dto(&p)),
         json!({
-            "goal_id": 3, "initiatives": ["ABC-1", "ABC-7"],
-            "discoveries": [{"key": "ABC-2", "item": "epic", "title": "E"}],
-            "decisions": [{"on": "ABC-4", "reason": {"reason": "decision_unchecked", "decision_id": 9, "title": "D"}}],
-            "discovery_total": 4, "decisions_total": 5
+            "goals": [{
+                "goal_id": 3,
+                "initiatives": [
+                    {"key": "ABC-1", "title": "Bookings", "horizon": "Now", "in_first_bucket": true},
+                    {"key": "ABC-7", "title": "Payments", "horizon": "Later", "in_first_bucket": false}
+                ],
+                "discoveries": [{"key": "ABC-2", "item": "epic", "title": "E"}],
+                "decisions": [{"on": "ABC-4", "reason": {"reason": "decision_unchecked", "decision_id": 9, "title": "D"}}],
+                "discovery_total": 4, "decisions_total": 5
+            }],
+            "first_bucket": "Now",
+            "first_bucket_initiatives": [
+                {"key": "ABC-1", "title": "Bookings", "target_month": "2026-12",
+                 "discovery_complete": {"at": "1970-01-01T00:00:00Z", "by": "dan"},
+                 "goals": [
+                    {"id": 3, "outcome": "Book", "active": true},
+                    {"id": 4, "outcome": "Pay", "active": false}
+                 ]},
+                {"key": "ABC-8", "title": "Reports", "target_month": null,
+                 "discovery_complete": null, "goals": []}
+            ]
         })
     );
 }

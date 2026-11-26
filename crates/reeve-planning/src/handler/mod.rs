@@ -25,13 +25,13 @@ pub use attachments::{MAX_CLAIM, MAX_UNCLAIMED_BYTES};
 use chrono::{DateTime, Utc};
 pub use decisions::DecisionScope;
 pub use dto::{
-    attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_promise_dto, sprint_view_dto,
-    story_promise_field,
+    attachment_dto, epic_promise_field, goal_dto, sprint_dto, sprint_planning_dto,
+    sprint_promise_dto, sprint_view_dto, story_promise_field,
 };
 pub use epics::EpicMove;
 use reeve_protocol::{ItemType, Key, KeyRef, Reason, Via};
 pub use similar::SIMILAR_MIN;
-pub use sprints::{SprintView, Sprints};
+pub use sprints::{SprintPlanning, SprintView, Sprints};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::sync::Arc;
 pub use urgent::{WarRoomEntry, WarRoomInitiative};

@@ -7,7 +7,7 @@
 use super::*;
 use crate::domain::promise::{Clock, SprintPromise, StoryFacts, sprint_range, story_promise};
 use crate::domain::readiness::decision_fact;
-use crate::domain::sprint::{self, Goal, GoalGates, GoalLink, Op, Sprint};
+use crate::domain::sprint::{self, Goal, GoalLink, Op, Sprint};
 use chrono::NaiveDate;
 use reeve_protocol::{Confidence, SprintState, SprintWarning, Verdict};
 
@@ -25,6 +25,17 @@ pub struct Sprints {
     pub active_summary: Option<sprint::Summary>,
     /// The promise clock's today (`Clock::at`): the UTC date of the request, as `SprintsDto.today` sends it.
     pub today: NaiveDate,
+}
+
+/// What `GET /sprints/planning` is put together from, all from one snapshot and derived on read (kb/ADR-0014 R6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SprintPlanning {
+    /// Each active and draft goal's gates with the initiatives it reaches resolved, by sprint then goal id.
+    pub goals: Vec<sprint::PlanningGoal>,
+    /// The first of the configured `horizon_buckets` (kb/ADR-0016 R2); None when no bucket is configured.
+    pub first_bucket: Option<String>,
+    /// That bucket's initiatives with their goals (`sprint::first_bucket_initiatives`); empty without a bucket.
+    pub first_bucket_initiatives: Vec<sprint::BucketInitiative>,
 }
 
 /// One sprint as `GET /sprints/{id}` shows it, from one snapshot.
@@ -701,7 +712,7 @@ impl Handlers {
 
     /// Each goal of the active and the draft sprint with what its work waits on, from one read-only snapshot.
     /// Derived on read, never stored (kb/ADR-0014 R6). Nothing in `handler/moves.rs` reaches it (kb/ADR-0014 R4).
-    pub async fn sprint_planning(&self) -> Result<Vec<GoalGates>, HandlerError> {
+    pub async fn sprint_planning(&self) -> Result<SprintPlanning, HandlerError> {
         let mut tx = self
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -712,11 +723,12 @@ impl Handlers {
 
     /// A fixed number of statements whatever the number of goals, links, stories or decisions: the two sprints, their
     /// goals, their links, then whole-table reads filtered in memory (one small team; the export reads the same way).
-    /// Each decision's fact is built and marked as readiness builds and marks it.
+    /// Each decision's fact is built and marked as readiness builds and marks it. The first bucket's initiatives come
+    /// from the same reads: no statement is added for them.
     async fn sprint_planning_in(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-    ) -> Result<Vec<GoalGates>, HandlerError> {
+    ) -> Result<SprintPlanning, HandlerError> {
         let sprints = self.ports.sprints.active_and_draft_in(tx).await?;
         let ids: Vec<i64> = sprints.iter().map(|s| s.id).collect();
         let goals = self.ports.sprints.goals_of_in(tx, &ids).await?;
@@ -726,7 +738,7 @@ impl Handlers {
         let epics = self.ports.reads.epics_in(tx).await?;
         let stories = self.ports.reads.stories_in(tx).await?;
         let decisions = self.ports.reads.decisions_in(tx).await?;
-        Ok(sprint::goal_gates(
+        let gates = sprint::goal_gates(
             &goal_ids,
             &links,
             (&initiatives, &epics, &stories),
@@ -736,7 +748,21 @@ impl Handlers {
                 self.mark_repo_configured(&mut f);
                 f
             },
-        ))
+        );
+        let first_bucket = self.settings.horizon_buckets.first().cloned();
+        let active = sprints
+            .iter()
+            .find(|s| s.state == SprintState::Active)
+            .map(|s| s.id);
+        let first_bucket_initiatives = first_bucket
+            .as_deref()
+            .map(|b| sprint::first_bucket_initiatives(b, &initiatives, &gates, &goals, active))
+            .unwrap_or_default();
+        Ok(SprintPlanning {
+            goals: sprint::planning_goals(gates, &initiatives, first_bucket.as_deref()),
+            first_bucket,
+            first_bucket_initiatives,
+        })
     }
 
     /// One sprint with its goals and links, its numbers and its promises. The numbers are over `[opened_at, closed_at)`
