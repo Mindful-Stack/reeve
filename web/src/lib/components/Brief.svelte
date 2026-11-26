@@ -31,6 +31,8 @@
 	.brief {
 		line-height: 1.5;
 		overflow-wrap: anywhere;
+		/* As a grid or flex item it would otherwise grow to its widest table or code block and widen the page. */
+		min-width: 0;
 	}
 	.brief :global(:first-child) {
 		margin-top: 0;

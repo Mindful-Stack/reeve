@@ -19,6 +19,7 @@ pub mod promise;
 pub mod readiness;
 pub mod requests;
 pub mod sprints;
+pub mod templates;
 pub mod urgency;
 pub use activity::*;
 pub use attachments::*;
@@ -39,6 +40,7 @@ pub use promise::*;
 pub use readiness::*;
 pub use requests::*;
 pub use sprints::*;
+pub use templates::*;
 pub use urgency::*;
 
 /// The one rule for comparing people by email across every crate: trimmed and ASCII-lowercased. Identity, planning

@@ -1,6 +1,6 @@
 use crate::{
-    ActivityEntryDto, AttachmentDto, CommentDto, EpicDto, InitiativeDto, ItemLinkType, Key,
-    RequiredDecisionDto, SprintDto, StoryDto, UserDto,
+    ActivityEntryDto, AttachmentDto, BriefTemplateDto, CommentDto, EpicDto, InitiativeDto,
+    ItemLinkType, Key, RequiredDecisionDto, SprintDto, StoryDto, UserDto,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 /// The whole instance as one consistent snapshot (`GET /api/v1/export`): every list is read inside one
 /// `REPEATABLE READ` transaction. Items order by key number, decisions, comments and activity by id, users by email, item links by their `from` key
-/// and web links by their item's key.
+/// and web links by their item's key. Brief templates order by level, then name.
 /// Users carry emails and roles only; the export never holds token hashes, secrets or configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ExportDto {
@@ -37,6 +37,10 @@ pub struct ExportDto {
     /// one number only between two prefixes) and, on one item, when it was added.
     #[serde(default)]
     pub web_links: Vec<ExportWebLinkDto>,
+    /// Every brief template, as `GET /brief-templates` lists them: initiative templates first, then by name
+    /// (compared lowercased), then by id. An export written before brief templates existed has no such field.
+    #[serde(default)]
+    pub brief_templates: Vec<BriefTemplateDto>,
     pub activity: Vec<ActivityEntryDto>,
     pub users: Vec<UserDto>,
 }

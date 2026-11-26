@@ -228,6 +228,14 @@ impl Handlers {
     ) -> Result<Story, HandlerError> {
         let attachments = attachment_ids(attachments)?;
         let cur = self.ports.stories.get_story(key).await?;
+        // The version the caller read must be the row read here: the row written below is rebuilt from this read (its
+        // owner, which a move may set, included), and the conditional update only proves the row is at the caller's version when it
+        // is written, which a concurrent write can make true of a caller ahead of this read.
+        if cur.version() != version {
+            return Err(HandlerError::Conflict {
+                current: cur.version(),
+            });
+        }
         let title = title.unwrap_or_else(|| cur.title().into());
         check_title(&title)?;
         let title = title.trim().to_string();

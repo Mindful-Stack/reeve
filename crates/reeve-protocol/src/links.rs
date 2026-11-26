@@ -118,6 +118,37 @@ impl ItemLinkType {
     }
 }
 
+/// What a client says after an item link was added, when there is something to say: for a `follows` between two
+/// stories, that it is informational (kb/ADR-0031, Consequences: "the clients say so when a `follows` is added
+/// between two stories"); for every other name and every other pair of levels, nothing. `from_level` and
+/// `to_level` are the levels of the two items as the server resolved them, and `story` is the key of the item that
+/// follows, which the sentence names. The condition and the wording live here once, for the CLI and the MCP tool;
+/// each adds after the sentence what its own reader can do next. The web client does not call this: it keeps its
+/// own copy of the sentence in `web/src/lib/components/Relations.svelte` and of the condition in `followsNote`
+/// (`web/src/lib/relations.ts`), which that component calls; a change here is made there too.
+pub fn follows_is_informational(
+    link_type: ItemLinkType,
+    from_level: ItemType,
+    to_level: ItemType,
+    story: &Key,
+) -> Option<String> {
+    (link_type == ItemLinkType::Follows
+        && from_level == ItemType::Story
+        && to_level == ItemType::Story)
+        .then(|| format!("Informational: this does not hold {story} back."))
+}
+
+/// The words people try for blocking where an item link name goes (kb/ADR-0031 R2), in the command line's spelling
+/// and the wire's. The one list: the CLI's name parser of `reeve link`, `reeve apply`'s reading of a plan file and
+/// the two MCP item link tools all ask here, and each answers one of these words with where blocking lives for its
+/// own reader. No item link name is among them, and a test holds that.
+pub fn is_blocking_word(s: &str) -> bool {
+    matches!(
+        s,
+        "blocks" | "blocked-by" | "blocked_by" | "depends-on" | "depends_on"
+    )
+}
+
 /// The item at the other end of an item link. No delivery state on purpose: a state beside "follows" would invite
 /// reading the link as a gate (kb/ADR-0031 R3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -186,6 +217,28 @@ mod tests {
     use ItemLinkDirection::{In, Out};
     use ItemLinkType::{Duplicates, Follows, RelatesTo};
     use serde_json::json;
+
+    /// The five words, each spelling written out, and nothing near them: the list is exact, as the command line has
+    /// always read it. No item link name is a blocking word, in either spelling.
+    #[test]
+    fn the_blocking_words_are_these_five_and_no_item_link_name() {
+        for word in [
+            "blocks",
+            "blocked-by",
+            "blocked_by",
+            "depends-on",
+            "depends_on",
+        ] {
+            assert!(is_blocking_word(word), "{word}");
+        }
+        for other in ["Blocks", "block", "depends on", "precedes", " blocks", ""] {
+            assert!(!is_blocking_word(other), "{other:?}");
+        }
+        for name in ItemLinkType::ALL {
+            assert!(!is_blocking_word(name.wire()), "{}", name.wire());
+            assert!(!is_blocking_word(name.cli()), "{}", name.cli());
+        }
+    }
 
     /// The whole table written out by hand, not read back through `NAMES`.
     #[test]
@@ -290,6 +343,31 @@ mod tests {
                 serde_json::from_value::<AddItemLink>(bad.clone()).is_err(),
                 "{bad}"
             );
+        }
+    }
+
+    /// The sentence the CLI and the MCP tool both say after a `follows` between two stories, and the one place
+    /// that says when: the name is `follows` and both ends are stories. Every other name and every other pair of
+    /// levels gets nothing.
+    #[test]
+    fn the_informational_sentence_is_said_for_a_follows_between_two_stories_only() {
+        use ItemType::{Epic, Initiative, Story};
+        let story: Key = "GRA-12".parse().unwrap();
+        assert_eq!(
+            follows_is_informational(ItemLinkType::Follows, Story, Story, &story).as_deref(),
+            Some("Informational: this does not hold GRA-12 back.")
+        );
+        for link_type in ItemLinkType::ALL {
+            for from in [Initiative, Epic, Story] {
+                for to in [Initiative, Epic, Story] {
+                    let said = follows_is_informational(link_type, from, to, &story);
+                    assert_eq!(
+                        said.is_some(),
+                        link_type == ItemLinkType::Follows && from == Story && to == Story,
+                        "{link_type:?} {from:?} {to:?}"
+                    );
+                }
+            }
         }
     }
 }

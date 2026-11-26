@@ -9,8 +9,8 @@ use super::*;
 use crate::domain::promise::Clock;
 use crate::domain::urgency::Urgency;
 use reeve_protocol::{
-    CommentDto, EpicDto, ExportItemLinkDto, ExportWebLinkDto, InitiativeDto, RequiredDecisionDto,
-    Resolution, SprintDto, StoryDto,
+    BriefTemplateDto, CommentDto, EpicDto, ExportItemLinkDto, ExportWebLinkDto, InitiativeDto,
+    RequiredDecisionDto, Resolution, SprintDto, StoryDto,
 };
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
@@ -161,5 +161,13 @@ impl Handlers {
         let mut links = self.ports.web_links.all_web_links_in(tx).await?;
         links.sort_by_cached_key(|w| (w.item.number(), w.item.to_string(), w.id));
         Ok(links.iter().map(super::dto::export_web_link_dto).collect())
+    }
+
+    /// Every brief template there is, read on this transaction, in list order (`brief_template_dtos_in`).
+    pub async fn export_brief_templates(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Vec<BriefTemplateDto>, HandlerError> {
+        self.brief_template_dtos_in(tx, None).await
     }
 }

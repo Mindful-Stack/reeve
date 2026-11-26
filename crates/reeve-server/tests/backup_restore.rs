@@ -295,6 +295,21 @@ async fn seed(h: &Harness) -> Seeded {
         json!({"title":"Scenario page","url":"https://example.com/wiki/scenario"}),
     )
     .await;
+    // A brief template (migration 1015), marked its level's default, with its two activity entries.
+    let template = post(
+        app,
+        t,
+        "/api/v1/brief-templates",
+        json!({"level":"initiative","name":"Scenario","body":"# Scenario\n"}),
+    )
+    .await;
+    post(
+        app,
+        t,
+        &format!("/api/v1/brief-templates/{}/default", template["id"]),
+        json!({}),
+    )
+    .await;
     Seeded { todo, active }
 }
 

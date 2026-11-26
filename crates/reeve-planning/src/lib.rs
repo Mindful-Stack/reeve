@@ -8,6 +8,7 @@ pub use domain::{
         Attachment, AttachmentOwner, CHUNK, ImageType, MAX_BYTES, UploadError, chunks,
         clean_filename, strip_metadata,
     },
+    brief_template::{BriefTemplate, BriefTemplateError},
     decision::{
         CheckOutcome, Closed, DecisionEdit, DecisionError, FieldChange, PrUrl, RecordRef,
         RequiredDecision,
@@ -25,20 +26,21 @@ pub use domain::{
     queue::{DiscoveryRow, LineageItem, QueueEntry, QueueStory, QueueSummary},
     readiness::{AncestorFact, BlockerFact, DecisionFact, ReadinessInput, compute_readiness},
     sprint::{
-        BucketInitiative, DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates, GoalLink,
-        GoalProgress, Sprint, SprintCounts, StoryTimes, Summary, first_bucket_initiatives,
-        goal_gates, summarise,
+        BucketGoal, BucketInitiative, DecisionGate, DemoStory, DiscoveryGate, Goal, GoalGates,
+        GoalLink, GoalProgress, PlanningGoal, ReachedInitiative, Sprint, SprintCounts, StoryTimes,
+        Summary, first_bucket_initiatives, goal_gates, is_first_bucket, planning_goals, summarise,
     },
     urgency::{Lineage, MarkFact, MarkState, Urgency, UrgentMark, expires_at, urgency},
     web_link::{WebLink, WebLinkError},
 };
 pub use handler::*;
 pub use ports::{
-    ActivityRecord, ActivitySink, AttachmentRepo, ClaimOutcome, CommentRepo, DecisionRepo,
-    DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, ItemHead, ItemLinkRepo, KeyRepo,
-    PlanningPorts, PlanningReads, PromiseFacts, PromiseRepo, PromiseTarget, PromisedStoryRow,
-    PullRequestRepo, RepoError, SearchRow, SprintRepo, StoredWebLink, StoryCounts, StoryFilter,
-    StoryPromiseRow, StoryRepo, StoryText, UrgencyRepo, WebLinkRepo,
+    ActivityRecord, ActivitySink, AttachmentRepo, BriefTemplateRepo, ClaimOutcome, CommentRepo,
+    DecisionRepo, DoneWindow, EpicRepo, GoalFilter, InitiativeRepo, ItemHead, ItemLinkRepo,
+    KeyRepo, PlanningPorts, PlanningReads, PromiseFacts, PromiseRepo, PromiseTarget,
+    PromisedStoryRow, PullRequestRepo, RepoError, SearchRow, SprintRepo, StoredBriefTemplate,
+    StoredWebLink, StoryCounts, StoryFilter, StoryPromiseRow, StoryRepo, StoryText, UrgencyRepo,
+    WebLinkRepo,
 };
 pub use reeve_protocol::ItemType;
 pub use repo::make_planning_ports;

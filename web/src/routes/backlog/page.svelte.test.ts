@@ -82,6 +82,7 @@ vi.mock('#lib/api/client.ts', async (orig) => {
 		api: {
 			GET: (path: string, init?: { params?: { query?: Record<string, unknown> } }) => {
 				if (data.failGets) return fail('boom');
+				if (path === '/api/v1/brief-templates') return ok([]);
 				if (!path.endsWith('/stories')) return ok(path.endsWith('/epics') ? data.epics : data.initiatives);
 				const query = init?.params?.query ?? {};
 				data.queries.push(query);
@@ -473,6 +474,11 @@ describe('backlog page', () => {
 		const form = () => document.body.querySelector(`dialog form[aria-label="New ${kind}"]`) as HTMLFormElement | null;
 		button(`New ${kind}`).click();
 		flushSync();
+		// The epic form is not sent before its templates have loaded; the story form has none and never says so.
+		await vi.waitFor(() => {
+			flushSync();
+			expect(form()!.querySelector('button[type="submit"]')!.textContent).not.toContain('Loading templates');
+		});
 		const title = form()!.querySelector('input') as HTMLInputElement;
 		title.value = 'Sent';
 		title.dispatchEvent(new Event('input', { bubbles: true }));

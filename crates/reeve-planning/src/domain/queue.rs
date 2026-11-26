@@ -332,13 +332,11 @@ fn entry_order(a: &QueueEntry, b: &QueueEntry, today: NaiveDate) -> Ordering {
 /// Whether `key`'s lineage (the item itself, or a story's epic) has an initiative in the first configured bucket
 /// (kb/ADR-0016 R2), marked or not. Never without a configured bucket.
 fn in_first_bucket(inp: &ClassifyInputs, key: &Key) -> bool {
-    inp.first_bucket.is_some_and(|b| {
-        inp.lineage
-            .get(key)
-            .and_then(|l| l.first())
-            .and_then(|l| l.initiative_horizon.as_deref())
-            == Some(b)
-    })
+    inp.lineage
+        .get(key)
+        .and_then(|l| l.first())
+        .and_then(|l| l.initiative_horizon.as_deref())
+        .is_some_and(|h| super::sprint::is_first_bucket(inp.first_bucket, h))
 }
 
 /// The discovery rows (spec §1, §2): unfinished stories grouped by their discovery item (the first
@@ -459,8 +457,8 @@ fn now_cmp(a: &NowFacts, b: &NowFacts) -> Ordering {
         .then_with(|| b.held.cmp(&a.held))
 }
 
-/// The target month of `key`'s initiative when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12
-/// (text order then sorts by date); any other value ranks as none.
+/// The target month of `key`'s initiative when it is a target month (`reeve_protocol::is_target_month`); any other
+/// value ranks as none.
 fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
     let m = inp
         .lineage
@@ -471,14 +469,9 @@ fn target_month(inp: &ClassifyInputs, key: &Key) -> Option<String> {
     real_month(m).map(str::to_owned)
 }
 
-/// `m` when it is exactly seven ASCII characters `YYYY-MM` with a month 01-12 (text order then sorts by date).
+/// `m` when it is a target month (`reeve_protocol::is_target_month`; text order then sorts by date).
 pub(crate) fn real_month(m: &str) -> Option<&str> {
-    let b = m.as_bytes();
-    let real = b.len() == 7
-        && b[..4].iter().all(u8::is_ascii_digit)
-        && b[4] == b'-'
-        && matches!(&b[5..], [b'0', b'1'..=b'9'] | [b'1', b'0'..=b'2']);
-    real.then_some(m)
+    reeve_protocol::is_target_month(m).then_some(m)
 }
 
 /// `d`'s due date and id when it is on or before `limit` (overdue included).

@@ -2,15 +2,15 @@ mod common;
 use async_trait::async_trait;
 use chrono::{NaiveDate, TimeZone, Utc};
 use reeve_planning::{
-    ActivityRecord, ActivitySink, BlockerFact, Closed, Ctx, DoneWindow, Epic, Handlers, Initiative,
-    ItemLink, ItemType, PlanningPorts, Promisable, Promise, PromiseFacts, PromiseItem,
-    PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings, StoredWebLink, Story,
-    StoryFilter, StoryPromiseRow, StoryText, UrgentMark, WebLink, compute_readiness,
-    make_planning_ports,
+    ActivityRecord, ActivitySink, BlockerFact, BriefTemplate, Closed, Ctx, DoneWindow, Epic,
+    Handlers, Initiative, ItemLink, ItemType, PlanningPorts, Promisable, Promise, PromiseFacts,
+    PromiseItem, PromiseTarget, PromisedStoryRow, RepoError, RequiredDecision, Settings,
+    StoredBriefTemplate, StoredWebLink, Story, StoryFilter, StoryPromiseRow, StoryText, UrgentMark,
+    WebLink, compute_readiness, make_planning_ports,
 };
 use reeve_protocol::{
-    CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason, Resolution,
-    Reversibility, SprintState, TokenKind, Via,
+    BriefTemplateLevel, CheckResult, ClosureKind, DeliveryState, ItemLinkType, Key, Kind, Reason,
+    Resolution, Reversibility, SprintState, TokenKind, Via,
 };
 use std::sync::Arc;
 
@@ -3733,4 +3733,249 @@ async fn all_web_links_in_answers_every_row_with_its_item() {
     all.sort_by_key(|w| w.id);
     assert_eq!(all, want, "every row, each once, with the item it is on");
     tx.rollback().await.unwrap();
+}
+#[tokio::test]
+async fn brief_templates_are_stored_per_level_under_a_unique_name_key() {
+    use BriefTemplateLevel::{Epic, Initiative};
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let t = |level: BriefTemplateLevel, name: &str, body: &str| {
+        BriefTemplate::new(level, name, body).unwrap()
+    };
+    let stored = |id: i64, level: BriefTemplateLevel, name: &str, body: &str, version: i64| {
+        StoredBriefTemplate {
+            id,
+            template: t(level, name, body),
+            is_default: false,
+            version,
+        }
+    };
+    let repo = &ports.brief_templates;
+
+    let mut tx = pool.begin().await.unwrap();
+    repo.lock_brief_templates(&mut tx).await.unwrap();
+    assert!(
+        repo.brief_templates_in(&mut tx, None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the control: an empty table"
+    );
+    let scenario = repo
+        .insert_brief_template(&mut tx, &t(Initiative, "Scenario", "# Scenario\n"))
+        .await
+        .unwrap();
+    // The same name at the other level is another template.
+    let epic_scenario = repo
+        .insert_brief_template(&mut tx, &t(Epic, "Scenario", "# Epic scenario\n"))
+        .await
+        .unwrap();
+    assert!(epic_scenario > scenario, "ids rise with insertion");
+    tx.commit().await.unwrap();
+
+    // The same name at the same level, in another case and with spaces around it, is refused by the table itself.
+    let mut tx = pool.begin().await.unwrap();
+    let twice = repo
+        .insert_brief_template(&mut tx, &t(Initiative, "  scenario ", "other"))
+        .await;
+    assert!(matches!(twice, Err(RepoError::Db(_))), "{twice:?}");
+    tx.rollback().await.unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    assert_eq!(
+        repo.brief_templates_in(&mut tx, None).await.unwrap(),
+        vec![
+            stored(scenario, Initiative, "Scenario", "# Scenario\n", 1),
+            stored(epic_scenario, Epic, "Scenario", "# Epic scenario\n", 1),
+        ]
+    );
+    assert_eq!(
+        repo.brief_templates_in(&mut tx, Some(Epic)).await.unwrap(),
+        vec![stored(
+            epic_scenario,
+            Epic,
+            "Scenario",
+            "# Epic scenario\n",
+            1
+        )]
+    );
+
+    // A save writes the name, its key and the body, and raises the version by one.
+    repo.save_brief_template(&mut tx, scenario, &t(Initiative, "User scenario", "new"))
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.brief_templates_in(&mut tx, Some(Initiative))
+            .await
+            .unwrap(),
+        vec![stored(scenario, Initiative, "User scenario", "new", 2)]
+    );
+    // The old name is free again: the key was saved with the name.
+    let again = repo
+        .insert_brief_template(&mut tx, &t(Initiative, "scenario", "third"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        repo.save_brief_template(&mut tx, 999_999, &t(Initiative, "Nobody", "x"))
+            .await,
+        Err(RepoError::NotFound)
+    ));
+
+    repo.delete_brief_template(&mut tx, scenario).await.unwrap();
+    assert!(matches!(
+        repo.delete_brief_template(&mut tx, scenario).await,
+        Err(RepoError::NotFound)
+    ));
+    let left: Vec<i64> = repo
+        .brief_templates_in(&mut tx, None)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    assert_eq!(left, vec![epic_scenario, again]);
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_default_mark_is_one_per_level_and_moves_in_either_id_order() {
+    use BriefTemplateLevel::{Epic, Initiative};
+    async fn marked(
+        ports: &PlanningPorts,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Vec<i64> {
+        ports
+            .brief_templates
+            .brief_templates_in(tx, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.is_default)
+            .map(|t| t.id)
+            .collect()
+    }
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let repo = &ports.brief_templates;
+    let mut tx = pool.begin().await.unwrap();
+    let mut add = Vec::new();
+    for (level, name) in [(Initiative, "A"), (Initiative, "B"), (Epic, "E")] {
+        let t = BriefTemplate::new(level, name, "body").unwrap();
+        add.push(repo.insert_brief_template(&mut tx, &t).await.unwrap());
+    }
+    let (a, b, e) = (add[0], add[1], add[2]);
+    assert!(
+        marked(&ports, &mut tx).await.is_empty(),
+        "the control: a new template is not the default"
+    );
+
+    repo.set_default_brief_template(&mut tx, Initiative, Some(a))
+        .await
+        .unwrap();
+    repo.set_default_brief_template(&mut tx, Epic, Some(e))
+        .await
+        .unwrap();
+    assert_eq!(
+        marked(&ports, &mut tx).await,
+        vec![a, e],
+        "one per level, each level its own"
+    );
+    // From the lower id to the higher, and back: the mark moves whichever row comes first.
+    repo.set_default_brief_template(&mut tx, Initiative, Some(b))
+        .await
+        .unwrap();
+    assert_eq!(marked(&ports, &mut tx).await, vec![b, e]);
+    repo.set_default_brief_template(&mut tx, Initiative, Some(a))
+        .await
+        .unwrap();
+    assert_eq!(marked(&ports, &mut tx).await, vec![a, e]);
+    // The mark changes no version.
+    let versions: Vec<i64> = repo
+        .brief_templates_in(&mut tx, None)
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.version)
+        .collect();
+    assert_eq!(versions, vec![1, 1, 1]);
+    repo.set_default_brief_template(&mut tx, Initiative, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        marked(&ports, &mut tx).await,
+        vec![e],
+        "a level may have none"
+    );
+    tx.commit().await.unwrap();
+
+    // A template of another level cannot become this level's default.
+    let mut tx = pool.begin().await.unwrap();
+    assert!(matches!(
+        repo.set_default_brief_template(&mut tx, Initiative, Some(e))
+            .await,
+        Err(RepoError::NotFound)
+    ));
+    tx.rollback().await.unwrap();
+
+    // The table itself refuses two defaults at one level, whoever writes them.
+    let mut tx = pool.begin().await.unwrap();
+    let both =
+        sqlx::query("UPDATE brief_templates SET is_default = true WHERE level = 'initiative'")
+            .execute(&mut *tx)
+            .await;
+    assert!(
+        both.is_err(),
+        "the partial unique index holds one default per level"
+    );
+    tx.rollback().await.unwrap();
+}
+
+/// The template lock is a real lock: a second writer that asks for it waits until the first writer's transaction
+/// ends. Every "is this name free" and "which template is the default" in the handlers rests on this.
+#[tokio::test]
+async fn the_brief_template_lock_holds_a_second_writer_until_the_first_ends() {
+    use std::time::Duration;
+    let (_c, pool) = common::pg().await;
+    let ports = make_planning_ports(pool.clone());
+    let mut first = pool.begin().await.unwrap();
+    ports
+        .brief_templates
+        .lock_brief_templates(&mut first)
+        .await
+        .unwrap();
+    let (repo, pool2) = (ports.brief_templates.clone(), pool.clone());
+    let second = tokio::spawn(async move {
+        let mut tx = pool2.begin().await.unwrap();
+        repo.lock_brief_templates(&mut tx).await.unwrap();
+        tx.commit().await.unwrap();
+    });
+    // Wait until the second writer is really queued on the advisory lock. pg_locks is server-wide and every test
+    // has a database of its own on one server, so the count is scoped to this database.
+    let mut conn = pool.acquire().await.unwrap();
+    let mut waiting = false;
+    for _ in 0..250 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+        if n >= 1 {
+            waiting = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(conn);
+    assert!(waiting, "no writer waited on the lock");
+    assert!(
+        !second.is_finished(),
+        "the second lock returned while the first transaction held it"
+    );
+    first.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), second)
+        .await
+        .expect("released when the first transaction ended")
+        .unwrap();
 }

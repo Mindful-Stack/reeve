@@ -22,6 +22,7 @@
 	--pr-open: #286983;
 	--pr-merged: #765f93;
 	--mark: #f6e2c3;
+	--table-shadow: var(--line);
 	--scrim: rgb(25 23 36 / 0.28);
 	--shadow: 0 8px 28px rgb(25 23 36 / 0.14);
 	color-scheme: light;
@@ -48,6 +49,7 @@
 	--pr-open: #31748f;
 	--pr-merged: #c4a7e7;
 	--mark: #403d52;
+	--table-shadow: color-mix(in srgb, var(--line) 60%, transparent);
 	--scrim: rgb(0 0 0 / 0.5);
 	--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
 	color-scheme: dark;
@@ -75,6 +77,7 @@
 		--pr-open: #31748f;
 		--pr-merged: #c4a7e7;
 		--mark: #403d52;
+		--table-shadow: color-mix(in srgb, var(--line) 60%, transparent);
 		--scrim: rgb(0 0 0 / 0.5);
 		--shadow: 0 8px 28px rgb(0 0 0 / 0.45);
 		color-scheme: dark;
@@ -319,4 +322,72 @@ mark {
 textarea[data-drop] {
 	outline: 2px dashed var(--focus);
 	outline-offset: 2px;
+}
+
+/* Tables in rendered Markdown (briefs, descriptions, comments): `renderMarkdown` wraps each one in `[data-table-scroll]`. */
+[data-table-scroll] {
+	max-width: 100%;
+	margin: 0.75rem 0;
+	overflow-x: auto;
+	/* A shadow on each side that has more table to scroll to (an overlay scrollbar shows nothing until touched). The
+	   two shadows stay at the wrapper's edges; the two covers, in the colour of the surface behind, travel with the
+	   table and hide a shadow once that end is reached. A container on another surface sets --table-surface. The
+	   shadow is --table-shadow: the line colour, faded in dark, where the full colour reads as a solid stripe. */
+	background:
+		linear-gradient(to right, var(--table-surface, var(--background)) 35%, transparent) left / 2.25rem 100% no-repeat local,
+		linear-gradient(to left, var(--table-surface, var(--background)) 35%, transparent) right / 2.25rem 100% no-repeat local,
+		linear-gradient(to right, var(--table-shadow), transparent) left / 0.625rem 100% no-repeat scroll,
+		linear-gradient(to left, var(--table-shadow), transparent) right / 0.625rem 100% no-repeat scroll;
+}
+[data-table-scroll] table {
+	border-collapse: collapse;
+	font-size: 0.9375em;
+	/* As wide as its content, up to the wrapper: two or three columns wrap inside it, even with a sentence in a cell. */
+	width: max-content;
+	max-width: 100%;
+}
+/* Four columns or more in a narrow wrapper (a phone, the drawer) would be one or two words per line: such a table may
+   grow to 44rem and scroll, so its lines can be read. On paper nothing scrolls, so this holds on screen only. */
+@media screen {
+	[data-table-scroll] table:has(tr > :nth-child(4)) {
+		max-width: max(100%, 44rem);
+	}
+}
+[data-table-scroll] th,
+[data-table-scroll] td {
+	padding: 0.375rem 0.625rem;
+	border: 1px solid var(--line);
+	vertical-align: top;
+	/* The surrounding text breaks anywhere; in a cell that squeezes a column down to one letter per line. */
+	overflow-wrap: break-word;
+}
+/* A long URL or identifier would otherwise set the table's width: a cell breaks only between words, a link or inline
+   code in it anywhere. */
+[data-table-scroll] :is(th, td) :is(a, code) {
+	overflow-wrap: anywhere;
+}
+[data-table-scroll] th {
+	/* A wash, not the opaque --lighter-background it comes close to: the wrapper's scroll shadows lie under the cells. */
+	background: color-mix(in srgb, var(--foreground) 7%, transparent);
+	font-weight: 600;
+}
+[data-table-scroll] th:not([align]) {
+	text-align: left;
+}
+/* Paper does not scroll: a small table keeps its own width, a wide one takes the width of the page and its cells wrap
+   wherever they must. A header keeps its words whole, so a narrow column ("Step", with a number under it) is not
+   squeezed to a letter a line; only a header that holds a long identifier (`renderMarkdown` marks it) breaks anywhere,
+   or it would push the table past the page. */
+@media print {
+	[data-table-scroll] {
+		overflow: visible;
+		background: none;
+	}
+	[data-table-scroll] table {
+		width: auto;
+		max-width: 100%;
+	}
+	[data-table-scroll] :is(td, th[data-long-word]) {
+		overflow-wrap: anywhere;
+	}
 }
