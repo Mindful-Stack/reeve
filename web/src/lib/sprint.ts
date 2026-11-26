@@ -143,17 +143,6 @@ export function sprintEnds(sprints: Pick<Sprints, 'active' | 'draft' | 'today'> 
 	return ends.flatMap(([shortcut, label, on]) => (on != null && on >= today ? [{ shortcut, label: `${label} (${dayLabel(on)})`, ends: on }] : []));
 }
 
-/** A goal owner's initials for the row's badge. The owner is free text, usually an address: what stands before the
- *  "@" (all of it without one), split on ".", "-", "_" and spaces; the first letters of the first two parts, or the
- *  first two letters of a single part; "?" when there is nothing to read. */
-export function ownerInitials(owner: string): string {
-	const parts = (owner.split('@')[0] ?? '').split(/[.\-_\s]+/).filter(Boolean);
-	const [a, b] = parts;
-	if (!a) return '?';
-	const chars = (part: string) => Array.from(part);
-	return (b ? chars(a)[0]! + chars(b)[0]! : chars(a).slice(0, 2).join('')).toUpperCase();
-}
-
 /** A goal's initiative tag on its row: the first initiative its links reach with its horizon, "+n" for the rest, or
  *  "no initiative". It warns when any of them is outside the first bucket, or there is none; never when no bucket is
  *  configured (`firstBucket` null). Display only: a goal may link to any initiative or none (kb/ADR-0014 R3). */
@@ -170,7 +159,3 @@ export function initiativeTag(initiatives: GoalInitiative[], firstBucket: string
 	}
 	return { text: `${first.key} ${first.horizon}${more}`, warn, label };
 }
-
-/** The total a goal's progress bar runs to: completed, in flight and todo. In review is inside in flight. */
-export const progressTotal = (p: Pick<GoalProgress, 'completed' | 'in_flight' | 'todo'>): number =>
-	p.completed + p.in_flight + p.todo;

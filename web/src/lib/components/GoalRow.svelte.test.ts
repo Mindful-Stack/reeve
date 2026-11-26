@@ -52,7 +52,7 @@ describe('a goal row', () => {
 		expect(line).toContain('waits on 1');
 		expect(line).toContain('2 links');
 		expect(text(row().querySelector('.numbers'))).toBe('1/6 1 of 6 completed');
-		expect(text(row().querySelector('.badge [aria-hidden]'))).toBe('AB');
+		expect(text(row().querySelector('.avatar'))).toBe('AB');
 		const bar = row().querySelector('progress')!;
 		expect([bar.value, bar.max]).toEqual([1, 6]);
 		expect(bar.getAttribute('aria-hidden')).toBe('true');
@@ -62,8 +62,9 @@ describe('a goal row', () => {
 		expect(mark.querySelector('.dot')).toBeNull();
 		expect(mark.getAttribute('title')).toBe('confidence: at risk');
 		expect(mark.compareDocumentPosition(row().querySelector('button.disclose')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(text(row().querySelector('.badge'))).toContain('Owner: ana.berg@example.com');
-		expect(row().querySelector('.badge')!.getAttribute('title')).toBe('ana.berg@example.com');
+		const avatar = row().querySelector('.avatar')!;
+		expect(avatar.getAttribute('aria-label')).toBe('ana.berg@example.com');
+		expect(avatar.getAttribute('title')).toBe('ana.berg@example.com');
 		expect(row().getAttribute('aria-labelledby')).toBe('goal-7-outcome');
 		expect(document.getElementById('goal-7-outcome')!.textContent).toBe('Customers book');
 		// Nothing of the detail is in the page while closed.
@@ -149,9 +150,10 @@ describe('a goal row', () => {
 		expect(tag.classList.contains('warn')).toBe(false);
 	});
 
-	it('without gates says no initiative, waits on nothing and shows no gates block', () => {
+	it('without gates shows no initiative tag (the read has not answered), waits on nothing and shows no gates block', () => {
 		show({ gates: undefined, open: true });
-		expect(text(row().querySelector('.tag'))).toContain('no initiative');
+		expect(row().querySelector('.tag')).toBeNull();
+		expect(text(row())).not.toContain('no initiative');
 		expect(text(row())).not.toContain('waits on');
 		expect(row().querySelector('[data-testid="gates"]')).toBeNull();
 	});

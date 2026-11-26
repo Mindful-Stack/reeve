@@ -1,20 +1,14 @@
-<!-- web/src/lib/components/GoalRow.svelte: one goal on the sprint page. Closed it is one line: the disclosure with the
-     outcome, the confidence dot (active sprint only: a draft takes no confidence, kb/ADR-0026), the initiative tag
-     (`initiativeTag`; display only, kb/ADR-0014 R3), what it waits on, its goal links, its progress and the owner's
-     initials. Open it adds the initiatives its links reach, the check, the notes, the confidence, the counts (under
-     the page's kb/ADR-0014 R2 rule line), the gates, and the page's own controls. It makes no write: the page owns
-     which goals are open, so a live refetch keeps them. A warning is carried in words (a visible "!" and hidden text),
-     never by colour or hover alone;
-     confidence leads the row in a fixed slot, so it reads as one column: a dot when on track, the word otherwise;
-     the article is a size container (`container-type: inline-size`), so anything the `controls` snippet positions as
-     fixed or absolute is positioned against the row; in a narrow column the link count and the bar drop out of the line. -->
+<!-- web/src/lib/components/GoalRow.svelte: one goal on the sprint page, one line closed and its detail open. It makes no
+     write: the page owns which rows are open, so a live refetch keeps them. A warning is never carried by colour or
+     hover alone. The article is a size container, so the `controls` snippet's fixed or absolute boxes sit in the row. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Goal, GoalGates as Gates, GoalProgress } from '#lib/api/types.ts';
 	import GoalGates from '#lib/components/GoalGates.svelte';
 	import { today } from '#lib/decisions.ts';
 	import { dayLabel, plural } from '#lib/format.ts';
-	import { confidenceLabel, confidenceTone, initiativeTag, ownerInitials, progressTotal } from '#lib/sprint.ts';
+	import Avatar from '#lib/ui/Avatar.svelte';
+	import { confidenceLabel, confidenceTone, initiativeTag } from '#lib/sprint.ts';
 
 	let {
 		goal,
@@ -48,7 +42,7 @@
 	const tag = $derived(initiativeTag(gates?.initiatives ?? [], firstBucket));
 	const waits = $derived((gates?.discoveries.length ?? 0) + (gates?.decisions.length ?? 0));
 	const confidenceText = $derived(`confidence: ${goal.confidence ? confidenceLabel(goal.confidence) : 'not recorded'}`);
-	const total = $derived(progress ? progressTotal(progress) : 0);
+	const total = $derived(progress ? progress.completed + progress.in_flight + progress.todo : 0);
 	/** The goal's creation as the browser's local day, in the app's day words ("3 Nov"). */
 	const waitingSince = $derived(dayLabel(today(new Date(goal.created_at))));
 </script>
@@ -78,12 +72,13 @@
 			<span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
 			<span class="outcome" class:wrap={open} id="goal-{goal.id}-outcome" title={goal.outcome}>{goal.outcome}</span>
 		</button>
-		<span class="tag" class:warn={tag.warn} title={tag.label}
-			>
-			<span class="tag-text" aria-hidden="true">{tag.text}</span>
-			{#if tag.warn}{' '}<span class="mark" aria-hidden="true">!</span>{/if}{' '}
-			<span class="visually-hidden">{tag.label}</span>
-		</span>
+		{#if gates}
+			<span class="tag" class:warn={tag.warn} title={tag.label}
+				><span class="tag-text" aria-hidden="true">{tag.text}</span>
+				{#if tag.warn}{' '}<span class="mark" aria-hidden="true">!</span>{/if}{' '}
+				<span class="visually-hidden">{tag.label}</span>
+			</span>
+		{/if}
 		{#if waits > 0}<span class="waits">waits on {waits}</span>{/if}
 		<span class="muted small links">{plural(goal.links.length, 'link', 'links')}</span>
 		{#if progress}
@@ -94,9 +89,7 @@
 				></span
 			>
 		{/if}
-		<span class="badge" title={goal.owner}
-			><span aria-hidden="true">{ownerInitials(goal.owner)}</span><span class="visually-hidden">Owner: {goal.owner}</span></span
-		>
+		<Avatar email={goal.owner} />
 	</div>
 	{#if open}
 		<div class="detail" id="goal-{goal.id}-detail">
@@ -251,17 +244,6 @@
 	.line .numbers {
 		min-width: 5ch;
 		text-align: right;
-	}
-	.badge {
-		display: inline-grid;
-		flex: none;
-		place-items: center;
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		background: var(--selection);
-		font-size: 11px;
-		font-weight: 600;
 	}
 	.detail {
 		display: grid;

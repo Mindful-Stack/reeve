@@ -196,41 +196,30 @@
 	let closing = $state<SprintView | null>(null);
 
 	// --- "+ goal" ---------------------------------------------------------------------------------------------------
-	/** Every goal of both sprints, with which sprint it is in, for the bucket list's chips. */
-	const everyGoal = $derived(
-		new Map<number, { goal: Goal; where: string }>([
-			...(active?.sprint.goals ?? []).map((g) => [g.id, { goal: g, where: 'this sprint' }] as const),
-			...(draft?.goals ?? []).map((g) => [g.id, { goal: g, where: 'next sprint' }] as const)
-		])
-	);
 	/** The open "+ goal" form: an initiative's key (the bucket list), `'active'` or `'next'` (a sprint's column), or
 	 *  none. */
 	let goalFor = $state<string | null>(null);
-	/** The bucket rows, by initiative key, to put focus inside them. */
+	/** The elements focus goes into, by key: each bucket row by initiative key, and the two columns' new-goal forms as
+	 *  `active` and `next` (their own wrappers, so the query never finds an Edit form's inputs). */
 	const rows: Record<string, HTMLElement | undefined> = {};
-	/** The new-goal form under this sprint: its own element, so the query never finds an Edit form's inputs. */
-	let activeForm = $state<HTMLElement | undefined>();
-	/** The same under the next sprint. */
-	let nextForm = $state<HTMLElement | undefined>();
-	const holder = (key: string) => (key === 'active' ? activeForm : key === 'next' ? nextForm : rows[key]);
 	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	async function openGoal(key: string) {
 		goalFor = key;
 		await tick();
-		holder(key)?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus();
+		rows[key]?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus();
 	}
 	/** Cancels the form and returns focus to the "+ goal" button that opened it. */
 	async function closeGoal(key: string) {
 		goalFor = null;
 		await tick();
-		holder(key)?.querySelector<HTMLButtonElement>('button.add-goal')?.focus();
+		rows[key]?.querySelector<HTMLButtonElement>('button.add-goal')?.focus();
 	}
 	/** After an add to the next sprint: the form stays open for the next goal, with focus back in its outcome input. */
 	function addedNext() {
 		// Not awaited: the form keeps its inputs disabled until this returns, and a disabled input takes no focus.
 		void reload()
 			.then(tick)
-			.then(() => nextForm?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus());
+			.then(() => rows.next?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus());
 	}
 	/** After an add: the form closes, the page reloads, and focus goes to the new goal's row. */
 	async function added(id: number) {
@@ -326,11 +315,11 @@
 				{:else}
 					<p class="muted">The active sprint has no goals.</p>
 				{/each}
-				<div bind:this={activeForm}>
+				<div bind:this={rows.active}>
 					{#if goalFor === 'active'}
 						<GoalForm
 							title="New goal for this sprint"
-							note="A goal added to an open sprint stays until the sprint closes."
+							note="A goal added to this sprint stays until the sprint closes."
 							active
 							endsOn={active.sprint.ends_on}
 							oncreated={({ goal }) => added(goal.id)}
@@ -378,7 +367,7 @@
 					{#snippet controls()}{@render goalControls(g, false)}{/snippet}
 				</GoalRow>
 			{/each}
-			<div bind:this={nextForm}>
+			<div bind:this={rows.next}>
 				{#if goalFor === 'next'}
 					{#key draft?.id}
 						<GoalForm title="New goal for next sprint" endsOn={draft?.ends_on ?? null} oncreated={addedNext} oncancel={() => closeGoal('next')} />
@@ -399,16 +388,13 @@
 						<a href={itemRoute({ key: i.key, item: 'initiative' }, page.url)}><span class="key">{i.key}</span> {i.title}</a>
 						{#if i.target_month}<span class="muted">{month(i.target_month)}</span>{/if}
 						{#if !i.discovery_complete}<span class="muted">in discovery</span>{/if}
-						{#each i.goals as id (id)}
-							{@const x = everyGoal.get(id)}
-							{#if x}<a class="goal-chip" href="#goal-{id}" title="{x.goal.outcome} · {x.where}"><span class="chip-outcome">{x.goal.outcome}</span><span class="chip-where">{' '}· {x.where}</span></a>{/if}
+						{#each i.goals as g (g.id)}
+							{@const where = g.active ? 'this sprint' : 'next sprint'}
+							<a class="goal-chip" href="#goal-{g.id}" title="{g.outcome} · {where}"><span class="chip-outcome">{g.outcome}</span><span class="chip-where">{' '}· {where}</span></a>
 						{:else}
 							<span class="muted">no goal</span>
 							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" aria-label="+ goal for {i.key}" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
 						{/each}
-						{#if i.goals.some((id) => !everyGoal.has(id))}
-							<span class="muted" data-testid="not-shown">{plural(i.goals.filter((id) => !everyGoal.has(id)).length, 'goal', 'goals')} not shown</span>
-						{/if}
 					</div>
 					{#if goalFor === i.key}
 						<GoalForm

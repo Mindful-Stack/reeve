@@ -52,10 +52,10 @@ describe('pickable and findGoal', () => {
 	it('offers the draft, then the active sprint, and never a closed one', () => {
 		expect(pickable(all()).map((g) => [g.label, g.sprint.id])).toEqual([
 			['Next sprint', 2],
-			['Active sprint', 1]
+			['This sprint', 1]
 		]);
 		expect(pickable({ ...all(), active: null }).map((g) => g.label)).toEqual(['Next sprint']);
-		expect(pickable({ ...all(), draft: null }).map((g) => g.label)).toEqual(['Active sprint']);
+		expect(pickable({ ...all(), draft: null }).map((g) => g.label)).toEqual(['This sprint']);
 		expect(pickable({ draft: null, active: null, closed: all().closed, today: '2026-11-12' })).toEqual([]);
 		expect(pickable(null)).toEqual([]);
 	});

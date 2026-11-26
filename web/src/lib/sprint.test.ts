@@ -11,8 +11,6 @@ import {
 	goalFilter,
 	goalOptionLabel,
 	initiativeTag,
-	ownerInitials,
-	progressTotal,
 	nowThen,
 	nudgeStillDue,
 	RULE,
@@ -236,30 +234,6 @@ describe('sprintEnds', () => {
 	});
 });
 
-describe('ownerInitials', () => {
-	it('takes the first letters of the first two parts before the @', () => {
-		expect(ownerInitials('daniel.thyselius@grantigo.com')).toBe('DT');
-		expect(ownerInitials('anna-karin_berg.holm@example.com')).toBe('AK');
-		expect(ownerInitials('Max Norling')).toBe('MN');
-	});
-	it('takes two letters of a single part, and works without an @', () => {
-		expect(ownerInitials('dan@example.com')).toBe('DA');
-		expect(ownerInitials('dan')).toBe('DA');
-		expect(ownerInitials('x@example.com')).toBe('X');
-	});
-	it('skips a leading separator, a plus tag, keeps digits and whole characters', () => {
-		expect(ownerInitials('.ana@x')).toBe('AN');
-		expect(ownerInitials('ana+w@x')).toBe('AN');
-		expect(ownerInitials('a1.b2@x')).toBe('AB');
-		expect(ownerInitials('åsa.öberg@x')).toBe('ÅÖ');
-		expect(ownerInitials('😀x@x')).toBe('😀X');
-	});
-	it('answers a question mark for nothing to read', () => {
-		expect(ownerInitials('@example.com')).toBe('?');
-		expect(ownerInitials('  ')).toBe('?');
-	});
-});
-
 describe('initiativeTag', () => {
 	it('names the first initiative and counts the rest', () => {
 		expect(initiativeTag([goalInitiative('ABC-1')], 'Now')).toEqual({ text: 'ABC-1 Now', warn: false, label: 'Initiative ABC-1, Now' });
@@ -290,11 +264,5 @@ describe('initiativeTag', () => {
 	it('never warns without a configured bucket', () => {
 		const any = goalInitiative('ABC-5', { horizon: 'Later', in_first_bucket: false });
 		expect(initiativeTag([any], null).warn).toBe(false);
-	});
-});
-
-describe('progressTotal', () => {
-	it('adds completed, in flight and todo; in review is part of in flight', () => {
-		expect(progressTotal({ completed: 2, in_flight: 3, todo: 4 })).toBe(9);
 	});
 });

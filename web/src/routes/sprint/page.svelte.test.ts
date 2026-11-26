@@ -8,7 +8,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEntry, Goal, Sprint, SprintCounts, SprintPlanning, Sprints, SprintView } from '#lib/api/types.ts';
 import { fullLabel } from '#lib/board.ts';
-import { activity, bucketInitiative, goal, goalGates, goalInitiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
+import { activity, bucketGoal, bucketInitiative, goal, goalGates, goalInitiative, planning, sprint, sprintView } from '#lib/test/fixtures.ts';
 import { RULE } from '#lib/sprint.ts';
 import Page from './+page.svelte';
 
@@ -950,7 +950,7 @@ describe('goal rows and the two columns', () => {
 		flushSync();
 		const form = q<HTMLFormElement>('form[aria-label="New goal for this sprint"]', column)!;
 		// A goal can only be removed from a draft, so the form says this one stays.
-		expect(text(q('.note', form))).toBe('A goal added to an open sprint stays until the sprint closes.');
+		expect(text(q('.note', form))).toBe('A goal added to this sprint stays until the sprint closes.');
 		type(q<HTMLInputElement>('input[name="outcome"]', form)!, 'A late goal');
 		type(q<HTMLInputElement>('input[name="check"]', form)!, 'it is done');
 		form.requestSubmit();
@@ -1039,6 +1039,7 @@ describe('goal rows and the two columns', () => {
 	it('lists the first bucket with its goals, or no goal, in the order served', async () => {
 		net.sprints!.active = activeWith([goal({ id: 1, outcome: 'Bookings work' })]);
 		net.sprints!.draft = draft([goal({ id: 5, sprint_id: 2, outcome: 'Reports work' })]);
+		const mark = { at: '2026-11-01T00:00:00Z', by: 'ana@example.com' };
 		net.planning = planning({
 			goals: [
 				goalGates({ goal_id: 1, initiatives: [goalInitiative('ABC-9', { horizon: 'Soon', in_first_bucket: true })] }),
@@ -1048,9 +1049,9 @@ describe('goal rows and the two columns', () => {
 			first_bucket_initiatives: [
 				// Served order [8, 7, 9] is what counts: it differs from key order (7, 8, 9), from title order (Alpha, Mike,
 				// Zulu: 9, 7, 8) and from dated-first-then-title order (9, 8, 7), so no client sort passes.
-				bucketInitiative({ key: 'ABC-8', title: 'Zulu Reports', target_month: '2026-12', discovery_complete: true }),
-				bucketInitiative({ key: 'ABC-7', title: 'Mike Payments', discovery_complete: true }),
-				bucketInitiative({ key: 'ABC-9', title: 'Alpha Bookings', target_month: '2026-11', goals: [1, 5, 77] })
+				bucketInitiative({ key: 'ABC-8', title: 'Zulu Reports', target_month: '2026-12', discovery_complete: mark }),
+				bucketInitiative({ key: 'ABC-7', title: 'Mike Payments', discovery_complete: mark }),
+				bucketInitiative({ key: 'ABC-9', title: 'Alpha Bookings', target_month: '2026-11', goals: [bucketGoal({ id: 1, outcome: 'Bookings work' }), bucketGoal({ id: 5, outcome: 'Reports work', active: false }), bucketGoal({ id: 77, outcome: 'Only the planning read knows', active: false })] })
 			]
 		});
 		await open({ closed: true });
@@ -1060,11 +1061,11 @@ describe('goal rows and the two columns', () => {
 		const first = q('[data-testid="bucket-ABC-9"]')!;
 		expect(text(first)).toContain('Nov 2026');
 		expect(text(first)).toContain('in discovery');
-		// A goal id the page does not hold (the reads raced) shows as a count, not nothing.
-		expect(text(q('[data-testid="not-shown"]', first))).toBe('1 goal not shown');
+		// The chips come from the planning read alone: a goal the sprints read does not hold still shows.
 		expect([...first.querySelectorAll('a.goal-chip')].map((a) => [text(a), a.getAttribute('href')])).toEqual([
 			['Bookings work · this sprint', '#goal-1'],
-			['Reports work · next sprint', '#goal-5']
+			['Reports work · next sprint', '#goal-5'],
+			['Only the planning read knows · next sprint', '#goal-77']
 		]);
 		const second = q('[data-testid="bucket-ABC-7"]')!;
 		expect(text(second)).toContain('no goal');
