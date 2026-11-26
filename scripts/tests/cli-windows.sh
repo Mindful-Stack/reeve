@@ -72,7 +72,7 @@ serve() {
 	python -I scripts/tests/cli-serve.py "$(win "$1")" "$(win "$work/port")" "$(win "$work/log")" 2>"$work/serve.err" &
 	pid=$!
 	local _
-	for _ in $(seq 100); do [ -s "$work/port" ] && break; sleep 0.1; done
+	for _ in $(seq 300); do [ -s "$work/port" ] && break; sleep 0.1; done
 	[ -s "$work/port" ] || die "the stand-in did not start: $(cat "$work/serve.err")"
 	url="http://127.0.0.1:$(cat "$work/port")"
 	sed "s|@REEVE_URL@|$url|" deploy/cli/install.ps1 >"$1/cli/install.ps1"
