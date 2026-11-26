@@ -5,6 +5,11 @@
 # (`mise run acceptance` and its siblings pass $REEVE_FEATURES themselves);
 # without, the suite: the workspace with the static provider, the doc tests,
 # and config_no_static without it.
+# The server's data directory is kept in memory (a tmpfs), not on a Docker volume: every test's database stays until
+# the run ends, so a full run writes about 7 GB, which is slow on an encrypted or copy-on-write disk. A machine
+# without that much free memory has two ways out: REEVE_TEST_DROP_DATABASES=1 drops each test's database when the
+# test ends (well under 1 GB, a slower run; crates/reeve-testdb reads it), and REEVE_TEST_PG_TMPFS=0 puts the data
+# directory back on a Docker volume.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -15,11 +20,27 @@ read -ra features <<<"${REEVE_FEATURES---features reeve-server/static-oidc}"
 
 args=()
 for s in "${settings[@]}"; do args+=(-c "$s"); done
+storage=()
+case "${REEVE_TEST_PG_TMPFS:-}" in
+	"" | 1) storage=(--tmpfs /var/lib/postgresql/data) ;;
+	0) ;;
+	*)
+		echo "test.sh: REEVE_TEST_PG_TMPFS is 1 or 0, not '$REEVE_TEST_PG_TMPFS'" >&2
+		exit 2
+		;;
+esac
+case "${REEVE_TEST_DROP_DATABASES:-}" in
+	"" | 0 | 1) ;;
+	*)
+		echo "test.sh: REEVE_TEST_DROP_DATABASES is 1 or 0, not '$REEVE_TEST_DROP_DATABASES'" >&2
+		exit 2
+		;;
+esac
 cid=""
 trap '[ -z "$cid" ] || docker rm -fv "$cid" >/dev/null 2>&1 || true' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cid=$(docker run -d --rm --label reeve.test-run=1 -e POSTGRES_PASSWORD=postgres -p 127.0.0.1::5432 postgres:16 postgres "${args[@]}")
+cid=$(docker run -d --rm --label reeve.test-run=1 -e POSTGRES_PASSWORD=postgres -p 127.0.0.1::5432 "${storage[@]}" postgres:16 postgres "${args[@]}")
 # The image's entrypoint runs a socket-only server while it initialises, so a TCP answer means the real one is up.
 ready=""
 for _ in $(seq 120); do
