@@ -1,6 +1,7 @@
 // Pure helpers for the delivery board: columns, reason labels, filters and rank placement.
 import type { PromisedFilter, Readiness, Reason, SimilarStory, Story, StoryWithReadiness } from '#lib/api/types.ts';
-import { sameEmail, short } from '#lib/format.ts';
+import { Refused } from '#lib/api/client.ts';
+import { errorMessage, sameEmail, short } from '#lib/format.ts';
 import { promisedMatches } from '#lib/promise.ts';
 
 export type Column = Story['delivery'];
@@ -135,6 +136,9 @@ function render(labels: Labels, r: Reason): string {
 
 export const shortLabel = (r: Reason): string => render(SHORT, r);
 export const fullLabel = (r: Reason): string => render(FULL, r);
+
+/** A write's failure in words: a refusal as its reasons (full labels), anything else as its message. */
+export const refusalText = (e: unknown): string => (e instanceof Refused ? e.reasons.map(fullLabel).join('; ') : errorMessage(e));
 
 /** "ready", or the first reason rendered short. */
 export function shortReason(r: Readiness): string {

@@ -1,4 +1,4 @@
-import type { Confidence, Goal, GoalProgress, PromiseShortcut, SprintCounts, SprintWarning, Sprints, Story, Verdict } from '#lib/api/types.ts';
+import type { Confidence, Goal, GoalInitiative, GoalProgress, PromiseShortcut, SprintCounts, SprintWarning, Sprints, Story, Verdict } from '#lib/api/types.ts';
 import { dayLabel } from '#lib/format.ts';
 
 /** kb/ADR-0014 R2, shown wherever counts are (the CLI's `MEMBERSHIP_RULE`). */
@@ -141,4 +141,21 @@ export function sprintEnds(sprints: Pick<Sprints, 'active' | 'draft' | 'today'> 
 		['next_sprint', 'End of next sprint', sprints.draft?.ends_on]
 	] as const;
 	return ends.flatMap(([shortcut, label, on]) => (on != null && on >= today ? [{ shortcut, label: `${label} (${dayLabel(on)})`, ends: on }] : []));
+}
+
+/** A goal's initiative tag on its row: the first initiative its links reach with its horizon, "+n" for the rest, or
+ *  "no initiative". It warns when any of them is outside the first bucket, or there is none; never when no bucket is
+ *  configured (`firstBucket` null). Display only: a goal may link to any initiative or none (kb/ADR-0014 R3). */
+export function initiativeTag(initiatives: GoalInitiative[], firstBucket: string | null): { text: string; warn: boolean; label: string } {
+	const [first, ...rest] = initiatives;
+	if (!first) return { text: 'no initiative', warn: firstBucket !== null, label: 'No initiative' };
+	const warn = firstBucket !== null && initiatives.some((i) => !i.in_first_bucket);
+	const more = rest.length ? ` +${rest.length}` : '';
+	let label = `Initiative ${first.key}, ${first.horizon}`;
+	if (rest.length) label += `, and ${rest.length} more`;
+	if (warn) {
+		const none = initiatives.every((i) => !i.in_first_bucket);
+		label += rest.length ? (none ? `, none in ${firstBucket}` : `, not all in ${firstBucket}`) : `, not in ${firstBucket}`;
+	}
+	return { text: `${first.key} ${first.horizon}${more}`, warn, label };
 }

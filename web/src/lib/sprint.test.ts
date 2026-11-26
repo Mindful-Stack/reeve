@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GoalProgress, SprintCounts, Sprints } from '#lib/api/types.ts';
-import { goal, sprint, sprintView } from '#lib/test/fixtures.ts';
+import { goal, goalInitiative, sprint, sprintView } from '#lib/test/fixtures.ts';
 import words from './promise.fixture.json';
 import {
 	promisesHeading,
@@ -10,6 +10,7 @@ import {
 	countsDiffer,
 	goalFilter,
 	goalOptionLabel,
+	initiativeTag,
 	nowThen,
 	nudgeStillDue,
 	RULE,
@@ -230,5 +231,38 @@ describe('sprintEnds', () => {
 		expect(sprintEnds(sprints('2026-11-10', null, '2026-11-12'))).toEqual([]);
 		expect(sprintEnds(sprints('2026-11-17', '2026-12-01', null))).toEqual([]);
 		expect(sprintEnds(null)).toEqual([]);
+	});
+});
+
+describe('initiativeTag', () => {
+	it('names the first initiative and counts the rest', () => {
+		expect(initiativeTag([goalInitiative('ABC-1')], 'Now')).toEqual({ text: 'ABC-1 Now', warn: false, label: 'Initiative ABC-1, Now' });
+		expect(initiativeTag([goalInitiative('ABC-1'), goalInitiative('ABC-2')], 'Now').text).toBe('ABC-1 Now +1');
+	});
+	it('warns when any initiative is outside the first bucket, the first included or not', () => {
+		const later = goalInitiative('ABC-5', { horizon: 'Later', in_first_bucket: false });
+		expect(initiativeTag([later], 'Now')).toEqual({ text: 'ABC-5 Later', warn: true, label: 'Initiative ABC-5, Later, not in Now' });
+		// The first is in the bucket, the second is not: the row still warns.
+		expect(initiativeTag([goalInitiative('ABC-1'), later], 'Now')).toEqual({
+			text: 'ABC-1 Now +1',
+			warn: true,
+			label: 'Initiative ABC-1, Now, and 1 more, not all in Now'
+		});
+	});
+	it('says none when every one of several is outside the first bucket', () => {
+		const out = (k: string) => goalInitiative(k, { horizon: 'Later', in_first_bucket: false });
+		expect(initiativeTag([out('ABC-5'), out('ABC-6')], 'Now')).toEqual({
+			text: 'ABC-5 Later +1',
+			warn: true,
+			label: 'Initiative ABC-5, Later, and 1 more, none in Now'
+		});
+	});
+	it('says no initiative, as a warning only when a bucket is configured', () => {
+		expect(initiativeTag([], 'Now')).toEqual({ text: 'no initiative', warn: true, label: 'No initiative' });
+		expect(initiativeTag([], null)).toEqual({ text: 'no initiative', warn: false, label: 'No initiative' });
+	});
+	it('never warns without a configured bucket', () => {
+		const any = goalInitiative('ABC-5', { horizon: 'Later', in_first_bucket: false });
+		expect(initiativeTag([any], null).warn).toBe(false);
 	});
 });

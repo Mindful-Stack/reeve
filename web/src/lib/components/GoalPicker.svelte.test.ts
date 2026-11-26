@@ -58,7 +58,7 @@ describe('GoalPicker', () => {
 	it('lists the next sprint’s goals, then the active sprint’s, with link counts, and offers the add form', async () => {
 		net.sprints = seeded();
 		await openPicker();
-		expect([...dialog()!.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Next sprint', 'Active sprint']);
+		expect([...dialog()!.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['Next sprint', 'This sprint']);
 		expect(button('Ship X')!.textContent).toContain('2');
 		button('Add goal')!.click();
 		flushSync();

@@ -13,7 +13,7 @@ export function pickable(s: Sprints | null): GoalGroup[] {
 	if (!s) return [];
 	const out: GoalGroup[] = [];
 	if (s.draft) out.push({ label: 'Next sprint', sprint: s.draft });
-	if (s.active) out.push({ label: 'Active sprint', sprint: s.active.sprint });
+	if (s.active) out.push({ label: 'This sprint', sprint: s.active.sprint });
 	return out;
 }
 

@@ -1,24 +1,21 @@
-<!-- web/src/routes/sprint/+page.svelte: the sprint page, where the PM plans this sprint and the next by goal. The active
-     sprint with its goals, numbers, upkeep line and demo list (Check Tuesday: record confidence; Plan Tuesday: Close…);
-     the next sprint's goals and links; each goal grouped under its first initiative with what its work waits on
-     (`GET /sprints/planning`); the Now initiatives no goal covers yet, each with "+ goal"; and the history, where a closed
-     sprint shows its counts at close beside the derived ones when they differ (kb/ADR-0014 R6). -->
+<!-- web/src/routes/sprint/+page.svelte: the sprint page, read on a shared screen when the team plans. This sprint (the
+     active one) and the next (the draft) side by side, every goal one line that opens in place (`GoalRow`); "+ goal"
+     under each; the first horizon bucket's initiatives with the goals that reach them (`GET /sprints/planning`, the
+     server's comparison, display only: kb/ADR-0026); then the demo list and the history, folded. The kb/ADR-0014 R2
+     rule line stands above the counts. -->
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { api, Refused, unwrap } from '#lib/api/client.ts';
-	import type { Confidence, Goal, GoalGates as Gates, Initiative, Sprints, SprintView, SprintWarning } from '#lib/api/types.ts';
-	import { fullLabel } from '#lib/board.ts';
+	import { api, unwrap } from '#lib/api/client.ts';
+	import type { Confidence, Goal, Sprints, SprintPlanning, SprintView, SprintWarning } from '#lib/api/types.ts';
+	import { refusalText } from '#lib/board.ts';
 	import CloseSprint from '#lib/components/CloseSprint.svelte';
 	import GoalForm from '#lib/components/GoalForm.svelte';
-	import GoalGates from '#lib/components/GoalGates.svelte';
+	import GoalRow from '#lib/components/GoalRow.svelte';
 	import SprintHistoryEntry from '#lib/components/SprintHistoryEntry.svelte';
-	import { today } from '#lib/decisions.ts';
 	import { onLive } from '#lib/events.svelte.ts';
-	import { dayLabel, errorMessage, month, plural } from '#lib/format.ts';
-	import { session } from '#lib/me.svelte.ts';
-	import { groupByInitiative, planningOrder } from '#lib/planning.ts';
+	import { errorMessage, month, plural } from '#lib/format.ts';
 	import { confidenceLabel, RULE, upkeepText, warningText } from '#lib/sprint.ts';
 	import Dialog from '#lib/ui/Dialog.svelte';
 	import Notice from '#lib/ui/Notice.svelte';
@@ -26,11 +23,12 @@
 	import { itemRoute } from '#lib/urgency.ts';
 
 	let sprints = $state<Sprints | null>(null);
-	/** Each active and draft goal's gates, by goal id. A goal without an entry (the reads raced an opening) shows no
-	 *  gates, groups under "Upkeep / no initiative", and its initiative may show under "no goal yet", until the next
+	/** The server's planning answer: each active and draft goal's gates and initiatives, and the first bucket's
+	 *  initiatives. A goal without an entry (the reads raced an opening) shows no tag or gates until the next
 	 *  refetch, which the opening's live event triggers. */
-	let gates = $state.raw(new Map<number, Gates>());
-	let initiatives = $state.raw<Initiative[]>([]);
+	let plan = $state.raw<SprintPlanning | null>(null);
+	const gates = $derived(new Map((plan?.goals ?? []).map((x) => [x.goal_id, x])));
+	const firstBucket = $derived(plan?.first_bucket ?? null);
 	let loadError = $state<string | null>(null);
 	/** A refetch failed after the page had loaded: what is shown stays; the banner offers a retry. */
 	let staleNotice = $state<string | null>(null);
@@ -41,28 +39,32 @@
 	const active = $derived(sprints?.active ?? null);
 	const draft = $derived(sprints?.draft ?? null);
 
+	// --- Open goals ----------------------------------------------------------------------------------------------------
+	/** The goals whose detail shows, by id: page state, so a live refetch keeps them. */
+	const opened = new SvelteSet<number>();
+	const toggle = (id: number) => (opened.has(id) ? opened.delete(id) : opened.add(id));
+
 	let latest = 0;
 	/** Bumped on every reload, for the history entries. */
 	let refresh = $state(0);
 	async function reload() {
 		const seq = ++latest;
 		try {
-			// Three reads together: they land or fail together, so the page never shows a partial state.
-			const [s, g, i] = await Promise.all([
-				unwrap(api.GET('/api/v1/sprints')),
-				unwrap(api.GET('/api/v1/sprints/planning')),
-				unwrap(api.GET('/api/v1/initiatives'))
-			]);
+			// Two reads together: they land or fail together, so the page never shows a partial state.
+			const [s, p] = await Promise.all([unwrap(api.GET('/api/v1/sprints')), unwrap(api.GET('/api/v1/sprints/planning'))]);
 			if (seq !== latest) return;
 			// A new draft (an opening happened): nothing is unticked in it.
 			if (s.draft?.id !== sprints?.draft?.id) {
 				leftOut.clear();
 				// The "+ goal" form is for the draft it was opened on: a new draft never receives its half-typed goal.
-				goalFor = null;
+				// The next sprint's own form stays open: it is keyed on the draft below, so it starts empty for a new one.
+				if (goalFor !== 'next') goalFor = null;
 			}
 			sprints = s;
-			gates = new Map(g.goals.map((x) => [x.goal_id, x]));
-			initiatives = i;
+			plan = p;
+			// A goal that left both sprints is no longer open.
+			const here = new Set([...(s.active?.sprint.goals ?? []), ...(s.draft?.goals ?? [])].map((g) => g.id));
+			for (const id of opened) if (!here.has(id)) opened.delete(id);
 			loadError = null;
 			staleNotice = null;
 		} catch (e) {
@@ -81,10 +83,6 @@
 	// Any activity entry, and every (re)connect, refetches (#lib/events.svelte.ts).
 	onLive(reload);
 
-	function explain(e: unknown): string {
-		return e instanceof Refused ? e.reasons.map(fullLabel).join('; ') : errorMessage(e);
-	}
-
 	/** One write: the page reloads after it, and a refusal or failure shows as the notice. */
 	async function act(write: () => Promise<unknown>): Promise<boolean> {
 		if (busy) return false;
@@ -94,7 +92,7 @@
 			await write();
 			return true;
 		} catch (e) {
-			notice = explain(e);
+			notice = refusalText(e);
 			return false;
 		} finally {
 			await reload();
@@ -158,8 +156,21 @@
 	/** The goal whose edit form is open (on either panel). */
 	let editing = $state<number | null>(null);
 	async function edited() {
+		const id = editing;
 		editing = null;
 		await reload();
+		await focusEdit(id);
+	}
+	/** Focus goes back to the goal's Edit button once its form is gone (the row itself when the button is not shown). */
+	async function focusEdit(id: number | null) {
+		await tick();
+		const row = id === null ? null : document.getElementById(`goal-${id}`);
+		(row?.querySelector<HTMLButtonElement>('button.edit') ?? row)?.focus();
+	}
+	async function cancelEdit() {
+		const id = editing;
+		editing = null;
+		await focusEdit(id);
 	}
 	/** The edit form stays open with what was typed; it saves again at the refetched goal's version. */
 	async function editConflict() {
@@ -184,27 +195,12 @@
 	/** The active sprint as the close step was opened on; the step keeps it while the page reloads under it. */
 	let closing = $state<SprintView | null>(null);
 
-	// --- Planning by goal ------------------------------------------------------------------------------------------
-	const buckets = $derived(session.config?.horizon_buckets ?? []);
-	/** A sprint's goals under the first of their initiatives, in the planning order (`groupByInitiative`), goals with
-	 *  none last; only groups holding a goal. */
-	function groups(goals: Goal[]) {
-		return groupByInitiative(buckets, initiatives, goals, (g) => gates.get(g.id)?.initiatives[0]?.key ?? null, 'Upkeep / no initiative').filter(
-			(x) => x.items.length > 0
-		);
-	}
-	/** The first configured horizon bucket (kb/ADR-0016 R2); without one the "no goal yet" section is absent. */
-	const nowBucket = $derived(buckets[0] ?? null);
-	/** Its initiatives that no active or draft goal covers, in `/planning`'s order for a bucket (target month, none last,
-	 *  then title). Urgency never orders, filters or shows here (kb/ADR-0024 R7). */
-	const noGoalYet = $derived.by(() => {
-		if (nowBucket === null) return [];
-		const covered = new Set([...gates.values()].flatMap((x) => x.initiatives.map((i) => i.key)));
-		return planningOrder([nowBucket], initiatives.filter((i) => i.horizon === nowBucket && !covered.has(i.key)));
-	});
-	/** The initiative whose "+ goal" form is open. */
+	// --- "+ goal" ---------------------------------------------------------------------------------------------------
+	/** The open "+ goal" form: an initiative's key (the bucket list), `'active'` or `'next'` (a sprint's column), or
+	 *  none. */
 	let goalFor = $state<string | null>(null);
-	/** The "no goal yet" rows, by initiative key, to put focus inside them. */
+	/** The elements focus goes into, by key: each bucket row by initiative key, and the two columns' new-goal forms as
+	 *  `active` and `next` (their own wrappers, so the query never finds an Edit form's inputs). */
 	const rows: Record<string, HTMLElement | undefined> = {};
 	/** Opens the form and focuses its outcome input once it is in the DOM. */
 	async function openGoal(key: string) {
@@ -212,20 +208,31 @@
 		await tick();
 		rows[key]?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus();
 	}
-	/** Cancels the form and returns focus to the row's "+ goal" button. */
+	/** Cancels the form and returns focus to the "+ goal" button that opened it. */
 	async function closeGoal(key: string) {
 		goalFor = null;
 		await tick();
 		rows[key]?.querySelector<HTMLButtonElement>('button.add-goal')?.focus();
 	}
-	/** A goal's creation as the browser's local day, in the app's day words ("3 Nov"): `today` gives the local
-	 *  `YYYY-MM-DD` of an instant, `dayLabel` words it, so no locale is assumed. */
-	const waitingSince = (iso: string) => dayLabel(today(new Date(iso)));
+	/** After an add to the next sprint: the form stays open for the next goal, with focus back in its outcome input. */
+	function addedNext() {
+		// Not awaited: the form keeps its inputs disabled until this returns, and a disabled input takes no focus.
+		void reload()
+			.then(tick)
+			.then(() => rows.next?.querySelector<HTMLInputElement>('input[name="outcome"]')?.focus());
+	}
+	/** After an add: the form closes, the page reloads, and focus goes to the new goal's row. */
+	async function added(id: number) {
+		goalFor = null;
+		await reload();
+		await tick();
+		document.getElementById(`goal-${id}`)?.focus();
+	}
 </script>
 
-<!-- A goal's editing controls, the same on the active and the draft panel: its epic and initiative links (stories are
-     linked from the drawer), and Edit. -->
-{#snippet goalControls(g: Goal)}
+<!-- A goal's controls, shown in its opened row: its goal links with unlink, the link field, the confidence form or
+     the actions, and the edit form. The same for both sprints, except confidence (active) and Remove (draft). -->
+{#snippet goalControls(g: Goal, isActive: boolean)}
 	{#if g.links.length}
 		<ul class="links" aria-label="Linked items">
 			{#each g.links as key (key)}
@@ -241,12 +248,32 @@
 		<button type="submit" disabled={busy}>Link</button>
 	</form>
 	{#if editing === g.id}
-		<GoalForm goal={g} onsaved={edited} onconflict={editConflict} oncancel={() => (editing = null)} />
+		<GoalForm goal={g} onsaved={edited} onconflict={editConflict} oncancel={cancelEdit} />
 	{/if}
-{/snippet}
-
-{#snippet groupHead(key: string | null, title: string)}
-	<h3 class="group-head">{#if key}<span class="key">{key}</span>{title === key ? '' : ` ${title}`}{:else}{title}{/if}</h3>
+	{#if isActive && confidenceFor?.id === g.id}
+		<form class="confidence" aria-label="Record confidence" onsubmit={recordConfidence}>
+			{#if g.suggested_confidence}
+				<p class="muted">Suggested by {g.suggested_by}: {g.suggested_note || confidenceLabel(g.suggested_confidence)}</p>
+			{/if}
+			<fieldset disabled={busy}>
+				<legend class="visually-hidden">Confidence</legend>
+				{#each CONFIDENCES as c (c)}
+					<label><input type="radio" name="confidence" value={c} bind:group={choice} /> {confidenceLabel(c)}</label>
+				{/each}
+			</fieldset>
+			<label class="field">Note <textarea bind:value={confidenceNote} rows="2" disabled={busy}></textarea></label>
+			<div class="row">
+				<button type="submit" class="primary" disabled={busy || !choice}>Record</button>
+				<button type="button" class="ghost" onclick={() => (confidenceFor = null)}>Cancel</button>
+			</div>
+		</form>
+	{:else}
+		<div class="row">
+			{#if isActive}<button type="button" disabled={busy} onclick={() => openConfidence(g)}>Record confidence</button>{/if}
+			{#if editing !== g.id}<button type="button" class="ghost edit" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
+			{#if !isActive}<button type="button" class="ghost" disabled={busy} onclick={() => remove(g)}>Remove</button>{/if}
+		</div>
+	{/if}
 {/snippet}
 
 <svelte:head><title>Sprint · Reeve</title></svelte:head>
@@ -265,179 +292,149 @@
 		<Notice tone="error" ondismiss={() => (notice = null)}>{notice}</Notice>
 	{/if}
 
-	{#if active}
-		{@const progress = new Map(active.counts.goals.map((p) => [p.goal_id, p]))}
+	<!-- kb/ADR-0014 R2: every view that shows counts states the membership rule: once, above both columns. -->
+	{#if active}<p class="rule">{RULE}</p>{/if}
+	<div class="columns" data-testid="columns">
 		<section class="panel" data-testid="active-sprint" aria-labelledby="active-title">
-			<div class="panel-head">
-				<h2 id="active-title">Active sprint <span class="dates">{active.sprint.starts_on} – {active.sprint.ends_on}</span></h2>
-				<button type="button" disabled={busy} onclick={() => (closing = active)}>Close…</button>
-			</div>
-			<!-- kb/ADR-0014 R2: every view that shows counts states the membership rule. -->
-			<p class="rule">{RULE}</p>
-			{#if active.sprint.warnings.length}
-				<p class="warn">Warning: {active.sprint.warnings.map((w) => warningText(w)).join('; ')}</p>
-			{/if}
-			{#each groups(active.sprint.goals) as grp (grp.key)}
-				<div class="group" data-testid="active-group-{grp.key ?? 'none'}">
-					{@render groupHead(grp.key, grp.title)}
-					{#each grp.items as g (g.id)}
-						{@const p = progress.get(g.id)}
-						{@const gg = gates.get(g.id)}
-						<article class="goal" data-testid="goal-{g.id}">
-							<h4>{g.outcome}</h4>
-							<p>We'll know when: {g.check}</p>
-							<p class="muted">Owner: {g.owner}</p>
-							{#if g.notes}<p class="notes">{g.notes}</p>{/if}
-							<p>
-								Confidence: <span data-testid="confidence">{g.confidence ? confidenceLabel(g.confidence) : 'not recorded'}</span>
-								{#if g.confidence_note}<span class="muted">({g.confidence_note})</span>{/if}
-							</p>
-							{#if g.suggested_confidence}
-								<p class="suggestion muted" data-testid="suggestion">
-									suggested: {confidenceLabel(g.suggested_confidence)} by {g.suggested_by}{#if g.suggested_note}{' '}({g.suggested_note}){/if}
-								</p>
-							{/if}
-							<p class="counts">
-								{p?.completed ?? 0} completed · {p?.in_flight ?? 0} in flight ({p?.in_review ?? 0} in review) · {p?.todo ?? 0} todo
-							</p>
-							{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
-							{@render goalControls(g)}
-							{#if confidenceFor?.id === g.id}
-								<form class="confidence" aria-label="Record confidence" onsubmit={recordConfidence}>
-									{#if g.suggested_confidence}
-										<p class="muted">
-											Suggested by {g.suggested_by}: {g.suggested_note || confidenceLabel(g.suggested_confidence)}
-										</p>
-									{/if}
-									<fieldset disabled={busy}>
-										<legend class="visually-hidden">Confidence</legend>
-										{#each CONFIDENCES as c (c)}
-											<label><input type="radio" name="confidence" value={c} bind:group={choice} /> {confidenceLabel(c)}</label>
-										{/each}
-									</fieldset>
-									<label class="field">Note <textarea bind:value={confidenceNote} rows="2" disabled={busy}></textarea></label>
-									<div class="row">
-										<button type="submit" class="primary" disabled={busy || !choice}>Record</button>
-										<button type="button" class="ghost" onclick={() => (confidenceFor = null)}>Cancel</button>
-									</div>
-								</form>
-							{:else}
-								<div class="row">
-									<button type="button" disabled={busy} onclick={() => openConfidence(g)}>Record confidence</button>
-									{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
-								</div>
-							{/if}
-						</article>
-					{/each}
+			{#if active}
+				{@const progress = new Map(active.counts.goals.map((p) => [p.goal_id, p]))}
+				<div class="panel-head">
+					<h2 id="active-title">
+						This sprint <span class="dates">{active.sprint.starts_on} – {active.sprint.ends_on} · {plural(active.sprint.goals.length, 'goal', 'goals')}</span>
+					</h2>
+					<button type="button" disabled={busy} onclick={() => (closing = active)}>Close…</button>
+				</div>
+				<p class="upkeep">{upkeepText(active.counts, active.upkeep_line)}</p>
+				{#if active.sprint.warnings.length}
+					<p class="warn">Warning: {active.sprint.warnings.map((w) => warningText(w)).join('; ')}</p>
+				{/if}
+				{#each active.sprint.goals as g (g.id)}
+					<GoalRow goal={g} gates={gates.get(g.id)} active progress={progress.get(g.id)} {firstBucket} open={opened.has(g.id)} ontoggle={() => toggle(g.id)}>
+						{#snippet controls()}{@render goalControls(g, true)}{/snippet}
+					</GoalRow>
+				{:else}
+					<p class="muted">The active sprint has no goals.</p>
+				{/each}
+				<div bind:this={rows.active}>
+					{#if goalFor === 'active'}
+						<GoalForm
+							title="New goal for this sprint"
+							note="A goal added to this sprint stays until the sprint closes."
+							active
+							endsOn={active.sprint.ends_on}
+							oncreated={({ goal }) => added(goal.id)}
+							oncancel={() => closeGoal('active')}
+						/>
+					{:else}
+						<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('active')}>+ goal to this sprint</button>
+					{/if}
 				</div>
 			{:else}
-				<p class="muted">The active sprint has no goals.</p>
+				<h2 id="active-title">This sprint</h2>
+				<p class="muted">No active sprint.</p>
+			{/if}
+		</section>
+
+		<section class="panel" data-testid="next-sprint" aria-labelledby="next-title">
+			<div class="panel-head">
+				<h2 id="next-title">
+					Next sprint {#if draft}<span class="dates">{draft.starts_on} – {draft.ends_on} · {plural(draft.goals.length, 'goal', 'goals')}</span>{/if}
+				</h2>
+				{#if draft && !active}
+					<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
+				{/if}
+			</div>
+			{#if draft?.goals.length}<p class="hint">Ticked goals go in when the sprint opens.</p>{/if}
+			{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
+			{#if openWarnings.length && active}
+				<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
+			{/if}
+			{#if draftWarning.length}
+				<p class="warn">Warning: {draftWarning.map((w) => warningText(w)).join('; ')}</p>
+			{/if}
+			{#each draft?.goals ?? [] as g (g.id)}
+				<GoalRow goal={g} gates={gates.get(g.id)} active={false} {firstBucket} open={opened.has(g.id)} ontoggle={() => toggle(g.id)}>
+					{#snippet lead()}
+						<input
+							type="checkbox"
+							aria-label="Goes in at open: {g.outcome}"
+							title="Goes in at open"
+							checked={!leftOut.has(g.id)}
+							disabled={busy}
+							onchange={(e) => (e.currentTarget.checked ? leftOut.delete(g.id) : leftOut.add(g.id))}
+						/>
+					{/snippet}
+					{#snippet controls()}{@render goalControls(g, false)}{/snippet}
+				</GoalRow>
 			{/each}
-			<p class="upkeep">{upkeepText(active.counts, active.upkeep_line)}</p>
-			<div data-testid="demo">
-				<h3>done in the last 7 days</h3>
-				{#if active.demo.length}
-					<ul>
-						{#each active.demo as d (d.key)}
-							<li><a href="?story={d.key}"><span class="key">{d.key}</span> {d.title}</a></li>
-						{/each}
-					</ul>
+			<div bind:this={rows.next}>
+				{#if goalFor === 'next'}
+					{#key draft?.id}
+						<GoalForm title="New goal for next sprint" endsOn={draft?.ends_on ?? null} oncreated={addedNext} oncancel={() => closeGoal('next')} />
+					{/key}
 				{:else}
-					<p class="muted">Nothing completed in the last 7 days.</p>
+					<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal('next')}>+ goal for next sprint</button>
 				{/if}
 			</div>
 		</section>
-	{/if}
+	</div>
 
-	<section class="panel" data-testid="next-sprint" aria-labelledby="next-title">
-		<div class="panel-head">
-			<h2 id="next-title">Next sprint {#if draft}<span class="dates">{draft.starts_on} – {draft.ends_on}</span>{/if}</h2>
-			{#if draft && !active}
-				<button type="button" disabled={busy} onclick={openDraft}>Open sprint with {plural(goingIn, 'goal', 'goals')}</button>
-			{/if}
-		</div>
-		{#if leaveOut.length}<p class="muted">{plural(leaveOut.length, 'goal stays', 'goals stay')} in Next sprint when it opens.</p>{/if}
-		{#if openWarnings.length && active}
-			<p class="warn">Opened. Warning: {openWarnings.map((w) => warningText(w)).join('; ')}</p>
-		{/if}
-		{#if draftWarning.length}
-			<p class="warn">Warning: {draftWarning.map((w) => warningText(w)).join('; ')}</p>
-		{/if}
-		{#each groups(draft?.goals ?? []) as grp (grp.key)}
-			<div class="group" data-testid="next-group-{grp.key ?? 'none'}">
-				{@render groupHead(grp.key, grp.title)}
-				{#each grp.items as g (g.id)}
-					{@const gg = gates.get(g.id)}
-					<article class="goal draft" data-testid="goal-{g.id}" tabindex="-1">
-						<h4>{g.outcome}</h4>
-						<p class="muted">Waiting since {waitingSince(g.created_at)}</p>
-						<label class="goes-in"
-							><input
-								type="checkbox"
-								aria-label="Goes in at open: {g.outcome}"
-								checked={!leftOut.has(g.id)}
-								disabled={busy}
-								onchange={(e) => (e.currentTarget.checked ? leftOut.delete(g.id) : leftOut.add(g.id))}
-							/> Goes in at open</label
-						>
-						<p>We'll know when: {g.check}</p>
-						<p class="muted">Owner: {g.owner}</p>
-						{#if g.notes}<p class="notes">{g.notes}</p>{/if}
-						{#if gg}<GoalGates gates={gg} linked={g.links.length > 0} />{/if}
-						{@render goalControls(g)}
-						<div class="row">
-							{#if editing !== g.id}<button type="button" class="ghost" disabled={busy} onclick={() => (editing = g.id)}>Edit</button>{/if}
-							<button type="button" class="ghost" disabled={busy} onclick={() => remove(g)}>Remove</button>
-						</div>
-					</article>
-				{/each}
-			</div>
-		{/each}
-		{#key draft?.id}
-			<GoalForm endsOn={draft?.ends_on ?? null} oncreated={() => reload()} />
-		{/key}
-	</section>
-
-	{#if nowBucket !== null}
-		<section class="panel" data-testid="no-goal-yet" aria-labelledby="no-goal-title">
-			<h2 id="no-goal-title">{nowBucket}, no goal yet</h2>
-			{#each noGoalYet as i (i.key)}
-				<div class="now-row" data-testid="no-goal-{i.key}" bind:this={rows[i.key]}>
+	{#if firstBucket !== null}
+		<section class="panel" data-testid="bucket-initiatives" aria-labelledby="bucket-title">
+			<h2 id="bucket-title">{firstBucket} initiatives</h2>
+			{#each plan?.first_bucket_initiatives ?? [] as i (i.key)}
+				<div class="bucket-row" data-testid="bucket-{i.key}" bind:this={rows[i.key]}>
 					<div class="row">
 						<a href={itemRoute({ key: i.key, item: 'initiative' }, page.url)}><span class="key">{i.key}</span> {i.title}</a>
 						{#if i.target_month}<span class="muted">{month(i.target_month)}</span>{/if}
 						{#if !i.discovery_complete}<span class="muted">in discovery</span>{/if}
-						{#if goalFor !== i.key}<button type="button" class="ghost add-goal" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
+						{#each i.goals as g (g.id)}
+							{@const where = g.active ? 'this sprint' : 'next sprint'}
+							<a class="goal-chip" href="#goal-{g.id}" title="{g.outcome} · {where}"><span class="chip-outcome">{g.outcome}</span><span class="chip-where">{' '}· {where}</span></a>
+						{:else}
+							<span class="muted">no goal</span>
+							{#if goalFor !== i.key}<button type="button" class="ghost add-goal" aria-label="+ goal for {i.key}" disabled={busy} onclick={() => openGoal(i.key)}>+ goal</button>{/if}
+						{/each}
 					</div>
 					{#if goalFor === i.key}
 						<GoalForm
 							title="New goal for next sprint · linked to {i.key}"
 							links={[i.key]}
 							endsOn={draft?.ends_on ?? null}
-							oncreated={async ({ goal }) => {
-								goalFor = null;
-								await reload();
-								await tick(); // the row has unmounted: focus the new goal's card
-								document.querySelector<HTMLElement>(`[data-testid="goal-${goal.id}"]`)?.focus();
-							}}
+							oncreated={({ goal }) => added(goal.id)}
 							oncancel={() => closeGoal(i.key)}
 						/>
 					{/if}
 				</div>
 			{:else}
-				<p class="muted">Every {nowBucket} initiative has a goal this sprint or next.</p>
+				<p class="muted">No initiative is in {firstBucket}.</p>
 			{/each}
 		</section>
 	{/if}
 
-	<section class="panel" aria-labelledby="history-title">
-		<h2 id="history-title">History</h2>
+	{#if active}
+		<details class="panel" data-testid="demo">
+			<summary><h2>Done in the last 7 days ({active.demo.length})</h2></summary>
+			{#if active.demo.length}
+				<ul>
+					{#each active.demo as d (d.key)}
+						<li><a href="?story={d.key}"><span class="key">{d.key}</span> {d.title}</a></li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="muted">Nothing completed in the last 7 days.</p>
+			{/if}
+		</details>
+	{/if}
+
+	<details class="panel" data-testid="history">
+		<summary><h2>History ({sprints.closed.length})</h2></summary>
 		{#each sprints.closed as s (s.id)}
 			<SprintHistoryEntry sprint={s} {refresh} />
 		{:else}
 			<p class="muted">No closed sprints yet.</p>
 		{/each}
-	</section>
+	</details>
 {/if}
 
 {#if closing}
@@ -447,26 +444,20 @@
 {/if}
 
 <style>
-	.goes-in {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-		font-size: 13px;
-	}
 	.panel {
 		display: grid;
-		gap: 10px;
+		gap: 6px;
 		margin: 0 0 28px;
 	}
 	.panel-head {
 		display: flex;
+		/* The Close and Open buttons are taller than a bare heading: both columns' heads take the same height. */
+		min-height: 34px;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px 12px;
 	}
 	h2,
-	h3,
-	h4,
 	p {
 		margin: 0;
 	}
@@ -475,45 +466,12 @@
 		font-size: 14px;
 		font-weight: 400;
 	}
-	.group {
-		display: grid;
-		gap: 8px;
-	}
-	/* app.css sizes only h1 and h2: the page's h3 (group headers, the demo list's heading) sit above the goals' h4. */
-	h3 {
-		font-size: 16px;
-	}
-	h4 {
-		font-size: 15px;
-	}
-	.goal.draft {
-		border-style: dashed;
-	}
-	.now-row {
-		display: grid;
-		gap: 8px;
-	}
-	.rule {
+	/* The head's three small lines read as one block: the rule, the upkeep and the hint share a size. */
+	.rule,
+	.upkeep,
+	.hint {
 		color: var(--muted);
 		font-size: 13px;
-	}
-	.goal {
-		display: grid;
-		gap: 4px;
-		padding: 10px 12px;
-		border: 1px solid var(--line);
-		border-radius: 6px;
-		background: var(--raised);
-	}
-	.goal button,
-	.goal form {
-		justify-self: start;
-	}
-	.notes {
-		white-space: pre-wrap;
-	}
-	.counts {
-		font-variant-numeric: tabular-nums;
 	}
 	.confidence {
 		display: grid;
@@ -565,5 +523,49 @@
 	.ghost.icon {
 		height: auto;
 		padding: 0 4px;
+	}
+	.columns {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 16px;
+		align-items: start;
+	}
+	@media (max-width: 900px) {
+		.columns {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	.bucket-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+	}
+	/* One line however long the outcome: the outcome takes the ellipsis, the sprint it is in never does. */
+	.goal-chip {
+		display: inline-flex;
+		box-sizing: border-box;
+		max-width: 100%;
+		padding: 1px 8px;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		font-size: 13px;
+		white-space: nowrap;
+		text-decoration: none;
+	}
+	.chip-outcome {
+		max-width: 32ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.chip-where {
+		flex: none;
+		margin-left: 0.35ch;
+	}
+	summary {
+		cursor: pointer;
+	}
+	/* The folded sections' headings sit inside the summary, so the disclosure marker stays on the same line. */
+	summary h2 {
+		display: inline;
 	}
 </style>

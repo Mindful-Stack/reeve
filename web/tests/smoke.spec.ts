@@ -684,30 +684,42 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	// The first goal creates the draft; no sprint is active, so the draft opens from its own panel.
 	await page.goto('/sprint');
 	const next = page.getByTestId('next-sprint');
-	const add = next.getByRole('form', { name: 'New goal' });
+	// The add form is behind its button, and stays open from one goal to the next.
+	await next.getByRole('button', { name: '+ goal for next sprint', exact: true }).click();
+	const add = next.getByRole('form', { name: 'New goal for next sprint', exact: true });
 	await add.getByLabel('Outcome').fill(outcome);
 	await add.getByLabel("We'll know when").fill('the smoke closes it');
 	await add.getByRole('button', { name: 'Add goal' }).click();
-	await expect(next.getByRole('heading', { name: outcome })).toBeVisible();
+	await expect(next.getByRole('button', { name: outcome, exact: true })).toBeVisible();
 	// A second goal, left out at the opening: it stays in Next sprint (kb/ADR-0026).
 	const later = 'The smoke leaves this goal for later';
 	await add.getByLabel('Outcome').fill(later);
 	await add.getByLabel("We'll know when").fill('it stays in the draft');
 	await add.getByRole('button', { name: 'Add goal' }).click();
-	await expect(next.getByRole('heading', { name: later })).toBeVisible();
+	await expect(next.getByRole('button', { name: later, exact: true })).toBeVisible();
 	await next.getByRole('checkbox', { name: `Goes in at open: ${later}` }).uncheck();
 	await expect(next).toContainText('1 goal stays in Next sprint when it opens.');
 	await next.getByRole('button', { name: 'Open sprint with 1 goal' }).click();
 	const active = page.getByTestId('active-sprint');
-	await expect(active.getByRole('heading', { name: outcome })).toBeVisible();
-	await expect(active.getByRole('heading', { name: later })).toBeHidden();
-	await expect(next.getByRole('heading', { name: outcome })).toBeHidden();
+	await expect(active.getByRole('button', { name: outcome, exact: true })).toBeVisible();
+	// A goal can be added to the sprint that is already open, from its own column.
+	const extra = 'The smoke adds a goal to the open sprint';
+	await active.getByRole('button', { name: '+ goal to this sprint', exact: true }).click();
+	const late = active.getByRole('form', { name: 'New goal for this sprint', exact: true });
+	await late.getByLabel('Outcome').fill(extra);
+	await late.getByLabel("We'll know when").fill('it shows in this sprint');
+	await late.getByRole('button', { name: 'Add goal' }).click();
+	await expect(active.getByRole('button', { name: extra, exact: true })).toBeVisible();
+	await expect(next.getByRole('button', { name: extra, exact: true })).toBeHidden();
+	await expect(active.getByRole('button', { name: later, exact: true })).toBeHidden();
+	await expect(next.getByRole('button', { name: outcome, exact: true })).toBeHidden();
 	await expect(next).not.toContainText('stays in Next sprint');
-	await expect(next.getByRole('heading', { name: later })).toBeVisible();
+	await expect(next.getByRole('button', { name: later, exact: true })).toBeVisible();
 	await expect(next.getByRole('checkbox', { name: `Goes in at open: ${later}` })).toBeChecked();
 	// Remove the left-out goal: later tests expect a draft without goals (the new draft stays, empty).
+	await next.getByRole('button', { name: later, exact: true }).click();
 	await next.getByTestId(/^goal-/).filter({ hasText: later }).getByRole('button', { name: 'Remove', exact: true }).click();
-	await expect(next.getByRole('heading', { name: later })).toBeHidden();
+	await expect(next.getByRole('button', { name: later, exact: true })).toBeHidden();
 
 	// On the board, the card's own move control starts the chore; the nudge links it to the goal.
 	await page.goto('/board');
@@ -717,7 +729,7 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	await expect(page.getByTestId('column-in_progress')).toContainText(work.key);
 	const nudge = page.getByTestId('nudge');
 	await expect(nudge).toContainText('Serving which goal?');
-	await nudge.getByRole('button', { name: outcome }).click();
+	await nudge.getByRole('button', { name: outcome, exact: true }).click();
 	await expect(nudge).toBeHidden();
 	await expect(card).toContainText(`goal: ${outcome}`);
 	const story = (await (await page.request.get(`/api/v1/stories/${work.key}`, { headers })).json()) as {
@@ -727,6 +739,7 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 
 	// Check Tuesday: record "at risk".
 	await page.goto('/sprint');
+	await active.getByRole('button', { name: outcome, exact: true }).click();
 	await expect(active.getByText('1 in flight')).toBeVisible();
 	await active.getByRole('button', { name: 'Record confidence' }).click();
 	const confidence = active.getByRole('form', { name: 'Record confidence' });
@@ -737,15 +750,20 @@ test('the sprint cycle: a goal, the open sprint, the start nudge, confidence, cl
 	// Plan Tuesday: close with "met".
 	await active.getByRole('button', { name: 'Close…' }).click();
 	const dialog = page.getByRole('dialog');
-	await dialog.getByRole('radio', { name: 'met', exact: true }).check();
+	// Every goal of the sprint needs a verdict, the one added to the open sprint too.
+	await dialog.getByRole('radiogroup', { name: `Verdict for ${outcome}` }).getByRole('radio', { name: 'met', exact: true }).check();
+	await dialog.getByRole('radiogroup', { name: `Verdict for ${extra}` }).getByRole('radio', { name: 'missed', exact: true }).check();
 	await dialog.getByRole('button', { name: 'Close sprint' }).click();
 	await expect(dialog.getByRole('status')).toHaveText('The sprint is closed.');
 	await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(dialog).toBeHidden();
-	await expect(active).toBeHidden();
+	// The column stays, and says so: no sprint is open now.
+	await expect(active).toContainText('No active sprint');
+	await expect(active.getByRole('button', { name: outcome, exact: true })).toBeHidden();
 
-	// History: the verdict, and the numbers with the membership rule. Nothing moved since the close, so the derived
+	// History is folded: open it first. The verdict, and the numbers with the membership rule. Nothing moved since the close, so the derived
 	// counts stand alone: no "now · at close" pair and no "changed since close" note (blocked-by is always "at close").
+	await page.getByTestId('history').locator(':scope > summary').click();
 	const history = page.locator('[data-testid^="history-"]').filter({ hasText: outcome });
 	await expect(history).toContainText('confidence at risk');
 	await expect(history).toContainText('verdict met');
@@ -881,7 +899,7 @@ test('the header goal picker links an initiative and, after navigating by click,
 	await page.getByRole('button', { name: 'Goals ▾' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Sprint goals' });
 	await dialog.getByRole('button', { name: '+ Add goal' }).click();
-	const form = dialog.getByRole('form', { name: 'New goal' });
+	const form = dialog.getByRole('form', { name: 'New goal', exact: true });
 	await form.getByLabel('Outcome').fill(outcome);
 	await form.getByLabel("We'll know when").fill('the smoke links it');
 	await form.getByRole('button', { name: 'Add goal', exact: true }).click();
@@ -909,7 +927,8 @@ test('the header goal picker links an initiative and, after navigating by click,
 
 	// The links are the server's and under this goal: /sprint loads fresh and lists both keys on this goal.
 	await page.goto('/sprint');
-	const goalCard = page.getByTestId('next-sprint').locator('article.goal', { has: page.getByRole('heading', { name: outcome, exact: true }) });
+	const goalCard = page.getByTestId('next-sprint').locator('article.goal', { has: page.getByRole('button', { name: outcome, exact: true }) });
+	await goalCard.getByRole('button', { name: outcome, exact: true }).click();
 	await expect(goalCard.getByRole('button', { name: `Unlink ${ini}`, exact: true })).toBeVisible();
 	await expect(goalCard.getByRole('button', { name: `Unlink ${epic}`, exact: true })).toBeVisible();
 	// The full load ended linking mode.
@@ -1781,19 +1800,22 @@ test('a Now initiative without a goal gets one from its row, and the goal waits 
 	const outcome = `Gates smoke goal ${tag}`;
 
 	await page.goto('/sprint');
-	const row = page.getByTestId(`no-goal-${ini.key}`);
+	const row = page.getByTestId(`bucket-${ini.key}`);
+	await expect(row).toContainText('no goal');
 	await expect(row).toContainText('in discovery');
-	await row.getByRole('button', { name: '+ goal' }).click();
+	await row.getByRole('button', { name: `+ goal for ${ini.key}`, exact: true }).click();
 	const form = row.getByRole('form', { name: `New goal for next sprint · linked to ${ini.key}` });
 	await form.getByLabel('Outcome').fill(outcome);
 	await form.getByLabel("We'll know when").fill('the smoke sees its gate');
 	await form.getByRole('button', { name: 'Add goal', exact: true }).click();
 
-	// The goal is in the next sprint, under its initiative, and its epic is one of the gates it waits on.
-	const group = page.getByTestId('next-sprint').getByTestId(`next-group-${ini.key}`);
-	const card = group.locator('article.goal', { has: page.getByRole('heading', { name: outcome, exact: true }) });
+	// The goal is in the next sprint, linked to its initiative (the bucket row now names it), and its epic is one of
+	// the gates it waits on: open its row to read them.
+	const card = page.getByTestId('next-sprint').locator('article.goal', { has: page.getByRole('button', { name: outcome, exact: true }) });
+	await expect(row.getByRole('link', { name: `${outcome} · next sprint` })).toBeVisible();
+	await expect(row).not.toContainText('no goal');
+	await card.getByRole('button', { name: outcome, exact: true }).click();
 	await expect(card.getByTestId(`discovery-${epic.key}`)).toContainText(`Gates epic ${tag}`);
-	await expect(page.getByTestId(`no-goal-${ini.key}`)).toHaveCount(0);
 
 	// Leave the draft as this test found it.
 	await card.getByRole('button', { name: 'Remove', exact: true }).click();
