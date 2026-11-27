@@ -17,7 +17,7 @@ description = "One PostgreSQL per run (scripts/test.sh): workspace tests under n
 run = "scripts/test.sh"
 
 [tasks.lint]
-description = "rustfmt check, clippy -D warnings with and without static-oidc, the isolation lint, actionlint and the action pins"
+description = "rustfmt check, clippy -D warnings with and without static-oidc, the isolation lint, actionlint, the action pins and the CLI licence check"
 run = [
   "cargo fmt --check",
   "cargo clippy --workspace --all-targets $REEVE_FEATURES -- -D warnings",
@@ -25,6 +25,7 @@ run = [
   "scripts/check-context-isolation.sh",
   "actionlint",
   "scripts/check-action-pins.sh",
+  "scripts/check-cli-licence.sh",
 ]
 
 [tasks.isolation]

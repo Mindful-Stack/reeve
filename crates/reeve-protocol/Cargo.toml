@@ -2,7 +2,7 @@
 name = "reeve-protocol"
 edition.workspace = true
 version.workspace = true
-license.workspace = true
+license = "MIT"
 
 [dependencies]
 serde.workspace = true

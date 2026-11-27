@@ -188,4 +188,13 @@ than in a public issue.
 
 ## Licence
 
-MIT; see [LICENSE](LICENSE).
+Reeve has two licences:
+
+- The server side (`reeve-server`, `reeve-planning`, `reeve-identity`, `reeve-activity`,
+  `reeve-testdb`) and the web client (`web/`) are licensed under the
+  [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).
+- The `reeve` CLI (`crates/reeve`) and the wire types (`crates/reeve-protocol`) are licensed under
+  the [MIT licence](LICENSE-MIT).
+
+Each crate's `Cargo.toml` names its licence. Releases before this change were MIT throughout and
+stay so. The reasons are in kb/ADR-0032 (`lore/knowledge/adrs/`).
