@@ -96,6 +96,9 @@ pub enum ItemError {
     Horizon(String),
     #[error("a criterion must not be blank")]
     BlankCriterion,
+    /// The value is the caller's, cut by `reeve_protocol::echo`.
+    #[error("target month must be YYYY-MM, for example 2027-03, not {0:?}")]
+    TargetMonth(String),
 }
 
 pub(crate) fn check_title(t: &str) -> Result<(), ItemError> {
@@ -118,6 +121,22 @@ pub fn check_horizon_change(
         Ok(())
     } else {
         Err(ItemError::Horizon(next.into()))
+    }
+}
+
+/// A target month a request names must be a month (`reeve_protocol::is_target_month`): any other text would be
+/// stored and then silently count as no month in the Now ranking. The one place that rule and its message are
+/// written: the server's create and edit actions and plan validation all call it. The refusal repeats the value
+/// cut by `reeve_protocol::echo`, as every refusal does. It judges only what a request names. A stored month is
+/// never passed here, so a month in another shape stays valid to keep, and the constructor (`Initiative::new`)
+/// does not call it: an edit rebuilds through the constructor with the stored month, and the import keeps the
+/// month the other tool had.
+pub fn named_target_month(month: Option<String>) -> Result<Option<String>, ItemError> {
+    match month {
+        Some(m) if !reeve_protocol::is_target_month(&m) => {
+            Err(ItemError::TargetMonth(reeve_protocol::echo(&m)))
+        }
+        other => Ok(other),
     }
 }
 
@@ -450,6 +469,47 @@ impl Story {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one rule for a month a request names. Catches: a shape other than YYYY-MM accepted; a missing month
+    /// refused; a message other than the API's.
+    #[test]
+    fn a_named_target_month_must_be_yyyy_mm() {
+        assert_eq!(named_target_month(None), Ok(None));
+        assert_eq!(
+            named_target_month(Some("2027-03".into())),
+            Ok(Some("2027-03".into()))
+        );
+        for bad in ["soon", "March 2027", "2027-3", "2027-13", ""] {
+            let e = named_target_month(Some(bad.into())).unwrap_err();
+            assert_eq!(e, ItemError::TargetMonth(bad.into()), "{bad:?}");
+            assert_eq!(
+                e.to_string(),
+                format!("target month must be YYYY-MM, for example 2027-03, not {bad:?}")
+            );
+        }
+    }
+
+    /// The value echoed in the refusal is cut at 200 characters, with a count of what was left out. Catches: a
+    /// refusal that repeats 5,000 characters of caller text; a rule that does not echo through
+    /// `reeve_protocol::echo`.
+    #[test]
+    fn a_long_named_target_month_is_echoed_cut() {
+        let long = "å".repeat(5_000);
+        let e = named_target_month(Some(long.clone())).unwrap_err();
+        assert_eq!(e, ItemError::TargetMonth(reeve_protocol::echo(&long)));
+        let ItemError::TargetMonth(echoed) = &e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(
+            echoed,
+            &format!("{}[cut: 4800 more characters]", "å".repeat(200))
+        );
+        assert!(
+            e.to_string().chars().count() < 300,
+            "{}",
+            e.to_string().len()
+        );
+    }
     #[test]
     fn new_validates_title_and_horizon() {
         let b = vec!["Now".to_string(), "Later".to_string()];

@@ -165,19 +165,6 @@ pub(super) fn allowed_owner(
     }
 }
 
-/// A target month a request names must be a month (`reeve_protocol::is_target_month`): any other text would be
-/// stored and then silently count as no month in the Now ranking. Like `allowed_owner`, it judges only what the
-/// request names; a stored month is never passed here.
-pub(super) fn named_target_month(month: Option<String>) -> Result<Option<String>, AppError> {
-    match month {
-        Some(m) if !reeve_protocol::is_target_month(&m) => Err(AppError::Validation(format!(
-            "target month must be YYYY-MM, for example 2027-03, not {:?}",
-            crate::text::echo(&m)
-        ))),
-        other => Ok(other),
-    }
-}
-
 /// Sets `browse_url` on an already-built decision DTO: `<repo url>/blob/HEAD/<path>`, nothing for a repository
 /// without an `https://` URL.
 pub(crate) fn browse(s: &AppState, dto: &mut RequiredDecisionDto) {

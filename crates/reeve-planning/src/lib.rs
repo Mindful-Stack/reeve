@@ -16,6 +16,7 @@ pub use domain::{
     item_link::{ItemLink, ItemLinkError},
     items::{
         Criterion, DiscoveryMark, Epic, Initiative, ItemError, Move, MoveRefused, Moved, Story,
+        named_target_month,
     },
     progress::progress,
     promise::{

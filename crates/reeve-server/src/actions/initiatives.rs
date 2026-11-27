@@ -1,7 +1,7 @@
 use super::templates::{Start, starting_brief};
-use super::{Acting, Edited, allowed_owner, named_target_month};
+use super::{Acting, Edited, allowed_owner};
 use crate::{error::AppError, state::AppState};
-use reeve_planning::Initiative;
+use reeve_planning::{HandlerError, Initiative, named_target_month};
 use reeve_protocol::{BriefTemplateLevel, CreateInitiative, EditItem, InitiativeDto, ItemType};
 
 /// `reeve initiative ls`: every initiative with its progress. Shared by `GET /api/v1/initiatives` and the MCP tool
@@ -38,7 +38,7 @@ pub(crate) async fn create_initiative(
 ) -> Result<(InitiativeDto, bool), AppError> {
     let idem = who.write_key(&b.idempotency_key)?;
     let owner = allowed_owner(who.policy, b.owner)?;
-    let target_month = named_target_month(b.target_month)?;
+    let target_month = named_target_month(b.target_month).map_err(HandlerError::from)?;
     // The brief the caller sent, or the template it asked for (`template`, `default_template`). A caller that asks
     // for neither, an MCP tool among them, gets exactly what it sent. A retry whose named template is gone since
     // is answered the item its key made (`Start::Made`), as the handler answers every other retry.
@@ -101,7 +101,7 @@ pub(crate) async fn edit_initiative(
         other => other,
     };
     let target_month = match b.target_month {
-        Some(Some(m)) => Some(named_target_month(Some(m))?),
+        Some(Some(m)) => Some(named_target_month(Some(m)).map_err(HandlerError::from)?),
         other => other,
     };
     let written = state
