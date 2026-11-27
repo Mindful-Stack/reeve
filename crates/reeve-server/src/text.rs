@@ -1,18 +1,8 @@
 //! Text the server cuts before it repeats it: shared by the actions (a refusal that repeats a caller's value) and
-//! the MCP adapter (every text a tool answers or a refusal lists), so neither depends on the other for it.
-/// How much of a caller's own argument an error message repeats.
-pub(crate) const MAX_ECHO: usize = 200;
-
-/// Cuts `text` to its first `limit` characters when it has more, and appends `[cut: <n> more characters]`, n being
-/// the number of characters removed. Characters, not bytes: the cut is always on a character boundary.
-pub(crate) fn cut(text: &mut String, limit: usize) {
-    // The byte offset of the character after the last one kept; `None` when the text is within the limit.
-    if let Some((at, _)) = text.char_indices().nth(limit) {
-        let removed = text[at..].chars().count();
-        text.truncate(at);
-        text.push_str(&format!("[cut: {removed} more characters]"));
-    }
-}
+//! the MCP adapter (every text a tool answers or a refusal lists), so neither depends on the other for it. The cut
+//! and the bound on an echoed value are `reeve-protocol`'s (`reeve_protocol::cut`, `reeve_protocol::echo`), so
+//! planning's refusals cut as the server's do; this module adds the cut that fits its marker within a limit.
+pub(crate) use reeve_protocol::{cut, echo};
 
 /// The most characters a cut's marker takes: its words and the most digits a count can have.
 const MAX_MARKER: usize = "[cut:  more characters]".len() + 20;
@@ -23,14 +13,6 @@ pub(crate) fn cut_within(text: &mut String, limit: usize) {
     if text.chars().count() > limit {
         cut(text, limit - MAX_MARKER);
     }
-}
-
-/// A caller's argument as an error message repeats it: its first `MAX_ECHO` characters, and how many were left out.
-/// Also where an action's refusal repeats a caller's value (`actions::stories`), so the words after it survive.
-pub(crate) fn echo(text: &str) -> String {
-    let mut text = text.to_string();
-    cut(&mut text, MAX_ECHO);
-    text
 }
 
 #[cfg(test)]
@@ -100,16 +82,6 @@ mod tests {
                 format!("{kept}[cut: {over} more characters]")
             );
         }
-    }
-
-    #[test]
-    fn an_echoed_argument_is_at_most_two_hundred_characters() {
-        assert_eq!(echo("TST-12"), "TST-12");
-        assert_eq!(echo(&"å".repeat(MAX_ECHO)), "å".repeat(MAX_ECHO));
-        assert_eq!(
-            echo(&"å".repeat(MAX_ECHO + 5)),
-            format!("{}[cut: 5 more characters]", "å".repeat(MAX_ECHO))
-        );
     }
 
     #[test]
