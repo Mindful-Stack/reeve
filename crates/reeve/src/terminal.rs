@@ -148,6 +148,8 @@ mod tests {
     #[test]
     fn block_turns_carriage_returns_into_line_breaks() {
         assert_eq!(block("one\r\ntwo\rthree\r"), "one\ntwo\nthree\n");
+        assert_eq!(block("\r\r\nx"), "\n\nx");
+        assert_eq!(block("\rx"), "\nx");
     }
 
     /// Everything else that can drive the terminal or reorder what follows is escaped, in long text too.
@@ -157,12 +159,18 @@ mod tests {
             block("a\u{1b}]0;owned\u{7}\0\u{9b}K\u{7f}b\u{2028}c\u{2029}d"),
             "a\\u{1b}]0;owned\\u{7}\\u{0}\\u{9b}K\\u{7f}b\\u{2028}c\\u{2029}d"
         );
-        for c in [
-            '\u{202a}', '\u{202b}', '\u{202c}', '\u{202d}', '\u{202e}', '\u{2066}', '\u{2067}',
-            '\u{2068}', '\u{2069}',
+        for (c, escaped) in [
+            ('\u{202a}', "\\u{202a}"),
+            ('\u{202b}', "\\u{202b}"),
+            ('\u{202c}', "\\u{202c}"),
+            ('\u{202d}', "\\u{202d}"),
+            ('\u{202e}', "\\u{202e}"),
+            ('\u{2066}', "\\u{2066}"),
+            ('\u{2067}', "\\u{2067}"),
+            ('\u{2068}', "\\u{2068}"),
+            ('\u{2069}', "\\u{2069}"),
         ] {
-            let shown = block(&format!("x{c}y")).into_owned();
-            assert_eq!(shown, format!("x{}y", c.escape_default()), "{c:?}");
+            assert_eq!(block(&format!("x{c}y")), format!("x{escaped}y"), "{c:?}");
         }
     }
 
@@ -171,6 +179,7 @@ mod tests {
     fn block_changes_nothing_already_escaped() {
         let hostile = "a\u{1b}[2Jb\nc\u{202e}d\r";
         let once = line(hostile).into_owned();
+        // Documents the layering (`line` first, then the guard); it cannot fail, the twice-applied check below is the real one.
         assert_eq!(block(&once), once);
         let shown = block(hostile).into_owned();
         assert_eq!(block(&shown), shown);
