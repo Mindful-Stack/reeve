@@ -119,7 +119,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
         Cmd::Auth(a) => auth::run(a, json).await,
         // The TUI resolves its own credential (kb/ADR-0011 R7), so it branches before `resolve()`.
         Cmd::Tui if json => {
-            eprintln!("error: --json is not supported by `reeve tui`");
+            crate::terminal::err("error: --json is not supported by `reeve tui`");
             Ok(1)
         }
         Cmd::Tui => Ok(crate::tui::main().await),

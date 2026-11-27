@@ -110,15 +110,15 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                 token: Some(token),
             })?;
             let path = crate::config::config_path()?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::json!({"outcome":"ok","value":{"path": path}})
-                );
+            let written = if json {
+                crate::terminal::exact(
+                    &serde_json::json!({"outcome":"ok","value":{"path": path}}).to_string(),
+                )
             } else {
-                println!("saved to {}", path.display());
-            }
-            Ok(0)
+                crate::terminal::out(&format!("saved to {}", path.display()));
+                Ok(())
+            };
+            Ok(crate::terminal::status(written, 0))
         }
         Auth::Status => {
             let r = crate::config::resolve()?;
@@ -209,14 +209,15 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
 
 /// Report a failed login (nothing has been written) and return exit status 1.
 fn refuse(json: bool, code: ErrorCode, message: &str) -> i32 {
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({"outcome":"error","code":code,"message":message})
-        );
-    }
-    eprintln!("error: {message}");
-    1
+    let written = if json {
+        crate::terminal::exact(
+            &serde_json::json!({"outcome":"error","code":code,"message":message}).to_string(),
+        )
+    } else {
+        Ok(())
+    };
+    crate::terminal::err(&format!("error: {message}"));
+    crate::terminal::status(written, 1)
 }
 
 /// `reeve auth login`: the token page issues an interactive token, the user pastes it here, and it is stored only after
@@ -229,12 +230,14 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
     let url = url.trim_end_matches('/').to_string();
     if crate::config::env_nonempty("REEVE_TOKEN").is_some() {
         // REEVE_TOKEN wins over the stored token (kb/ADR-0015 R7), so the login would otherwise look like it did nothing.
-        eprintln!(
-            "note: REEVE_TOKEN is set and takes precedence over the token stored here; unset it to use this login"
+        crate::terminal::err(
+            "note: REEVE_TOKEN is set and takes precedence over the token stored here; unset it to use this login",
         );
     }
     let page = format!("{url}/tokens?for=cli");
-    eprintln!("Open {page}, sign in with Google, create an interactive token and paste it here:");
+    crate::terminal::err(&format!(
+        "Open {page}, sign in with Google, create an interactive token and paste it here:"
+    ));
     // Only a person at a terminal gets a browser; piped input (tests, CI, scripts) never does.
     let stdin = std::io::stdin();
     if stdin.is_terminal() && !no_browser {
@@ -282,19 +285,25 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
         url: Some(url),
         token: Some(token),
     })?;
-    if json {
-        println!(
-            "{}",
-            serde_json::json!({"outcome":"ok","value":{"email": me.email, "kind": "interactive"}})
-        );
+    let written = if json {
+        crate::terminal::exact(
+            &serde_json::json!({"outcome":"ok","value":{"email": me.email, "kind": "interactive"}})
+                .to_string(),
+        )
     } else {
-        println!(
-            "signed in as {} (saved to {})",
-            me.email,
-            crate::config::config_path()?.display()
-        );
-    }
-    Ok(0)
+        crate::terminal::out(&signed_in(&me, &crate::config::config_path()?));
+        Ok(())
+    };
+    Ok(crate::terminal::status(written, 0))
+}
+
+/// `reeve auth login`'s last line. The account is the server's text, so it prints as one line (`terminal::line`).
+fn signed_in(me: &reeve_protocol::Me, path: &std::path::Path) -> String {
+    format!(
+        "signed in as {} (saved to {})",
+        crate::terminal::line(&me.email),
+        path.display()
+    )
 }
 
 /// Best effort: the address is already on stderr, so a missing opener is not an error.

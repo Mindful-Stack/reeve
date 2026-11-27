@@ -490,7 +490,7 @@ pub async fn run(c: &Client, s: Story, json: bool) -> anyhow::Result<i32> {
                     .join("\n")
             });
             if let Some(line) = more {
-                eprintln!("{line}");
+                crate::terminal::err(&line);
             }
             code
         }

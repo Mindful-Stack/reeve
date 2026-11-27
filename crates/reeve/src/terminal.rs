@@ -92,6 +92,13 @@ pub fn exact(text: &str) -> io::Result<()> {
     untouched(&mut io::stdout(), text, true)
 }
 
+/// A whole document on standard output exactly as given, with no line break added: `reeve export`, which writes JSON
+/// with or without `--json`. A closed pipe is success; any other failure is returned, for `status`, so a full disk
+/// cannot leave a truncated document behind exit status 0.
+pub fn document(text: &str) -> io::Result<()> {
+    untouched(&mut io::stdout(), text, false)
+}
+
 /// The exit status after an exact write: `code` when it was written, else 1, with the failure said on standard error.
 pub fn status(written: io::Result<()>, code: i32) -> i32 {
     match written {

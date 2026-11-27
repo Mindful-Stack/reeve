@@ -153,7 +153,7 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             reversibility,
         } => {
             if due.is_none() {
-                eprintln!("no decide-by date; the queue will flag it");
+                crate::terminal::err("no decide-by date; the queue will flag it");
             }
             // The protocol type, not a hand-built object: a renamed field fails to compile here, not at the server.
             let req = RequireDecision {
@@ -284,28 +284,30 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                 Err(e) => (d.clone(), Some(format!("{e:#}"))),
             };
             if let Some(e) = &refresh_error {
-                eprintln!(
+                crate::terminal::err(&format!(
                     "decision {id}: linked, but it could not be read back after the check: {e}"
-                );
+                ));
             }
-            if json {
+            let written = if json {
                 let mut out =
                     serde_json::json!({"outcome":"ok","value":value,"immediate_check":entry});
                 if let Some(e) = &refresh_error {
                     out["refresh_error"] = e.clone().into();
                 }
-                println!("{out}");
+                crate::terminal::exact(&out.to_string())
             } else {
-                println!("{}", crate::render::decision(&value));
-            }
+                crate::terminal::out(&crate::render::decision(&value));
+                Ok(())
+            };
             // 0 only when the check stored its result or held it for the scheduled run, and the decision shown is current.
-            if refresh_error.is_none()
+            let code = if refresh_error.is_none()
                 && matches!(entry.outcome, "stored" | "held" | "repo_not_configured")
             {
                 0
             } else {
                 1
-            }
+            };
+            crate::terminal::status(written, code)
         }
         Decision::Check {
             household,
@@ -327,15 +329,16 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                 && selected.is_empty()
             {
                 let message = format!("no open decision with a record has id {o}");
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::json!({"outcome":"error","code":"not_found","message":message})
-                    );
+                let written = if json {
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"error","code":"not_found","message":message})
+                            .to_string(),
+                    )
                 } else {
-                    eprintln!("error: {message}");
-                }
-                return Ok(1);
+                    crate::terminal::err(&format!("error: {message}"));
+                    Ok(())
+                };
+                return Ok(crate::terminal::status(written, 1));
             }
             let mut fetched = Fetched::new();
             let mut results = vec![];
@@ -365,21 +368,24 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             let value = serde_json::json!({"checked": checked, "held": held, "skipped": skipped, "unreadable": unreadable, "failed": failed, "results": results});
             // Held is not bad, except under `--strict`; skipped is never bad.
             let bad = unreadable + failed + if strict { held } else { 0 };
-            if json {
+            let written = if json {
                 if bad == 0 {
-                    println!("{}", serde_json::json!({"outcome":"ok","value":value}))
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"ok","value":value}).to_string(),
+                    )
                 } else {
-                    println!(
-                        "{}",
-                        serde_json::json!({"outcome":"error","code":"internal","message":format!("{bad} of {} checks failed", results.len()),"value":value})
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"error","code":"internal","message":format!("{bad} of {} checks failed", results.len()),"value":value})
+                            .to_string(),
                     )
                 }
             } else {
-                println!(
+                crate::terminal::out(&format!(
                     "checked {checked} decision(s), {held} held, {skipped} skipped, {unreadable} unreadable, {failed} failed"
-                )
-            }
-            if bad == 0 { 0 } else { 1 }
+                ));
+                Ok(())
+            };
+            crate::terminal::status(written, if bad == 0 { 0 } else { 1 })
         }
         Decision::Close {
             id,
@@ -466,15 +472,15 @@ const HELD: &str =
 /// The stderr line for an entry that did not simply store: its error, or the held line.
 fn report(id: i64, e: &CheckEntry) {
     if let Some(err) = &e.error {
-        eprintln!("decision {id}: {err}");
+        crate::terminal::err(&format!("decision {id}: {err}"));
     }
     if e.outcome == "held" {
-        eprintln!("decision {id}: {HELD}");
+        crate::terminal::err(&format!("decision {id}: {HELD}"));
     }
     if e.outcome == "repo_not_configured" {
-        eprintln!(
+        crate::terminal::err(&format!(
             "decision {id}: linked; its repository is not configured on the server, so the record is not checked yet (the scheduled check reads it once the repository is configured)"
-        );
+        ));
     }
 }
 

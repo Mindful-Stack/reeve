@@ -339,26 +339,25 @@ fn cannot_replace(exe: &Path, base: &url::Url, e: &InstallError) -> Failure {
     )
 }
 
-/// A line on standard output or error that cannot panic: once the binary is replaced, a closed stream must not turn a
-/// successful update into exit status 101.
-fn say(to: &mut dyn Write, line: std::fmt::Arguments<'_>) {
-    let _ = writeln!(to, "{line}");
-}
-
+/// Its lines go through `terminal`. Once the binary is replaced, nothing written can change the status: a failed write
+/// of the answer is ignored and the update exits 0. Before that, an envelope that cannot be written (other than to a
+/// closed pipe) is exit status 1 with the error said; it was ignored, with status 0, while `say` wrote it.
 pub async fn run(_u: Update, json: bool) -> anyhow::Result<i32> {
     match attempt(json).await {
         Ok(code) => Ok(code),
         Err(f) => {
-            if json {
+            let written = if json {
                 let mut v =
                     serde_json::json!({"outcome":"error","code":f.code,"message":f.message});
                 if let Some(r) = f.reason {
                     v["reason"] = r.into();
                 }
-                say(&mut std::io::stdout(), format_args!("{v}"));
-            }
-            say(&mut std::io::stderr(), format_args!("error: {}", f.message));
-            Ok(1)
+                crate::terminal::exact(&v.to_string())
+            } else {
+                Ok(())
+            };
+            crate::terminal::err(&format!("error: {}", f.message));
+            Ok(crate::terminal::status(written, 1))
         }
     }
 }
@@ -407,21 +406,16 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
         })?;
     let offered = offered_build(&http, &base).await?;
     if current.as_deref() == Some(offered.as_str()) {
-        if json {
-            say(
-                &mut std::io::stdout(),
-                format_args!(
-                    "{}",
-                    serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":false}})
-                ),
-            );
+        let written = if json {
+            crate::terminal::exact(
+                &serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":false}})
+                    .to_string(),
+            )
         } else {
-            say(
-                &mut std::io::stdout(),
-                format_args!("reeve is up to date (build {})", short(&offered)),
-            );
-        }
-        return Ok(0);
+            crate::terminal::out(&format!("reeve is up to date (build {})", short(&offered)));
+            Ok(())
+        };
+        return Ok(crate::terminal::status(written, 0));
     }
     let sums = file(&http, &base, CLI_SUMS_FILE, TEXT_CAP).await?;
     let bin = file(&http, &base, file_name, BINARY_CAP).await?;
@@ -457,22 +451,18 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
     let from = current
         .as_deref()
         .map_or("dev build".to_string(), |c| format!("build {}", short(c)));
+    // The binary is replaced: the update succeeded, and no stream may turn that into a failure. The envelope's write
+    // result is ignored on purpose (the one exact write whose failure is not a status).
     if json {
-        say(
-            &mut std::io::stdout(),
-            format_args!(
-                "{}",
-                serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":true}})
-            ),
+        let _ = crate::terminal::exact(
+            &serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":true}})
+                .to_string(),
         );
     } else {
-        say(
-            &mut std::io::stdout(),
-            format_args!(
-                "replaced reeve {from} with the server's {}",
-                short(&offered)
-            ),
-        );
+        crate::terminal::out(&format!(
+            "replaced reeve {from} with the server's {}",
+            short(&offered)
+        ));
     }
     Ok(0)
 }

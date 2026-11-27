@@ -281,18 +281,19 @@ fn first_me(answer: anyhow::Result<Outcome<Me>>) -> Result<Option<Me>, String> {
 }
 
 /// Runs `reeve tui` and returns its exit status.
+/// Its five messages are printed before the terminal is entered or after it is left, never between (kb/ADR-0030 R6, kb/ADR-0011 R7).
 pub async fn main() -> i32 {
     let login = match login::resolve() {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            crate::terminal::err(&format!("error: {e:#}"));
             return 1;
         }
     };
     let options = Options::default();
     // The first `/me`, before the alternate screen; the line keeps a slow host from
     // looking like a hang.
-    eprintln!("connecting to {}…", login.url);
+    crate::terminal::err(&format!("connecting to {}…", login.url));
     let probe = crate::client::Client::with_timeout(
         login.url.clone(),
         login.token.clone(),
@@ -301,7 +302,7 @@ pub async fn main() -> i32 {
     let me = match first_me(probe.get::<Me>("/me").await) {
         Ok(me) => me,
         Err(e) => {
-            eprintln!("error: {e}");
+            crate::terminal::err(&format!("error: {e}"));
             return 1;
         }
     };
@@ -318,7 +319,7 @@ pub async fn main() -> i32 {
     let guard = match term::enter() {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("error: cannot set up the terminal: {e}");
+            crate::terminal::err(&format!("error: cannot set up the terminal: {e}"));
             return 1;
         }
     };
@@ -340,7 +341,7 @@ pub async fn main() -> i32 {
     match result {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: terminal: {e}");
+            crate::terminal::err(&format!("error: terminal: {e}"));
             1
         }
     }

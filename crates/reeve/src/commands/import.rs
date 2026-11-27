@@ -128,12 +128,13 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         0
     };
     // One shape for every report, partial failures included: the exit code and `value.apply.failed` carry them.
-    if json {
-        println!("{}", serde_json::json!({"outcome": "ok", "value": report}));
+    let written = if json {
+        crate::terminal::exact(&serde_json::json!({"outcome": "ok", "value": report}).to_string())
     } else {
-        println!("{}", crate::render::import_report(&report));
-    }
-    Ok(code)
+        crate::terminal::out(&crate::render::import_report(&report));
+        Ok(())
+    };
+    Ok(crate::terminal::status(written, code))
 }
 
 /// A refusal or failure with no report: stderr always, and with `--json` the protocol's error envelope (a protocol
@@ -145,15 +146,17 @@ fn fail(
     exit: i32,
     extra: Option<serde_json::Value>,
 ) -> i32 {
-    if json {
+    let written = if json {
         let mut v = serde_json::json!({"outcome":"error","code":code,"message":message});
         if let (Some(serde_json::Value::Object(extra)), Some(obj)) = (extra, v.as_object_mut()) {
             obj.extend(extra);
         }
-        println!("{v}");
-    }
-    eprintln!("error: {message}");
-    exit
+        crate::terminal::exact(&v.to_string())
+    } else {
+        Ok(())
+    };
+    crate::terminal::err(&format!("error: {message}"));
+    crate::terminal::status(written, exit)
 }
 
 /// A page that failed, named with what was being read (`issues of SCRUM: search page 2`).

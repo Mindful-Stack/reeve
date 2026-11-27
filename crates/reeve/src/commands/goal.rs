@@ -234,7 +234,10 @@ pub async fn run(c: &Client, g: Goal, json: bool) -> anyhow::Result<i32> {
                     }
                     failed => {
                         if !json && !done.is_empty() {
-                            eprintln!("unlinked: {}; stopped at {k}", done.join(", "));
+                            crate::terminal::err(&format!(
+                                "unlinked: {}; stopped at {k}",
+                                done.join(", ")
+                            ));
                         }
                         return Ok(finish(failed, json, crate::render::goal));
                     }
