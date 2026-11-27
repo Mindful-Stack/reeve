@@ -507,7 +507,7 @@ mod tests {
         assert!(
             e.to_string().chars().count() < 300,
             "{}",
-            e.to_string().len()
+            e.to_string().chars().count()
         );
     }
     #[test]
