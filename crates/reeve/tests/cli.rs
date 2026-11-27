@@ -5927,3 +5927,123 @@ fn a_create_refuses_a_template_beside_a_brief() {
         }
     }
 }
+
+/// What stored text must not be able to do to a terminal: clear the screen, start a line of its own, reorder what
+/// follows.
+const HOSTILE: &str = "a\u{1b}[2Jb\r\nc\u{202e}d";
+
+/// Whether `c` could drive a terminal or reorder the text after it. A line break and a tab are the CLI's own.
+fn drives(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+fn hostile_story() -> serde_json::Value {
+    serde_json::json!({
+        "key": "TST-1", "title": HOSTILE, "kind": "chore", "epic": null, "description": HOSTILE,
+        "criteria": [{"text": HOSTILE, "done": false}], "owner": HOSTILE, "labels": [HOSTILE], "rank": 0,
+        "blocked_by": [], "delivery": "todo", "resolution": null, "external_ref": HOSTILE, "version": 1, "prs": []
+    })
+}
+
+/// An answer, a refusal and an error from the server each reach the terminal escaped, on the stream each is printed
+/// on; the same three with `--json` are exact: standard output is the whole envelope, byte for byte, and its line
+/// break.
+#[test]
+fn server_text_reaches_the_terminal_escaped_and_json_exact() {
+    let refused = serde_json::json!({"outcome":"refused","overridable":true,
+        "reasons":[{"reason":"decision_no_record","decision_id":7,"title":HOSTILE}]});
+    let error = serde_json::json!({"outcome":"error","code":"validation","message":HOSTILE});
+    // The envelopes `finish` writes, built through the real DTOs, so every field the client serialises (defaults
+    // included) is in the expected bytes, and the keys come in the order the client writes them.
+    let story: reeve_protocol::StoryDto = serde_json::from_value(hostile_story()).unwrap();
+    let reasons: Vec<reeve_protocol::Reason> =
+        serde_json::from_value(refused["reasons"].clone()).unwrap();
+    type Case<'a> = (
+        &'a str,
+        u16,
+        serde_json::Value,
+        &'a [&'a str],
+        i32,
+        serde_json::Value,
+    );
+    let cases: [Case; 3] = [
+        (
+            "GET /api/v1/stories/TST-1",
+            200,
+            ok(hostile_story()),
+            &["story", "show", "TST-1"],
+            0,
+            serde_json::json!({"outcome":"ok","value":story}),
+        ),
+        (
+            "POST /api/v1/stories/TST-1/move",
+            422,
+            refused.clone(),
+            &["story", "mv", "TST-1", "in-progress", "--version", "1"],
+            2,
+            serde_json::json!({"outcome":"refused","reasons":reasons,"overridable":true}),
+        ),
+        (
+            "GET /api/v1/stories/TST-1",
+            400,
+            error.clone(),
+            &["story", "show", "TST-1"],
+            1,
+            serde_json::json!({"outcome":"error","code":"validation","message":HOSTILE}),
+        ),
+    ];
+    for (want, status, body, args, code, envelope) in cases {
+        let (url, server) = serve(vec![(want, status, body.clone())]);
+        let out = reeve_at(&url, args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?}");
+        let (stdout, stderr) = (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        );
+        assert!(!stdout.chars().any(drives), "{args:?} stdout: {stdout:?}");
+        assert!(!stderr.chars().any(drives), "{args:?} stderr: {stderr:?}");
+        // The text is there, escaped, not dropped.
+        assert!(
+            format!("{stdout}{stderr}").contains("a\\u{1b}[2Jb"),
+            "{args:?}: {stdout:?} {stderr:?}"
+        );
+
+        let (url, server) = serve(vec![(want, status, body.clone())]);
+        let mut json_args = vec!["--json"];
+        json_args.extend_from_slice(args);
+        let out = reeve_at(&url, &json_args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "--json {args:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("{envelope}\n"),
+            "--json {args:?}"
+        );
+    }
+}
+
+/// `reeve export` writes a JSON document with or without `--json`: it is exempt from the guard, and what it writes
+/// parses back to exactly what the server sent.
+#[test]
+fn export_writes_the_servers_document_untouched() {
+    let doc = serde_json::json!({"stories": [hostile_story()], "activity": [], "note": "\u{2028}\u{200e}\u{7f}"});
+    for args in [&["export"][..], &["--json", "export"][..]] {
+        let (url, server) = serve(vec![("GET /api/v1/export", 200, ok(doc.clone()))]);
+        let out = reeve_at(&url, args);
+        server.join().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let written: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(written, doc, "{args:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
+            "{args:?}"
+        );
+    }
+}

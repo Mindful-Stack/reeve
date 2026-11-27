@@ -58,14 +58,16 @@ pub async fn cli() -> i32 {
     let code = match commands::run(cli.cmd, cli.json).await {
         Ok(code) => code,
         Err(e) => {
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"outcome":"error","code":"internal","message":format!("{e:#}")})
-                );
-            }
-            eprintln!("error: {e:#}");
-            1
+            let written = if cli.json {
+                terminal::exact(
+                    &serde_json::json!({"outcome":"error","code":"internal","message":format!("{e:#}")})
+                        .to_string(),
+                )
+            } else {
+                Ok(())
+            };
+            terminal::err(&format!("error: {e:#}"));
+            terminal::status(written, 1)
         }
     };
     if !tui {

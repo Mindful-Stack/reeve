@@ -4,6 +4,7 @@
 //!
 //! Text mode is for reading; `--json` is exact and never comes through `line` or `block`.
 use std::borrow::Cow;
+use std::io::{self, Write};
 
 /// One-line text (a title, a name, a label, an owner, a URL, a criterion) as text output prints it: every control
 /// character (Unicode category Cc: ESC, NUL, a line break, a tab and the rest), the line and paragraph separators
@@ -71,6 +72,53 @@ fn escaped_in_line(c: char) -> bool {
 /// return never reaches here: `block` turns it into a line break first.
 fn escaped_in_block(c: char) -> bool {
     !matches!(c, '\n' | '\t' | '\u{200e}' | '\u{200f}' | '\u{061c}') && escaped_in_line(c)
+}
+
+/// A line of text for a person on standard output: guarded by `block`, then one line break. A failed write is
+/// ignored: a closed stream is not this command's failure, and a person's line has no status of its own.
+pub fn out(text: &str) {
+    guarded(&mut io::stdout(), text);
+}
+
+/// `out`, on standard error: a refusal, an error, a note, the update notice.
+pub fn err(text: &str) {
+    guarded(&mut io::stderr(), text);
+}
+
+/// One line on standard output exactly as given: a `--json` envelope. It does not pass the guard, which would turn a
+/// raw U+202E into an escape JSON does not have. A reader that went away (a closed pipe) is success; any other
+/// failure is returned, for `status`.
+pub fn exact(text: &str) -> io::Result<()> {
+    untouched(&mut io::stdout(), text, true)
+}
+
+/// The exit status after an exact write: `code` when it was written, else 1, with the failure said on standard error.
+pub fn status(written: io::Result<()>, code: i32) -> i32 {
+    match written {
+        Ok(()) => code,
+        Err(e) => {
+            err(&format!("error: writing standard output: {e}"));
+            1
+        }
+    }
+}
+
+fn guarded(to: &mut dyn Write, text: &str) {
+    let _ = writeln!(to, "{}", block(text));
+}
+
+/// Writes `text` (and a line break) and flushes, so a failure shows here and not in the exit-time flush, which
+/// ignores it. A closed pipe (`ErrorKind::BrokenPipe`, on Windows too) is success.
+fn untouched(to: &mut dyn Write, text: &str, line_break: bool) -> io::Result<()> {
+    let written = if line_break {
+        writeln!(to, "{text}")
+    } else {
+        write!(to, "{text}")
+    };
+    match written.and_then(|()| to.flush()) {
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +231,110 @@ mod tests {
         assert_eq!(block(&once), once);
         let shown = block(hostile).into_owned();
         assert_eq!(block(&shown), shown);
+    }
+
+    use std::io::ErrorKind;
+
+    /// A stream whose every write and flush fails with `kind`: a closed pipe, or a full disk. In process, so it runs on
+    /// Windows and macOS too.
+    struct Failing(ErrorKind);
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(self.0.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(self.0.into())
+        }
+    }
+
+    /// `println!` panics on a stream it cannot write (exit status 101). A human line ignores the failure; an envelope
+    /// or a document whose reader went away (`| head -1`) is a success; any other failure is returned, and `status`
+    /// makes it exit status 1, so `reeve export > backup.json` on a full disk cannot exit 0 with half a document.
+    #[test]
+    fn a_closed_pipe_is_success_and_any_other_failure_is_reported() {
+        guarded(&mut Failing(ErrorKind::BrokenPipe), "reeve is up to date");
+        guarded(&mut Failing(ErrorKind::Other), "reeve is up to date");
+        for line_break in [true, false] {
+            assert!(untouched(&mut Failing(ErrorKind::BrokenPipe), "{}", line_break).is_ok());
+            let e = untouched(&mut Failing(ErrorKind::Other), "{}", line_break).unwrap_err();
+            assert_eq!(e.kind(), ErrorKind::Other, "{line_break}");
+        }
+        assert_eq!(status(Ok(()), 2), 2);
+        assert_eq!(
+            status(Err(io::Error::other("no space left on device")), 0),
+            1
+        );
+    }
+
+    /// A stream that takes every byte and then fails to flush them: a buffered pipe whose reader went away, or a
+    /// buffered file on a full disk.
+    struct FlushFails(ErrorKind, Vec<u8>);
+    impl Write for FlushFails {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            self.1.extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(self.0.into())
+        }
+    }
+
+    /// The exact writers flush, so a failure that only the flush sees is treated as a failed write: a closed pipe is
+    /// success, anything else is returned. The bytes were all handed over first.
+    #[test]
+    fn a_flush_that_fails_is_reported_like_a_write() {
+        for line_break in [true, false] {
+            let mut pipe = FlushFails(ErrorKind::BrokenPipe, vec![]);
+            assert!(
+                untouched(&mut pipe, "{}", line_break).is_ok(),
+                "{line_break}"
+            );
+            let mut disk = FlushFails(ErrorKind::Other, vec![]);
+            let e = untouched(&mut disk, "{}", line_break).unwrap_err();
+            assert_eq!(e.kind(), ErrorKind::Other, "{line_break}");
+            assert_eq!(
+                disk.1,
+                if line_break {
+                    b"{}\n".to_vec()
+                } else {
+                    b"{}".to_vec()
+                }
+            );
+        }
+    }
+
+    /// A human line is guarded and ends in one line break; an envelope and a document are written as given.
+    #[test]
+    fn human_lines_are_guarded_and_exact_ones_are_not() {
+        let hostile = "a\u{1b}[2Jb\r\nc\u{202e}d";
+        let mut human = Vec::new();
+        guarded(&mut human, hostile);
+        assert_eq!(
+            String::from_utf8(human).unwrap(),
+            "a\\u{1b}[2Jb\nc\\u{202e}d\n"
+        );
+        let mut envelope = Vec::new();
+        untouched(&mut envelope, hostile, true).unwrap();
+        assert_eq!(String::from_utf8(envelope).unwrap(), format!("{hostile}\n"));
+        let mut doc = Vec::new();
+        untouched(&mut doc, hostile, false).unwrap();
+        assert_eq!(String::from_utf8(doc).unwrap(), hostile);
+    }
+
+    /// The notice line is what agents match on (kb/ADR-0030 R6): the guard writes it byte for byte, the dash
+    /// included. `reeve update`'s `reason` values travel only in an envelope, which never passes the guard;
+    /// `tests/update.rs` pins them end to end.
+    #[test]
+    fn the_guard_leaves_the_notice_as_it_is() {
+        const A: &str = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+        const B: &str = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b";
+        for ascii in [false, true] {
+            let notice = crate::cli_version::notice(Some(A), Some(B), ascii)
+                .expect("two different stamped builds");
+            assert!(notice.starts_with("note: this reeve is build"), "{notice}");
+            let mut written = Vec::new();
+            guarded(&mut written, &notice);
+            assert_eq!(String::from_utf8(written).unwrap(), format!("{notice}\n"));
+        }
     }
 }
