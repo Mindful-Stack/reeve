@@ -36,4 +36,9 @@ ignore = [
   # testcontainers 0.28 still depends on it. Clears when testcontainers drops or replaces the crate (Astral suggests
   # tar-codec).
   { id = "RUSTSEC-2026-0440", reason = "unmaintained, test-only (testcontainers); clears when testcontainers replaces it" },
+  # chrono: unmaintained (RUSTSEC-2026-0543), not a vulnerability, and no release replaces it. Reeve uses it directly
+  # (timestamps, with sqlx and utoipa's chrono features), and so do oauth2 and openidconnect, so moving Reeve's own code
+  # to jiff or time would not take chrono out of Cargo.lock. Clears when oauth2 and openidconnect drop it, after Reeve's
+  # own code has moved.
+  { id = "RUSTSEC-2026-0543", reason = "unmaintained, no vulnerability; oauth2/openidconnect depend on it too" },
 ]
