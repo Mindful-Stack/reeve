@@ -471,6 +471,12 @@ impl Handlers {
             ) {
                 errors.push(format!("{at}: {e}"));
             }
+            // A plan names its initiatives' months as a request does, so the rule for a named month applies
+            // (`named_target_month`). The owner is not judged here: who is allowed is identity's to say, and
+            // planning cannot ask.
+            if let Err(e) = named_target_month(i.target_month.clone()) {
+                errors.push(format!("{at}: {e}"));
+            }
             if let Some(r) = &i.external_ref
                 && let Err(HandlerError::Validation(m)) = check_item_ref(r, prefix)
             {
