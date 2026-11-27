@@ -124,6 +124,7 @@ fn untouched(to: &mut dyn Write, text: &str, line_break: bool) -> io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::ErrorKind;
 
     /// A title stored before the server refused control characters, or by another server, cannot clear the screen,
     /// set the window title or start a line of its own.
@@ -227,13 +228,11 @@ mod tests {
     fn block_changes_nothing_already_escaped() {
         let hostile = "a\u{1b}[2Jb\nc\u{202e}d\r";
         let once = line(hostile).into_owned();
-        // Documents the layering (`line` first, then the guard); it cannot fail, the twice-applied check below is the real one.
+        // Pins that the guard leaves `line`'s escapes alone (it fails if `block` ever escaped a backslash or brace).
         assert_eq!(block(&once), once);
         let shown = block(hostile).into_owned();
         assert_eq!(block(&shown), shown);
     }
-
-    use std::io::ErrorKind;
 
     /// A stream whose every write and flush fails with `kind`: a closed pipe, or a full disk. In process, so it runs on
     /// Windows and macOS too.

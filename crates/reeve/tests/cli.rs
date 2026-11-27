@@ -6024,6 +6024,43 @@ fn server_text_reaches_the_terminal_escaped_and_json_exact() {
     }
 }
 
+/// An answer that matches no outcome fails the client with "unexpected response: <body>", which reaches the outer
+/// error path in `lib.rs`: its line on standard error is guarded, and with `--json` the `internal` envelope is exact.
+#[test]
+fn the_outer_error_path_reaches_the_terminal_guarded() {
+    let body = serde_json::json!({"surprise": HOSTILE});
+    let args = &["story", "show", "TST-1"];
+    let want = "GET /api/v1/stories/TST-1";
+
+    let (url, server) = serve(vec![(want, 200, body.clone())]);
+    let out = reeve_at(&url, args);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let (stdout, stderr) = (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    );
+    assert!(!stdout.chars().any(drives), "stdout: {stdout:?}");
+    assert!(!stderr.chars().any(drives), "stderr: {stderr:?}");
+    assert!(
+        stderr.contains("error: unexpected response: "),
+        "{stderr:?}"
+    );
+    assert!(stderr.contains("\\u{202e}"), "{stderr:?}");
+
+    let (url, server) = serve(vec![(want, 200, body.clone())]);
+    let out = reeve_at(&url, &["--json", "story", "show", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // The envelope lib.rs writes: the error chain as the message, exact.
+    let envelope = serde_json::json!({"outcome":"error","code":"internal",
+        "message":format!("unexpected response: {body}")});
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!("{envelope}\n")
+    );
+}
+
 /// `reeve export` writes a JSON document with or without `--json`: it is exempt from the guard, and what it writes
 /// parses back to exactly what the server sent.
 #[test]
