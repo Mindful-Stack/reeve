@@ -12,6 +12,7 @@ mod jira;
 mod promise;
 mod relations;
 mod render;
+mod terminal;
 pub mod tui;
 mod urgency;
 

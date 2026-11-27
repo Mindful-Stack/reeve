@@ -1661,7 +1661,7 @@ fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
     }
 
     // A web link's title and URL are stored text: a control or bidirectional character in either is printed
-    // escaped (`relations::for_terminal`), as `reeve link ls` prints it, and `--json` stays lossless.
+    // escaped (`terminal::line`), as `reeve link ls` prints it, and `--json` stays lossless.
     let mut hostile = applied();
     hostile["web_links"][0]["title"] = serde_json::json!("Scenario\u{1b}[2J page");
     hostile["web_links"][0]["url"] = serde_json::json!("https://example.com/\u{202e}gnp.exe");

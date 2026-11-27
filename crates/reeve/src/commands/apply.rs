@@ -3,7 +3,7 @@
 use super::finish;
 use crate::client::Client;
 use crate::glyphs::{Level, mark};
-use crate::relations::for_terminal;
+use crate::terminal::line;
 use anyhow::Context;
 use clap::Args;
 use reeve_protocol::*;
@@ -90,7 +90,7 @@ fn state(created: bool) -> &'static str {
 }
 
 /// One line per name: its key and whether this apply created it; then each blocker edge, each item link and each
-/// web link. A web link's title and URL are stored text, so they print through `for_terminal`.
+/// web link. A web link's title and URL are stored text, so they print through `terminal::line`.
 fn render(p: &PlanApplied) -> String {
     let mut out = String::new();
     for i in &p.items {
@@ -129,8 +129,8 @@ fn render(p: &PlanApplied) -> String {
             out,
             "web link on {}: {}  {}\t{}",
             mark(Level::of_item(w.level), &w.on),
-            for_terminal(&w.title),
-            for_terminal(&w.url),
+            line(&w.title),
+            line(&w.url),
             state(w.created)
         );
     }

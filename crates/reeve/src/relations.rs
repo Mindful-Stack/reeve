@@ -3,7 +3,6 @@
 //! `link ls`.
 use crate::glyphs::{Level, mark};
 use reeve_protocol::*;
-use std::borrow::Cow;
 use std::fmt::Write;
 
 /// Clap's parser for an item link name. Blocking is not an item link (kb/ADR-0031 R2), so the words people try
@@ -98,7 +97,7 @@ pub fn listing(v: &LinkListingDto) -> String {
 }
 
 /// The `web links:` block: one line per web link, title then URL, oldest first as the server sent them, each with
-/// its control characters escaped (`for_terminal`). None when there are none. Every text form of a web link is
+/// its control characters escaped (`terminal::line`). None when there are none. Every text form of a web link is
 /// this block: `link ls`, `show`, `story context` and the answers of `link add --url` and `link rm --url`.
 pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
     if links.is_empty() {
@@ -109,49 +108,11 @@ pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
         let _ = write!(
             out,
             "\n  {}  {}",
-            for_terminal(&l.title),
-            for_terminal(&l.url)
+            crate::terminal::line(&l.title),
+            crate::terminal::line(&l.url)
         );
     }
     Some(out)
-}
-
-/// A web link's title or URL as text output prints it: every control character (Unicode category Cc: ESC, NUL, a
-/// line break, a tab and the rest), the line and paragraph separators (U+2028, U+2029) and the bidirectional
-/// controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) written as their Rust escape (`\u{1b}`,
-/// `\n`, `\u{202e}`), so stored text cannot drive the reader's terminal, pass for another line of output or reorder
-/// the URL printed after a title. The zero-width joiner and non-joiner (U+200D, U+200C) print as they are, so a
-/// joined emoji does. The server refuses the control characters and the separators in a title and its URL parser
-/// leaves none in a URL; this is the output's own guard, for a row stored before that refusal or by another
-/// server. `--json` does not come through here and stays lossless.
-pub fn for_terminal(s: &str) -> Cow<'_, str> {
-    if !s.chars().any(escaped_in_text) {
-        return Cow::Borrowed(s);
-    }
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if escaped_in_text(c) {
-            out.extend(c.escape_default());
-        } else {
-            out.push(c);
-        }
-    }
-    Cow::Owned(out)
-}
-
-/// What `for_terminal` escapes.
-fn escaped_in_text(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{2028}'
-                | '\u{2029}'
-                | '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2066}'..='\u{2069}'
-        )
 }
 
 /// Whether a URL as a person typed it names a stored web link. The stored form is the server's URL parser's
@@ -203,15 +164,6 @@ mod tests {
                 "web links:\n  Report\\u{1b}[2J\\u{1b}[Hfake\\noutput\\ttab\\u{0}\\u{9b}K\\u{7f}  http://example.com/a\\u{1b}]0;x\\u{7}\\r"
             )
         );
-        // Text without one is printed as it is, whatever its script, and is not copied to be so.
-        for plain in [
-            "Scenario page",
-            "Scenariosida för ärenden",
-            "シナリオ 🚀",
-            "a\\nb",
-        ] {
-            assert!(matches!(for_terminal(plain), Cow::Borrowed(s) if s == plain));
-        }
     }
 
     /// A line or paragraph separator would start a line of its own, and a bidirectional control would reorder what
@@ -219,44 +171,9 @@ mod tests {
     #[test]
     fn a_line_separator_or_a_bidirectional_control_is_printed_escaped() {
         assert_eq!(
-            for_terminal("Report\u{2028}second line\u{2029}paragraph"),
-            "Report\\u{2028}second line\\u{2029}paragraph"
-        );
-        for (c, escaped) in [
-            ('\u{061c}', "\\u{61c}"),
-            ('\u{200e}', "\\u{200e}"),
-            ('\u{200f}', "\\u{200f}"),
-            ('\u{202a}', "\\u{202a}"),
-            ('\u{202b}', "\\u{202b}"),
-            ('\u{202c}', "\\u{202c}"),
-            ('\u{202d}', "\\u{202d}"),
-            ('\u{202e}', "\\u{202e}"),
-            ('\u{2066}', "\\u{2066}"),
-            ('\u{2067}', "\\u{2067}"),
-            ('\u{2068}', "\\u{2068}"),
-            ('\u{2069}', "\\u{2069}"),
-        ] {
-            assert_eq!(
-                for_terminal(&format!("Report{c}page")),
-                format!("Report{escaped}page"),
-                "{c:?}"
-            );
-        }
-        assert_eq!(
             web_links(&[web(1, "Report\u{202e}gnp.exe", "https://example.com/a")]).as_deref(),
             Some("web links:\n  Report\\u{202e}gnp.exe  https://example.com/a")
         );
-        // The joiners are not escaped: a joined emoji prints as it is, and is not copied to be so.
-        for joined in [
-            "Family \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467} page",
-            "Rainbow flag \u{1f3f3}\u{fe0f}\u{200d}\u{1f308}",
-            "\u{645}\u{200c}\u{6cc}\u{62e}\u{648}\u{627}\u{647}\u{645}",
-        ] {
-            assert!(
-                matches!(for_terminal(joined), Cow::Borrowed(s) if s == joined),
-                "{joined:?}"
-            );
-        }
     }
 
     #[test]
