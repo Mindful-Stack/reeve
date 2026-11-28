@@ -19,7 +19,7 @@ Tasks are defined once in `mise.toml` and run the same way locally and in CI (`m
 | Command | What it does |
 |---|---|
 | `mise run test` | `scripts/test.sh`: one PostgreSQL 16 for the run, then `cargo nextest run --workspace --features reeve-server/static-oidc`, the doc tests (`cargo test --doc`), then `cargo nextest run -p reeve-server --test config_no_static` WITHOUT the feature (proves a production build cannot parse the static provider); needs Docker for PostgreSQL; tests are never skipped |
-| `mise run lint` | `cargo fmt --check`, clippy with `-D warnings` twice (with `--features reeve-server/static-oidc` and without it), the isolation lint, actionlint on `.github/workflows/` and the action-pin check (every third-party action pinned by SHA with a version comment) |
+| `mise run lint` | `cargo fmt --check`, clippy with `-D warnings` twice (with `--features reeve-server/static-oidc` and without it), the isolation lint, actionlint on `.github/workflows/` the action-pin check (every third-party action pinned by SHA with a version comment) and the CLI licence check (`scripts/check-cli-licence.sh`: the MIT `reeve` and `reeve-protocol` link no AGPL code, kb/ADR-0032) |
 | `mise run audit` | `audit-rust` (`cargo deny check advisories`; policy and commented ignores in `deny.toml`) and `audit-web` (`npm audit` for `web/` through `scripts/npm-audit.mjs`; ignores in `scripts/npm-audit-ignore.json`); CI runs them in `audit.yml` on dependency changes and daily; not required checks |
 | `mise run isolation`, `mise run isolation-test` | run the context-isolation lint; prove the lint catches every bypass shape |
 | `mise run acceptance` | the CLI end-to-end acceptance test |

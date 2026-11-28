@@ -11556,8 +11556,8 @@
   "info": {
     "description": "",
     "license": {
-      "identifier": "MIT",
-      "name": "MIT"
+      "identifier": "AGPL-3.0-only",
+      "name": "AGPL-3.0-only"
     },
     "title": "Reeve planner API",
     "version": "0.1.0"
