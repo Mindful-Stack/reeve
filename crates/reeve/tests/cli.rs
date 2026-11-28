@@ -6096,6 +6096,7 @@ fn a_title_cannot_start_a_line_of_its_own() {
     )]);
     let out = reeve_at(&url, &["story", "show", "TST-1"]);
     server.join().unwrap();
+    assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     let mut plain = hostile_story();
     for field in ["title", "owner", "external_ref"] {
@@ -6106,9 +6107,9 @@ fn a_title_cannot_start_a_line_of_its_own() {
     let (url, server) = serve(vec![("GET /api/v1/stories/TST-1", 200, ok(plain))]);
     let reference = reeve_at(&url, &["story", "show", "TST-1"]);
     server.join().unwrap();
-    assert_eq!(
-        stdout.lines().count(),
-        String::from_utf8(reference.stdout).unwrap().lines().count(),
-        "{stdout:?}"
-    );
+    assert!(reference.status.success(), "{reference:?}");
+    let lines = String::from_utf8(reference.stdout).unwrap().lines().count();
+    // Two empty outputs would compare equal.
+    assert!(lines > 0, "the reference printed nothing");
+    assert_eq!(stdout.lines().count(), lines, "{stdout:?}");
 }

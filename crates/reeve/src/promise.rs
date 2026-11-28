@@ -442,12 +442,12 @@ mod tests {
     /// changed one (`previous` names another date and recipient).
     #[test]
     fn a_promise_entrys_text_stays_on_its_line() {
-        use crate::hostile::{assert_one_line, assert_shown};
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
         let fresh = serde_json::json!({"on": "2026-11-20", "to": "Anna"});
         let changed = serde_json::json!({"on": "2026-11-20", "to": "Anna",
             "previous": {"on": "2026-11-18", "to": "Bo"}});
         for payload in [fresh, changed] {
-            let shown = assert_one_line(&payload, |p| {
+            let shown = assert_one_line(&payload, &Paths::none(), |p| {
                 activity_words("promised", p, Some("ABC-1")).expect("a promised entry has words")
             });
             assert_shown(&shown, &["/on", "/to"]);

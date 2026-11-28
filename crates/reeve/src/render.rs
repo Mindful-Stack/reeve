@@ -1317,7 +1317,7 @@ pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hostile::{assert_no_stored_text, assert_one_line, assert_shown};
+    use crate::hostile::{Paths, assert_no_stored_text, assert_one_line, assert_shown};
     use chrono::TimeZone;
 
     fn dto(prs: Vec<PullRequestDto>) -> StoryDto {
@@ -1603,10 +1603,12 @@ mod tests {
         }
     }
 
-    /// A story with every optional text set and every list holding an entry.
+    /// A story with every list holding an entry and every optional field set, but its resolution (it is not done) and
+    /// what `promise` leaves out: `story_paths` names those.
     fn full_story(promise: StoryPromiseDto) -> StoryDto {
         StoryDto {
             title: "Booking".into(),
+            epic: Some("ABC-2".parse().unwrap()),
             description: "Long text".into(),
             criteria: vec![CriterionDto {
                 text: "a customer books".into(),
@@ -1614,7 +1616,13 @@ mod tests {
             }],
             owner: Some("dan@example.com".into()),
             labels: vec!["web".into(), "api".into()],
+            blocked_by: vec!["ABC-8".parse().unwrap()],
             external_ref: Some("SCRUM-1".into()),
+            goals: vec![GoalRefDto {
+                id: 12,
+                outcome: "Bookings work".into(),
+                via: GoalVia::Epic,
+            }],
             urgent_mark: Some(marked()),
             urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
             promise: Some(promise),
@@ -1637,30 +1645,83 @@ mod tests {
         }
     }
 
+    /// What a story fixture in the shape of `full_story(p)` leaves empty, and its long text.
+    fn story_paths(p: &StoryPromiseDto) -> Paths {
+        let mut paths = Paths::none()
+            .long(&["/description"])
+            .absent("/resolution", "a story not done has no resolution")
+            .absent(
+                "/promise/due",
+                "the promise's period is a word the fixtures leave out",
+            )
+            .absent("/promise/days", "an open promise counts no days");
+        if p.own.is_none() {
+            paths = paths.absent("/promise/own", "the epic's promise alone");
+        }
+        if p.epic.is_none() {
+            paths = paths.absent("/promise/epic", "the story's own promise alone");
+        }
+        paths
+    }
+
+    fn blocker_paths() -> Paths {
+        story_paths(&promised(true, false))
+    }
+
+    /// A sprint goal with every optional field set.
+    fn full_sprint_goal() -> GoalDto {
+        GoalDto {
+            id: 12,
+            sprint_id: 4,
+            outcome: "Bookings work".into(),
+            check: "a customer books".into(),
+            owner: "dan@example.com".into(),
+            notes: "Long text".into(),
+            confidence: Some(Confidence::AtRisk),
+            confidence_note: Some("the host is late".into()),
+            confidence_at: Some(now()),
+            suggested_confidence: Some(Confidence::OffTrack),
+            suggested_note: Some("two stories slipped".into()),
+            suggested_at: Some(now()),
+            suggested_by: Some("eva@example.com".into()),
+            verdict: Some(Verdict::PartlyMet),
+            verdict_note: Some("half of it".into()),
+            version: 1,
+            created_at: now(),
+            links: vec!["ABC-1".parse().unwrap()],
+        }
+    }
+
+    /// A blocker: a full story of its own, in progress.
     fn blocker() -> StoryDto {
         StoryDto {
             key: "ABC-8".parse().unwrap(),
             title: "Hosting".into(),
             owner: Some("eva@example.com".into()),
             delivery: DeliveryState::InProgress,
-            ..dto(vec![])
+            blocked_by: vec!["ABC-9".parse().unwrap()],
+            ..full_story(promised(true, false))
         }
     }
 
-    /// The three promise shapes, each with the recipient and setter fields its words print.
-    fn promise_shapes() -> Vec<(StoryPromiseDto, Vec<&'static str>)> {
+    /// The three promise shapes, each with the recipient and setter fields its words print in `show`, and those the
+    /// promise answer prints.
+    fn promise_shapes() -> Vec<(StoryPromiseDto, Vec<&'static str>, Vec<&'static str>)> {
         vec![
             (
                 promised(true, true),
                 vec!["/promise/own/to", "/promise/epic/fact/to"],
+                vec!["/promise/own/to"],
             ),
             (
                 promised(true, false),
                 vec!["/promise/own/to", "/promise/own/by"],
+                vec!["/promise/own/to"],
             ),
             (
                 promised(false, true),
                 vec!["/promise/epic/fact/to", "/promise/epic/fact/by"],
+                vec!["/promise/epic/fact/by", "/promise/epic/fact/to"],
             ),
         ]
     }
@@ -1669,9 +1730,10 @@ mod tests {
     /// `story context`'s form with the blocker itself.
     #[test]
     fn a_storys_fields_stay_on_their_lines() {
-        for (p, promise_fields) in promise_shapes() {
+        for (p, promise_fields, answer_fields) in promise_shapes() {
+            let paths = story_paths(&p);
             let s = full_story(p);
-            let shown = assert_one_line(&s, story);
+            let shown = assert_one_line(&s, &paths, story);
             assert_shown(
                 &shown,
                 &[
@@ -1686,7 +1748,7 @@ mod tests {
                     "/prs/0/url",
                 ],
             );
-            let shown = assert_one_line(&s, |s| story_show(s, now()));
+            let shown = assert_one_line(&s, &paths, |s| story_show(s, now()));
             assert_shown(
                 &shown,
                 &[
@@ -1699,18 +1761,30 @@ mod tests {
                 ],
             );
             assert_shown(&shown, &promise_fields);
+            let not_ready = Readiness {
+                ready: false,
+                reasons: text_reasons(),
+            };
             assert_shown(
-                &assert_one_line(&(s.clone(), ready()), |(s, r)| story_row(s, r)),
+                &assert_one_line(
+                    &(s.clone(), not_ready),
+                    &paths
+                        .clone()
+                        .under("/0")
+                        .and(reasons_paths().under("/1/reasons")),
+                    |(s, r)| story_row(s, r),
+                ),
                 &["/0/title"],
             );
-            assert_one_line(&s, story_promise_answer);
-            let blocked = StoryDto {
-                blocked_by: vec!["ABC-8".parse().unwrap()],
-                ..s
-            };
-            let shown = assert_one_line(&(blocked, vec![blocker()]), |(s, b)| {
-                story_with_relations(s, b, now())
-            });
+            assert_eq!(
+                assert_one_line(&s, &paths, story_promise_answer),
+                answer_fields
+            );
+            let shown = assert_one_line(
+                &(s, vec![blocker()]),
+                &paths.under("/0").and(blocker_paths().under("/1/*")),
+                |(s, b)| story_with_relations(s, b, now()),
+            );
             assert_shown(&shown, &["/1/0/title", "/1/0/owner"]);
         }
     }
@@ -1768,23 +1842,36 @@ mod tests {
     /// (The superseded reason prints its successor, not its status.)
     #[test]
     fn a_reasons_text_stays_on_its_line() {
-        assert_eq!(assert_one_line(&text_reasons(), |rs| reasons(rs)).len(), 11);
+        assert_eq!(
+            assert_one_line(&text_reasons(), &reasons_paths(), |rs| reasons(rs)).len(),
+            11
+        );
         let r = Readiness {
             ready: false,
             reasons: text_reasons(),
         };
-        assert_eq!(assert_one_line(&r, readiness).len(), 11);
+        assert_eq!(
+            assert_one_line(&r, &reasons_paths().under("/reasons"), readiness).len(),
+            11
+        );
     }
 
-    fn full_decision(check: CheckResult) -> RequiredDecisionDto {
+    /// What `text_reasons` leaves empty.
+    fn reasons_paths() -> Paths {
+        Paths::none().absent("/5/superseded_by", "a proposed record has no successor")
+    }
+
+    /// A required decision closed as `closed` says (`None`: by a server that does not say how), with every other
+    /// optional field set; `decision_paths` names what `check` and `closed` leave empty.
+    fn full_decision(check: CheckResult, closed: Option<ClosureKind>) -> RequiredDecisionDto {
         RequiredDecisionDto {
             id: 7,
             on: "ABC-1".parse().unwrap(),
             on_type: ItemType::Story,
             title: "Pick a host".into(),
             decider: "dan@example.com".into(),
-            due: None,
-            reversibility: None,
+            due: Some("2026-11-30".parse().unwrap()),
+            reversibility: Some(Reversibility::OneWay),
             record: Some(RecordRefDto {
                 repo: "acme/kb".into(),
                 path: "adrs/0009-host.md".into(),
@@ -1793,17 +1880,33 @@ mod tests {
             }),
             pr_url: Some("https://github.com/acme/kb/pull/9".into()),
             check,
-            checked_at: None,
+            checked_at: Some(now()),
             closed: Some(ClosedDto {
                 at: now(),
                 by: "dan@example.com".into(),
                 reason: "chosen".into(),
-                kind: Some(ClosureKind::Decided),
-                via: None,
+                kind: closed,
+                via: Some(TokenKind::Interactive),
             }),
             created_at: now(),
             version: 2,
         }
+    }
+
+    /// What a decision fixture (`full_decision`) leaves empty.
+    fn decision_paths(d: &RequiredDecisionDto) -> Paths {
+        let mut paths = Paths::none();
+        if let CheckResult::NotAccepted {
+            superseded_by: None,
+            ..
+        } = d.check
+        {
+            paths = paths.absent("/check/superseded_by", "a proposed record has no successor");
+        }
+        if d.closed.as_ref().is_some_and(|c| c.kind.is_none()) {
+            paths = paths.absent("/closed/kind", "a server that does not say how it closed");
+        }
+        paths
     }
 
     /// The check results that print text, each with the field it prints.
@@ -1813,7 +1916,7 @@ mod tests {
             (
                 CheckResult::Accepted {
                     commit: commit(),
-                    reversibility: None,
+                    reversibility: Some(Reversibility::OneWay),
                 },
                 "/check/commit",
             ),
@@ -1822,7 +1925,7 @@ mod tests {
                     status: "proposed".into(),
                     superseded_by: None,
                     commit: commit(),
-                    reversibility: None,
+                    reversibility: Some(Reversibility::TwoWay),
                 },
                 "/check/status",
             ),
@@ -1831,7 +1934,7 @@ mod tests {
                     status: "superseded".into(),
                     superseded_by: Some("kb/ADR-0010".into()),
                     commit: commit(),
-                    reversibility: None,
+                    reversibility: Some(Reversibility::OneWay),
                 },
                 "/check/superseded_by",
             ),
@@ -1839,35 +1942,59 @@ mod tests {
     }
 
     /// A required decision is one row wherever it is listed: its title, decider, record, pull request, check and
-    /// closing reason cannot break it.
+    /// closing reason cannot break it, whichever way it was closed.
     #[test]
     fn a_decisions_fields_stay_on_its_row() {
-        for (check, check_field) in checks() {
-            let d = full_decision(check);
-            let shown = assert_one_line(&d, decision);
-            assert_shown(
-                &shown,
-                &[
-                    "/title",
-                    "/decider",
-                    "/record/repo",
-                    "/record/path",
-                    "/record/record_id",
-                    "/pr_url",
-                    "/closed/reason",
-                    check_field,
-                ],
-            );
-            assert_one_line(&vec![d.clone(), d], |ds| decisions_block(ds));
+        for ((check, check_field), closed) in checks().into_iter().flat_map(|c| {
+            [
+                Some(ClosureKind::Decided),
+                Some(ClosureKind::Withdrawn),
+                None,
+            ]
+            .map(|k| (c.clone(), k))
+        }) {
+            let d = full_decision(check, closed);
+            let paths = decision_paths(&d);
+            let fields = [
+                "/title",
+                "/decider",
+                "/record/repo",
+                "/record/path",
+                "/record/record_id",
+                "/pr_url",
+                "/closed/reason",
+                check_field,
+            ];
+            assert_shown(&assert_one_line(&d, &paths, decision), &fields);
+            let listed = assert_one_line(&vec![d.clone(), d], &paths.clone().under("/*"), |ds| {
+                decisions_block(ds)
+            });
+            for i in ["/0", "/1"] {
+                let under: Vec<String> = fields.iter().map(|f| format!("{i}{f}")).collect();
+                assert_shown(
+                    &listed,
+                    &under.iter().map(String::as_str).collect::<Vec<_>>(),
+                );
+            }
         }
     }
 
+    fn discovered() -> DiscoveryMarkDto {
+        DiscoveryMarkDto {
+            at: now(),
+            by: "dan@example.com".into(),
+        }
+    }
+
+    /// An initiative with every optional field set and every list holding an entry; its brief is long text.
     fn full_initiative() -> InitiativeDto {
         InitiativeDto {
             title: "Leave the old host".into(),
             brief: "Long text".into(),
             target_month: Some("2026-12".into()),
             owner: Some("dan@example.com".into()),
+            discovery_complete: Some(discovered()),
+            progress: Some(0.5),
             external_ref: Some("JPD-30".into()),
             urgent_mark: Some(marked()),
             urgent_sources: vec![ref_("ABC-3", ItemType::Initiative)],
@@ -1888,12 +2015,13 @@ mod tests {
             title: "Hosting".into(),
             brief: "Long text".into(),
             initiative: Some("ABC-3".parse().unwrap()),
+            discovery_complete: Some(discovered()),
             external_ref: Some("SCRUM-480".into()),
             urgent_mark: Some(marked()),
             urgent_sources: vec![ref_("ABC-2", ItemType::Epic)],
             promise: Some(EpicPromiseDto {
                 fact: fact(),
-                due: None,
+                due: Some(PromiseDue::ThisSprint),
                 past: false,
             }),
             links: Some(vec![item_link(
@@ -1914,7 +2042,7 @@ mod tests {
     fn an_initiatives_and_an_epics_fields_stay_on_their_lines() {
         let i = full_initiative();
         assert_shown(
-            &assert_one_line(&i, initiative),
+            &assert_one_line(&i, &initiative_paths(), initiative),
             &[
                 "/title",
                 "/horizon",
@@ -1924,7 +2052,7 @@ mod tests {
             ],
         );
         assert_shown(
-            &assert_one_line(&i, |i| initiative_show(i, now())),
+            &assert_one_line(&i, &initiative_paths(), |i| initiative_show(i, now())),
             &[
                 "/urgent_mark/reason",
                 "/links/0/label",
@@ -1933,9 +2061,12 @@ mod tests {
             ],
         );
         let e = full_epic();
-        assert_shown(&assert_one_line(&e, epic), &["/title", "/external_ref"]);
         assert_shown(
-            &assert_one_line(&e, |e| epic_show(e, now())),
+            &assert_one_line(&e, &epic_paths(), epic),
+            &["/title", "/external_ref"],
+        );
+        assert_shown(
+            &assert_one_line(&e, &epic_paths(), |e| epic_show(e, now())),
             &[
                 "/urgent_mark/by",
                 "/promise/fact/to",
@@ -1944,7 +2075,7 @@ mod tests {
             ],
         );
         assert_shown(
-            &assert_one_line(&e, epic_promise_answer),
+            &assert_one_line(&e, &epic_paths(), epic_promise_answer),
             &["/promise/fact/to"],
         );
         let fs = vec![
@@ -1956,13 +2087,16 @@ mod tests {
                 title: "Pick a host".into(),
             },
         ];
-        assert_eq!(assert_one_line(&fs, |fs| findings(fs)).len(), 3);
+        assert_eq!(
+            assert_one_line(&fs, &Paths::none(), |fs| findings(fs)).len(),
+            3
+        );
         let rows = vec![WarRoomEntryDto {
             mark: marked(),
             ..war_room_row("ABC-1", ItemType::Story, Some("Leave"), false)
         }];
         assert_shown(
-            &assert_one_line(&rows, |rows| war_room_rows(rows, now())),
+            &assert_one_line(&rows, &Paths::none(), |rows| war_room_rows(rows, now())),
             &[
                 "/0/title",
                 "/0/initiative/title",
@@ -1970,6 +2104,25 @@ mod tests {
                 "/0/mark/reason",
             ],
         );
+    }
+
+    /// What an initiative fixture (`full_initiative`) holds as long text.
+    fn initiative_paths() -> Paths {
+        Paths::none().long(&["/brief"])
+    }
+
+    /// What an epic fixture (`full_epic`) holds as long text.
+    fn epic_paths() -> Paths {
+        Paths::none().long(&["/brief"])
+    }
+
+    /// What a comment fixture (`full_comment`) leaves empty, and its long text.
+    fn comment_paths() -> Paths {
+        Paths::none()
+            .long(&["/body"])
+            .absent("/on_decision", "a comment on a story is on nothing else")
+            .absent("/on_initiative", "a comment on a story is on nothing else")
+            .absent("/on_epic", "a comment on a story is on nothing else")
     }
 
     fn full_comment() -> CommentDto {
@@ -1989,7 +2142,10 @@ mod tests {
     /// A comment's author is one-line; its body is long text and is the guard's, with its lines kept.
     #[test]
     fn a_comments_author_stays_on_its_line_and_its_body_keeps_its_lines() {
-        assert_eq!(assert_one_line(&full_comment(), comment), ["/author"]);
+        assert_eq!(
+            assert_one_line(&full_comment(), &comment_paths(), comment),
+            ["/author"]
+        );
         let c = CommentDto {
             body: "first\r\nsecond \u{1b}[2J\u{202e}".into(),
             ..full_comment()
@@ -2005,23 +2161,49 @@ mod tests {
     #[test]
     fn the_context_bundles_one_line_fields_stay_on_their_lines() {
         let ctx = StoryContextDto {
-            story: StoryDto {
-                blocked_by: vec!["ABC-8".parse().unwrap()],
-                ..full_story(promised(true, false))
-            },
+            story: full_story(promised(true, false)),
             epic: Some(full_epic()),
             initiative: Some(full_initiative()),
-            required_decisions: vec![full_decision(checks()[1].0.clone())],
+            required_decisions: vec![full_decision(
+                checks()[1].0.clone(),
+                Some(ClosureKind::Decided),
+            )],
             blockers: vec![blocker()],
             comments: vec![full_comment()],
             readiness: Readiness {
                 ready: false,
                 reasons: text_reasons(),
             },
-            goals: vec![],
-            attachments: vec![],
+            goals: vec![GoalContextDto {
+                goal: full_sprint_goal(),
+                starts_on: "2026-11-09".parse().unwrap(),
+                ends_on: "2026-11-20".parse().unwrap(),
+                via: GoalVia::Epic,
+            }],
+            attachments: vec![AttachmentDto {
+                id: uuid::Uuid::nil(),
+                url: "https://reeve.example.com/attachments/1".into(),
+                filename: "plan.pdf".into(),
+                content_type: "application/pdf".into(),
+                byte_size: 1024,
+                uploaded_by: "dan@example.com".into(),
+                uploaded_at: now(),
+                owner: Some(AttachmentOwnerDto {
+                    item: ItemType::Story,
+                    key: "ABC-1".parse().unwrap(),
+                }),
+            }],
         };
-        let shown = assert_one_line(&ctx, |c| context_markdown(c, now()));
+        let paths = story_paths(&promised(true, false))
+            .under("/story")
+            .and(epic_paths().under("/epic"))
+            .and(initiative_paths().under("/initiative"))
+            .and(decision_paths(&ctx.required_decisions[0]).under("/required_decisions/*"))
+            .and(blocker_paths().under("/blockers/*"))
+            .and(comment_paths().under("/comments/*"))
+            .and(reasons_paths().under("/readiness/reasons"))
+            .long(&["/goals/*/goal/notes"]);
+        let shown = assert_one_line(&ctx, &paths, |c| context_markdown(c, now()));
         assert_shown(
             &shown,
             &[
@@ -2092,33 +2274,94 @@ mod tests {
             },
         ];
         assert_shown(
-            &assert_one_line(&cs, |cs| comments(cs)),
+            &assert_one_line(&cs, &comment_paths().under("/*"), |cs| comments(cs)),
             &["/0/author", "/1/author"],
         );
+    }
+
+    fn affected(key: &str, title: &str) -> AffectedStoryDto {
+        AffectedStoryDto {
+            key: key.parse().unwrap(),
+            title: title.into(),
+            kind: Kind::Story,
+            delivery: DeliveryState::InProgress,
+            owner: Some("eva@example.com".into()),
+            urgent: true,
+            needed_in: NeededIn::ThisSprint,
+        }
     }
 
     /// The decision queue: each entry is its decision's row, whose fields cannot break it.
     #[test]
     fn a_queue_entrys_decision_stays_on_its_row() {
         // Through JSON: the entry's lane, window, next step and nesting take their defaults, as from an older server.
-        let entry: DecisionQueueEntryDto = serde_json::from_value(serde_json::json!({
-            "decision": full_decision(checks()[0].0.clone()),
+        let older: DecisionQueueEntryDto = serde_json::from_value(serde_json::json!({
+            "decision": full_decision(checks()[0].0.clone(), Some(ClosureKind::Decided)),
             "group": "blocking",
             "blocks": [{"key": "ABC-1", "title": "Booking", "owner": "dan@example.com"}],
         }))
         .unwrap();
-        let q = DecisionQueueDto {
-            entries: vec![entry],
-            discoveries: vec![],
-            summary: DecisionQueueSummaryDto::default(),
+        let goal = || NeededInReason::Goal {
+            goal_id: 12,
+            outcome: "Bookings work".into(),
         };
+        let full = DecisionQueueEntryDto {
+            decision: full_decision(checks()[2].0.clone(), Some(ClosureKind::Withdrawn)),
+            group: QueueGroup::Open,
+            lane: QueueLane::ThisSprint,
+            needed_in: NeededIn::ThisSprint,
+            needed_in_reason: Some(goal()),
+            next_step: Some(NextStep::ConfigureRepo {
+                repo: "acme/kb".into(),
+            }),
+            blocks: vec![affected("ABC-4", "Checkout")],
+            under_way: vec![affected("ABC-5", "Payments")],
+            under: Some("ABC-3".parse().unwrap()),
+        };
+        let q = DecisionQueueDto {
+            entries: vec![older, full],
+            discoveries: vec![DiscoveryEntryDto {
+                key: "ABC-3".parse().unwrap(),
+                level: ItemType::Initiative,
+                title: "Leave the old host".into(),
+                also: Some("ABC-2".parse().unwrap()),
+                lane: QueueLane::ThisSprint,
+                needed_in_reason: Some(goal()),
+                blocks: vec![affected("ABC-6", "Hosting")],
+                under_way: vec![affected("ABC-7", "Moving")],
+                at: 1,
+            }],
+            summary: DecisionQueueSummaryDto {
+                open: 2,
+                blocking: 1,
+                blocked_stories: 1,
+                overdue: 0,
+                review: 0,
+                this_sprint: 1,
+                next_sprint: 0,
+            },
+        };
+        let paths = Paths::none()
+            .absent(
+                "/entries/0/needed_in_reason",
+                "an older server sends no window",
+            )
+            .absent("/entries/0/next_step", "an older server sends no next step")
+            .absent(
+                "/entries/0/under_way",
+                "an older server sends no work under way",
+            )
+            .absent("/entries/0/under", "an older server sends no nesting");
         assert_shown(
-            &assert_one_line(&q, queue),
+            &assert_one_line(&q, &paths, queue),
             &[
                 "/entries/0/decision/title",
                 "/entries/0/decision/decider",
                 "/entries/0/decision/record/path",
                 "/entries/0/decision/closed/reason",
+                "/entries/1/decision/title",
+                "/entries/1/decision/check/superseded_by",
+                "/entries/1/decision/closed/reason",
             ],
         );
     }
@@ -2134,7 +2377,7 @@ mod tests {
                 ref_("ABC-3", ItemType::Initiative),
             ],
         );
-        let shown = assert_one_line(&fixture, |(key, own, sources)| {
+        let shown = assert_one_line(&fixture, &Paths::none(), |(key, own, sources)| {
             urgent_answer(Level::Story, key, own.as_ref(), sources, now())
         });
         assert_shown(&shown, &["/1/by", "/1/reason"]);
@@ -2149,7 +2392,11 @@ mod tests {
                 cleared,
                 story: full_story(promised(true, epic)),
             };
-            assert_no_stored_text(&c, story_promise_cleared);
+            assert_no_stored_text(
+                &c,
+                &story_paths(&promised(true, epic)).under("/story"),
+                story_promise_cleared,
+            );
         }
     }
 

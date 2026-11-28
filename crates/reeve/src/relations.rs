@@ -296,7 +296,7 @@ mod tests {
     /// `reeve link ls`: an item link's label and title and a web link's title and URL, each on its row.
     #[test]
     fn a_listings_text_stays_on_its_rows() {
-        use crate::hostile::{assert_one_line, assert_shown};
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
         let v = LinkListingDto {
             links: vec![ItemLinkDto {
                 link_type: ItemLinkType::Follows,
@@ -311,7 +311,7 @@ mod tests {
             web_links: vec![web(1, "Board", "http://example.com/board")],
         };
         assert_shown(
-            &assert_one_line(&v, listing),
+            &assert_one_line(&v, &Paths::none(), listing),
             &[
                 "/links/0/label",
                 "/links/0/item/title",
