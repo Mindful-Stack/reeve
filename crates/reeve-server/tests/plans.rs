@@ -1185,6 +1185,31 @@ async fn a_plan_with_a_malformed_target_month_writes_nothing_and_names_the_initi
         "the check runs before anything is written"
     );
 
+    // A second refusal beside the month's: the joined message holds both, each after its initiative's name, and
+    // still nothing is written.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "m-two",
+            "initiatives": [
+                {"name": "ok", "title": "", "horizon": "Now"},
+                {"name": "q3", "title": "Dated", "horizon": "Now", "target_month": "soon"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(
+        b["message"],
+        "initiative \"ok\": title must be 1..=200 characters; initiative \"q3\": target month must be YYYY-MM, for example 2027-03, not \"soon\""
+    );
+    assert_eq!(
+        rows(&h, "initiatives").await,
+        0,
+        "two refusals write nothing either"
+    );
+
     let (st, b) = post(
         &h,
         "/api/v1/plans",
@@ -1193,8 +1218,13 @@ async fn a_plan_with_a_malformed_target_month_writes_nothing_and_names_the_initi
     .await;
     assert_eq!(st, 400, "{b}");
     let m = b["message"].as_str().unwrap();
-    assert!(m.contains("[cut: 4800 more characters]"), "{m}");
-    assert!(m.chars().count() < 400, "{} characters", m.chars().count());
+    assert_eq!(
+        m,
+        format!(
+            "initiative \"q3\": target month must be YYYY-MM, for example 2027-03, not \"{}[cut: 4800 more characters]\"",
+            "x".repeat(200)
+        )
+    );
 
     let (st, b) = post(&h, "/api/v1/plans", plan("m-ok", json!("2027-03"))).await;
     assert_eq!(st, 200, "{b}");

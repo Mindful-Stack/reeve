@@ -1998,7 +1998,7 @@ async fn a_target_month_a_request_names_must_be_a_month() {
     for (n, month) in bad.iter().enumerate() {
         let (st, b) = create(&format!("m-bad-{n}"), month).await;
         assert_eq!(st, 400, "create with {month:?}: {b}");
-        let refusal = format!("target month must be YYYY-MM, for example 2027-03, not {month:?}");
+        let refusal = format!("target month must be YYYY-MM, for example 2027-03, not \"{month}\"");
         assert_eq!(b["message"], refusal.as_str(), "create with {month:?}: {b}");
         let (st, b) = send(
             "PATCH",
