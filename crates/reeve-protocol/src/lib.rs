@@ -52,7 +52,7 @@ pub fn normalise_email(s: &str) -> String {
 }
 
 /// How much of a caller's own value a refusal repeats, in characters (`echo`).
-pub const MAX_ECHO: usize = 200;
+const MAX_ECHO: usize = 200;
 
 /// Cuts `text` to its first `limit` characters when it has more, and appends `[cut: <n> more characters]`, n being
 /// the number of characters removed. Characters, not bytes: the cut is always on a character boundary. The one cut

@@ -72,7 +72,6 @@ enum Scope {
 /// What a plan's create answers (`create_initiative_guarded` and its epic and story forms): the item its
 /// idempotency key has at this level, and whether this call inserted it; or the item of another level that already
 /// has the key, in which case this call wrote nothing.
-#[derive(Debug)]
 enum Guarded<T> {
     Item { item: T, created: bool },
     HeldElsewhere { level: ItemType, key: Key },

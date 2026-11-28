@@ -44,6 +44,7 @@ impl Handlers {
     /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2), and whether
     /// this call inserted the story: false when its idempotency key already had one. The flag is the insert's own
     /// answer, true only from the insert itself, so of two calls racing on one key exactly one is told it created.
+    /// The story is created in todo: only the plan's entry (`create_story_guarded`) creates one in another state.
     pub async fn create_story_attaching(
         &self,
         c: &Ctx,
@@ -58,41 +59,7 @@ impl Handlers {
         owner: Option<String>,
         attachments: &[Uuid],
     ) -> Result<(Story, bool), HandlerError> {
-        self.create_story_reporting(
-            c,
-            idem,
-            title,
-            kind,
-            epic,
-            description,
-            criteria,
-            labels,
-            external_ref,
-            owner,
-            DeliveryState::Todo,
-            attachments,
-        )
-        .await
-    }
-
-    /// `create_story`, and whether this call inserted it (false when its idempotency key already had one). A `delivery`
-    /// other than todo grandfathers a migrated story (a plan's): it is inserted in that state and logged
-    /// `imported` with its reference, exactly as the importer logs it; the gate is never consulted.
-    pub(crate) async fn create_story_reporting(
-        &self,
-        c: &Ctx,
-        idem: &str,
-        title: &str,
-        kind: Kind,
-        epic: Option<Key>,
-        description: &str,
-        criteria: Vec<String>,
-        labels: Vec<String>,
-        external_ref: Option<String>,
-        owner: Option<String>,
-        delivery: DeliveryState,
-        attachments: &[Uuid],
-    ) -> Result<(Story, bool), HandlerError> {
+        let delivery = DeliveryState::Todo;
         let (attachments, made) = self
             .before_story_create(
                 idem,
@@ -124,7 +91,9 @@ impl Handlers {
         .await
     }
 
-    /// `create_story_reporting` for plan apply (`create_initiative_guarded` says what it adds).
+    /// `create_story_attaching` for plan apply (`create_initiative_guarded` says what it adds). A `delivery` other
+    /// than todo grandfathers a migrated story (a plan's): it is inserted in that state and logged `imported` with
+    /// its reference, exactly as the importer logs it; the gate is never consulted.
     pub(super) async fn create_story_guarded(
         &self,
         c: &Ctx,
