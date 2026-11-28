@@ -274,8 +274,9 @@ impl Handlers {
             r,
             cur.version(),
         );
-        // The story as this write left it: every field `next` carries, with the rank the row has (kept unless
-        // `rank` names one) and the version raised by one.
+        // The story as this write left it: the row as written, that is the editable fields `next` carries, and
+        // delivery, resolution and rank as the row holds them (the UPDATE does not write delivery or resolution,
+        // and keeps the rank unless `rank` names one), with the version raised by one.
         let written = self
             .ports
             .stories

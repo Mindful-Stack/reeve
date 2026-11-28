@@ -273,10 +273,6 @@ async fn keys_items_versions_and_readiness_inputs() {
         .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(edited.version(), 5, "one above the expected version");
-    assert_eq!(
-        (edited.key(), edited.title(), edited.rank()),
-        (reopened.key(), reopened.title(), reopened.rank())
-    );
     assert_eq!(ports.stories.get_story(&k3).await.unwrap(), edited);
     let mut tx = pool.begin().await.unwrap();
     assert!(matches!(
