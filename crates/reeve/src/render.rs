@@ -812,8 +812,9 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
             } else {
                 g.lines.len()
             };
+            // Each warning is one line by construction, so the whole line is one-line text.
             for l in &g.lines[..shown] {
-                let _ = write!(out, "\n    {l}");
+                let _ = write!(out, "\n    {}", line(l));
             }
             if shown < g.lines.len() {
                 let _ = write!(out, "\n    ... and {} more", g.lines.len() - shown);
@@ -825,7 +826,7 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
         out.push_str(" none");
     }
     for (t, n) in &r.link_types_seen {
-        let _ = write!(out, "\n  {t}: {n}");
+        let _ = write!(out, "\n  {}: {n}", line(t));
     }
     out.push_str("\n\nGrandfathered (created in their current state, labelled legacy-import):");
     for (what, keys) in [
@@ -839,7 +840,7 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
         let list = if keys.is_empty() {
             "none".to_string()
         } else {
-            keys.join(", ")
+            keys.iter().map(|k| line(k)).collect::<Vec<_>>().join(", ")
         };
         let _ = write!(out, "\n  {what}: {list}");
     }
@@ -860,15 +861,21 @@ pub fn import_report(r: &crate::commands::import::Report) -> String {
                 let _ = write!(
                     out,
                     "\n    {} ({}): {code}: {}",
-                    f.jira_key, f.step, f.message
+                    line(&f.jira_key),
+                    f.step,
+                    line(&f.message)
                 );
             }
             let _ = write!(out, "\n  skipped: {}", a.skipped.len());
             for (k, why) in &a.skipped {
-                let _ = write!(out, "\n    {k}: {why}");
+                let _ = write!(out, "\n    {}: {}", line(k), line(why));
             }
             if let Some(why) = &a.stopped {
-                let _ = write!(out, "\n  stopped after {why}: nothing more was sent");
+                let _ = write!(
+                    out,
+                    "\n  stopped after {}: nothing more was sent",
+                    line(why)
+                );
             }
         }
     }

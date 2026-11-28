@@ -61,9 +61,13 @@ fn connection_line(
 ) -> String {
     use reeve_protocol::{RevokedReason, Scope};
     let app = if c.client_host.is_empty() {
-        c.client_name.clone()
+        crate::terminal::line(&c.client_name).into_owned()
     } else {
-        format!("{} ({})", c.client_host, c.client_name)
+        format!(
+            "{} ({})",
+            crate::terminal::line(&c.client_host),
+            crate::terminal::line(&c.client_name)
+        )
     };
     let scope = match c.scope {
         Scope::Read => "read",
@@ -87,6 +91,29 @@ fn connection_line(
         _ => format!("ends {}", day(&c.ends_at)),
     };
     format!("{}\t{app}\t{scope}\t{state}", c.id)
+}
+
+/// `reeve auth status` in text mode: where the CLI connects, who the server says you are, and both builds. Each value
+/// is the configuration's or the server's text and prints as one line (`terminal::line`).
+fn status_text(v: &serde_json::Value, via_env: bool) -> String {
+    use crate::terminal::line;
+    let field = |name: &str| line(v[name].as_str().unwrap_or_default()).into_owned();
+    let build = |x: &serde_json::Value, none: &str| {
+        x.as_str().map_or_else(
+            || none.to_string(),
+            |s| format!("build {}", line(crate::cli_version::short(s))),
+        )
+    };
+    format!(
+        "{} (token from {})\n{} role={} token_kind={}\ncli: {} (server offers: {})",
+        field("url"),
+        if via_env { "REEVE_TOKEN" } else { "config" },
+        field("email"),
+        field("role"),
+        field("token_kind"),
+        build(&v["cli"]["current"], "dev build"),
+        build(&v["cli"]["server"], "none"),
+    )
 }
 
 pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
@@ -152,24 +179,7 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                     current,
                 },
             };
-            Ok(finish(out, json, |v| {
-                let build = |x: &serde_json::Value, none: &str| {
-                    x.as_str().map_or_else(
-                        || none.to_string(),
-                        |s| format!("build {}", crate::cli_version::short(s)),
-                    )
-                };
-                format!(
-                    "{} (token from {})\n{} role={} token_kind={}\ncli: {} (server offers: {})",
-                    v["url"].as_str().unwrap_or_default(),
-                    if via_env { "REEVE_TOKEN" } else { "config" },
-                    v["email"].as_str().unwrap_or_default(),
-                    v["role"].as_str().unwrap_or_default(),
-                    v["token_kind"].as_str().unwrap_or_default(),
-                    build(&v["cli"]["current"], "dev build"),
-                    build(&v["cli"]["server"], "none"),
-                )
-            }))
+            Ok(finish(out, json, |v| status_text(v, via_env)))
         }
         Auth::Connections {
             owner,
@@ -310,5 +320,95 @@ fn signed_in(me: &reeve_protocol::Me, path: &std::path::Path) -> String {
 fn open_browser(page: &str) {
     if let Ok(mut c) = crate::browser::command(page) {
         let _ = c.spawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hostile::{Paths, assert_one_line, assert_shown};
+    use reeve_protocol::{ConnectionDto, Me, Role, Scope};
+
+    fn connection() -> ConnectionDto {
+        ConnectionDto {
+            id: 3,
+            owner: "dan@example.com".into(),
+            client_id: "https://claude.ai/oauth/mcp-client".into(),
+            client_host: "claude.ai".into(),
+            client_name: "Claude".into(),
+            scope: Scope::Write,
+            approved_at: "2026-11-01T10:00:00Z".parse().unwrap(),
+            ends_at: "2026-12-01T10:00:00Z".parse().unwrap(),
+            refreshed_at: Some("2026-11-15T10:00:00Z".parse().unwrap()),
+            revoked_at: None,
+            revoked_reason: None,
+        }
+    }
+
+    /// What `connection` leaves empty: it is live.
+    fn connection_paths() -> Paths {
+        Paths::none()
+            .absent("/revoked_at", "a live connection")
+            .absent("/revoked_reason", "a live connection")
+    }
+
+    /// A connected app names itself: its host and name are another party's text, and stay in their column.
+    #[test]
+    fn a_connections_app_stays_in_its_column() {
+        let now: chrono::DateTime<chrono::Utc> = "2026-11-20T10:00:00Z".parse().unwrap();
+        assert_shown(
+            &assert_one_line(&connection(), &connection_paths(), |c| {
+                connection_line(c, now)
+            }),
+            &["/client_host", "/client_name"],
+        );
+        // Without a host the name stands alone (the helper cannot reach this arm: it makes the empty host hostile).
+        let bare = ConnectionDto {
+            client_host: String::new(),
+            client_name: "a\nb\tc".into(),
+            ..connection()
+        };
+        assert_eq!(
+            connection_line(&bare, now),
+            "3\ta\\nb\\tc\tread and change\tends 2026-12-01"
+        );
+    }
+
+    /// `reeve auth status`: the url, the account, its role and token kind, and both builds, each on its line.
+    #[test]
+    fn auth_status_prints_each_value_in_its_place() {
+        let v = serde_json::json!({
+            "url": "https://reeve.example.com", "token_from_env": false,
+            "email": "dan@example.com", "role": "admin", "token_kind": "interactive",
+            "cli": {"current": "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+                    "server": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"},
+        });
+        assert_shown(
+            &assert_one_line(&v, &Paths::none(), |v| status_text(v, false)),
+            &[
+                "/url",
+                "/email",
+                "/role",
+                "/token_kind",
+                "/cli/current",
+                "/cli/server",
+            ],
+        );
+    }
+
+    /// `reeve auth login` names the account the server answered for, on one line.
+    #[test]
+    fn login_names_the_account_on_one_line() {
+        let me = Me {
+            email: "dan@example.com".into(),
+            role: Role::Member,
+            token_kind: TokenKind::Interactive,
+        };
+        assert_eq!(
+            assert_one_line(&me, &Paths::none(), |m| {
+                signed_in(m, std::path::Path::new("reeve/config.toml"))
+            }),
+            ["/email"]
+        );
     }
 }

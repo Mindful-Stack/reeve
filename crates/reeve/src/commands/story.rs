@@ -665,7 +665,7 @@ fn render_similar(hits: &[SimilarStory]) -> String {
                 "{}\t{}\t{}",
                 crate::glyphs::mark(crate::glyphs::Level::of_kind(h.kind), &h.key),
                 state,
-                h.title
+                crate::terminal::line(&h.title)
             )
         })
         .collect::<Vec<_>>()
@@ -695,6 +695,21 @@ mod tests {
             delivery,
             resolution,
         }
+    }
+
+    /// A similar story is one tab-separated row: its title cannot add a row or a column.
+    #[test]
+    fn a_similar_storys_title_stays_in_its_column() {
+        let hits = vec![SimilarStory {
+            epic: Some("ABC-2".parse().unwrap()),
+            ..hit("ABC-1", DeliveryState::Done, Some(Resolution::Dropped))
+        }];
+        assert_eq!(
+            crate::hostile::assert_one_line(&hits, &crate::hostile::Paths::none(), |h| {
+                render_similar(h)
+            }),
+            ["/0/title"]
+        );
     }
 
     #[test]

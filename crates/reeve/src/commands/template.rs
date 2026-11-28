@@ -253,4 +253,30 @@ mod tests {
             "#3 initiative Scenario (default) (version 2)\n\n# Title\n\n| a\t| b |\n\\u{1b}]0;owned\\u{7}"
         );
     }
+
+    /// A template's name is one line in every form it is printed in (its line, the list, the edit answer, `show`);
+    /// its body is long text and keeps its line breaks. Only `show` prints the body, so only its call names it long.
+    #[test]
+    fn a_templates_name_stays_on_its_line_and_its_body_keeps_its_lines() {
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
+        let t = template("Scenario", "Long text", true);
+        assert_eq!(assert_one_line(&t, &Paths::none(), line), ["/name"]);
+        assert_eq!(assert_one_line(&t, &Paths::none(), edited), ["/name"]);
+        assert_eq!(
+            assert_one_line(&t, &Paths::none().long(&["/body"]), shown),
+            ["/name"]
+        );
+        let ts = vec![t.clone(), template("Other", "Long text", false)];
+        assert_shown(
+            &assert_one_line(&ts, &Paths::none(), listed),
+            &["/0/name", "/1/name"],
+        );
+        // The hostile helper's long text holds no line break; a body forced through `line` shows here as `\n`.
+        let two = template("Scenario", "first line\nsecond line\n", false);
+        assert!(
+            shown(&two).ends_with("\n\nfirst line\nsecond line"),
+            "{}",
+            shown(&two)
+        );
+    }
 }
