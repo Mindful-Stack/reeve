@@ -341,7 +341,7 @@ fn cannot_replace(exe: &Path, base: &url::Url, e: &InstallError) -> Failure {
 
 /// Its lines go through `terminal`. Once the binary is replaced, nothing written can change the status: a failed write
 /// of the answer is ignored and the update exits 0. Before that, an envelope that cannot be written (other than to a
-/// closed pipe) is exit status 1 with the error said; it was ignored, with status 0, while `say` wrote it.
+/// closed pipe) is exit status 1 with the error said.
 pub async fn run(_u: Update, json: bool) -> anyhow::Result<i32> {
     match attempt(json).await {
         Ok(code) => Ok(code),

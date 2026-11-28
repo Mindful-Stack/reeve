@@ -281,7 +281,9 @@ fn first_me(answer: anyhow::Result<Outcome<Me>>) -> Result<Option<Me>, String> {
 }
 
 /// Runs `reeve tui` and returns its exit status.
-/// Its five messages are printed before the terminal is entered or after it is left, never between (kb/ADR-0030 R6, kb/ADR-0011 R7).
+///
+/// Its five messages are printed before the terminal is entered or after it is left, never between (kb/ADR-0030 R6,
+/// kb/ADR-0011 R7).
 pub async fn main() -> i32 {
     let login = match login::resolve() {
         Ok(l) => l,
@@ -332,7 +334,7 @@ pub async fn main() -> i32 {
         color,
         options,
     };
-    let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+    let backend = term::backend();
     let result = match Driver::new(backend, term::input(), Arc::new(term::TerminalIo), setup) {
         Ok(d) => d.run().await,
         Err(e) => Err(e),

@@ -107,6 +107,11 @@ pub fn watch_signals() {
 #[cfg(not(unix))]
 pub fn watch_signals() {}
 
+/// The ratatui backend the driver draws through, on standard output.
+pub fn backend() -> ratatui::backend::CrosstermBackend<std::io::Stdout> {
+    ratatui::backend::CrosstermBackend::new(stdout())
+}
+
 /// Keys and resizes. crossterm's `EventStream` does not end in practice (not on stdin EOF either: it reads the tty), so
 /// the stream carries no end marker; an injected stream that ends exits the driver cleanly.
 pub fn input() -> BoxStream<'static, Input> {

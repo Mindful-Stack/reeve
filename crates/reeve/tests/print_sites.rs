@@ -1,6 +1,8 @@
-//! Only `src/terminal.rs` writes to standard output or standard error. Everything a command prints for reading
-//! passes its guard there, so a command added later cannot print stored text raw, neither by reaching for
-//! `println!` nor by writing to `std::io::stderr()` itself.
+//! Only `src/terminal.rs` writes what a command prints to standard output or standard error. Everything a command
+//! prints for reading passes its guard there, so a command added later cannot print stored text raw, neither by
+//! reaching for `println!` nor by writing to `std::io::stderr()` itself. Two other writers are not a command's text:
+//! `src/tui/term.rs`, the TUI's own terminal (the alternate screen, the ratatui backend, the clipboard sequence), and
+//! clap's `e.print()` in `src/lib.rs` (help, version and usage errors), a method call this check does not see.
 use std::path::{Path, PathBuf};
 
 /// The print macros, by name: `println!(…)` and `println !(…)` are both a call.
@@ -9,15 +11,11 @@ const PRINTS: [&str; 5] = ["print", "println", "eprint", "eprintln", "dbg"];
 /// The functions that open a standard stream: `stdout()`, `std::io::stderr()`, `io::stdout().lock()`.
 const STREAMS: [&str; 2] = ["stdout", "stderr"];
 
-/// The files that may open a standard stream, each for the TUI's own terminal and never for text a command prints;
-/// neither may hold a print macro:
-/// - `tui/term.rs` enters and leaves the alternate screen and writes the OSC 52 clipboard sequence itself;
-/// - `tui/mod.rs` hands `std::io::stdout()` to the ratatui backend.
-fn stream_owners() -> [PathBuf; 2] {
-    [
-        ["tui", "term.rs"].iter().collect(),
-        ["tui", "mod.rs"].iter().collect(),
-    ]
+/// The files besides `terminal.rs` that may open a standard stream, for the TUI's own terminal and never for text a
+/// command prints; none may hold a print macro: `tui/term.rs` enters and leaves the alternate screen, builds the
+/// ratatui backend on standard output and writes the OSC 52 clipboard sequence itself.
+fn stream_owners() -> [PathBuf; 1] {
+    [["tui", "term.rs"].iter().collect()]
 }
 
 #[derive(Debug, PartialEq)]
@@ -250,4 +248,12 @@ fn the_check_tells_a_call_from_a_mention() {
     );
     assert_eq!(found("use std::io::{self, stderr as e};"), ["1:stderr as"]);
     assert_eq!(found("use std::println as say;"), ["1:println as"]);
+    // A raw string with two `#` holding `"#`, a C string, a raw byte string, an escaped character literal and a raw
+    // identifier hide no call; a path-qualified macro is one.
+    assert!(found("let s = r##\"a\"# println!(x)\"##;").is_empty());
+    assert!(found("let s = c\"println!(x)\";").is_empty());
+    assert!(found("let s = br#\"eprintln!(\"x\")\"#;").is_empty());
+    assert!(found("let e = '\\u{1b}'; let f = '\\u{1b}';").is_empty());
+    assert!(found("let r#println = 1;").is_empty());
+    assert_eq!(found("std::println!(\"x\");"), ["1:println!"]);
 }
