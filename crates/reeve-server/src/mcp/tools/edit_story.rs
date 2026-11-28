@@ -1,13 +1,20 @@
 //! `edit_story`: `reeve story edit <KEY>` as a tool. Changes the planner.
 use super::{Annotations, Tool, ToolError, bound};
 use crate::{
-    actions::{self, Acting},
+    actions::{self, Acting, Edited},
     error::AppError,
     state::AppState,
 };
 use futures_util::future::BoxFuture;
-use reeve_protocol::{CriterionDto, EditItem, EditStoryInput, StoryReceipt};
+use reeve_planning::Story;
+use reeve_protocol::{CriterionDto, EditItem, EditStoryInput, StoryDto, StoryReceipt};
 use serde_json::{Value, json};
+
+/// The receipt of an edit: the story as this call wrote it (its title, state and version), built from the written
+/// story alone and never from `answer`, part of which is read after the commit.
+fn receipt(edited: Edited<StoryDto, Story>) -> StoryReceipt {
+    StoryReceipt::from(StoryDto::from(&edited.written))
+}
 
 pub(super) fn tool(key_prefix: &str) -> Tool {
     let mut input_schema = super::input_schema::<EditStoryInput>();
@@ -156,7 +163,7 @@ fn run<'a>(
             labels,
             ..EditItem::default()
         };
-        let story = actions::edit_story(state, who, &input.key, body)
+        let edited = actions::edit_story(state, who, &input.key, body)
             .await
             .map_err(|e| match (e, &named_epic) {
                 // With an epic named, a missing item may be either.
@@ -167,13 +174,50 @@ fn run<'a>(
                 )),
                 (other, _) => failed(other),
             })?;
-        super::sent(StoryReceipt::from(story))
+        super::sent(receipt(edited))
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The receipt is the story as this edit wrote it. Here the answer's DTO shows another caller's title, state
+    /// and version, as a DTO built from a read after the commit would; the receipt must report this edit's.
+    /// Catches a receipt built from the DTO: a chat that sent that later version with text it read before would
+    /// overwrite a change it never saw.
+    #[test]
+    fn the_receipt_reports_the_story_this_edit_wrote_not_a_later_read() {
+        use reeve_planning::Story;
+        use reeve_protocol::{DeliveryState, Key, Kind};
+        let key: Key = "TST-596".parse().unwrap();
+        let at = |title: &str, delivery: DeliveryState, version: i64| {
+            Story::from_persisted(
+                key.clone(),
+                title.into(),
+                Kind::Story,
+                None,
+                String::new(),
+                vec![],
+                None,
+                vec![],
+                1,
+                delivery,
+                None,
+                None,
+                version,
+            )
+        };
+        let edited = Edited {
+            answer: StoryDto::from(&at("Theirs", DeliveryState::InProgress, 3)),
+            written: at("Mine", DeliveryState::Todo, 2),
+        };
+        let r = receipt(edited);
+        assert_eq!(
+            (r.key, r.title.as_str(), r.delivery, r.resolution, r.version),
+            (key, "Mine", DeliveryState::Todo, None, 2)
+        );
+    }
 
     fn criterion(text: &str, done: bool) -> CriterionDto {
         CriterionDto {

@@ -43,9 +43,10 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    Ok(ok(
-        crate::actions::edit_story(&s, &c.acting(), &key, b).await?
-    ))
+    // The story as this edit wrote it, never a read after the commit: the CLI and the web client reuse the
+    // version it carries.
+    let edited = crate::actions::edit_story(&s, &c.acting(), &key, b).await?;
+    Ok(ok(edited.answer))
 }
 #[utoipa::path(post, path = "/stories/{key}/move", params(("key" = String, Path)), request_body = MoveStory, responses((status = 200, body = Response<StoryDto>), (status = 422, body = Response<StoryDto>)))]
 async fn mv(

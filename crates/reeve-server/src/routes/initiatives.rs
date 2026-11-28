@@ -42,9 +42,9 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
-    // The initiative as written is the MCP receipt's; the route answers the read after the commit.
+    // The initiative as this edit wrote it, never a read after the commit.
     let edited = crate::actions::edit_initiative(&s, &c.acting(), &key, b).await?;
-    Ok(ok(edited.read))
+    Ok(ok(edited.answer))
 }
 #[utoipa::path(post, path = "/initiatives/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<InitiativeDto>)))]
 async fn discovery(

@@ -47,13 +47,15 @@ pub(crate) use stories::{
     StoryQuery, create_story, edit_story, list_stories, move_story, read_story, story_context,
 };
 
-/// What an edit answers when its tool's receipt needs more than the route sends: `read`, the item as a read after the
-/// commit shows it, with what only a read adds (urgency, promise, links), which the route sends; and `written`, the
-/// item as this call's write left it. The two differ when another writer lands between the commit and the read, so a
-/// receipt takes what the write decided (title, version, place) from `written`: it never reports another caller's
-/// change, or the version after it, as this call's.
+/// What an edit answers. `answer` is what the route sends: every field the aggregate carries as this call's write
+/// left it (`written`'s), and what the aggregate does not carry (the urgent mark, and what other tables hold:
+/// urgency, promise, progress, blockers, item links, web links) read after the commit
+/// (`Handlers::story_dto_as_written` and its epic and initiative forms). `written` is the item as this call's write
+/// left it, which a tool's receipt is built from alone. Neither reports another caller's title or version as this
+/// call's when one lands between the commit and the read: a caller that sent that later version with text it read
+/// before would overwrite a change it never saw.
 pub(crate) struct Edited<D, I> {
-    pub(crate) read: D,
+    pub(crate) answer: D,
     pub(crate) written: I,
 }
 

@@ -82,8 +82,8 @@ pub(crate) async fn create_initiative(
 /// `edit_initiative`. `key` and `b` are what the route takes. An owner the edit names must be an allowed user and a
 /// target month it names must be a month; an edit that leaves either alone or clears it is not judged, so a stored
 /// owner who is no longer allowed and a stored month in another shape never stand in the way of another change.
-/// An edit never reads or writes the discovery mark. Answers the initiative as a read after the commit shows it (the
-/// route's answer) and as this edit wrote it (the receipt's).
+/// An edit never reads or writes the discovery mark. Answers the initiative as this edit wrote it: the DTO the route
+/// sends, with what only a read adds read after the commit, and the item the receipt is built from.
 pub(crate) async fn edit_initiative(
     state: &AppState,
     who: &Acting<'_>,
@@ -119,6 +119,9 @@ pub(crate) async fn edit_initiative(
             &b.attachments,
         )
         .await?;
-    let read = state.handlers.initiative_dto(&key, who.ctx.now).await?;
-    Ok(Edited { read, written })
+    let answer = state
+        .handlers
+        .initiative_dto_as_written(&written, who.ctx.now)
+        .await?;
+    Ok(Edited { answer, written })
 }
