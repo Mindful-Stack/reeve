@@ -122,20 +122,26 @@ fn type_name(t: ItemType) -> &'static str {
     }
 }
 
-/// The refusal of an apply whose create found the plan name `name` already an item of another level (`level`,
-/// `key`). That only happens when another apply of this plan id created the item after this apply's check
-/// (`check_name_levels`) passed, so this apply has stopped part-way. It does not open as the check's message does,
-/// which means nothing was written, and it claims only what is always true: items are written initiatives first,
-/// then epics, then stories; some before this one may exist, written by this apply or by the other; this apply
-/// wrote nothing after it, and no decisions, blockers or links (the other apply may have written all of them).
-fn name_taken_meanwhile(name: &str, level: ItemType, key: &Key) -> HandlerError {
-    let a_level = match level {
+/// A level with its article: "an initiative", "an epic", "a story".
+fn a_type_name(t: ItemType) -> &'static str {
+    match t {
         ItemType::Initiative => "an initiative",
         ItemType::Epic => "an epic",
         ItemType::Story => "a story",
-    };
+    }
+}
+
+/// The refusal of an apply whose create found the plan name `name` already an item of another level (`level`,
+/// `key`), created after this apply's check (`check_name_levels`) passed, so this apply has stopped part-way. The
+/// item was made by another apply of this plan id, or by a single create that sent the plan's key by hand (which
+/// nothing stops yet, GRA-984), so the message says only that it was created at that level while this apply ran.
+/// It does not open as the check's message does, which means nothing was written, and it claims only what is
+/// always true: items are written initiatives first, then epics, then stories; some before this one may exist;
+/// this apply wrote nothing after it, and no decisions, blockers or links.
+fn name_taken_meanwhile(name: &str, level: ItemType, key: &Key) -> HandlerError {
+    let a_level = a_type_name(level);
     HandlerError::Validation(format!(
-        "{name:?} is {a_level} ({key}), created by another apply of this plan while this one ran; a name keeps \
+        "{name:?} is {a_level} ({key}), created at that level while this apply ran; a name keeps \
          its level. This apply stopped at {name:?}: items written before it (initiatives, then epics, then \
          stories) may exist; this apply wrote nothing after it, and no decisions, blockers or links. List \
          {name:?} as {a_level}, or give it a new name, and apply the same id again; what exists is reused."
@@ -738,14 +744,9 @@ impl Handlers {
                     .find_by_idempotency(earlier, &plan_key(id, name))
                     .await?
                 {
-                    let article = if earlier == ItemType::Story {
-                        "a"
-                    } else {
-                        "an"
-                    };
                     errors.push(format!(
-                        "{name:?} was {article} {} ({k}) in an earlier apply of this plan; a name keeps its level",
-                        type_name(earlier)
+                        "{name:?} was {} ({k}) in an earlier apply of this plan; a name keeps its level",
+                        a_type_name(earlier)
                     ));
                 }
             }

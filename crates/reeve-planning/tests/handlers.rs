@@ -13469,8 +13469,8 @@ const IDEMPOTENCY_LOCK_WAIT: &str = "classid = 1 AND objsubid = 2";
 /// must find each of the other two, and a look at a wrong level is only reached by the apply that comes second.
 /// Catches: the fault GRA-888 names (both create, since an idempotency key is unique per table only), any of the
 /// three plan creates left unguarded (an ordinary create in `apply_plan`), a look that skips a level, a lock in
-/// another key space, under another key or none (`waited` is false), and a refusal in the words of the check, which
-/// would say nothing was written.
+/// another key space, under another key or none (the first apply is then never seen queued on the held lock, and the
+/// case fails at that assert), and a refusal in the words of the check, which would say nothing was written.
 #[tokio::test]
 async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
     let (_c, pool) = common::pg().await;
@@ -13569,8 +13569,8 @@ async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
         assert_eq!(
             m,
             &format!(
-                "\"{name}\" is {a_level} ({made}), created by another apply of this plan while this one ran; a \
-                 name keeps its level. This apply stopped at \"{name}\": items written before it (initiatives, \
+                "\"{name}\" is {a_level} ({made}), created at that level while this apply ran; a name keeps \
+                 its level. This apply stopped at \"{name}\": items written before it (initiatives, \
                  then epics, then stories) may exist; this apply wrote nothing after it, and no decisions, \
                  blockers or links. List \"{name}\" as {a_level}, or give it a new name, and apply the same id \
                  again; what exists is reused."
