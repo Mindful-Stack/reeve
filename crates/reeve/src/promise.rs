@@ -210,12 +210,15 @@ fn payload_date(iso: &str) -> String {
 
 /// A promise activity entry's words, as the web's `actionLabel` gives them (`web/src/lib/format.ts`): a `promised`
 /// entry's chosen by comparing `on` and `to` with `previous`, a `promise_cleared` entry's fixed. `key` names the item
-/// where the words are not already about it. `None` for every other action.
+/// where the words are not already about it; it is the server's text, and prints as one line. `None` for every other
+/// action.
 pub fn activity_words(
     action: &str,
     payload: &serde_json::Value,
     key: Option<&str>,
 ) -> Option<String> {
+    let key = key.map(line);
+    let key = key.as_deref();
     match action {
         "promise_cleared" => Some(match key {
             Some(k) => format!("cleared the promise on {k}"),
@@ -461,5 +464,29 @@ mod tests {
                 .expect("a promised entry has words"),
             "changed the recipient of the promise on ABC-1 to Anna\\n\\u{1b}[2J\\u{202e}x"
         );
+    }
+
+    /// The key an entry names is the server's text too (an activity entry's `entity_key`), one line in every wording
+    /// that names it: a fresh promise, a changed one, one without a date, and a cleared one.
+    #[test]
+    fn a_promise_entrys_key_stays_on_its_line() {
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
+        let changed = serde_json::json!({"on": "2026-11-20", "to": "Anna",
+            "previous": {"on": "2026-11-18", "to": "Bo"}});
+        for (action, payload) in [
+            (
+                "promised",
+                serde_json::json!({"on": "2026-11-20", "to": "Anna"}),
+            ),
+            ("promised", changed),
+            ("promised", serde_json::json!({"to": "Anna"})),
+            ("promise_cleared", serde_json::json!({"to": "Anna"})),
+        ] {
+            let fixture = ("ABC-1".to_string(), payload);
+            let shown = assert_one_line(&fixture, &Paths::none(), |(k, p)| {
+                activity_words(action, p, Some(k)).expect("a promise entry has words")
+            });
+            assert_shown(&shown, &["/0"]);
+        }
     }
 }
