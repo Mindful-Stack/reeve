@@ -2017,6 +2017,137 @@ fn decision_link_refuses_a_hostile_stored_repository_name_on_one_line() {
     }
 }
 
+/// Record paths a hostile or corrupted server could store: a reviewer's path whose pathspec magic made git echo it,
+/// line breaks and all, a lone carriage return, an escape sequence, a right-to-left override, and nothing at all.
+const HOSTILE_PATHS: [&str; 5] = [
+    ":(glob)x\nwarning: forged line\nerror: another",
+    "adrs/0001.md\rerror: forged",
+    "adrs/\u{1b}[2J0001.md",
+    "adrs/\u{202e}dm.1000",
+    "",
+];
+
+/// What the refusal of a hostile record path must look like on stderr: one line, the refusal of the path (not a git
+/// error that echoes it), and none of its characters raw.
+fn assert_path_refused_on_one_line(path: &str, out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{path:?}: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{path:?}: {stderr:?}");
+    assert!(
+        lines[0].starts_with("decision 7: record path `"),
+        "{path:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with("` is empty or not one clean line; nothing recorded"),
+        "{path:?}: {stderr:?}"
+    );
+    for c in ['\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{path:?}: {c:?} raw in {stderr:?}");
+    }
+}
+
+/// `decision check` refuses a stored record path that is not one clean line, on one line, before it hands it to git.
+#[test]
+fn decision_check_refuses_a_hostile_record_path_on_one_line() {
+    for path in HOSTILE_PATHS {
+        let hh = household();
+        let d = decision(path, serde_json::json!({"kind":"unchecked"}));
+        let (url, server) = serve(vec![(
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([d])),
+        )]);
+        let out = reeve_at(
+            &url,
+            &[
+                "decision",
+                "check",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_path_refused_on_one_line(path, &out);
+    }
+}
+
+/// `decision link`'s immediate check reads the path the server stored: a hostile one is refused on one line too.
+#[test]
+fn decision_link_refuses_a_hostile_stored_record_path_on_one_line() {
+    for path in HOSTILE_PATHS {
+        let hh = household();
+        let d = decision(path, serde_json::json!({"kind":"unchecked"}));
+        let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":["kb"],"sign_in_configured":true});
+        let (url, server) = serve(vec![
+            ("POST /api/v1/decisions/7/link", 200, ok(d.clone())),
+            ("GET /api/v1/config", 200, ok(config)),
+            ("GET /api/v1/decisions/7", 200, ok(d)),
+        ]);
+        let out = reeve_at(
+            &url,
+            &[
+                "--json",
+                "decision",
+                "link",
+                "7",
+                "--record",
+                "kb/ADR-0001",
+                "--repo",
+                "kb",
+                "--path",
+                "adrs/0001.md",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_path_refused_on_one_line(path, &out);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["immediate_check"]["outcome"], "unreadable", "{v}");
+    }
+}
+
+/// A clean path that spells pathspec magic is a file name, not a glob: git looks for a file called `:(glob)*.md`,
+/// finds none, and the check posts not found (without literal pathspecs git refused the magic: unreadable).
+#[test]
+fn decision_check_takes_a_pathspec_magic_path_literally() {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([decision(
+                ":(glob)*.md",
+                serde_json::json!({"kind":"unchecked"})
+            )])),
+        ),
+        (
+            "POST /api/v1/decisions/7/check",
+            200,
+            ok(decision(
+                ":(glob)*.md",
+                serde_json::json!({"kind":"not_found"}),
+            )),
+        ),
+    ]);
+    let out = reeve_at(
+        &url,
+        &[
+            "--json",
+            "decision",
+            "check",
+            "--household",
+            hh.path().to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let posted: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(posted["check"]["kind"], "not_found", "{posted}");
+}
+
 /// The import's preflight refusal names the caller by the email `/me` answered: a line break, tab, escape sequence
 /// or override in it is shown escaped, so the refusal stays on one line.
 #[test]

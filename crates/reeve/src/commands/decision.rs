@@ -535,6 +535,20 @@ fn valid_repo_name(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A record path from the server is handed to git, and git may name it in an error: it must not be empty, and it must
+/// hold nothing `terminal::line` escapes (no control character, line or paragraph separator or bidirectional control),
+/// so every message that names it, git's own included, stays on its line. The refusal itself prints the path through
+/// `line`. Git takes it literally (`git::command` sets literal pathspecs).
+fn valid_record_path(path: &str) -> Result<(), String> {
+    if path.is_empty() || crate::terminal::line(path) != path {
+        return Err(format!(
+            "record path `{}` is empty or not one clean line",
+            crate::terminal::line(path)
+        ));
+    }
+    Ok(())
+}
+
 /// The result for a record that was read. A front-matter `id` that differs from the linked record id (or is missing) means
 /// the path points at some other record: not accepted, with status `id mismatch`, whatever that record's own status is.
 fn record_result(r: crate::git::RecordStatus, record_id: &str) -> CheckResult {
@@ -605,6 +619,9 @@ async fn check_one(
         refused: None,
     };
     if let Err(e) = valid_repo_name(t.repo) {
+        return Ok(unreadable(e));
+    }
+    if let Err(e) = valid_record_path(t.path) {
         return Ok(unreadable(e));
     }
     let dir = repo_dir(household, t.repo);
