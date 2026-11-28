@@ -725,25 +725,58 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let urg = self.urgency_in(&mut tx, now).await?;
-            let clock = self.promise_clock_in(&mut tx, now).await?;
-            let stories = self
+            let story = self
                 .ports
                 .reads
                 .stories_by_keys(&mut tx, std::slice::from_ref(key))
-                .await?;
-            let mut dto = self
-                .story_dtos_in(&mut tx, &stories, &urg, &clock)
                 .await?
                 .pop()
                 .ok_or(HandlerError::NotFound)?;
-            // A read of one item is whole: its item links come along (kb/ADR-0031), from the same snapshot.
-            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
-            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
-            Ok(dto)
+            self.whole_story_dto_in(&mut tx, &story, now).await
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// The answer of an edit: `story_dto` of the story as the edit wrote it. Every field the `Story` carries is
+    /// `written`'s, so the title and the version are this write's whatever commits afterwards; what it does not
+    /// carry (the urgent mark, and what other tables hold: blockers, pull requests, goals, urgency, promise, item
+    /// links, web links) is read here, after the commit, in one read-only snapshot. Those fields can therefore be a
+    /// moment newer than the written story: after a concurrent move to another epic, goals, promise or urgency may
+    /// be reached through that other epic. No rule depends on the pairing; the version is the write's, so a write
+    /// based on this answer conflicts.
+    pub async fn story_dto_as_written(
+        &self,
+        written: &Story,
+        now: DateTime<Utc>,
+    ) -> Result<StoryDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.whole_story_dto_in(&mut tx, written, now).await;
+        end_read(tx, out).await
+    }
+
+    /// One story as a read of one item answers it: `story_dtos_in` for `story`, with its item links and web links
+    /// (kb/ADR-0031: a read of one item is whole), all on the caller's snapshot. `story` is the row the caller read
+    /// there (`story_dto`) or the story an edit wrote (`story_dto_as_written`).
+    async fn whole_story_dto_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        story: &Story,
+        now: DateTime<Utc>,
+    ) -> Result<StoryDto, HandlerError> {
+        let urg = self.urgency_in(tx, now).await?;
+        let clock = self.promise_clock_in(tx, now).await?;
+        let mut dto = self
+            .story_dtos_in(tx, std::slice::from_ref(story), &urg, &clock)
+            .await?
+            .pop()
+            .ok_or(HandlerError::NotFound)?;
+        dto.links = Some(self.item_link_dtos_in(tx, story.key()).await?);
+        dto.web_links = Some(self.web_link_dtos_in(tx, story.key()).await?);
+        Ok(dto)
     }
 
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in

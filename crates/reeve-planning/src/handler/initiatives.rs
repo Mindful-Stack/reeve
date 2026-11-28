@@ -281,14 +281,46 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let urg = self.urgency_in(&mut tx, now).await?;
-            let mut dto = self.initiative_dto_in(&mut tx, key, &urg).await?;
-            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
-            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
-            Ok(dto)
+            let i = self
+                .ports
+                .initiatives
+                .get_initiative_in(&mut tx, key)
+                .await?;
+            self.whole_initiative_dto_in(&mut tx, &i, now).await
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// The answer of an edit: `initiative_dto` of the initiative as the edit wrote it. Every field the `Initiative`
+    /// carries is `written`'s; what it does not carry (its progress, its urgent mark and urgency, its item links and
+    /// its web links) is read here, after the commit, in one read-only snapshot.
+    pub async fn initiative_dto_as_written(
+        &self,
+        written: &Initiative,
+        now: DateTime<Utc>,
+    ) -> Result<InitiativeDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.whole_initiative_dto_in(&mut tx, written, now).await;
+        end_read(tx, out).await
+    }
+
+    /// One initiative as a read of one item answers it: its progress and urgency (`initiative_dto_of_in`), with its
+    /// item links and web links, all on the caller's snapshot.
+    async fn whole_initiative_dto_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        i: &Initiative,
+        now: DateTime<Utc>,
+    ) -> Result<InitiativeDto, HandlerError> {
+        let urg = self.urgency_in(tx, now).await?;
+        let mut dto = self.initiative_dto_of_in(tx, i, &urg).await?;
+        dto.links = Some(self.item_link_dtos_in(tx, i.key()).await?);
+        dto.web_links = Some(self.web_link_dtos_in(tx, i.key()).await?);
+        Ok(dto)
     }
 
     /// `initiative_dto` on the caller's transaction: the initiative and its story counts from its snapshot, with the
@@ -300,12 +332,22 @@ impl Handlers {
         urg: &Urgency,
     ) -> Result<InitiativeDto, HandlerError> {
         let i = self.ports.initiatives.get_initiative_in(tx, key).await?;
+        self.initiative_dto_of_in(tx, &i, urg).await
+    }
+
+    /// `initiative_dto_of` for `i` with its story counts read on the caller's transaction.
+    async fn initiative_dto_of_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        i: &Initiative,
+        urg: &Urgency,
+    ) -> Result<InitiativeDto, HandlerError> {
         let counts = self
             .ports
             .reads
-            .story_counts_under_initiative_in(tx, key)
+            .story_counts_under_initiative_in(tx, i.key())
             .await?;
-        Ok(initiative_dto_of(&i, &counts, urg))
+        Ok(initiative_dto_of(i, &counts, urg))
     }
 
     /// Every initiative with its progress and urgency, from one `REPEATABLE READ READ ONLY` snapshot in a fixed number

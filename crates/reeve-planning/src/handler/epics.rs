@@ -271,21 +271,49 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let urg = self.urgency_in(&mut tx, now).await?;
-            let clock = self.promise_clock_in(&mut tx, now).await?;
             let e = self.ports.epics.get_epic_in(&mut tx, key).await?;
-            let mut promises = self
-                .ports
-                .reads
-                .promise_facts_in(&mut tx, &[], std::slice::from_ref(key))
-                .await?;
-            let mut dto = epic_dto_of(&e, &urg, promises.epics.remove(key).as_ref(), &clock);
-            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
-            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
-            Ok(dto)
+            self.whole_epic_dto_in(&mut tx, &e, now).await
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// The answer of an edit: `epic_dto` of the epic as the edit wrote it. Every field the `Epic` carries is
+    /// `written`'s; what it does not carry (its urgent mark and urgency, its promise, its item links and its web
+    /// links) is read here, after the commit, in one read-only snapshot, and can be a moment newer than the written
+    /// epic (`story_dto_as_written` says what follows).
+    pub async fn epic_dto_as_written(
+        &self,
+        written: &Epic,
+        now: DateTime<Utc>,
+    ) -> Result<EpicDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.whole_epic_dto_in(&mut tx, written, now).await;
+        end_read(tx, out).await
+    }
+
+    /// One epic as a read of one item answers it: `epic_dto_of` for `e`, with its item links and web links, all
+    /// on the caller's snapshot. `e` is the row the caller read there or the epic an edit wrote.
+    async fn whole_epic_dto_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        e: &Epic,
+        now: DateTime<Utc>,
+    ) -> Result<EpicDto, HandlerError> {
+        let urg = self.urgency_in(tx, now).await?;
+        let clock = self.promise_clock_in(tx, now).await?;
+        let mut promises = self
+            .ports
+            .reads
+            .promise_facts_in(tx, &[], std::slice::from_ref(e.key()))
+            .await?;
+        let mut dto = epic_dto_of(e, &urg, promises.epics.remove(e.key()).as_ref(), &clock);
+        dto.links = Some(self.item_link_dtos_in(tx, e.key()).await?);
+        dto.web_links = Some(self.web_link_dtos_in(tx, e.key()).await?);
+        Ok(dto)
     }
 
     /// Every epic (of one initiative when given) with its urgency, from one `REPEATABLE READ READ ONLY` snapshot in a

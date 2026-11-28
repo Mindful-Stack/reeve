@@ -13074,3 +13074,325 @@ async fn made_under_refuses_what_a_create_replay_refuses() {
         assert_eq!(h.made_under(item, "mu-none", &[]).await.unwrap(), None);
     }
 }
+
+/// An edit's answer is built from the story as the edit wrote it. Here another writer has since retitled the
+/// story, moved it under another epic, given it an external reference, started it and marked it urgent; `written`
+/// is the story as the first edit left it. Every field the `Story` carries is `written`'s; what it does not carry
+/// (the urgent mark, on the story's row but not in the aggregate, and the blocker and the web link, in other
+/// tables) is read from the store. Catches: an answer that re-reads the row (it would show "Theirs", the later
+/// version, in_progress and the other epic), and an answer that drops what only a read adds.
+#[tokio::test]
+async fn a_story_dto_as_written_keeps_the_written_story_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let mine = h
+        .create_epic(&dan, "w-e1", "Mine", None, "", None)
+        .await
+        .unwrap();
+    let theirs = h
+        .create_epic(&dan, "w-e2", "Theirs", None, "", None)
+        .await
+        .unwrap();
+    let blocker = h
+        .create_story(
+            &dan,
+            "w-b",
+            "Blocker",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "w-s",
+            "First",
+            Kind::Story,
+            None,
+            "",
+            vec!["c".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    // This call's edit: title and epic, version 1 -> 2.
+    let written = h
+        .edit_story(
+            &dan,
+            s.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            Some(Some(mine.key().clone())),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!((written.title(), written.version()), ("Mine", 2));
+    // Another writer lands before the answer is built.
+    h.edit_story(
+        &dan,
+        s.key(),
+        2,
+        Some("Theirs".into()),
+        None,
+        None,
+        Some(Some(theirs.key().clone())),
+        None,
+        None,
+        None,
+        None,
+        Some("OLD-7".into()),
+    )
+    .await
+    .unwrap();
+    h.move_story(
+        &dan,
+        s.key(),
+        3,
+        DeliveryState::InProgress,
+        None,
+        Some("demo".into()),
+    )
+    .await
+    .unwrap();
+    h.add_block(&dan, s.key(), blocker.key()).await.unwrap();
+    assert!(
+        h.add_web_link(&dan, s.key(), "Page", "https://example.com/s")
+            .await
+            .unwrap()
+    );
+    // A mark raises no version (`set_urgent_mark` names only the mark's columns).
+    h.mark_urgent(&dan, ItemType::Story, s.key(), None)
+        .await
+        .unwrap();
+
+    let stored = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(
+        (stored.title.as_str(), stored.version, stored.delivery),
+        ("Theirs", 4, DeliveryState::InProgress),
+        "the control: the store holds the other writer's row"
+    );
+
+    let dto = h.story_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.delivery,
+            dto.resolution,
+            dto.epic.as_ref(),
+            dto.external_ref.as_deref(),
+            dto.rank
+        ),
+        (
+            "Mine",
+            2,
+            DeliveryState::Todo,
+            None,
+            Some(mine.key()),
+            None,
+            written.rank()
+        ),
+        "what the story carries is the written one"
+    );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "not in the aggregate: read from the store"
+    );
+    assert_eq!(
+        dto.blocked_by,
+        vec![blocker.key().clone()],
+        "another table: read from the store"
+    );
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(
+        dto.links,
+        Some(vec![]),
+        "a read of one item carries its item links"
+    );
+}
+
+/// The same for an epic: what the `Epic` carries (title, initiative, version, external reference) is the written
+/// one; its web links are read from the store. Catches an answer that re-reads the epic's row.
+#[tokio::test]
+async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let ini = |idem: &'static str| {
+        let (h, dan) = (h.clone(), dan.clone());
+        async move {
+            h.create_initiative(&dan, idem, "I", "", "Now", None, None, None)
+                .await
+                .unwrap()
+        }
+    };
+    let (mine, theirs) = (ini("w-i1").await, ini("w-i2").await);
+    let e = h
+        .create_epic(&dan, "w-e", "First", None, "", None)
+        .await
+        .unwrap();
+    let written = h
+        .edit_epic(
+            &dan,
+            e.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            Some(Some(mine.key().clone())),
+            None,
+        )
+        .await
+        .unwrap();
+    h.edit_epic(
+        &dan,
+        e.key(),
+        2,
+        Some("Theirs".into()),
+        Some("their brief".into()),
+        Some(Some(theirs.key().clone())),
+        Some("OLD-8".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        h.add_web_link(&dan, e.key(), "Page", "https://example.com/e")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        h.epic_dto(e.key(), now).await.unwrap().title,
+        "Theirs",
+        "the control"
+    );
+
+    let dto = h.epic_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.initiative.as_ref(),
+            dto.brief.as_str(),
+            dto.external_ref.as_deref()
+        ),
+        ("Mine", 2, Some(mine.key()), "", None),
+        "what the epic carries is the written one"
+    );
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(dto.links, Some(vec![]));
+}
+
+/// The same for an initiative: what the `Initiative` carries is the written one; its progress and its web links are
+/// read from the store. Catches an answer that re-reads the initiative's row, and one that loses the progress.
+#[tokio::test]
+async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let i = h
+        .create_initiative(&dan, "w-i", "First", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let written = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            Some(Some("2027-03".into())),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.edit_initiative(
+        &dan,
+        i.key(),
+        2,
+        Some("Theirs".into()),
+        None,
+        Some("Later".into()),
+        Some(None),
+        None,
+        Some("OLD-9".into()),
+    )
+    .await
+    .unwrap();
+    // One story under it, so its progress is 0 of 1 and not "nothing counts".
+    let e = h
+        .create_epic(&dan, "w-ie", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.create_story(
+        &dan,
+        "w-is",
+        "S",
+        Kind::Story,
+        Some(e.key().clone()),
+        "",
+        vec![],
+        vec![],
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        h.add_web_link(&dan, i.key(), "Page", "https://example.com/i")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        h.initiative_dto(i.key(), now).await.unwrap().title,
+        "Theirs",
+        "the control"
+    );
+
+    let dto = h.initiative_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.horizon.as_str(),
+            dto.target_month.as_deref(),
+            dto.external_ref.as_deref()
+        ),
+        ("Mine", 2, "Now", Some("2027-03"), None),
+        "what the initiative carries is the written one"
+    );
+    assert_eq!(dto.progress, Some(0.0), "other tables: read from the store");
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(dto.links, Some(vec![]));
+}
