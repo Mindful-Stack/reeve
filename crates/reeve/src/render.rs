@@ -674,8 +674,9 @@ pub fn comment(c: &CommentDto) -> String {
 
 /// A comment whose body's lines after the first start with `continuation`, which the caller sets right of the column
 /// its comment headers' text (the time) starts at: stored text cannot take leading spaces away, so no line of a body
-/// can start where a comment does, nor put a time in the column a header's time is in. The body is normalised first, so a lone `\r` is a line break here and never one the guard makes
-/// after the layout. An empty line of the body stays empty.
+/// can start where a comment does, nor put a time in the column a header's time is in. The body is normalised first,
+/// so a lone `\r` is a line break here and never one the guard makes after the layout. An empty line of the body stays
+/// empty.
 fn comment_continued(c: &CommentDto, continuation: &str) -> String {
     let body = block(&c.body);
     let mut lines = body.split('\n');

@@ -64,15 +64,19 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         other => return Ok(finish(other, json, |_| String::new())),
     };
     if me.role != Role::Admin || me.token_kind != TokenKind::Interactive {
-        return Ok(fail(
-            json,
-            ErrorCode::Forbidden,
-            &format!(
-                "import needs an admin with an interactive token; {} is {} with an {} token",
-                crate::terminal::line(&me.email),
+        // `--json` carries the email exactly; standard error names it through `line`, so it stays on one line.
+        let refusal = |email: &str| {
+            format!(
+                "import needs an admin with an interactive token; {email} is {} with an {} token",
                 wire(&me.role),
                 wire(&me.token_kind)
-            ),
+            )
+        };
+        return Ok(fail_with(
+            json,
+            ErrorCode::Forbidden,
+            &refusal(&me.email),
+            &refusal(&crate::terminal::line(&me.email)),
             2,
             None,
         ));
@@ -146,8 +150,21 @@ fn fail(
     exit: i32,
     extra: Option<serde_json::Value>,
 ) -> i32 {
+    fail_with(json, code, message, message, exit, extra)
+}
+
+/// `fail` for a message that names a server value: `exact` (the value as it is) goes into the `--json` envelope, and
+/// `shown` (the value through `terminal::line`) to standard error.
+fn fail_with(
+    json: bool,
+    code: ErrorCode,
+    exact: &str,
+    shown: &str,
+    exit: i32,
+    extra: Option<serde_json::Value>,
+) -> i32 {
     let written = if json {
-        let mut v = serde_json::json!({"outcome":"error","code":code,"message":message});
+        let mut v = serde_json::json!({"outcome":"error","code":code,"message":exact});
         if let (Some(serde_json::Value::Object(extra)), Some(obj)) = (extra, v.as_object_mut()) {
             obj.extend(extra);
         }
@@ -155,7 +172,7 @@ fn fail(
     } else {
         Ok(())
     };
-    crate::terminal::err(&format!("error: {message}"));
+    crate::terminal::err(&format!("error: {shown}"));
     crate::terminal::status(written, exit)
 }
 

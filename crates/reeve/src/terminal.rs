@@ -2,7 +2,9 @@
 //! write to standard output or standard error (`tests/print_sites.rs` refuses a print macro or an opened standard
 //! stream anywhere else).
 //!
-//! Text mode is for reading; `--json` is exact and never comes through `line` or `block`.
+//! Text mode is for reading; `--json` carries server values exactly, never through `line` or `block`. A sentence the
+//! CLI itself writes about a value it refuses to use (a record's repository name or path, refused in
+//! `results[].error` and `immediate_check.error`) may name that value in escaped form.
 use std::borrow::Cow;
 use std::io::{self, Write};
 

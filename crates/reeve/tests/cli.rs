@@ -2183,6 +2183,40 @@ fn the_import_preflight_refusal_names_the_caller_on_one_line() {
     }
 }
 
+/// With `--json` the same refusal's envelope carries the email exactly, not its escaped form; standard error still
+/// names it escaped, on one line.
+#[test]
+fn the_import_preflight_refusal_carries_the_email_exactly_in_json() {
+    let email = "a@x\nerror: forged\t\u{1b}[2J\u{202e}\r";
+    let (url, server) = serve(vec![(
+        "GET /api/v1/me",
+        200,
+        ok(serde_json::json!({"email":email,"role":"member","token_kind":"interactive"})),
+    )]);
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let out = reeve_at(&url, &["--json", "import", "jira", "--mapping", mapping]);
+    server.join().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["outcome"], "error", "{v}");
+    assert_eq!(v["code"], "forbidden", "{v}");
+    assert_eq!(
+        v["message"],
+        format!(
+            "import needs an admin with an interactive token; {email} is member with an interactive token"
+        ),
+        "{v}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr:?}");
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+}
+
 /// `story create --owner` and `story edit --owner` set a story's owner; `story edit --no-owner` clears it.
 #[test]
 fn story_owner_is_set_on_create_and_edit_and_cleared() {

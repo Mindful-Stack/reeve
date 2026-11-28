@@ -524,7 +524,7 @@ fn valid_repo_name(repo: &str) -> Result<(), String> {
         || repo.contains('/')
         || repo.contains('\\')
         || repo.starts_with(['-', '.'])
-        || repo.chars().any(|c| c.is_whitespace() || c.is_control())
+        || repo.chars().any(char::is_whitespace)
         || crate::terminal::line(repo) != repo
     {
         return Err(format!(
