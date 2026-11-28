@@ -55,15 +55,106 @@ impl Handlers {
         attachments: &[Uuid],
     ) -> Result<(Epic, bool), HandlerError> {
         let (attachments, made) = self
-            .before_create(ItemType::Epic, idem, attachments)
+            .before_epic_create(idem, initiative.as_ref(), attachments)
             .await?;
         if let Some(k) = made {
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
-        if let Some(ik) = &initiative {
-            self.ports.initiatives.get_initiative(ik).await?;
+        let tx = self.pool.begin().await?;
+        self.finish_epic_create(
+            tx,
+            c,
+            idem,
+            title,
+            initiative,
+            brief,
+            external_ref,
+            &attachments,
+        )
+        .await
+    }
+
+    /// `create_epic_reporting` for plan apply (`create_initiative_guarded` says what it adds).
+    pub(super) async fn create_epic_guarded(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        initiative: Option<Key>,
+        brief: &str,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Guarded<Epic>, HandlerError> {
+        let (attachments, made) = self
+            .before_epic_create(idem, initiative.as_ref(), attachments)
+            .await?;
+        if let Some(k) = made {
+            let item = self.ports.epics.get_epic(&k).await?;
+            return Ok(Guarded::Item {
+                item,
+                created: false,
+            });
         }
         let mut tx = self.pool.begin().await?;
+        // First in the transaction: before the external reference's lock, the key sequence and the activity lock.
+        if let Some((level, key)) = self
+            .idempotency_holder_elsewhere(&mut tx, ItemType::Epic, idem)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(Guarded::HeldElsewhere { level, key });
+        }
+        let (item, created) = self
+            .finish_epic_create(
+                tx,
+                c,
+                idem,
+                title,
+                initiative,
+                brief,
+                external_ref,
+                &attachments,
+            )
+            .await?;
+        Ok(Guarded::Item { item, created })
+    }
+
+    /// What a create of an epic does before it writes anything, in this order: `before_create` (the attachment ids
+    /// and the lookup of `idem` among epics), and, when no epic has it, that the named initiative exists. Answers
+    /// the ids to claim and the key a create under `idem` already made, if one did. Every epic create entry calls
+    /// it, as every story create entry calls `before_story_create`. `made_under` keeps calling `before_create`
+    /// alone: a replay is judged before the initiative is looked at.
+    async fn before_epic_create(
+        &self,
+        idem: &str,
+        initiative: Option<&Key>,
+        attachments: &[Uuid],
+    ) -> Result<(Vec<Uuid>, Option<Key>), HandlerError> {
+        let (attachments, made) = self
+            .before_create(ItemType::Epic, idem, attachments)
+            .await?;
+        if made.is_some() {
+            return Ok((attachments, made));
+        }
+        if let Some(ik) = initiative {
+            self.ports.initiatives.get_initiative(ik).await?;
+        }
+        Ok((attachments, None))
+    }
+
+    /// The insert every epic create entry shares, in `tx`, which it ends (`finish_initiative_create` says how). Its
+    /// caller has run `before_epic_create` and taken any lock of its own before calling it.
+    async fn finish_epic_create(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        initiative: Option<Key>,
+        brief: &str,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<(Epic, bool), HandlerError> {
         let r = match self
             .claim_ref(&mut tx, ItemType::Epic, idem, external_ref)
             .await?
@@ -95,7 +186,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
-        self.claim_attachments(&mut tx, c, &attachments, ItemType::Epic, e.key())
+        self.claim_attachments(&mut tx, c, attachments, ItemType::Epic, e.key())
             .await?;
         self.activity
             .record(
@@ -271,21 +362,50 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let urg = self.urgency_in(&mut tx, now).await?;
-            let clock = self.promise_clock_in(&mut tx, now).await?;
             let e = self.ports.epics.get_epic_in(&mut tx, key).await?;
-            let mut promises = self
-                .ports
-                .reads
-                .promise_facts_in(&mut tx, &[], std::slice::from_ref(key))
-                .await?;
-            let mut dto = epic_dto_of(&e, &urg, promises.epics.remove(key).as_ref(), &clock);
-            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
-            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
-            Ok(dto)
+            self.whole_epic_dto_in(&mut tx, &e, now).await
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// The answer of an edit: `epic_dto` of the epic as the edit wrote it. Every field the `Epic` carries is
+    /// `written`'s; what it does not carry (the urgent mark and the promise, on the epic's row but in no aggregate,
+    /// and what other tables hold: its urgency, its item links and its web links) is read here, after the commit,
+    /// in one read-only snapshot, and can be a moment newer than the written epic (`story_dto_as_written` says what
+    /// follows).
+    pub async fn epic_dto_as_written(
+        &self,
+        written: &Epic,
+        now: DateTime<Utc>,
+    ) -> Result<EpicDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.whole_epic_dto_in(&mut tx, written, now).await;
+        end_read(tx, out).await
+    }
+
+    /// One epic as a read of one item answers it: `epic_dto_of` for `e`, with its item links and web links, all
+    /// on the caller's snapshot. `e` is the row the caller read there or the epic an edit wrote.
+    async fn whole_epic_dto_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        e: &Epic,
+        now: DateTime<Utc>,
+    ) -> Result<EpicDto, HandlerError> {
+        let urg = self.urgency_in(tx, now).await?;
+        let clock = self.promise_clock_in(tx, now).await?;
+        let mut promises = self
+            .ports
+            .reads
+            .promise_facts_in(tx, &[], std::slice::from_ref(e.key()))
+            .await?;
+        let mut dto = epic_dto_of(e, &urg, promises.epics.remove(e.key()).as_ref(), &clock);
+        dto.links = Some(self.item_link_dtos_in(tx, e.key()).await?);
+        dto.web_links = Some(self.web_link_dtos_in(tx, e.key()).await?);
+        Ok(dto)
     }
 
     /// Every epic (of one initiative when given) with its urgency, from one `REPEATABLE READ READ ONLY` snapshot in a

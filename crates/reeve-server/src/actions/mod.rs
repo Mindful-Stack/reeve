@@ -7,8 +7,9 @@
 //!
 //! It answers what its route sends, and beside it what its tool's receipt needs when that is more. A create
 //! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
-//! the DTO, and the receipt needs the flag. An edit whose receipt needs the item as its write left it answers an
-//! `Edited` (`edit_epic`, `edit_initiative`). A comment action answers the comment's id and whether this call wrote
+//! the DTO, and the receipt needs the flag. An edit answers an `Edited` (`edit_story`, `edit_epic`,
+//! `edit_initiative`): what its route sends (`answer`) and the item as its write left it (`written`), which its
+//! receipt is built from. A comment action answers the comment's id and whether this call wrote
 //! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that. A link
 //! action answers a struct (`ItemLinkWritten`, `WebLinkWritten`): the list its route sends, and what a receipt
 //! needs beside it (each item as resolved, the web link's id, whether this call changed anything).
@@ -47,13 +48,16 @@ pub(crate) use stories::{
     StoryQuery, create_story, edit_story, list_stories, move_story, read_story, story_context,
 };
 
-/// What an edit answers when its tool's receipt needs more than the route sends: `read`, the item as a read after the
-/// commit shows it, with what only a read adds (urgency, promise, links), which the route sends; and `written`, the
-/// item as this call's write left it. The two differ when another writer lands between the commit and the read, so a
-/// receipt takes what the write decided (title, version, place) from `written`: it never reports another caller's
-/// change, or the version after it, as this call's.
+/// What an edit answers. `answer` is what the route sends: every field the aggregate carries as this call's write
+/// left it (`written`'s), and what it does not carry (the urgent mark and the promise, on the item's row but in no
+/// aggregate, and what other tables hold) read after the commit, so those can be a moment newer than the write
+/// (`Handlers::story_dto_as_written`, whose doc lists them and states that accepted limit, and its epic and
+/// initiative forms). `written` is the item as this call's write left it, which a tool's receipt is built from
+/// alone. Neither reports another caller's title or
+/// version as this call's when one lands between the commit and the read: a caller that sent that later version
+/// with text it read before would overwrite a change it never saw.
 pub(crate) struct Edited<D, I> {
-    pub(crate) read: D,
+    pub(crate) answer: D,
     pub(crate) written: I,
 }
 
@@ -161,19 +165,6 @@ pub(super) fn allowed_owner(
             ))
             .into())
         }
-        other => Ok(other),
-    }
-}
-
-/// A target month a request names must be a month (`reeve_protocol::is_target_month`): any other text would be
-/// stored and then silently count as no month in the Now ranking. Like `allowed_owner`, it judges only what the
-/// request names; a stored month is never passed here.
-pub(super) fn named_target_month(month: Option<String>) -> Result<Option<String>, AppError> {
-    match month {
-        Some(m) if !reeve_protocol::is_target_month(&m) => Err(AppError::Validation(format!(
-            "target month must be YYYY-MM, for example 2027-03, not {:?}",
-            crate::text::echo(&m)
-        ))),
         other => Ok(other),
     }
 }

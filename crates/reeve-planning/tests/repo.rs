@@ -263,14 +263,17 @@ async fn keys_items_versions_and_readiness_inputs() {
     assert_eq!((counts.completed, counts.dropped, counts.total), (0, 0, 1));
 
     // update_story, update_epic and update_initiative: success, stale write, missing row.
+    // update_story answers the row as it wrote it. Catches: an answer that is the argument handed back (the
+    // version would still be 4).
     let mut tx = pool.begin().await.unwrap();
-    ports
+    let edited = ports
         .stories
         .update_story(&mut tx, &reopened, None, 4, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    assert_eq!(ports.stories.get_story(&k3).await.unwrap().version(), 5);
+    assert_eq!(edited.version(), 5, "one above the expected version");
+    assert_eq!(ports.stories.get_story(&k3).await.unwrap(), edited);
     let mut tx = pool.begin().await.unwrap();
     assert!(matches!(
         ports
@@ -283,7 +286,8 @@ async fn keys_items_versions_and_readiness_inputs() {
     tx.rollback().await.unwrap();
 
     // A content update writes rank only when one is supplied: `reopened` carries the rank read earlier, and a rerank
-    // committed since must survive an update that supplies none.
+    // committed since must survive an update that supplies none. The answer carries the rank the row has, which is
+    // not the argument's. Catches: an answer built from the argument (it would show the stale rank).
     let stale_rank = reopened.rank();
     let mut tx = pool.begin().await.unwrap();
     ports
@@ -293,25 +297,26 @@ async fn keys_items_versions_and_readiness_inputs() {
         .unwrap();
     tx.commit().await.unwrap();
     let mut tx = pool.begin().await.unwrap();
-    ports
+    let kept = ports
         .stories
         .update_story(&mut tx, &reopened, None, 5, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let kept = ports.stories.get_story(&k3).await.unwrap();
     assert_eq!(
-        kept.rank(),
-        stale_rank + 7,
-        "a rank-less update restored a stale rank"
+        (kept.rank(), kept.version()),
+        (stale_rank + 7, 6),
+        "a rank-less update restored a stale rank, or answered the argument's"
     );
+    assert_eq!(ports.stories.get_story(&k3).await.unwrap(), kept);
     let mut tx = pool.begin().await.unwrap();
-    ports
+    let ranked = ports
         .stories
         .update_story(&mut tx, &reopened, Some(3), 6, now)
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    assert_eq!((ranked.rank(), ranked.version()), (3, 7));
     assert_eq!(ports.stories.get_story(&k3).await.unwrap().rank(), 3);
 
     let mut tx = pool.begin().await.unwrap();

@@ -92,11 +92,11 @@ pub(crate) async fn create_epic(
 
 /// `reeve epic edit <KEY>`. Shared by `PATCH /api/v1/epics/{key}` and the MCP tool `edit_epic`. `key` and `b` are
 /// what the route takes: its path parameter and its body. An edit never reads or writes the discovery mark: the
-/// handler carries the stored mark over (`POST …/discovery` is the only way to it). Answers the epic as a read after
-/// the commit shows it (the route's answer) and as this edit wrote it (the receipt's), and the move this edit wrote
-/// (`None`: it did not change the initiative), which `edit_epic`'s receipt says (decision A). The written epic and
-/// the move are the handler's: the move is the one its `edited` entry names, never one worked out here from reads
-/// around the write, which another edit could fall between.
+/// handler carries the stored mark over (`POST …/discovery` is the only way to it). Answers the epic as this edit
+/// wrote it (the DTO the route sends, the rest read after the commit, and the item the receipt is built from), and
+/// the move this edit wrote (`None`: it did not change the initiative), which `edit_epic`'s receipt says (decision
+/// A). The written epic and the move are the handler's: the move is the one its `edited` entry names, never one
+/// worked out here from reads around the write, which another edit could fall between.
 pub(crate) async fn edit_epic(
     state: &AppState,
     who: &Acting<'_>,
@@ -118,6 +118,9 @@ pub(crate) async fn edit_epic(
             &b.attachments,
         )
         .await?;
-    let read = state.handlers.epic_dto(written.key(), who.ctx.now).await?;
-    Ok((Edited { read, written }, moved))
+    let answer = state
+        .handlers
+        .epic_dto_as_written(&written, who.ctx.now)
+        .await?;
+    Ok((Edited { answer, written }, moved))
 }

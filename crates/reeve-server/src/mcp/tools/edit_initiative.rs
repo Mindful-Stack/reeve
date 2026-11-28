@@ -132,7 +132,7 @@ mod tests {
             )
         };
         let edited = Edited {
-            read: InitiativeDto::from(&at("Theirs", 3)),
+            answer: InitiativeDto::from(&at("Theirs", 3)),
             written: at("Mine", 2),
         };
         let r = receipt(edited);

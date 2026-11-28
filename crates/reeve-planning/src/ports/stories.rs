@@ -38,6 +38,11 @@ pub trait StoryRepo: Send + Sync {
         done_since: DateTime<Utc>,
         limit: i64,
     ) -> Result<Vec<Story>, RepoError>;
+    /// Writes every editable field of `s` at `expected_version` and answers the story as the row now is: the
+    /// version raised by one, and the rank the row has, which is `rank` when one is given and otherwise the stored
+    /// one (a content edit must not restore a rank read before a rerank). Answered from the update itself, never
+    /// from a later read, so it is this write's row whatever commits afterwards. `now` is the handler's timestamp
+    /// (kb/ADR-0010 R4).
     async fn update_story(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -45,7 +50,7 @@ pub trait StoryRepo: Send + Sync {
         rank: Option<i32>,
         expected_version: i64,
         now: DateTime<Utc>,
-    ) -> Result<(), RepoError>;
+    ) -> Result<Story, RepoError>;
     /// Writes a story's delivery and resolution after `Story::move_to`, stamping `started_at`/`done_at` from the locked
     /// row's state, guarded by `expected_version`. The owner is written as `COALESCE(owner, story.owner())`: a non-null
     /// stored owner is kept and `story.owner()` lands only when the row has none, so an owner change must not rely on

@@ -1,10 +1,20 @@
 //! A plan applied in one request (`POST /plans`, `reeve apply`). The whole plan is validated before anything is
 //! written: names, references, and each item's own rules (the same constructors the creates use). Then the items are
-//! created through the ordinary create handlers, in dependency order, each under the idempotency key
+//! created through the plan-only create entries (`create_*_guarded`, which share every check and the insert with the
+//! ordinary create handlers), in dependency order, each under the idempotency key
 //! `plan:<len(id)>:<id>:<name>`, so a second apply of the same plan answers every item as existing and writes nothing. Nothing
 //! here bypasses a rule a single create keeps: activity entries, external references and blocker targets are checked
 //! by the handlers the plan calls. A story carrying a migrated ticket's active state is grandfathered as the
 //! importer does: created in that state and logged `imported`, never through `move_story`.
+//!
+//! A plan name is one item, whichever list it stands in. The check refuses a name that an earlier apply made at
+//! another level (`check_name_levels`). Two applies of one plan id that run at once can both pass that check, so
+//! each create a plan makes (`create_initiative_guarded` and its epic and story forms) also takes a lock on its
+//! idempotency key and looks for the key at the other two levels inside its transaction; the apply that comes
+//! second is refused there (`name_taken_meanwhile`). That covers applies of one plan id: a single create that
+//! sends a plan's key by hand takes no lock and is not stopped (GRA-984 reserves the prefix). A plan is not
+//! stored: nothing reads a plan's state and it has no lifecycle, so the rule is guarded where an external
+//! reference is, by a lock and a look in the creating transaction.
 //!
 //! Each create commits on its own: a plan has no transaction around its items. Its item links and web links
 //! (kb/ADR-0031) are written last, once every item it names exists, each in a transaction of its own, through the
@@ -112,6 +122,32 @@ fn type_name(t: ItemType) -> &'static str {
     }
 }
 
+/// A level with its article: "an initiative", "an epic", "a story".
+fn a_type_name(t: ItemType) -> &'static str {
+    match t {
+        ItemType::Initiative => "an initiative",
+        ItemType::Epic => "an epic",
+        ItemType::Story => "a story",
+    }
+}
+
+/// The refusal of an apply whose create found the plan name `name` already an item of another level (`level`,
+/// `key`), created after this apply's check (`check_name_levels`) passed, so this apply has stopped part-way. The
+/// item was made by another apply of this plan id, or by a single create that sent the plan's key by hand (which
+/// nothing stops yet, GRA-984), so the message says only that it was created at that level while this apply ran.
+/// It does not open as the check's message does, which means nothing was written, and it claims only what is
+/// always true: items are written initiatives first, then epics, then stories; some before this one may exist;
+/// this apply wrote nothing after it, and no decisions, blockers or links.
+fn name_taken_meanwhile(name: &str, level: ItemType, key: &Key) -> HandlerError {
+    let a_level = a_type_name(level);
+    HandlerError::Validation(format!(
+        "{name:?} is {a_level} ({key}), created at that level while this apply ran; a name keeps \
+         its level. This apply stopped at {name:?}: items written before it (initiatives, then epics, then \
+         stories) may exist; this apply wrote nothing after it, and no decisions, blockers or links. List \
+         {name:?} as {a_level}, or give it a new name, and apply the same id again; what exists is reused."
+    ))
+}
+
 /// Where a problem with an item link is, as the plan wrote it. "item link", never bare "link" (kb/ADR-0031 R6):
 /// the same answer may name a plan's blockers and a decision's record link.
 fn link_at(l: &PlanLink) -> String {
@@ -148,8 +184,8 @@ impl Handlers {
         let mut items = vec![];
         for i in &p.initiatives {
             let key = idem(&i.name);
-            let (made, created) = self
-                .create_initiative_reporting(
+            let (made, created) = match self
+                .create_initiative_guarded(
                     c,
                     &key,
                     &i.title,
@@ -160,7 +196,13 @@ impl Handlers {
                     i.external_ref.clone(),
                     &[],
                 )
-                .await?;
+                .await?
+            {
+                Guarded::Item { item, created } => (item, created),
+                Guarded::HeldElsewhere { level, key: held } => {
+                    return Err(name_taken_meanwhile(&i.name, level, &held));
+                }
+            };
             keys.insert(i.name.clone(), made.key().clone());
             items.push(PlannedItem {
                 name: i.name.clone(),
@@ -175,8 +217,8 @@ impl Handlers {
                 .initiative
                 .as_deref()
                 .map(|r| resolve(&keys, r, Some(ItemType::Initiative)));
-            let (made, created) = self
-                .create_epic_reporting(
+            let (made, created) = match self
+                .create_epic_guarded(
                     c,
                     &key,
                     &e.title,
@@ -185,7 +227,13 @@ impl Handlers {
                     e.external_ref.clone(),
                     &[],
                 )
-                .await?;
+                .await?
+            {
+                Guarded::Item { item, created } => (item, created),
+                Guarded::HeldElsewhere { level, key: held } => {
+                    return Err(name_taken_meanwhile(&e.name, level, &held));
+                }
+            };
             keys.insert(e.name.clone(), made.key().clone());
             items.push(PlannedItem {
                 name: e.name.clone(),
@@ -200,8 +248,8 @@ impl Handlers {
                 .epic
                 .as_deref()
                 .map(|r| resolve(&keys, r, Some(ItemType::Epic)));
-            let (made, created) = self
-                .create_story_reporting(
+            let (made, created) = match self
+                .create_story_guarded(
                     c,
                     &key,
                     &s.title,
@@ -215,7 +263,13 @@ impl Handlers {
                     s.delivery.unwrap_or(DeliveryState::Todo),
                     &[],
                 )
-                .await?;
+                .await?
+            {
+                Guarded::Item { item, created } => (item, created),
+                Guarded::HeldElsewhere { level, key: held } => {
+                    return Err(name_taken_meanwhile(&s.name, level, &held));
+                }
+            };
             keys.insert(s.name.clone(), made.key().clone());
             items.push(PlannedItem {
                 name: s.name.clone(),
@@ -471,6 +525,12 @@ impl Handlers {
             ) {
                 errors.push(format!("{at}: {e}"));
             }
+            // A plan names its initiatives' months as a request does, so the rule for a named month applies
+            // (`named_target_month`). The owner is not judged here: who is allowed is identity's to say, and
+            // planning cannot ask.
+            if let Err(e) = named_target_month(i.target_month.clone()) {
+                errors.push(format!("{at}: {e}"));
+            }
             if let Some(r) = &i.external_ref
                 && let Err(HandlerError::Validation(m)) = check_item_ref(r, prefix)
             {
@@ -684,14 +744,9 @@ impl Handlers {
                     .find_by_idempotency(earlier, &plan_key(id, name))
                     .await?
                 {
-                    let article = if earlier == ItemType::Story {
-                        "a"
-                    } else {
-                        "an"
-                    };
                     errors.push(format!(
-                        "{name:?} was {article} {} ({k}) in an earlier apply of this plan; a name keeps its level",
-                        type_name(earlier)
+                        "{name:?} was {} ({k}) in an earlier apply of this plan; a name keeps its level",
+                        a_type_name(earlier)
                     ));
                 }
             }

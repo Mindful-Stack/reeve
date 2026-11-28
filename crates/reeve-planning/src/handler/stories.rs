@@ -44,6 +44,7 @@ impl Handlers {
     /// `create_story`, claiming `attachments` for the new story in its transaction (kb/ADR-0022 R2), and whether
     /// this call inserted the story: false when its idempotency key already had one. The flag is the insert's own
     /// answer, true only from the insert itself, so of two calls racing on one key exactly one is told it created.
+    /// The story is created in todo: only the plan's entry (`create_story_guarded`) creates one in another state.
     pub async fn create_story_attaching(
         &self,
         c: &Ctx,
@@ -58,7 +59,22 @@ impl Handlers {
         owner: Option<String>,
         attachments: &[Uuid],
     ) -> Result<(Story, bool), HandlerError> {
-        self.create_story_reporting(
+        let delivery = DeliveryState::Todo;
+        let (attachments, made) = self
+            .before_story_create(
+                idem,
+                epic.as_ref(),
+                external_ref.as_deref(),
+                delivery,
+                attachments,
+            )
+            .await?;
+        if let Some(k) = made {
+            return Ok((self.ports.stories.get_story(&k).await?, false));
+        }
+        let tx = self.pool.begin().await?;
+        self.finish_story_create(
+            tx,
             c,
             idem,
             title,
@@ -69,16 +85,16 @@ impl Handlers {
             labels,
             external_ref,
             owner,
-            DeliveryState::Todo,
-            attachments,
+            delivery,
+            &attachments,
         )
         .await
     }
 
-    /// `create_story`, and whether this call inserted it (false when its idempotency key already had one). A `delivery`
-    /// other than todo grandfathers a migrated story (a plan's): it is inserted in that state and logged
-    /// `imported` with its reference, exactly as the importer logs it; the gate is never consulted.
-    pub(crate) async fn create_story_reporting(
+    /// `create_story_attaching` for plan apply (`create_initiative_guarded` says what it adds). A `delivery` other
+    /// than todo grandfathers a migrated story (a plan's): it is inserted in that state and logged `imported` with
+    /// its reference, exactly as the importer logs it; the gate is never consulted.
+    pub(super) async fn create_story_guarded(
         &self,
         c: &Ctx,
         idem: &str,
@@ -92,7 +108,65 @@ impl Handlers {
         owner: Option<String>,
         delivery: DeliveryState,
         attachments: &[Uuid],
-    ) -> Result<(Story, bool), HandlerError> {
+    ) -> Result<Guarded<Story>, HandlerError> {
+        let (attachments, made) = self
+            .before_story_create(
+                idem,
+                epic.as_ref(),
+                external_ref.as_deref(),
+                delivery,
+                attachments,
+            )
+            .await?;
+        if let Some(k) = made {
+            let item = self.ports.stories.get_story(&k).await?;
+            return Ok(Guarded::Item {
+                item,
+                created: false,
+            });
+        }
+        let mut tx = self.pool.begin().await?;
+        // First in the transaction: before the external reference's lock, the key sequence and the activity lock.
+        if let Some((level, key)) = self
+            .idempotency_holder_elsewhere(&mut tx, ItemType::Story, idem)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(Guarded::HeldElsewhere { level, key });
+        }
+        let (item, created) = self
+            .finish_story_create(
+                tx,
+                c,
+                idem,
+                title,
+                kind,
+                epic,
+                description,
+                criteria,
+                labels,
+                external_ref,
+                owner,
+                delivery,
+                &attachments,
+            )
+            .await?;
+        Ok(Guarded::Item { item, created })
+    }
+
+    /// What a create of a story does before it writes anything, in this order: the attachment ids (deduplicated, at
+    /// most `MAX_CLAIM`), the state it may be created in, the lookup of `idem` among stories, and, when no story
+    /// has it, that the named epic exists. Answers the ids to claim and the key a create under `idem` already made,
+    /// if one did. Every story create entry calls it, so a replay is answered for the same reasons whichever is
+    /// called (`before_create` is the same for an initiative, `before_epic_create` for an epic).
+    async fn before_story_create(
+        &self,
+        idem: &str,
+        epic: Option<&Key>,
+        external_ref: Option<&str>,
+        delivery: DeliveryState,
+        attachments: &[Uuid],
+    ) -> Result<(Vec<Uuid>, Option<Key>), HandlerError> {
         let attachments = attachment_ids(attachments)?;
         if delivery != DeliveryState::Todo
             && (external_ref.is_none() || delivery == DeliveryState::Done)
@@ -107,12 +181,32 @@ impl Handlers {
             .find_by_idempotency(ItemType::Story, idem)
             .await?
         {
-            return Ok((self.ports.stories.get_story(&k).await?, false));
+            return Ok((attachments, Some(k)));
         }
-        if let Some(ek) = &epic {
+        if let Some(ek) = epic {
             self.ports.epics.get_epic(ek).await?;
         }
-        let mut tx = self.pool.begin().await?;
+        Ok((attachments, None))
+    }
+
+    /// The insert every story create entry shares, in `tx`, which it ends (`finish_initiative_create` says how). Its
+    /// caller has run `before_story_create` and taken any lock of its own before calling it.
+    async fn finish_story_create(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        kind: Kind,
+        epic: Option<Key>,
+        description: &str,
+        criteria: Vec<String>,
+        labels: Vec<String>,
+        external_ref: Option<String>,
+        owner: Option<String>,
+        delivery: DeliveryState,
+        attachments: &[Uuid],
+    ) -> Result<(Story, bool), HandlerError> {
         let r = match self
             .claim_ref(&mut tx, ItemType::Story, idem, external_ref)
             .await?
@@ -155,7 +249,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.stories.get_story(&k).await?, false));
         }
-        self.claim_attachments(&mut tx, c, &attachments, ItemType::Story, s.key())
+        self.claim_attachments(&mut tx, c, attachments, ItemType::Story, s.key())
             .await?;
         let (action, payload) = match s.external_ref() {
             Some(r) if delivery != DeliveryState::Todo => {
@@ -209,7 +303,8 @@ impl Handlers {
         .await
     }
 
-    /// `edit_story`, claiming `attachments` for the story in its transaction (kb/ADR-0022 R2).
+    /// `edit_story`, claiming `attachments` for the story in its transaction (kb/ADR-0022 R2). Answers the story as
+    /// this write left it (`StoryRepo::update_story`'s answer), not a later read of it.
     pub async fn edit_story_attaching(
         &self,
         c: &Ctx,
@@ -273,7 +368,11 @@ impl Handlers {
             r,
             cur.version(),
         );
-        self.ports
+        // The story as this write left it: the row as written, that is the editable fields `next` carries, and
+        // delivery, resolution and rank as the row holds them (the UPDATE does not write delivery or resolution,
+        // and keeps the rank unless `rank` names one), with the version raised by one.
+        let written = self
+            .ports
             .stories
             .update_story(&mut tx, &next, rank, version, c.now)
             .await?;
@@ -292,7 +391,8 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.ports.stories.get_story(key).await?)
+        // Never a read after the commit, which another writer can land before.
+        Ok(written)
     }
 
     pub async fn get_story(&self, key: &Key) -> Result<Story, HandlerError> {
@@ -719,25 +819,60 @@ impl Handlers {
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
         let out = async {
-            let urg = self.urgency_in(&mut tx, now).await?;
-            let clock = self.promise_clock_in(&mut tx, now).await?;
-            let stories = self
+            let story = self
                 .ports
                 .reads
                 .stories_by_keys(&mut tx, std::slice::from_ref(key))
-                .await?;
-            let mut dto = self
-                .story_dtos_in(&mut tx, &stories, &urg, &clock)
                 .await?
                 .pop()
                 .ok_or(HandlerError::NotFound)?;
-            // A read of one item is whole: its item links come along (kb/ADR-0031), from the same snapshot.
-            dto.links = Some(self.item_link_dtos_in(&mut tx, key).await?);
-            dto.web_links = Some(self.web_link_dtos_in(&mut tx, key).await?);
-            Ok(dto)
+            self.whole_story_dto_in(&mut tx, &story, now).await
         }
         .await;
         end_read(tx, out).await
+    }
+
+    /// The answer of an edit: `story_dto` of the story as the edit wrote it. Every field the `Story` carries is
+    /// `written`'s, so the title and the version are this write's whatever commits afterwards; what it does not carry
+    /// (the urgent mark and the promise, on the story's row or its epic's but in no aggregate, and what other tables
+    /// hold: blockers, pull requests, goals, urgency, item links, web links) is read here, after the commit, in one
+    /// read-only snapshot. Those fields can therefore be a moment newer than the written story: after a concurrent move
+    /// to another epic, goals, promise or urgency may be reached through that other epic. No rule depends on the
+    /// pairing; the version is the write's, so a write based on this answer conflicts.
+    pub async fn story_dto_as_written(
+        &self,
+        written: &Story,
+        now: DateTime<Utc>,
+    ) -> Result<StoryDto, HandlerError> {
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+        let out = self.whole_story_dto_in(&mut tx, written, now).await;
+        end_read(tx, out).await
+    }
+
+    /// One story as a read of one item answers it: `story_dtos_in` for `story`, with its item links and web links
+    /// (kb/ADR-0031: a read of one item is whole), all on the caller's snapshot. `story` is the row the caller read
+    /// there (`story_dto`) or the story an edit wrote (`story_dto_as_written`).
+    async fn whole_story_dto_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        story: &Story,
+        now: DateTime<Utc>,
+    ) -> Result<StoryDto, HandlerError> {
+        let urg = self.urgency_in(tx, now).await?;
+        let clock = self.promise_clock_in(tx, now).await?;
+        let mut dto = self
+            .story_dtos_in(tx, std::slice::from_ref(story), &urg, &clock)
+            .await?
+            .pop()
+            // Never NotFound: `story_dtos_in` answers one DTO per story passed in, and one was passed. This
+            // also holds for the written story, which is not read from the store.
+            .ok_or(HandlerError::NotFound)?;
+        dto.links = Some(self.item_link_dtos_in(tx, story.key()).await?);
+        dto.web_links = Some(self.web_link_dtos_in(tx, story.key()).await?);
+        Ok(dto)
     }
 
     /// The one place a `StoryDto` is built: blockers, pull requests and the active sprint's goals for all the stories in

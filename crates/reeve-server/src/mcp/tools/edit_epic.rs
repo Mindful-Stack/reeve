@@ -154,7 +154,7 @@ mod tests {
             3,
         );
         let edited = Edited {
-            read: EpicDto::from(&later),
+            answer: EpicDto::from(&later),
             written,
         };
         let moved = EpicMove {

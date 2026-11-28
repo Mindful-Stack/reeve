@@ -40,10 +40,10 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<EpicDto>>, AppError> {
-    // The epic as written and the move the edit wrote are the MCP receipt's; the route answers the read after the
-    // commit.
+    // What the epic carries is as this edit wrote it, and the rest is read after the commit (`Edited`); the move the
+    // edit wrote is the MCP receipt's.
     let (edited, _moved) = crate::actions::edit_epic(&s, &c.acting(), &key, b).await?;
-    Ok(ok(edited.read))
+    Ok(ok(edited.answer))
 }
 #[utoipa::path(post, path = "/epics/{key}/discovery", params(("key" = String, Path)), request_body = DiscoveryMark, responses((status = 200, body = Response<EpicDto>)))]
 async fn discovery(

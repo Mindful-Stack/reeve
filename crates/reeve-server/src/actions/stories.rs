@@ -1,6 +1,6 @@
-use super::{Acting, FilterRef, allowed_owner, resolve_edit, resolve_filter, resolve_opt};
+use super::{Acting, Edited, FilterRef, allowed_owner, resolve_edit, resolve_filter, resolve_opt};
 use crate::{error::AppError, state::AppState};
-use reeve_planning::{GoalFilter, StoryFilter};
+use reeve_planning::{GoalFilter, Story, StoryFilter};
 use reeve_protocol::{
     CreateStory, DeliveryState, DoneFilter, EditItem, ItemType, KeyRef, Kind, MoveStory,
     PromisedFilter, StoryContextDto, StoryDto, StorySort, StoryWithReadiness,
@@ -210,13 +210,15 @@ pub(crate) async fn read_story(
 }
 
 /// `reeve story edit <KEY>`. Shared by `PATCH /api/v1/stories/{key}` and the MCP tool `edit_story`. `key` and `b`
-/// are what the route takes: its path parameter and its body.
+/// are what the route takes: its path parameter and its body. Answers the story as this edit wrote it, twice: as
+/// the DTO the route sends (what the story carries as written, the rest read after the commit) and as the item the
+/// tool's receipt is built from.
 pub(crate) async fn edit_story(
     state: &AppState,
     who: &Acting<'_>,
     key: &str,
     b: EditItem,
-) -> Result<StoryDto, AppError> {
+) -> Result<Edited<StoryDto, Story>, AppError> {
     let key = state.handlers.resolve_ref(key, ItemType::Story).await?;
     let criteria = b.criteria.map(|v| {
         v.into_iter()
@@ -231,7 +233,7 @@ pub(crate) async fn edit_story(
         Some(Some(o)) => Some(allowed_owner(who.policy, Some(o))?),
         other => other,
     };
-    let story = state
+    let written = state
         .handlers
         .edit_story_attaching(
             &who.ctx,
@@ -249,7 +251,11 @@ pub(crate) async fn edit_story(
             &b.attachments,
         )
         .await?;
-    Ok(state.handlers.story_dto(story.key(), who.ctx.now).await?)
+    let answer = state
+        .handlers
+        .story_dto_as_written(&written, who.ctx.now)
+        .await?;
+    Ok(Edited { answer, written })
 }
 
 /// `reeve story mv <KEY>`. Shared by `POST /api/v1/stories/{key}/move` and the MCP tool `move_story`. `key` and `b`

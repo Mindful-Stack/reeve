@@ -53,4 +53,13 @@ pub trait KeyRepo: Send + Sync {
         tx: &mut Transaction<'_, Postgres>,
         external_ref: &str,
     ) -> Result<(), RepoError>;
+    /// Serialises every create that asks for it under one idempotency key, whatever the item type, until the
+    /// transaction ends (`pg_advisory_xact_lock`). Taken first in the creating transaction: before the external
+    /// reference's lock, the key sequence and the activity lock. Only plan apply's creates take it (a plan's name
+    /// must be one item across the three levels); a single create never does.
+    async fn lock_idempotency_key(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        idem: &str,
+    ) -> Result<(), RepoError>;
 }

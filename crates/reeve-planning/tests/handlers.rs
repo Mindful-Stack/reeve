@@ -12847,37 +12847,51 @@ async fn a_brief_template_and_its_entry_commit_together() {
     assert_eq!(h.brief_template(t.id).await.unwrap().name, "Tech debt");
 }
 
-/// Holds the brief template lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once
-/// both are seen waiting on an advisory lock in `pg_locks`, or after five seconds when they never are. The holder takes
-/// the exact lock the adapter takes (its SQL, not the port, so a no-op adapter cannot also make the holder a no-op).
-/// Answers both results and whether both writers waited. The holder is released whether or not they waited, so a run
-/// without the lock ends in a failed assertion, not a hang. pg_locks is server-wide and every test has a database of
-/// its own on one server, so the count is scoped to this database; `mk`'s memory sink takes no lock of its own, so the
-/// only advisory locks in this database are the template lock's.
-async fn while_both_wait<A, B>(
+/// How many ungranted advisory locks in this database match `waiting`, a condition on `pg_locks`'s columns.
+async fn advisory_waiters(conn: &mut sqlx::PgConnection, waiting: &str) -> i64 {
+    sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+         AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND ({waiting})"
+    ))
+    .fetch_one(conn)
+    .await
+    .unwrap()
+}
+
+/// Holds an advisory lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once both
+/// are seen waiting on an advisory lock in `pg_locks` that matches `waiting` (a condition on `pg_locks`'s columns,
+/// naming the lock under test), or after five seconds when they never are. `lock` is the
+/// exact statement the adapter under test sends, written out by the caller with its one argument in `arg` (never
+/// the port: a no-op adapter must not also make the holder a no-op). Answers both results and whether both waited.
+/// The holder is released whether or not they waited, so a run without the lock ends in a failed assertion, not a
+/// hang; and the whole, the release included, must end within 30 seconds, so a call that stalls after the release
+/// fails here by name rather than at nextest's termination. pg_locks is server-wide and every test has a database
+/// of its own on one server, so the count is scoped to this database; `mk`'s memory sink takes no lock of its own,
+/// so the only advisory locks in this database are the ones under test.
+async fn while_both_wait_on<A, B>(
     pool: &sqlx::PgPool,
+    lock: &str,
+    arg: Option<&str>,
+    waiting: &str,
     a: impl std::future::Future<Output = A>,
     b: impl std::future::Future<Output = B>,
 ) -> (A, B, bool) {
     use std::time::Duration;
     let mut holder = pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))")
-        .execute(&mut *holder)
-        .await
-        .unwrap();
+    let held = sqlx::query(lock);
+    match arg {
+        Some(arg) => held.bind(arg),
+        None => held,
+    }
+    .execute(&mut *holder)
+    .await
+    .unwrap();
     let release = async {
         let mut waited = false;
         {
             let mut conn = pool.acquire().await.unwrap();
             for _ in 0..250 {
-                let n: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
-                     AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-                )
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-                if n >= 2 {
+                if advisory_waiters(&mut conn, waiting).await >= 2 {
                     waited = true;
                     break;
                 }
@@ -12887,7 +12901,28 @@ async fn while_both_wait<A, B>(
         holder.commit().await.unwrap();
         waited
     };
-    tokio::join!(a, b, release)
+    tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(a, b, release)
+    })
+    .await
+    .expect("the two calls did not end within 30 seconds of the lock being taken")
+}
+
+/// `while_both_wait_on` the brief template lock, a single bigint key (`objsubid` 1 in `pg_locks`).
+async fn while_both_wait<A, B>(
+    pool: &sqlx::PgPool,
+    a: impl std::future::Future<Output = A>,
+    b: impl std::future::Future<Output = B>,
+) -> (A, B, bool) {
+    while_both_wait_on(
+        pool,
+        "SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))",
+        None,
+        "objsubid = 1",
+        a,
+        b,
+    )
+    .await
 }
 
 /// Template writes that overlap are serialised by the advisory lock: each reads what the other committed. Each pair
@@ -13073,4 +13108,573 @@ async fn made_under_refuses_what_a_create_replay_refuses() {
         );
         assert_eq!(h.made_under(item, "mu-none", &[]).await.unwrap(), None);
     }
+}
+
+/// An edit's answer is built from the story as the edit wrote it. Here another writer has since retitled the
+/// story, moved it under another epic, given it an external reference, started it and marked it urgent; `written`
+/// is the story as the first edit left it. Every field the `Story` carries is `written`'s; what it does not carry
+/// (the urgent mark, on the story's row but not in the aggregate, and the blocker and the web link, in other
+/// tables) is read from the store. Catches: an answer that re-reads the row (it would show "Theirs", the later
+/// version, in_progress and the other epic), and an answer that drops what only a read adds.
+#[tokio::test]
+async fn a_story_dto_as_written_keeps_the_written_story_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let mine = h
+        .create_epic(&dan, "w-e1", "Mine", None, "", None)
+        .await
+        .unwrap();
+    let theirs = h
+        .create_epic(&dan, "w-e2", "Theirs", None, "", None)
+        .await
+        .unwrap();
+    let blocker = h
+        .create_story(
+            &dan,
+            "w-b",
+            "Blocker",
+            Kind::Story,
+            None,
+            "",
+            vec![],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let s = h
+        .create_story(
+            &dan,
+            "w-s",
+            "First",
+            Kind::Story,
+            None,
+            "",
+            vec!["c".into()],
+            vec![],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    // This call's edit: title and epic, version 1 -> 2.
+    let written = h
+        .edit_story(
+            &dan,
+            s.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            Some(Some(mine.key().clone())),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!((written.title(), written.version()), ("Mine", 2));
+    // Another writer reranks a neighbour before it, which renumbers the column and gives the story another stored
+    // rank (a rerank bumps only the moved story's version, so the story stays at version 2).
+    // (Both start at rank 0 and tie by key: the blocker goes last, then back before the story.)
+    for before in [None, Some(s.key())] {
+        let v = h.get_story(blocker.key()).await.unwrap().version();
+        h.rank_story(&dan, blocker.key(), v, before).await.unwrap();
+    }
+    assert_ne!(
+        h.get_story(s.key()).await.unwrap().rank(),
+        written.rank(),
+        "the control: the stored rank is not the written one"
+    );
+    // Another writer lands before the answer is built.
+    h.edit_story(
+        &dan,
+        s.key(),
+        2,
+        Some("Theirs".into()),
+        None,
+        None,
+        Some(Some(theirs.key().clone())),
+        None,
+        None,
+        None,
+        None,
+        Some("OLD-7".into()),
+    )
+    .await
+    .unwrap();
+    h.move_story(
+        &dan,
+        s.key(),
+        3,
+        DeliveryState::InProgress,
+        None,
+        Some("demo".into()),
+    )
+    .await
+    .unwrap();
+    h.add_block(&dan, s.key(), blocker.key()).await.unwrap();
+    assert!(
+        h.add_web_link(&dan, s.key(), "Page", "https://example.com/s")
+            .await
+            .unwrap()
+    );
+    // A mark raises no version (`set_urgent_mark` names only the mark's columns).
+    h.mark_urgent(&dan, ItemType::Story, s.key(), None)
+        .await
+        .unwrap();
+
+    let stored = h.story_dto(s.key(), now).await.unwrap();
+    assert_eq!(
+        (stored.title.as_str(), stored.version, stored.delivery),
+        ("Theirs", 4, DeliveryState::InProgress),
+        "the control: the store holds the other writer's row"
+    );
+    assert_ne!(
+        stored.rank,
+        written.rank(),
+        "the control: the stored row's rank is not the written one"
+    );
+
+    let dto = h.story_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.delivery,
+            dto.resolution,
+            dto.epic.as_ref(),
+            dto.external_ref.as_deref(),
+            dto.rank
+        ),
+        (
+            "Mine",
+            2,
+            DeliveryState::Todo,
+            None,
+            Some(mine.key()),
+            None,
+            written.rank()
+        ),
+        "what the story carries is the written one"
+    );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "not in the aggregate: read from the store"
+    );
+    assert_eq!(
+        dto.blocked_by,
+        vec![blocker.key().clone()],
+        "another table: read from the store"
+    );
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(
+        dto.links,
+        Some(vec![]),
+        "a read of one item carries its item links"
+    );
+}
+
+/// The same for an epic: what the `Epic` carries (title, initiative, version, external reference) is the written
+/// one; its urgent mark and its promise (on the epic's row but in no aggregate, set after the edit) and its web
+/// links are read from the store. Catches an answer that re-reads the epic's row, and one that drops what only a
+/// read adds.
+#[tokio::test]
+async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let ini = |idem: &'static str| {
+        let (h, dan) = (h.clone(), dan.clone());
+        async move {
+            h.create_initiative(&dan, idem, "I", "", "Now", None, None, None)
+                .await
+                .unwrap()
+        }
+    };
+    let (mine, theirs) = (ini("w-i1").await, ini("w-i2").await);
+    let e = h
+        .create_epic(&dan, "w-e", "First", None, "", None)
+        .await
+        .unwrap();
+    let written = h
+        .edit_epic(
+            &dan,
+            e.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            Some(Some(mine.key().clone())),
+            None,
+        )
+        .await
+        .unwrap();
+    h.edit_epic(
+        &dan,
+        e.key(),
+        2,
+        Some("Theirs".into()),
+        Some("their brief".into()),
+        Some(Some(theirs.key().clone())),
+        Some("OLD-8".into()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        h.add_web_link(&dan, e.key(), "Page", "https://example.com/e")
+            .await
+            .unwrap()
+    );
+    // A mark and a promise raise no version: both are written after the edit and only a read can add them.
+    h.mark_urgent(&dan, ItemType::Epic, e.key(), None)
+        .await
+        .unwrap();
+    let on = (now + chrono::Duration::days(30)).date_naive();
+    h.set_promise(
+        &dan,
+        ItemType::Epic,
+        e.key(),
+        promise_body(Some(on), None, None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        h.epic_dto(e.key(), now).await.unwrap().title,
+        "Theirs",
+        "the control"
+    );
+
+    let dto = h.epic_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.initiative.as_ref(),
+            dto.brief.as_str(),
+            dto.external_ref.as_deref()
+        ),
+        ("Mine", 2, Some(mine.key()), "", None),
+        "what the epic carries is the written one"
+    );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "on the row, in no aggregate: read from the store"
+    );
+    assert_eq!(
+        dto.promise.as_ref().map(|p| p.fact.on),
+        Some(on),
+        "on the row, in no aggregate: read from the store"
+    );
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(dto.links, Some(vec![]));
+}
+
+/// The same for an initiative: what the `Initiative` carries is the written one; its urgent mark (on its row but in
+/// no aggregate, set after the edit; an initiative has no promise), its progress and its web links are read from the
+/// store. Catches an answer that re-reads the initiative's row, and one that loses the mark or the progress.
+#[tokio::test]
+async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the_rest() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool);
+    let dan = ctx("dan@example.com", false);
+    let now = Utc::now();
+    let i = h
+        .create_initiative(&dan, "w-i", "First", "", "Now", None, None, None)
+        .await
+        .unwrap();
+    let written = h
+        .edit_initiative(
+            &dan,
+            i.key(),
+            1,
+            Some("Mine".into()),
+            None,
+            None,
+            Some(Some("2027-03".into())),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    h.edit_initiative(
+        &dan,
+        i.key(),
+        2,
+        Some("Theirs".into()),
+        None,
+        Some("Later".into()),
+        Some(None),
+        None,
+        Some("OLD-9".into()),
+    )
+    .await
+    .unwrap();
+    // One story under it, so its progress is 0 of 1 and not "nothing counts".
+    let e = h
+        .create_epic(&dan, "w-ie", "E", Some(i.key().clone()), "", None)
+        .await
+        .unwrap();
+    h.create_story(
+        &dan,
+        "w-is",
+        "S",
+        Kind::Story,
+        Some(e.key().clone()),
+        "",
+        vec![],
+        vec![],
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        h.add_web_link(&dan, i.key(), "Page", "https://example.com/i")
+            .await
+            .unwrap()
+    );
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.initiative_dto(i.key(), now).await.unwrap().title,
+        "Theirs",
+        "the control"
+    );
+
+    let dto = h.initiative_dto_as_written(&written, now).await.unwrap();
+    assert_eq!(
+        (
+            dto.title.as_str(),
+            dto.version,
+            dto.horizon.as_str(),
+            dto.target_month.as_deref(),
+            dto.external_ref.as_deref()
+        ),
+        ("Mine", 2, "Now", Some("2027-03"), None),
+        "what the initiative carries is the written one"
+    );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "on the row, in no aggregate: read from the store"
+    );
+    assert_eq!(dto.progress, Some(0.0), "other tables: read from the store");
+    assert_eq!(
+        dto.web_links.as_ref().map(|w| w.len()),
+        Some(1),
+        "another table: read from the store"
+    );
+    assert_eq!(dto.links, Some(vec![]));
+}
+
+/// The lock plan apply's creates take on a plan item's idempotency key: the adapter's statement with its key space
+/// (`IDEMPOTENCY_LOCK_SPACE` in `repo/keys.rs`, 1, private to the crate) written out.
+const IDEMPOTENCY_LOCK: &str = "SELECT pg_advisory_xact_lock(1, hashtext($1))";
+
+/// That lock as `pg_locks` shows it: a lock taken with two integer keys has the first key in `classid`, the second
+/// in `objid` and `objsubid` 2 (a single bigint key has `objsubid` 1). The 1 in `classid` is
+/// `IDEMPOTENCY_LOCK_SPACE`, as in `IDEMPOTENCY_LOCK`.
+const IDEMPOTENCY_LOCK_WAIT: &str = "classid = 1 AND objsubid = 2";
+
+/// Two applies of one plan id that give one name different levels, made to overlap, not hoped to, at every pair of
+/// levels (initiative and epic, initiative and story, epic and story) and in both orders, each case under a plan id
+/// of its own: a holder takes the key's lock first; the first apply passes the plan's check (nothing exists yet, so
+/// the level check finds nothing) and is seen queued on that very lock inside its create; only then does the second
+/// start, pass the check and queue behind it; and once both are seen waiting the lock is released. PostgreSQL grants
+/// the lock in queue order, so the first apply creates and the second, the one whose guard is under test, is
+/// refused and told which item has the name; sent again with the name at the winner's level it answers that item.
+/// Exactly one item exists for the name afterwards across the three tables. Both orders matter: each level's look
+/// must find each of the other two, and a look at a wrong level is only reached by the apply that comes second.
+/// Catches: the fault GRA-888 names (both create, since an idempotency key is unique per table only), any of the
+/// three plan creates left unguarded (an ordinary create in `apply_plan`), a look that skips a level, a lock in
+/// another key space, under another key or none (the first apply is then never seen queued on the held lock, and the
+/// case fails at that assert), and a refusal in the words of the check, which would say nothing was written.
+#[tokio::test]
+async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let erin = ctx("erin@example.com", false);
+    // A plan of one item named `name` in `list`; an initiative needs its horizon.
+    let plan = |id: &str, list: &str, name: &str| -> reeve_protocol::ApplyPlan {
+        let mut item = serde_json::json!({"name": name, "title": "T"});
+        if list == "initiatives" {
+            item["horizon"] = serde_json::json!("Now");
+        }
+        serde_json::from_value(serde_json::json!({"id": id, list: [item]})).unwrap()
+    };
+    let level = |list: &str| match list {
+        "initiatives" => "an initiative",
+        "epics" => "an epic",
+        "stories" => "a story",
+        other => panic!("{other}"),
+    };
+    // `plan_key`: "plan:<length of the id>:<id>:<name>".
+    for (id, name, key, first, second) in [
+        ("race-ie", "ie", "plan:7:race-ie:ie", "initiatives", "epics"),
+        ("race-ei", "ei", "plan:7:race-ei:ei", "epics", "initiatives"),
+        (
+            "race-is",
+            "is",
+            "plan:7:race-is:is",
+            "initiatives",
+            "stories",
+        ),
+        (
+            "race-si",
+            "si",
+            "plan:7:race-si:si",
+            "stories",
+            "initiatives",
+        ),
+        ("race-es", "es", "plan:7:race-es:es", "epics", "stories"),
+        ("race-se", "se", "plan:7:race-se:se", "stories", "epics"),
+    ] {
+        let case = format!("{first}, then {second}");
+        // The second apply starts once the first is seen queued on the lock, so it queues behind it.
+        let after_the_first = async {
+            {
+                let mut conn = pool.acquire().await.unwrap();
+                let mut seen = false;
+                for _ in 0..250 {
+                    if advisory_waiters(&mut conn, IDEMPOTENCY_LOCK_WAIT).await >= 1 {
+                        seen = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                assert!(
+                    seen,
+                    "{case}: the first apply never queued on the idempotency key's lock"
+                );
+            }
+            h.apply_plan(&erin, plan(id, second, name)).await
+        };
+        let (won, lost, waited) = while_both_wait_on(
+            &pool,
+            IDEMPOTENCY_LOCK,
+            Some(key),
+            IDEMPOTENCY_LOCK_WAIT,
+            h.apply_plan(&dan, plan(id, first, name)),
+            after_the_first,
+        )
+        .await;
+        assert!(
+            waited,
+            "{case}: the two applies never both waited on the idempotency key's lock"
+        );
+        let (initiatives, epics, stories): (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM initiatives WHERE idempotency_key = $1), \
+             (SELECT count(*) FROM epics WHERE idempotency_key = $1), \
+             (SELECT count(*) FROM stories WHERE idempotency_key = $1)",
+        )
+        .bind(key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            initiatives + epics + stories,
+            1,
+            "{case}: {initiatives} initiatives, {epics} epics and {stories} stories for one name"
+        );
+        let won = won.unwrap_or_else(|e| panic!("{case}: the first apply was refused: {e:?}"));
+        assert_eq!((won.items.len(), won.items[0].created), (1, true), "{case}");
+        let made = &won.items[0].key;
+        let Err(HandlerError::Validation(m)) = &lost else {
+            panic!("{case}: wanted the second apply refused, got {lost:?}")
+        };
+        let a_level = level(first);
+        assert_eq!(
+            m,
+            &format!(
+                "\"{name}\" is {a_level} ({made}), created at that level while this apply ran; a name keeps \
+                 its level. This apply stopped at \"{name}\": items written before it (initiatives, \
+                 then epics, then stories) may exist; this apply wrote nothing after it, and no decisions, \
+                 blockers or links. List \"{name}\" as {a_level}, or give it a new name, and apply the same id \
+                 again; what exists is reused."
+            ),
+            "{case}"
+        );
+        // The loser applied again as the message says: the same name at the winner's level answers the one item.
+        let again = h.apply_plan(&erin, plan(id, first, name)).await.unwrap();
+        assert_eq!(
+            (&again.items[0].key, again.items[0].created),
+            (made, false),
+            "{case}"
+        );
+    }
+}
+
+/// What does not take the lock. While a holder has the lock of a plan item's key, a second apply of the plan that
+/// made the item answers it (the same-level replay is answered before the lock, and writes nothing), and a single
+/// create under that very key at another level is not held up (a single create never takes the lock). Both are
+/// given five seconds and must not need the holder to let go. Catches: a replay that queues behind another apply's
+/// create, and the lock leaking into creates that are not a plan's. The single create's outcome, a second item
+/// for the plan's name at another level, is not wanted: it pins a known limit (the property covers applies of one
+/// plan id, not a single create that sends a plan's key by hand). GRA-984 makes single creates refuse a key with
+/// the `plan:` prefix; that story replaces this half of the test with the refusal.
+#[tokio::test]
+async fn a_replayed_plan_and_a_single_create_never_wait_on_the_idempotency_lock() {
+    use std::time::Duration;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(
+            serde_json::json!({"id": "once", "stories": [{"name": "s", "title": "S"}]}),
+        )
+        .unwrap()
+    };
+    let first = h.apply_plan(&dan, plan()).await.unwrap();
+    let key = "plan:4:once:s";
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query(IDEMPOTENCY_LOCK)
+        .bind(key)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let again = tokio::time::timeout(Duration::from_secs(5), h.apply_plan(&dan, plan()))
+        .await
+        .expect("a replay waited on the idempotency key's lock")
+        .unwrap();
+    assert_eq!(
+        (&again.items[0].key, again.items[0].created),
+        (&first.items[0].key, false)
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        h.create_epic(&dan, key, "An epic under a plan's key", None, "", None),
+    )
+    .await
+    .expect("a single create waited on the idempotency key's lock")
+    .unwrap();
+    // The known limit (GRA-984), read from the tables: the plan's name now has a story and an epic.
+    let (stories, epics): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM stories WHERE idempotency_key = $1), \
+         (SELECT count(*) FROM epics WHERE idempotency_key = $1)",
+    )
+    .bind(key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (stories, epics),
+        (1, 1),
+        "known limit, not wanted (GRA-984): a single create under a plan's key at another level is not stopped"
+    );
+    holder.rollback().await.unwrap();
 }

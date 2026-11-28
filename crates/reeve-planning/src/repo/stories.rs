@@ -111,13 +111,14 @@ impl StoryRepo for PgPlanningRepo {
         rank: Option<i32>,
         expected: i64,
         now: DateTime<Utc>,
-    ) -> Result<(), RepoError> {
+    ) -> Result<Story, RepoError> {
         // rank is written only when the caller supplied one: a content edit that read the story before a rerank must not
-        // restore the stale rank (re-ranks change neighbours' ranks without bumping their version).
-        let res = sqlx::query("UPDATE stories SET title=$2, kind=$3, epic_key=$4, description=$5, criteria=$6, owner=$7, labels=$8, rank=COALESCE($9, rank), version=version+1, updated_at=$10, external_ref=$12 WHERE key=$1 AND version=$11")
-            .bind(s.key().to_string()).bind(s.title()).bind(kind_str(s.kind())).bind(s.epic().map(|k| k.to_string())).bind(s.description()).bind(criteria_json(s.criteria())).bind(s.owner()).bind(s.labels().to_vec()).bind(rank).bind(now).bind(expected).bind(s.external_ref()).execute(&mut **tx).await?;
-        if res.rows_affected() == 1 {
-            return Ok(());
+        // restore the stale rank (re-ranks change neighbours' ranks without bumping their version). The row comes back
+        // from the statement that wrote it, so the answer's rank and version are the written ones.
+        let row = sqlx::query(&format!("UPDATE stories SET title=$2, kind=$3, epic_key=$4, description=$5, criteria=$6, owner=$7, labels=$8, rank=COALESCE($9, rank), version=version+1, updated_at=$10, external_ref=$12 WHERE key=$1 AND version=$11 RETURNING {STORY_COLS}"))
+            .bind(s.key().to_string()).bind(s.title()).bind(kind_str(s.kind())).bind(s.epic().map(|k| k.to_string())).bind(s.description()).bind(criteria_json(s.criteria())).bind(s.owner()).bind(s.labels().to_vec()).bind(rank).bind(now).bind(expected).bind(s.external_ref()).fetch_optional(&mut **tx).await?;
+        if let Some(row) = row {
+            return Ok(story_from(&row)?);
         }
         let current: Option<i64> = sqlx::query_scalar("SELECT version FROM stories WHERE key = $1")
             .bind(s.key().to_string())

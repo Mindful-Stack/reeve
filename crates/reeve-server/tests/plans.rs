@@ -1154,3 +1154,96 @@ async fn a_plan_holds_at_most_500_item_links_and_500_web_links() {
         (500, 500)
     );
 }
+
+/// A plan is how agents create initiatives, and it runs the month rule the API runs. A month that is not YYYY-MM
+/// fails the plan's check with the API's words after the initiative's name, before anything is written; a month
+/// in the shape, and none, apply. Catches: `reeve apply` storing a month the Now ranking then counts as none; a
+/// message that does not say which initiative; a refusal that repeats thousands of characters.
+#[tokio::test]
+async fn a_plan_with_a_malformed_target_month_writes_nothing_and_names_the_initiative() {
+    let h = harness().await;
+    let plan = |id: &str, month: serde_json::Value| {
+        json!({
+            "id": id,
+            "initiatives": [
+                {"name": "ok", "title": "Fine", "horizon": "Now"},
+                {"name": "q3", "title": "Dated", "horizon": "Now", "target_month": month}
+            ],
+            "epics": [{"name": "e", "title": "E", "initiative": "q3"}]
+        })
+    };
+    let (st, b) = post(&h, "/api/v1/plans", plan("m-bad", json!("soon"))).await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(b["code"], "validation");
+    assert_eq!(
+        b["message"],
+        "initiative \"q3\": target month must be YYYY-MM, for example 2027-03, not \"soon\""
+    );
+    assert_eq!(
+        (rows(&h, "initiatives").await, rows(&h, "epics").await),
+        (0, 0),
+        "the check runs before anything is written"
+    );
+
+    // A second refusal beside the month's: the joined message holds both, each after its initiative's name, and
+    // still nothing is written.
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        json!({
+            "id": "m-two",
+            "initiatives": [
+                {"name": "ok", "title": "", "horizon": "Now"},
+                {"name": "q3", "title": "Dated", "horizon": "Now", "target_month": "soon"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    assert_eq!(
+        b["message"],
+        "initiative \"ok\": title must be 1..=200 characters; initiative \"q3\": target month must be YYYY-MM, for example 2027-03, not \"soon\""
+    );
+    assert_eq!(
+        rows(&h, "initiatives").await,
+        0,
+        "two refusals write nothing either"
+    );
+
+    let (st, b) = post(
+        &h,
+        "/api/v1/plans",
+        plan("m-long", json!("x".repeat(5_000))),
+    )
+    .await;
+    assert_eq!(st, 400, "{b}");
+    let m = b["message"].as_str().unwrap();
+    assert_eq!(
+        m,
+        format!(
+            "initiative \"q3\": target month must be YYYY-MM, for example 2027-03, not \"{}[cut: 4800 more characters]\"",
+            "x".repeat(200)
+        )
+    );
+
+    let (st, b) = post(&h, "/api/v1/plans", plan("m-ok", json!("2027-03"))).await;
+    assert_eq!(st, 200, "{b}");
+    let q3 = b["value"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "q3")
+        .unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        get(&h, &format!("/api/v1/initiatives/{q3}")).await["target_month"],
+        "2027-03"
+    );
+    assert_eq!(
+        rows(&h, "initiatives").await,
+        2,
+        "the one without a month too"
+    );
+}
