@@ -2621,6 +2621,107 @@ mod tests {
         }
     }
 
+    /// The answer to `epic promise --clear` prints a key and its own words only, cleared or not: with every string of
+    /// the epic hostile, none reaches it.
+    #[test]
+    fn an_epics_cleared_promise_prints_no_stored_text() {
+        for cleared in [true, false] {
+            let c = EpicPromiseCleared {
+                cleared,
+                epic: full_epic(),
+            };
+            assert_no_stored_text(&c, &Paths::none(), epic_promise_cleared);
+        }
+    }
+
+    /// The parts other renderers are built from, each checked on its own so a new caller inherits a checked part:
+    /// the promise chips and lines, a sprint's promise row, an urgent mark's words and lines, and the relations block.
+    #[test]
+    fn every_part_renderer_keeps_stored_text_on_its_line() {
+        use crate::promise::{
+            chip_text, epic_chip_text, epic_line_text, line_text, sprint_row_text,
+        };
+        use crate::relations::{BlockerLine, relations};
+        use crate::urgency::{expiry, own_mark_text, urgent_lines};
+        for ((own, epic), promise_fields, _) in promise_shapes() {
+            let s = full_story(promised(own, epic));
+            let paths = story_paths(own, epic);
+            for via in [true, false] {
+                assert_no_stored_text(&s, &paths, |s| chip_text(s.promise.as_ref().unwrap(), via));
+            }
+            // `show`'s promise words name at least the recipients its line names.
+            let shown = assert_one_line(&s, &paths, |s| line_text(s.promise.as_ref().unwrap()));
+            let to: Vec<&str> = promise_fields
+                .into_iter()
+                .filter(|f| f.ends_with("/to"))
+                .collect();
+            assert_shown(&shown, &to);
+        }
+        let e = full_epic();
+        assert_no_stored_text(&e, &Paths::none(), |e| {
+            epic_chip_text(e.promise.as_ref().unwrap())
+        });
+        assert_shown(
+            &assert_one_line(&e, &Paths::none(), |e| {
+                epic_line_text(e.promise.as_ref().unwrap())
+            }),
+            &["/promise/fact/to", "/promise/fact/by"],
+        );
+        let row = full_view().promises.remove(0);
+        assert_eq!(
+            assert_one_line(
+                &row,
+                &Paths::none()
+                    .absent("/epic_key", "the story's own promise")
+                    .absent("/done_on", "an open promise is not done")
+                    .absent("/days", "an open promise counts no days"),
+                sprint_row_text,
+            ),
+            ["/to"]
+        );
+        let m = marked();
+        assert_no_stored_text(&m, &Paths::none(), |m| expiry(m, now()));
+        assert_shown(
+            &assert_one_line(&m, &Paths::none(), |m| own_mark_text(m, now())),
+            &["/by", "/reason"],
+        );
+        let fixture = (
+            "ABC-1".parse::<Key>().unwrap(),
+            Some(marked()),
+            vec![
+                ref_("ABC-1", ItemType::Story),
+                ref_("ABC-3", ItemType::Initiative),
+            ],
+        );
+        assert_shown(
+            &assert_one_line(&fixture, &Paths::none(), |(key, own, sources)| {
+                urgent_lines(own.as_ref(), sources, key, now()).join("\n")
+            }),
+            &["/1/by", "/1/reason"],
+        );
+        let block = (
+            vec![blocker()],
+            vec![item_link(
+                ItemLinkType::Follows,
+                ItemLinkDirection::Out,
+                "ABC-9",
+                ItemType::Story,
+                "Earlier",
+            )],
+        );
+        let shown = assert_one_line(&block, &blocker_paths().under("/0/*"), |(bs, ls)| {
+            let lines: Vec<BlockerLine<'_>> = bs
+                .iter()
+                .map(|b| BlockerLine {
+                    key: &b.key,
+                    detail: Some(b),
+                })
+                .collect();
+            relations(&lines, ls).unwrap_or_default()
+        });
+        assert_shown(&shown, &["/0/0/title", "/1/0/label", "/1/0/item/title"]);
+    }
+
     #[test]
     fn an_urgent_item_carries_a_bang_after_its_key_in_every_one_line_form() {
         let key: Key = "ABC-1".parse().unwrap();

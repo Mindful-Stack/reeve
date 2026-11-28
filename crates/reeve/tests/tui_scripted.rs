@@ -450,7 +450,8 @@ async fn an_epic_mark_elsewhere_refetches_and_marks_the_descendant() {
     );
 }
 
-/// How many characters `escaped_by_line` yields; a change to the copy below changes it.
+/// How many characters `escaped_by_line` yields; a change to the copy below changes it. `terminal.rs`'s
+/// `line_escapes_79_characters_as_the_tui_pins_copy_says` pins the same count on the original.
 const COUNT: usize = 79;
 
 /// What `terminal::line` escapes. This mirrors `escaped_in_line` in `crates/reeve/src/terminal.rs` (a private module,

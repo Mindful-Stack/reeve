@@ -165,13 +165,14 @@ jobs:
       - name: the update unit tests
         if: matrix.target == 'x86_64-unknown-linux-musl' || runner.os == 'Windows'
         run: cargo test --locked -p reeve --lib commands::update
-      # The print-site check walks src and compares paths by component, and terminal.rs's writers are tested against
-      # failing streams in process; both run where paths and streams differ from Linux's. Debug builds for the host;
-      # the x86_64 macOS leg runs on the same arm64 runner, so one macOS leg is enough.
-      - name: the print-site check and the terminal writers
+      # The print-site and renderer checks walk src and compare paths by component, and terminal.rs's writers are
+      # tested against failing streams in process; all run where paths and streams differ from Linux's. Debug builds
+      # for the host; the x86_64 macOS leg runs on the same arm64 runner, so one macOS leg is enough.
+      - name: the print-site and renderer checks and the terminal writers
         if: runner.os == 'Windows' || matrix.target == 'aarch64-apple-darwin'
         run: |
           cargo test --locked -p reeve --test print_sites
+          cargo test --locked -p reeve --test renderer_tests
           cargo test --locked -p reeve --lib terminal::
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         if: runner.os == 'Windows'

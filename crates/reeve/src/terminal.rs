@@ -209,6 +209,18 @@ mod tests {
         }
     }
 
+    /// How many characters `line` escapes: all 65 of Unicode `Cc`, the two separators and the twelve bidirectional
+    /// controls. `crates/reeve/tests/tui_scripted.rs` holds a copy of `escaped_in_line` (this module is private) and
+    /// pins the same count on it: a change to the rule fails here, and the copy must change with it.
+    #[test]
+    fn line_escapes_79_characters_as_the_tui_pins_copy_says() {
+        let escaped = (0..=0x10FFFF)
+            .filter_map(char::from_u32)
+            .filter(|&c| escaped_in_line(c))
+            .count();
+        assert_eq!(escaped, 79);
+    }
+
     /// Long text keeps its shape: its lines, its tabs and the marks a right-to-left sentence needs.
     #[test]
     fn block_keeps_line_breaks_tabs_and_direction_marks() {
