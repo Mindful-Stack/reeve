@@ -1583,7 +1583,7 @@ mod tests {
                 PromiseHolder::Epic
             },
             state: Some(PromiseState::Open),
-            due: None,
+            due: Some(PromiseDue::ThisSprint),
             days: None,
         }
     }
@@ -1604,7 +1604,7 @@ mod tests {
     }
 
     /// A story with every list holding an entry and every optional field set, but its resolution (it is not done) and
-    /// what `promise` leaves out: `story_paths` names those.
+    /// what `promise` leaves out: `story_paths` names those, from the shape `promise` was built in.
     fn full_story(promise: StoryPromiseDto) -> StoryDto {
         StoryDto {
             title: "Booking".into(),
@@ -1645,27 +1645,24 @@ mod tests {
         }
     }
 
-    /// What a story fixture in the shape of `full_story(p)` leaves empty, and its long text.
-    fn story_paths(p: &StoryPromiseDto) -> Paths {
+    /// What `full_story(promised(own, epic))` leaves empty, from the inputs that built it, so a fixture that loses a
+    /// field fails the fullness check. No long text: the description is long only to a renderer that prints it
+    /// (`story context`), which names it itself; to every other one it is one-line and must not be printed raw.
+    fn story_paths(own: bool, epic: bool) -> Paths {
         let mut paths = Paths::none()
-            .long(&["/description"])
             .absent("/resolution", "a story not done has no resolution")
-            .absent(
-                "/promise/due",
-                "the promise's period is a word the fixtures leave out",
-            )
             .absent("/promise/days", "an open promise counts no days");
-        if p.own.is_none() {
+        if !own {
             paths = paths.absent("/promise/own", "the epic's promise alone");
         }
-        if p.epic.is_none() {
+        if !epic {
             paths = paths.absent("/promise/epic", "the story's own promise alone");
         }
         paths
     }
 
     fn blocker_paths() -> Paths {
-        story_paths(&promised(true, false))
+        story_paths(true, false)
     }
 
     /// A sprint goal with every optional field set.
@@ -1706,20 +1703,24 @@ mod tests {
 
     /// The three promise shapes, each with the recipient and setter fields its words print in `show`, and those the
     /// promise answer prints.
-    fn promise_shapes() -> Vec<(StoryPromiseDto, Vec<&'static str>, Vec<&'static str>)> {
+    /// A promise shape as `promised`'s inputs (own, epic), the fields `show` prints and those the answer prints.
+    type PromiseShape = ((bool, bool), Vec<&'static str>, Vec<&'static str>);
+
+    /// Each shape is given as `promised`'s inputs (own, epic).
+    fn promise_shapes() -> Vec<PromiseShape> {
         vec![
             (
-                promised(true, true),
+                (true, true),
                 vec!["/promise/own/to", "/promise/epic/fact/to"],
                 vec!["/promise/own/to"],
             ),
             (
-                promised(true, false),
+                (true, false),
                 vec!["/promise/own/to", "/promise/own/by"],
                 vec!["/promise/own/to"],
             ),
             (
-                promised(false, true),
+                (false, true),
                 vec!["/promise/epic/fact/to", "/promise/epic/fact/by"],
                 vec!["/promise/epic/fact/by", "/promise/epic/fact/to"],
             ),
@@ -1730,9 +1731,9 @@ mod tests {
     /// `story context`'s form with the blocker itself.
     #[test]
     fn a_storys_fields_stay_on_their_lines() {
-        for (p, promise_fields, answer_fields) in promise_shapes() {
-            let paths = story_paths(&p);
-            let s = full_story(p);
+        for ((own, epic), promise_fields, answer_fields) in promise_shapes() {
+            let paths = story_paths(own, epic);
+            let s = full_story(promised(own, epic));
             let shown = assert_one_line(&s, &paths, story);
             assert_shown(
                 &shown,
@@ -1893,17 +1894,18 @@ mod tests {
         }
     }
 
-    /// What a decision fixture (`full_decision`) leaves empty.
-    fn decision_paths(d: &RequiredDecisionDto) -> Paths {
+    /// What `full_decision(check, closed)` leaves empty, from the inputs that built it, so a fixture that loses a field
+    /// fails the fullness check.
+    fn decision_paths(check: &CheckResult, closed: Option<ClosureKind>) -> Paths {
         let mut paths = Paths::none();
         if let CheckResult::NotAccepted {
             superseded_by: None,
             ..
-        } = d.check
+        } = check
         {
             paths = paths.absent("/check/superseded_by", "a proposed record has no successor");
         }
-        if d.closed.as_ref().is_some_and(|c| c.kind.is_none()) {
+        if closed.is_none() {
             paths = paths.absent("/closed/kind", "a server that does not say how it closed");
         }
         paths
@@ -1953,8 +1955,8 @@ mod tests {
             ]
             .map(|k| (c.clone(), k))
         }) {
+            let paths = decision_paths(&check, closed);
             let d = full_decision(check, closed);
-            let paths = decision_paths(&d);
             let fields = [
                 "/title",
                 "/decider",
@@ -2042,7 +2044,7 @@ mod tests {
     fn an_initiatives_and_an_epics_fields_stay_on_their_lines() {
         let i = full_initiative();
         assert_shown(
-            &assert_one_line(&i, &initiative_paths(), initiative),
+            &assert_one_line(&i, &Paths::none(), initiative),
             &[
                 "/title",
                 "/horizon",
@@ -2052,7 +2054,7 @@ mod tests {
             ],
         );
         assert_shown(
-            &assert_one_line(&i, &initiative_paths(), |i| initiative_show(i, now())),
+            &assert_one_line(&i, &Paths::none(), |i| initiative_show(i, now())),
             &[
                 "/urgent_mark/reason",
                 "/links/0/label",
@@ -2062,11 +2064,11 @@ mod tests {
         );
         let e = full_epic();
         assert_shown(
-            &assert_one_line(&e, &epic_paths(), epic),
+            &assert_one_line(&e, &Paths::none(), epic),
             &["/title", "/external_ref"],
         );
         assert_shown(
-            &assert_one_line(&e, &epic_paths(), |e| epic_show(e, now())),
+            &assert_one_line(&e, &Paths::none(), |e| epic_show(e, now())),
             &[
                 "/urgent_mark/by",
                 "/promise/fact/to",
@@ -2075,7 +2077,7 @@ mod tests {
             ],
         );
         assert_shown(
-            &assert_one_line(&e, &epic_paths(), epic_promise_answer),
+            &assert_one_line(&e, &Paths::none(), epic_promise_answer),
             &["/promise/fact/to"],
         );
         let fs = vec![
@@ -2104,16 +2106,6 @@ mod tests {
                 "/0/mark/reason",
             ],
         );
-    }
-
-    /// What an initiative fixture (`full_initiative`) holds as long text.
-    fn initiative_paths() -> Paths {
-        Paths::none().long(&["/brief"])
-    }
-
-    /// What an epic fixture (`full_epic`) holds as long text.
-    fn epic_paths() -> Paths {
-        Paths::none().long(&["/brief"])
     }
 
     /// What a comment fixture (`full_comment`) leaves empty, and its long text.
@@ -2194,15 +2186,18 @@ mod tests {
                 }),
             }],
         };
-        let paths = story_paths(&promised(true, false))
+        // The long text this renderer prints: the story's description, the two briefs and the comment bodies. The
+        // blockers' descriptions and the goals' notes are not printed, so they stay one-line.
+        let paths = story_paths(true, false)
             .under("/story")
-            .and(epic_paths().under("/epic"))
-            .and(initiative_paths().under("/initiative"))
-            .and(decision_paths(&ctx.required_decisions[0]).under("/required_decisions/*"))
+            .and(
+                decision_paths(&checks()[1].0, Some(ClosureKind::Decided))
+                    .under("/required_decisions/*"),
+            )
             .and(blocker_paths().under("/blockers/*"))
             .and(comment_paths().under("/comments/*"))
             .and(reasons_paths().under("/readiness/reasons"))
-            .long(&["/goals/*/goal/notes"]);
+            .long(&["/story/description", "/epic/brief", "/initiative/brief"]);
         let shown = assert_one_line(&ctx, &paths, |c| context_markdown(c, now()));
         assert_shown(
             &shown,
@@ -2215,6 +2210,9 @@ mod tests {
                 "/required_decisions/0/title",
                 "/required_decisions/0/decider",
                 "/required_decisions/0/record/path",
+                "/required_decisions/0/record/repo",
+                "/required_decisions/0/record/record_id",
+                "/required_decisions/0/check/status",
                 "/required_decisions/0/pr_url",
                 "/comments/0/author",
                 "/readiness/reasons/0/title",
@@ -2394,7 +2392,7 @@ mod tests {
             };
             assert_no_stored_text(
                 &c,
-                &story_paths(&promised(true, epic)).under("/story"),
+                &story_paths(true, epic).under("/story"),
                 story_promise_cleared,
             );
         }
