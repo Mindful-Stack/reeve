@@ -2,10 +2,12 @@
 //!
 //! With `REEVE_TEST_DATABASE_URL` set (scripts/test.sh starts one PostgreSQL 16 per run and exports it), every call
 //! creates a database of its own, cloned from a template that the migration set's first caller builds by running the
-//! committed migrator; with `REEVE_TEST_DROP_DATABASES=1` the database is dropped when the test's `TestDb` is. Unset, every call starts a PostgreSQL 16 container of its own, as the tests always did. Nothing
-//! is ever skipped: an unreachable server fails the test.
+//! committed migrator; with `REEVE_TEST_DROP_DATABASES=1` as well, the database is dropped when the test's `TestDb`
+//! is. With `REEVE_TEST_DATABASE_URL` unset, every call starts a PostgreSQL 16 container of its own, as the tests
+//! always did. Nothing is ever skipped: an unreachable server fails the test.
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, Executor, PgConnection, PgPool, migrate::Migrator};
+use std::io::Write;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use testcontainers_modules::{
@@ -102,9 +104,9 @@ pub struct TestDb {
 // That TestDb has a Drop also makes moving a field out of it a compile error (E0509): `database(&m).await.pool` would
 // drop the database, or the fallback container, under a live pool. Callers keep the TestDb bound and clone its pool.
 impl Drop for TestDb {
-    /// Drops the owned databases, if any, blocking until the server has done it: nextest runs each test in a process of its
-    /// own, which may exit right after. A failure is reported and never panics (this may run while a failed test
-    /// unwinds); the database then stays until the run's server is discarded.
+    /// Drops the owned databases, if any, blocking until the server has done it or `DROP_TIMEOUT` has passed: nextest
+    /// runs each test in a process of its own, which may exit right after. A failure is reported and never panics
+    /// (this may run while a failed test unwinds); the database then stays until the run's server is discarded.
     fn drop(&mut self) {
         let names = std::mem::take(&mut *self.owned.lock().unwrap_or_else(|e| e.into_inner()));
         if names.is_empty() {
@@ -112,33 +114,65 @@ impl Drop for TestDb {
         }
         let admin = self.admin.clone();
         // A thread with a runtime of its own: `drop` is not async, and the caller's runtime may be this very thread.
-        let dropped = std::thread::spawn(
-            move || -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(async {
-                        let mut conn = PgConnection::connect(&admin).await?;
-                        for name in names {
-                            conn.execute(
-                                format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str(),
-                            )
-                            .await?;
-                        }
-                        Ok(())
-                    })
-            },
-        )
-        .join();
-        match dropped {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("reeve-testdb: {} was not dropped: {e}", self.name),
-            Err(_) => eprintln!(
-                "reeve-testdb: {} was not dropped: the dropping thread panicked",
-                self.name
-            ),
-        }
+        let failed = std::thread::Builder::new()
+            .spawn(move || drop_databases(&admin, &names))
+            .map_err(|e| format!("no thread to drop it on: {e}"))
+            .and_then(|t| {
+                t.join()
+                    .map_err(|_| "the dropping thread panicked".to_string())
+            });
+        let why = match failed {
+            Ok(failed) if failed.is_empty() => return,
+            Ok(failed) => failed.join("; "),
+            Err(e) => e,
+        };
+        // Not eprintln!, which panics when stderr is closed.
+        let _ = writeln!(
+            std::io::stderr(),
+            "reeve-testdb: {} was not dropped: {why}",
+            self.name
+        );
     }
+}
+
+/// How long a `TestDb`'s drop waits for the server to drop its databases: a server that stopped answering must not
+/// hold the test until the runner's own timeout.
+const DROP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Drops `names` from the server at `admin`, each whatever became of the one before, within `DROP_TIMEOUT` in all.
+/// Returns what failed, one message each; never panics.
+fn drop_databases(admin: &str, names: &[String]) -> Vec<String> {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => return vec![format!("no runtime to drop it on: {e}")],
+    };
+    runtime.block_on(async {
+        let dropping = async {
+            let mut conn = match PgConnection::connect(admin).await {
+                Ok(conn) => conn,
+                Err(e) => return vec![format!("connecting to the server: {e}")],
+            };
+            let mut failed = Vec::new();
+            for name in names {
+                let sql = format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)");
+                if let Err(e) = conn.execute(sql.as_str()).await {
+                    failed.push(format!("{name}: {e}"));
+                }
+            }
+            failed
+        };
+        tokio::time::timeout(DROP_TIMEOUT, dropping)
+            .await
+            .unwrap_or_else(|_| {
+                vec![format!(
+                    "the server did not finish within {} s",
+                    DROP_TIMEOUT.as_secs()
+                )]
+            })
+    })
 }
 
 impl TestDb {
@@ -475,6 +509,40 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(left, 2);
+    }
+
+    #[test]
+    fn a_drop_that_cannot_reach_the_server_reports_it_and_does_not_panic() {
+        let failed = drop_databases(
+            "postgres://postgres:postgres@127.0.0.1:1/postgres",
+            &["reeve_test_a".to_string(), "reeve_test_a_other".to_string()],
+        );
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(
+            failed[0].starts_with("connecting to the server: "),
+            "{failed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_database_that_cannot_be_dropped_does_not_stop_the_next_one() {
+        let (_c, url) = server().await;
+        let mut admin = PgConnection::connect(&url).await.unwrap();
+        admin.execute("CREATE DATABASE reeve_test_b").await.unwrap();
+        // template1 is a template, which DROP DATABASE refuses.
+        let names = ["template1".to_string(), "reeve_test_b".to_string()];
+        let admin_url = url.clone();
+        let failed = tokio::task::spawn_blocking(move || drop_databases(&admin_url, &names))
+            .await
+            .unwrap();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].starts_with("template1: "), "{failed:?}");
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_database WHERE datname = 'reeve_test_b'")
+                .fetch_one(&mut admin)
+                .await
+                .unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]

@@ -6,8 +6,9 @@
 # without, the suite: the workspace with the static provider, the doc tests,
 # and config_no_static without it.
 # The server's data directory is kept in memory (a tmpfs), not on a Docker volume: every test's database stays until
-# the run ends, so a full run writes about 7 GB, which is slow on an encrypted or copy-on-write disk. A machine
-# without that much free memory has two ways out: REEVE_TEST_DROP_DATABASES=1 drops each test's database when the
+# the run ends, so a full run writes about 7 GB, which is slow on an encrypted or copy-on-write disk. A tmpfs holds
+# at most half the machine's memory, and every run going at the same time holds its own: a machine with 16 GB or
+# less, where PostgreSQL would fail mid-run with "No space left on device", has two ways out: REEVE_TEST_DROP_DATABASES=1 drops each test's database when the
 # test ends (well under 1 GB, a slower run; crates/reeve-testdb reads it), and REEVE_TEST_PG_TMPFS=0 puts the data
 # directory back on a Docker volume.
 set -euo pipefail
