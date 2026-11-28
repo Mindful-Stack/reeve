@@ -13285,7 +13285,9 @@ async fn a_story_dto_as_written_keeps_the_written_story_and_reads_the_rest() {
 }
 
 /// The same for an epic: what the `Epic` carries (title, initiative, version, external reference) is the written
-/// one; its web links are read from the store. Catches an answer that re-reads the epic's row.
+/// one; its urgent mark and its promise (on the epic's row but in no aggregate, set after the edit) and its web
+/// links are read from the store. Catches an answer that re-reads the epic's row, and one that drops what only a
+/// read adds.
 #[tokio::test]
 async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
     let (_c, pool) = common::pg().await;
@@ -13333,6 +13335,19 @@ async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
             .await
             .unwrap()
     );
+    // A mark and a promise raise no version: both are written after the edit and only a read can add them.
+    h.mark_urgent(&dan, ItemType::Epic, e.key(), None)
+        .await
+        .unwrap();
+    let on = (now + chrono::Duration::days(30)).date_naive();
+    h.set_promise(
+        &dan,
+        ItemType::Epic,
+        e.key(),
+        promise_body(Some(on), None, None),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         h.epic_dto(e.key(), now).await.unwrap().title,
         "Theirs",
@@ -13351,6 +13366,15 @@ async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
         ("Mine", 2, Some(mine.key()), "", None),
         "what the epic carries is the written one"
     );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "on the row, in no aggregate: read from the store"
+    );
+    assert_eq!(
+        dto.promise.as_ref().map(|p| p.fact.on),
+        Some(on),
+        "on the row, in no aggregate: read from the store"
+    );
     assert_eq!(
         dto.web_links.as_ref().map(|w| w.len()),
         Some(1),
@@ -13359,8 +13383,9 @@ async fn an_epic_dto_as_written_keeps_the_written_epic_and_reads_the_rest() {
     assert_eq!(dto.links, Some(vec![]));
 }
 
-/// The same for an initiative: what the `Initiative` carries is the written one; its progress and its web links are
-/// read from the store. Catches an answer that re-reads the initiative's row, and one that loses the progress.
+/// The same for an initiative: what the `Initiative` carries is the written one; its urgent mark (on its row but in
+/// no aggregate, set after the edit; an initiative has no promise), its progress and its web links are read from the
+/// store. Catches an answer that re-reads the initiative's row, and one that loses the mark or the progress.
 #[tokio::test]
 async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the_rest() {
     let (_c, pool) = common::pg().await;
@@ -13422,6 +13447,9 @@ async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the
             .await
             .unwrap()
     );
+    h.mark_urgent(&dan, ItemType::Initiative, i.key(), None)
+        .await
+        .unwrap();
     assert_eq!(
         h.initiative_dto(i.key(), now).await.unwrap().title,
         "Theirs",
@@ -13439,6 +13467,10 @@ async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the
         ),
         ("Mine", 2, "Now", Some("2027-03"), None),
         "what the initiative carries is the written one"
+    );
+    assert!(
+        dto.urgent_mark.is_some(),
+        "on the row, in no aggregate: read from the store"
     );
     assert_eq!(dto.progress, Some(0.0), "other tables: read from the store");
     assert_eq!(
