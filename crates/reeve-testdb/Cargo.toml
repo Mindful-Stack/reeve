@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 sqlx.workspace = true
-tokio = { workspace = true, features = ["time", "sync"] } # the clone backoff sleeps; a test's barrier
+tokio = { workspace = true, features = ["time", "sync", "rt"] } # the clone backoff sleeps; a test's barrier; the runtime that drops a test's database
 testcontainers-modules.workspace = true
 sha2.workspace = true
 hex.workspace = true
