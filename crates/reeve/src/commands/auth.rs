@@ -142,8 +142,7 @@ pub async fn run(a: Auth, json: bool) -> anyhow::Result<i32> {
                     &serde_json::json!({"outcome":"ok","value":{"path": path}}).to_string(),
                 )
             } else {
-                crate::terminal::out(&format!("saved to {}", path.display()));
-                Ok(())
+                crate::terminal::out(&format!("saved to {}", path.display()))
             };
             Ok(crate::terminal::status(written, 0))
         }
@@ -301,8 +300,7 @@ async fn login(url: Option<String>, no_browser: bool, json: bool) -> anyhow::Res
                 .to_string(),
         )
     } else {
-        crate::terminal::out(&signed_in(&me, &crate::config::config_path()?));
-        Ok(())
+        crate::terminal::out(&signed_in(&me, &crate::config::config_path()?))
     };
     Ok(crate::terminal::status(written, 0))
 }

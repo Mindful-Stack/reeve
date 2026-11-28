@@ -135,8 +135,7 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
     let written = if json {
         crate::terminal::exact(&serde_json::json!({"outcome": "ok", "value": report}).to_string())
     } else {
-        crate::terminal::out(&crate::render::import_report(&report));
-        Ok(())
+        crate::terminal::out(&crate::render::import_report(&report))
     };
     Ok(crate::terminal::status(written, code))
 }

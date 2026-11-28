@@ -296,8 +296,7 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                 }
                 crate::terminal::exact(&out.to_string())
             } else {
-                crate::terminal::out(&crate::render::decision(&value));
-                Ok(())
+                crate::terminal::out(&crate::render::decision(&value))
             };
             // 0 only when the check stored its result or held it for the scheduled run, and the decision shown is current.
             let code = if refresh_error.is_none()
@@ -382,8 +381,7 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             } else {
                 crate::terminal::out(&format!(
                     "checked {checked} decision(s), {held} held, {skipped} skipped, {unreadable} unreadable, {failed} failed"
-                ));
-                Ok(())
+                ))
             };
             crate::terminal::status(written, if bad == 0 { 0 } else { 1 })
         }

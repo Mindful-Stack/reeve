@@ -340,8 +340,8 @@ fn cannot_replace(exe: &Path, base: &url::Url, e: &InstallError) -> Failure {
 }
 
 /// Its lines go through `terminal`. Once the binary is replaced, nothing written can change the status: a failed write
-/// of the answer is ignored and the update exits 0. Before that, an envelope that cannot be written (other than to a
-/// closed pipe) is exit status 1 with the error said.
+/// of the answer is ignored and the update exits 0. Before that, an answer that cannot be written to standard output
+/// (other than to a closed pipe), text or envelope, is exit status 1 with the error said.
 pub async fn run(_u: Update, json: bool) -> anyhow::Result<i32> {
     match attempt(json).await {
         Ok(code) => Ok(code),
@@ -412,8 +412,7 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
                     .to_string(),
             )
         } else {
-            crate::terminal::out(&format!("reeve is up to date (build {})", short(&offered)));
-            Ok(())
+            crate::terminal::out(&format!("reeve is up to date (build {})", short(&offered)))
         };
         return Ok(crate::terminal::status(written, 0));
     }
@@ -451,19 +450,19 @@ async fn attempt(json: bool) -> Result<i32, Failure> {
     let from = current
         .as_deref()
         .map_or("dev build".to_string(), |c| format!("build {}", short(c)));
-    // The binary is replaced: the update succeeded, and no stream may turn that into a failure. The envelope's write
-    // result is ignored on purpose (the one exact write whose failure is not a status).
-    if json {
-        let _ = crate::terminal::exact(
+    // The binary is replaced: the update succeeded, and no stream may turn that into a failure. The answer's write
+    // result is ignored on purpose (the one write to standard output whose failure is not a status, kb/ADR-0030 R6).
+    let _ = if json {
+        crate::terminal::exact(
             &serde_json::json!({"outcome":"ok","value":{"from":current,"to":offered,"updated":true}})
                 .to_string(),
-        );
+        )
     } else {
         crate::terminal::out(&format!(
             "replaced reeve {from} with the server's {}",
             short(&offered)
-        ));
-    }
+        ))
+    };
     Ok(0)
 }
 

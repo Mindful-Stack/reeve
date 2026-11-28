@@ -6412,3 +6412,153 @@ fn a_title_cannot_start_a_line_of_its_own() {
     assert!(lines > 0, "the reference printed nothing");
     assert_eq!(stdout.lines().count(), lines, "{stdout:?}");
 }
+
+/// Runs `reeve` against `url` with standard output going to `stdout` (a file or a pipe, never captured) and standard
+/// error captured; killed if it runs past a minute.
+#[cfg(target_os = "linux")]
+fn reeve_to(url: &str, args: &[&str], stdout: std::process::Stdio) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"));
+    for v in isolation::PROXY_VARS {
+        cmd.env_remove(v);
+    }
+    let mut child = cmd
+        .env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("reeve {args:?} ran past a minute");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().unwrap()
+}
+
+/// Standard output on a full disk (`/dev/full` fails every write with ENOSPC).
+#[cfg(target_os = "linux")]
+fn full_disk() -> std::process::Stdio {
+    std::fs::File::create("/dev/full").unwrap().into()
+}
+
+/// Standard output a pipe whose reader went away before anything was written (`reeve story ls | head -0`).
+#[cfg(target_os = "linux")]
+fn closed_pipe() -> std::process::Stdio {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    writer.into()
+}
+
+#[cfg(target_os = "linux")]
+fn one_story_row() -> serde_json::Value {
+    ok(serde_json::json!([{
+        "story": urgent_story(vec![]),
+        "readiness": {"ready": true, "reasons": []}
+    }]))
+}
+
+#[cfg(target_os = "linux")]
+fn refused_interactive_only() -> serde_json::Value {
+    serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false})
+}
+
+#[cfg(target_os = "linux")]
+fn assert_said_write_failed(out: &std::process::Output) {
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("error: writing standard output: "), "{err}");
+}
+
+/// Text output redirected to a full disk is a failure (exit status 1, said on standard error), not a silent 0 with
+/// nothing written: `reeve story ls > stories.txt` must not look like it worked.
+#[cfg(target_os = "linux")]
+#[test]
+fn text_output_to_a_full_disk_exits_1() {
+    let (url, server) = serve(vec![("GET /api/v1/stories", 200, one_story_row())]);
+    let out = reeve_to(&url, &["story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// An envelope that cannot be written is exit status 1, whatever the outcome it carried: a refusal whose envelope never
+/// reached the reader is not a delivered refusal (2).
+#[cfg(target_os = "linux")]
+#[test]
+fn an_envelope_to_a_full_disk_exits_1_even_for_a_refusal() {
+    let (url, server) = serve(vec![("GET /api/v1/stories", 200, one_story_row())]);
+    let out = reeve_to(&url, &["--json", "story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories",
+        403,
+        refused_interactive_only(),
+    )]);
+    let out = reeve_to(&url, &["--json", "story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// `reeve export > backup.json` on a full disk cannot exit 0 with half a document behind it.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_export_to_a_full_disk_exits_1() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/export",
+        200,
+        ok(serde_json::json!({"stories": [], "activity": []})),
+    )]);
+    let out = reeve_to(&url, &["export"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// A reader that went away (`| head -1`) is not this command's failure: the command exits with its own status, text or
+/// `--json`, success or refusal, and says nothing about the write.
+#[cfg(target_os = "linux")]
+#[test]
+fn output_to_a_closed_pipe_keeps_the_commands_own_status() {
+    let export = ok(serde_json::json!({"stories": [], "activity": []}));
+    for (args, path, status, body, code) in [
+        (
+            &["story", "ls"][..],
+            "GET /api/v1/stories",
+            200,
+            one_story_row(),
+            0,
+        ),
+        (
+            &["--json", "story", "ls"][..],
+            "GET /api/v1/stories",
+            200,
+            one_story_row(),
+            0,
+        ),
+        (
+            &["--json", "story", "ls"][..],
+            "GET /api/v1/stories",
+            403,
+            refused_interactive_only(),
+            2,
+        ),
+        (&["export"][..], "GET /api/v1/export", 200, export, 0),
+    ] {
+        let (url, server) = serve(vec![(path, status, body)]);
+        let out = reeve_to(&url, args, closed_pipe());
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?} {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("writing standard output"), "{args:?} {err}");
+    }
+}
