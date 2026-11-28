@@ -225,7 +225,11 @@ fn refuse(json: bool, code: ErrorCode, message: &str) -> i32 {
     } else {
         Ok(())
     };
-    crate::terminal::err(&format!("error: {message}"));
+    // The server's message is long text: its further lines continue two spaces in, clear of a line's start.
+    crate::terminal::err(&format!(
+        "error: {}",
+        crate::render::continued(message, "  ")
+    ));
     crate::terminal::status(written, 1)
 }
 

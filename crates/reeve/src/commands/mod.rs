@@ -355,7 +355,11 @@ pub fn finish<T: Serialize>(out: Outcome<T>, json: bool, render: impl Fn(&T) -> 
                 }
                 terminal::exact(&v.to_string())
             } else {
-                terminal::err(&format!("error ({code:?}): {message}"));
+                // The message is long text: its further lines continue two spaces in, clear of a line's start.
+                terminal::err(&format!(
+                    "error ({code:?}): {}",
+                    crate::render::continued(message, "  ")
+                ));
                 if let (ErrorCode::Conflict, Some(c)) = (code, current)
                     && *c >= 0
                 {

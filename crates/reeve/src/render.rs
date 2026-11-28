@@ -690,8 +690,9 @@ fn comment_continued(c: &CommentDto, continuation: &str) -> String {
 /// after `indent`, which the caller sets right of the column its headers start at, so no line can pass for a header.
 /// The text is normalised with `block` first, so a lone `\r` is a line break here and never one the guard makes after
 /// the layout. An empty line stays empty (no trailing spaces), and the text's trailing line breaks are not printed,
-/// so what follows starts on the next line whether or not the text ended in one.
-fn continued(text: &str, indent: &str) -> String {
+/// so what follows starts on the next line whether or not the text ended in one. A server's error message is laid out
+/// with it too (`commands::finish`, the decision commands, `auth login`).
+pub(crate) fn continued(text: &str, indent: &str) -> String {
     let text = block(text);
     let mut lines = text.trim_end_matches('\n').split('\n');
     let mut out = lines.next().unwrap_or_default().to_string();

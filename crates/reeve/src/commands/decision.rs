@@ -262,6 +262,7 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                     outcome: "repo_not_configured",
                     check: None,
                     error: None,
+                    shown: None,
                     refused: None,
                 }
             };
@@ -270,21 +271,26 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             // decision read back after the check, as before; when that read fails (a transport error or an error
             // envelope), it falls back to the link's own response and `refresh_error` says why, as the CLI words it (a
             // refusal's reasons through `render::reasons`, titles escaped).
-            let (value, refresh_error) = match c
+            // Text mode shows that sentence as `shown` (see `CheckEntry::shown`).
+            let (value, refresh_error, shown) = match c
                 .get::<RequiredDecisionDto>(&format!("/decisions/{id}"))
                 .await
             {
-                Ok(Outcome::Ok(now)) => (now, None),
-                Ok(Outcome::Refused { reasons: rs, .. }) => (
-                    d.clone(),
-                    Some(format!("refused:\n{}", crate::render::reasons(&rs))),
-                ),
-                Ok(Outcome::Error { code, message, .. }) => {
-                    (d.clone(), Some(format!("{code:?} {message}")))
+                Ok(Outcome::Ok(now)) => (now, None, None),
+                Ok(Outcome::Refused { reasons: rs, .. }) => {
+                    let e = format!("refused:\n{}", crate::render::reasons(&rs));
+                    (d.clone(), Some(e.clone()), Some(e))
                 }
-                Err(e) => (d.clone(), Some(format!("{e:#}"))),
+                Ok(Outcome::Error { code, message, .. }) => {
+                    let (e, shown) = server_error(code, &message);
+                    (d.clone(), Some(e), Some(shown))
+                }
+                Err(e) => {
+                    let (e, shown) = decode_error(&e);
+                    (d.clone(), Some(e), Some(shown))
+                }
             };
-            if let Some(e) = &refresh_error {
+            if let Some(e) = &shown {
                 crate::terminal::err(&format!(
                     "decision {id}: linked, but it could not be read back after the check: {e}"
                 ));
@@ -470,7 +476,7 @@ const HELD: &str =
 
 /// The stderr line for an entry that did not simply store: its error, or the held line.
 fn report(id: i64, e: &CheckEntry) {
-    if let Some(err) = &e.error {
+    if let Some(err) = e.shown.as_ref().or(e.error.as_ref()) {
         crate::terminal::err(&format!("decision {id}: {err}"));
     }
     if e.outcome == "held" {
@@ -512,6 +518,10 @@ struct CheckEntry {
     /// `immediate_check.error` (`decision link`), so a value it names may appear escaped there.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// `error` as text mode prints it on standard error, when that differs: the server's message laid out by
+    /// `render::continued`, or a transport or decoding error through `terminal::line`.
+    #[serde(skip)]
+    shown: Option<String>,
     /// The code of the server's own refusal of the post, if that is why the entry failed.
     #[serde(skip)]
     refused: Option<ErrorCode>,
@@ -620,6 +630,7 @@ async fn check_one(
         outcome: "unreadable",
         check: None,
         error: Some(format!("{e}; nothing recorded")),
+        shown: None,
         refused: None,
     };
     if let Err(e) = valid_repo_name(t.repo) {
@@ -671,28 +682,53 @@ fn posted_entry(
         }) => Some(*code),
         _ => None,
     };
-    let (outcome, error) = match posted {
-        Ok(Outcome::Ok(_)) => ("stored", None),
+    let (outcome, error, shown) = match posted {
+        Ok(Outcome::Ok(_)) => ("stored", None, None),
         Ok(Outcome::Refused { reasons: rs, .. }) => (
             "failed",
             Some(format!("refused:\n{}", crate::render::reasons(&rs))),
+            None,
         ),
         // Property: held is exactly a forbidden answer to the satisfying result; anything else refused is failed.
         Ok(Outcome::Error {
             code: ErrorCode::Forbidden,
             envelope: true,
             ..
-        }) if matches!(check, CheckResult::Accepted { .. }) => ("held", None),
-        Ok(Outcome::Error { code, message, .. }) => ("failed", Some(format!("{code:?} {message}"))),
-        Err(e) => ("failed", Some(format!("{e:#}"))),
+        }) if matches!(check, CheckResult::Accepted { .. }) => ("held", None, None),
+        Ok(Outcome::Error { code, message, .. }) => {
+            let (e, shown) = server_error(code, &message);
+            ("failed", Some(e), Some(shown))
+        }
+        Err(e) => {
+            let (e, shown) = decode_error(&e);
+            ("failed", Some(e), Some(shown))
+        }
     };
     CheckEntry {
         id,
         outcome,
         check: Some(check),
         error,
+        shown,
         refused,
     }
+}
+
+/// A server's error envelope as an entry's error says it (`Internal boom`), and as standard error shows it: the message
+/// is long text, so its further lines continue two spaces in, clear of the `decision N:` lines' start.
+fn server_error(code: ErrorCode, message: &str) -> (String, String) {
+    (
+        format!("{code:?} {message}"),
+        format!("{code:?} {}", crate::render::continued(message, "  ")),
+    )
+}
+
+/// A transport or decoding error as an entry's error says it, and as standard error shows it: through
+/// `terminal::line`, on one line, since a decoding error quotes the server's value (an enum word it does not know).
+fn decode_error(e: &anyhow::Error) -> (String, String) {
+    let e = format!("{e:#}");
+    let shown = crate::terminal::line(&e).into_owned();
+    (e, shown)
 }
 
 /// A post the server refused because the decision moved on after the run listed it is `skipped`: a 409 (stale) when
@@ -724,10 +760,9 @@ async fn skip_if_moved_on(c: &Client, listed_version: i64, mut e: CheckEntry) ->
         return e;
     };
     e.outcome = "skipped";
-    e.error = Some(format!(
-        "{}; skipped: {why} during the run, so the next run checks it",
-        e.error.unwrap_or_default()
-    ));
+    let skipped = format!("; skipped: {why} during the run, so the next run checks it");
+    e.shown = e.shown.map(|s| s + &skipped);
+    e.error = Some(e.error.unwrap_or_default() + &skipped);
     e
 }
 

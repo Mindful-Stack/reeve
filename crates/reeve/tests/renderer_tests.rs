@@ -37,6 +37,11 @@ const EXEMPT: &[(&str, &str)] = &[
         "joins text its callers already rendered; their hostile tests cover what it prints",
     ),
     (
+        "continued",
+        "lays out one long text given as a string, not a DTO; `continued_lays_long_text_out_under_its_header` \
+         pins it, and its renderers' hostile tests and `a_servers_error_message_continues_indented` cover its callers",
+    ),
+    (
         "import_report",
         "its Report is the CLI's own type, not a DTO the hostile helper can deserialise; \
          its test `a_jira_value_cannot_start_a_row_of_its_own` in commands/import.rs is hand-rolled",

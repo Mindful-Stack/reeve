@@ -2414,6 +2414,239 @@ fn an_undecodable_answer_names_the_servers_value_on_one_line() {
     }
 }
 
+/// A line the server's text tries to pass for a line of the CLI's own output.
+const STORED: &str = "\ndecision 8: stored";
+
+/// The lines of standard error that start at column 0 with text: the CLI's own lines, never a continuation.
+fn column_zero_lines(out: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with(char::is_whitespace))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `decision check` for decision 7 (accepted on the default branch), the post answered `status` `answer`.
+fn check_answered(json: bool, status: u16, answer: serde_json::Value) -> std::process::Output {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([decision(
+                "adrs/0001.md",
+                serde_json::json!({"kind":"unchecked"})
+            )])),
+        ),
+        ("POST /api/v1/decisions/7/check", status, answer),
+    ]);
+    let mut args = vec![
+        "decision",
+        "check",
+        "--household",
+        hh.path().to_str().unwrap(),
+    ];
+    if json {
+        args.insert(0, "--json");
+    }
+    let out = reeve_at(&url, &args);
+    server.join().unwrap();
+    out
+}
+
+/// `decision link 7` whose immediate check is held and whose read-back is answered `status` `answer`.
+fn link_read_back(json: bool, status: u16, answer: serde_json::Value) -> std::process::Output {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "POST /api/v1/decisions/7/link",
+            200,
+            ok(decision(
+                "adrs/0001.md",
+                serde_json::json!({"kind":"unchecked"}),
+            )),
+        ),
+        (
+            "GET /api/v1/config",
+            200,
+            ok(
+                serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":["kb"],"sign_in_configured":true}),
+            ),
+        ),
+        ("POST /api/v1/decisions/7/check", 403, forbidden()),
+        ("GET /api/v1/decisions/7", status, answer),
+    ]);
+    let mut args = vec![
+        "decision",
+        "link",
+        "7",
+        "--record",
+        "kb/ADR-0001",
+        "--repo",
+        "kb",
+        "--path",
+        "adrs/0001.md",
+        "--household",
+        hh.path().to_str().unwrap(),
+    ];
+    if json {
+        args.insert(0, "--json");
+    }
+    let out = reeve_at(&url, &args);
+    server.join().unwrap();
+    out
+}
+
+fn internal(message: &str) -> serde_json::Value {
+    serde_json::json!({"outcome":"error","code":"internal","message":message})
+}
+
+/// Decision 7 holding an `on_type` the CLI cannot decode, with a line break in it.
+fn undecodable_decision() -> serde_json::Value {
+    let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+    d["on_type"] = format!("story{STORED}").into();
+    d
+}
+
+/// A decode error names the server's value, so in text mode it stays on one line, in `decision check`'s post and in
+/// `decision link`'s read-back; `--json` carries it exactly.
+#[test]
+fn a_decisions_decode_error_stays_on_one_line() {
+    for json in [false, true] {
+        let out = check_answered(json, 200, ok(undecodable_decision()));
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(stderr.starts_with("decision 7: "), "{stderr:?}");
+        assert!(stderr.contains("story\\ndecision 8: stored"), "{stderr:?}");
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let e = v["value"]["results"][0]["error"].as_str().unwrap();
+            assert!(e.contains(&format!("story{STORED}")), "{v}");
+        }
+
+        let out = link_read_back(json, 200, ok(undecodable_decision()));
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let lines = column_zero_lines(&out);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[1]
+                .starts_with("decision 7: linked, but it could not be read back after the check: "),
+            "{lines:?}"
+        );
+        assert!(lines[1].contains("story\\ndecision 8: stored"), "{lines:?}");
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let e = v["refresh_error"].as_str().unwrap();
+            assert!(e.contains(&format!("story{STORED}")), "{v}");
+        }
+    }
+}
+
+/// The server's error message is long text: in text mode its further lines continue indented, so none passes for a
+/// line of the CLI's own; a one-line message prints as it always has, and `--json` carries the message exactly.
+#[test]
+fn a_servers_error_message_continues_indented() {
+    let hostile = format!("boom{STORED}");
+    for (message, check_says, finish_says) in [
+        (
+            hostile.as_str(),
+            "decision 7: Internal boom\n  decision 8: stored\n",
+            "error (Internal): boom\n  decision 8: stored\n",
+        ),
+        (
+            "boom",
+            "decision 7: Internal boom\n",
+            "error (Internal): boom\n",
+        ),
+    ] {
+        for json in [false, true] {
+            // `decision check`'s post.
+            let out = check_answered(json, 500, internal(message));
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            assert_eq!(String::from_utf8_lossy(&out.stderr), check_says);
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(
+                    v["value"]["results"][0]["error"],
+                    format!("Internal {message}"),
+                    "{v}"
+                );
+            }
+
+            // `decision link`'s read-back.
+            let out = link_read_back(json, 500, internal(message));
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            let said = check_says.replacen(
+                "decision 7: ",
+                "decision 7: linked, but it could not be read back after the check: ",
+                1,
+            );
+            assert!(stderr.ends_with(&said), "{stderr:?}");
+            assert_eq!(column_zero_lines(&out).len(), 2, "{stderr:?}");
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(v["refresh_error"], format!("Internal {message}"), "{v}");
+            }
+
+            // Any command's error envelope (`finish`).
+            let (url, server) = serve(vec![("GET /api/v1/stories/ABC-1", 500, internal(message))]);
+            let mut args = vec!["story", "show", "ABC-1"];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_at(&url, &args);
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            if json {
+                // The envelope is the answer; standard error stays empty.
+                assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+                assert_eq!(
+                    String::from_utf8_lossy(&out.stdout),
+                    format!("{}\n", internal(message))
+                );
+            } else {
+                assert_eq!(String::from_utf8_lossy(&out.stderr), finish_says);
+            }
+
+            // A login the server refused.
+            let (url, server) = serve(vec![("GET /api/v1/me", 500, internal(message))]);
+            let cfg = tempfile::tempdir().unwrap();
+            let mut args = vec!["auth", "login", "--no-browser", "--url", &url];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_cmd()
+                .env_remove("REEVE_URL")
+                .env_remove("REEVE_TOKEN")
+                .env("REEVE_CONFIG_DIR", cfg.path())
+                .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+                .env_remove("REEVE_UPDATE_NOTICE")
+                .args(&args)
+                .write_stdin("reeve_test\n")
+                .timeout(Duration::from_secs(30))
+                .output()
+                .unwrap();
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            let said = finish_says.replacen("error (Internal): ", "error: ", 1);
+            assert!(stderr.ends_with(&said), "{stderr:?}");
+            assert_eq!(
+                column_zero_lines(&out).len(),
+                2,
+                "the prompt and the error: {stderr:?}"
+            );
+            if json {
+                assert_eq!(
+                    String::from_utf8_lossy(&out.stdout),
+                    format!("{}\n", internal(message))
+                );
+            }
+        }
+    }
+}
+
 /// `story create --owner` and `story edit --owner` set a story's owner; `story edit --no-owner` clears it.
 #[test]
 fn story_owner_is_set_on_create_and_edit_and_cleared() {
