@@ -48,12 +48,12 @@ pub(crate) use stories::{
 };
 
 /// What an edit answers. `answer` is what the route sends: every field the aggregate carries as this call's write
-/// left it (`written`'s), and what the aggregate does not carry (the urgent mark, and what other tables hold:
-/// urgency, promise, progress, blockers, item links, web links) read after the commit
-/// (`Handlers::story_dto_as_written` and its epic and initiative forms). `written` is the item as this call's write
-/// left it, which a tool's receipt is built from alone. Neither reports another caller's title or version as this
-/// call's when one lands between the commit and the read: a caller that sent that later version with text it read
-/// before would overwrite a change it never saw.
+/// left it (`written`'s), and what it does not carry (what other tables hold, and marks the aggregate leaves out)
+/// read after the commit, so those can be a moment newer than the write (`Handlers::story_dto_as_written`, whose
+/// doc lists them and states that accepted limit, and its epic and initiative forms). `written` is the item as this
+/// call's write left it, which a tool's receipt is built from alone. Neither reports another caller's title or
+/// version as this call's when one lands between the commit and the read: a caller that sent that later version
+/// with text it read before would overwrite a change it never saw.
 pub(crate) struct Edited<D, I> {
     pub(crate) answer: D,
     pub(crate) written: I,

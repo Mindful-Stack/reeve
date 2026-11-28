@@ -188,29 +188,36 @@ mod tests {
     /// overwrite a change it never saw.
     #[test]
     fn the_receipt_reports_the_story_this_edit_wrote_not_a_later_read() {
-        use reeve_planning::Story;
-        use reeve_protocol::{DeliveryState, Key, Kind};
+        use reeve_protocol::{DeliveryState, Key, Kind, Resolution};
         let key: Key = "TST-596".parse().unwrap();
-        let at = |title: &str, delivery: DeliveryState, version: i64| {
-            Story::from_persisted(
-                key.clone(),
-                title.into(),
-                Kind::Story,
-                None,
-                String::new(),
-                vec![],
-                None,
-                vec![],
-                1,
-                delivery,
-                None,
-                None,
-                version,
-            )
-        };
+        let at =
+            |title: &str, delivery: DeliveryState, resolution: Option<Resolution>, version: i64| {
+                Story::from_persisted(
+                    key.clone(),
+                    title.into(),
+                    Kind::Story,
+                    None,
+                    String::new(),
+                    vec![],
+                    None,
+                    vec![],
+                    1,
+                    delivery,
+                    resolution,
+                    None,
+                    version,
+                )
+            };
+        // The answer is a later read in which the story is done, so a receipt built from it would carry a
+        // resolution; the story as this edit wrote it has none.
         let edited = Edited {
-            answer: StoryDto::from(&at("Theirs", DeliveryState::InProgress, 3)),
-            written: at("Mine", DeliveryState::Todo, 2),
+            answer: StoryDto::from(&at(
+                "Theirs",
+                DeliveryState::Done,
+                Some(Resolution::Completed),
+                3,
+            )),
+            written: at("Mine", DeliveryState::Todo, None, 2),
         };
         let r = receipt(edited);
         assert_eq!(

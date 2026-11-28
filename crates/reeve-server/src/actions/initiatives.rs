@@ -83,7 +83,7 @@ pub(crate) async fn create_initiative(
 /// target month it names must be a month; an edit that leaves either alone or clears it is not judged, so a stored
 /// owner who is no longer allowed and a stored month in another shape never stand in the way of another change.
 /// An edit never reads or writes the discovery mark. Answers the initiative as this edit wrote it: the DTO the route
-/// sends, with what only a read adds read after the commit, and the item the receipt is built from.
+/// sends, the rest read after the commit, and the item the receipt is built from.
 pub(crate) async fn edit_initiative(
     state: &AppState,
     who: &Acting<'_>,

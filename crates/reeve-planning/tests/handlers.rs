@@ -13200,6 +13200,11 @@ async fn a_story_dto_as_written_keeps_the_written_story_and_reads_the_rest() {
         ("Theirs", 4, DeliveryState::InProgress),
         "the control: the store holds the other writer's row"
     );
+    assert_ne!(
+        stored.rank,
+        written.rank(),
+        "the control: the stored row's rank is not the written one"
+    );
 
     let dto = h.story_dto_as_written(&written, now).await.unwrap();
     assert_eq!(
