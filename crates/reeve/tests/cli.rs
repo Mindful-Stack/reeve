@@ -6084,3 +6084,31 @@ fn export_writes_the_servers_document_untouched() {
         );
     }
 }
+
+/// A title holding a line break cannot pass for a second line of output: `story show` prints as many lines whatever
+/// the one-line fields hold.
+#[test]
+fn a_title_cannot_start_a_line_of_its_own() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories/TST-1",
+        200,
+        ok(hostile_story()),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let mut plain = hostile_story();
+    for field in ["title", "owner", "external_ref"] {
+        plain[field] = "abcd".into();
+    }
+    plain["labels"] = serde_json::json!(["abcd"]);
+    plain["criteria"] = serde_json::json!([{"text": "abcd", "done": false}]);
+    let (url, server) = serve(vec![("GET /api/v1/stories/TST-1", 200, ok(plain))]);
+    let reference = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(
+        stdout.lines().count(),
+        String::from_utf8(reference.stdout).unwrap().lines().count(),
+        "{stdout:?}"
+    );
+}

@@ -2,6 +2,7 @@
 use crate::glyphs::{Level, mark};
 use crate::promise;
 use crate::relations::{BlockerLine, relations, web_links};
+use crate::terminal::line;
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -23,19 +24,34 @@ pub fn reason(r: &Reason) -> String {
         Reason::NoCriteria => "no acceptance criteria".into(),
         Reason::AncestorDiscoveryIncomplete { item } => format!("discovery incomplete on {item}"),
         Reason::DecisionNoRecord { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\" has no record linked")
+            format!(
+                "decision #{decision_id} \"{}\" has no record linked",
+                line(title)
+            )
         }
         Reason::DecisionUnchecked { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\" has not been checked")
+            format!(
+                "decision #{decision_id} \"{}\" has not been checked",
+                line(title)
+            )
         }
         Reason::DecisionProposedPrOpen { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\" is proposed; its PR is linked")
+            format!(
+                "decision #{decision_id} \"{}\" is proposed; its PR is linked",
+                line(title)
+            )
         }
         Reason::DecisionRecordNotFound { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\": record not found on the default branch")
+            format!(
+                "decision #{decision_id} \"{}\": record not found on the default branch",
+                line(title)
+            )
         }
         Reason::DecisionRepoNotConfigured { decision_id, title } => {
-            format!("decision #{decision_id} \"{title}\": record in an unchecked repository")
+            format!(
+                "decision #{decision_id} \"{}\": record in an unchecked repository",
+                line(title)
+            )
         }
         Reason::DecisionNotAccepted {
             decision_id,
@@ -44,9 +60,17 @@ pub fn reason(r: &Reason) -> String {
             superseded_by,
         } => match superseded_by {
             Some(s) => {
-                format!("decision #{decision_id} \"{title}\": superseded by {s}, re-point")
+                format!(
+                    "decision #{decision_id} \"{}\": superseded by {}, re-point",
+                    line(title),
+                    line(s)
+                )
             }
-            None => format!("decision #{decision_id} \"{title}\" is {status}"),
+            None => format!(
+                "decision #{decision_id} \"{}\" is {}",
+                line(title),
+                line(status)
+            ),
         },
         Reason::BlockedBy {
             story,
@@ -155,7 +179,7 @@ pub fn story_with_relations(s: &StoryDto, blockers: &[StoryDto], now: DateTime<U
 /// A recipient as the answer names it: ` · to <recipient>`, or nothing.
 fn to_text(to: Option<&str>) -> String {
     to.filter(|t| !t.is_empty())
-        .map(|t| format!(" · to {t}"))
+        .map(|t| format!(" · to {}", line(t)))
         .unwrap_or_default()
 }
 
@@ -283,12 +307,12 @@ pub fn war_room_rows<'a>(
             let mut parts = vec![format!(
                 "{} {}",
                 mark(Level::of_item(r.item.item), &r.item.key),
-                r.title
+                line(&r.title)
             )];
             if r.item.item != ItemType::Initiative
                 && let Some(i) = &r.initiative
             {
-                parts.push(format!("in {}", i.title));
+                parts.push(format!("in {}", line(&i.title)));
             }
             parts.push(own_mark_text(&r.mark, now));
             if r.mark.done {
@@ -310,7 +334,7 @@ pub fn story(s: &StoryDto) -> String {
         mark(Level::of_kind(s.kind), &s.key),
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
-        s.title,
+        line(&s.title),
         story_chip(s),
         s.kind,
         s.version
@@ -319,19 +343,25 @@ pub fn story(s: &StoryDto) -> String {
         let _ = write!(out, "  epic: {}", mark(Level::Epic, e));
     }
     if let Some(o) = &s.owner {
-        let _ = write!(out, "  owner: {o}");
+        let _ = write!(out, "  owner: {}", line(o));
     }
     if let Some(r) = &s.resolution {
         let _ = write!(out, "  resolution: {r:?}");
     }
     if !s.labels.is_empty() {
-        let _ = write!(out, "  labels: {}", s.labels.join(","));
+        let labels: Vec<_> = s.labels.iter().map(|l| line(l)).collect();
+        let _ = write!(out, "  labels: {}", labels.join(","));
     }
     if let Some(r) = &s.external_ref {
-        let _ = write!(out, "  from: {r}");
+        let _ = write!(out, "  from: {}", line(r));
     }
     for c in &s.criteria {
-        let _ = write!(out, "\n  [{}] {}", if c.done { "x" } else { " " }, c.text);
+        let _ = write!(
+            out,
+            "\n  [{}] {}",
+            if c.done { "x" } else { " " },
+            line(&c.text)
+        );
     }
     if !s.prs.is_empty() {
         let _ = write!(out, "\n  Pull requests:");
@@ -339,11 +369,11 @@ pub fn story(s: &StoryDto) -> String {
             let _ = write!(
                 out,
                 "\n    {}#{} [{}] {} {}",
-                p.repo,
+                line(&p.repo),
                 p.number,
                 pr_status_word(p.status),
-                p.title,
-                p.url
+                line(&p.title),
+                line(&p.url)
             );
         }
     }
@@ -373,7 +403,8 @@ pub fn state_phrase(s: DeliveryState) -> &'static str {
 /// kb/ADR-0027's BlockedBy in full: what the blocker is doing and who can unblock it.
 fn blocked_by_sentence(story: &str, delivery: DeliveryState, owner: Option<&str>) -> String {
     let state = state_phrase(delivery);
-    match (delivery, owner) {
+    let owner = owner.map(line);
+    match (delivery, owner.as_deref()) {
         (DeliveryState::Todo, None) => {
             format!("blocked by {story}: todo, not yet started by anyone")
         }
@@ -409,7 +440,7 @@ pub fn story_row(s: &StoryDto, r: &Readiness) -> String {
         urgent_marker(&s.urgent_sources),
         state_word(s.delivery),
         ready_word,
-        s.title,
+        line(&s.title),
         story_chip(s)
     )
 }
@@ -426,15 +457,18 @@ fn check_text(c: &CheckResult) -> String {
     match c {
         CheckResult::Unchecked => "unchecked".into(),
         CheckResult::Accepted { commit, .. } => {
-            format!("accepted @ {}", commit.chars().take(8).collect::<String>())
+            format!(
+                "accepted @ {}",
+                line(&commit.chars().take(8).collect::<String>())
+            )
         }
         CheckResult::NotAccepted {
             status,
             superseded_by,
             ..
         } => match superseded_by {
-            Some(s) => format!("superseded by {s}, re-point"),
-            None => status.clone(),
+            Some(s) => format!("superseded by {}, re-point", line(s)),
+            None => line(status).into_owned(),
         },
         CheckResult::ProposedPrOpen => "proposed (PR linked)".into(),
         CheckResult::NotFound => "record not found".into(),
@@ -446,8 +480,8 @@ pub fn decision(d: &RequiredDecisionDto) -> String {
         "#{} on {} \"{}\" decider: {} check: {} version: {}",
         d.id,
         mark(Level::of_item(d.on_type), &d.on),
-        d.title,
-        d.decider,
+        line(&d.title),
+        line(&d.decider),
         check_text(&d.check),
         d.version
     );
@@ -455,10 +489,16 @@ pub fn decision(d: &RequiredDecisionDto) -> String {
         let _ = write!(out, " due: {due}");
     }
     if let Some(r) = &d.record {
-        let _ = write!(out, " record: {}:{} ({})", r.repo, r.path, r.record_id);
+        let _ = write!(
+            out,
+            " record: {}:{} ({})",
+            line(&r.repo),
+            line(&r.path),
+            line(&r.record_id)
+        );
     }
     if let Some(pr) = &d.pr_url {
-        let _ = write!(out, " pr: {pr}");
+        let _ = write!(out, " pr: {}", line(pr));
     }
     if let Some(r) = d.reversibility {
         let _ = write!(
@@ -472,9 +512,9 @@ pub fn decision(d: &RequiredDecisionDto) -> String {
     }
     if let Some(c) = &d.closed {
         let _ = match c.kind {
-            Some(ClosureKind::Decided) => write!(out, " closed: decided: {}", c.reason),
-            Some(ClosureKind::Withdrawn) => write!(out, " closed: withdrawn: {}", c.reason),
-            None => write!(out, " closed: {}", c.reason),
+            Some(ClosureKind::Decided) => write!(out, " closed: decided: {}", line(&c.reason)),
+            Some(ClosureKind::Withdrawn) => write!(out, " closed: withdrawn: {}", line(&c.reason)),
+            None => write!(out, " closed: {}", line(&c.reason)),
         };
     }
     let _ = write!(
@@ -518,18 +558,18 @@ pub fn initiative(i: &InitiativeDto) -> String {
         "{}{} {} (horizon: {}, version: {})",
         mark(Level::Initiative, &i.key),
         urgent_marker(&i.urgent_sources),
-        i.title,
-        i.horizon,
+        line(&i.title),
+        line(&i.horizon),
         i.version
     );
     if let Some(m) = &i.target_month {
-        let _ = write!(out, " target: {m}");
+        let _ = write!(out, " target: {}", line(m));
     }
     if let Some(o) = &i.owner {
-        let _ = write!(out, " owner: {o}");
+        let _ = write!(out, " owner: {}", line(o));
     }
     if let Some(r) = &i.external_ref {
-        let _ = write!(out, " from: {r}");
+        let _ = write!(out, " from: {}", line(r));
     }
     if let Some(p) = i.progress {
         let _ = write!(out, " progress: {:.0}%", p * 100.0);
@@ -551,7 +591,7 @@ pub fn epic(e: &EpicDto) -> String {
         "{}{} {}{} (version: {})",
         mark(Level::Epic, &e.key),
         urgent_marker(&e.urgent_sources),
-        e.title,
+        line(&e.title),
         epic_chip(e),
         e.version
     );
@@ -559,7 +599,7 @@ pub fn epic(e: &EpicDto) -> String {
         let _ = write!(out, " initiative: {}", mark(Level::Initiative, i));
     }
     if let Some(r) = &e.external_ref {
-        let _ = write!(out, " from: {r}");
+        let _ = write!(out, " from: {}", line(r));
     }
     let _ = write!(
         out,
@@ -580,20 +620,23 @@ pub fn findings(fs: &[Finding]) -> String {
     }
     let mut out = "findings (advisory, never block a move):".to_string();
     for f in fs {
-        let line = match f {
+        let text = match f {
             Finding::EmptyBrief => "the brief is empty".to_string(),
             Finding::BriefCitesWithoutDecision { cites } => format!(
                 "the brief cites {} but no required decision is on this item or above it",
-                cites.join(", ")
+                cites.iter().map(|c| line(c)).collect::<Vec<_>>().join(", ")
             ),
             Finding::DiscoveryCompleteWithOpenDecision { decision_id, title } => {
-                format!("discovery is complete while decision #{decision_id} \"{title}\" is open")
+                format!(
+                    "discovery is complete while decision #{decision_id} \"{}\" is open",
+                    line(title)
+                )
             }
             Finding::DiscoveryCompleteWithoutStories => {
                 "discovery is complete and there are no stories under it".to_string()
             }
         };
-        let _ = write!(out, "\n  - {line}");
+        let _ = write!(out, "\n  - {text}");
     }
     out
 }
@@ -623,11 +666,17 @@ pub fn comments(cs: &[CommentDto]) -> String {
 }
 
 pub fn comment(c: &CommentDto) -> String {
-    format!("{} {}: {}", c.at.format("%Y-%m-%d %H:%M"), c.author, c.body)
+    format!(
+        "{} {}: {}",
+        c.at.format("%Y-%m-%d %H:%M"),
+        line(&c.author),
+        c.body
+    )
 }
 
-/// The context bundle as Markdown at a given instant. Every required decision's record path appears verbatim so an agent
-/// can open the file; the story's urgent lines follow its title line.
+/// The context bundle as Markdown at a given instant. Every required decision's record path appears as stored, unless it
+/// holds a character that could drive the terminal; `--json` is the exact form. The story's urgent lines follow its
+/// title line.
 pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
     let mut o = String::new();
     let _ = writeln!(
@@ -658,19 +707,21 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
         let _ = writeln!(
             o,
             "- {} (decider: {}) check: {}",
-            d.title,
-            d.decider,
+            line(&d.title),
+            line(&d.decider),
             check_text(&d.check)
         );
         if let Some(r) = &d.record {
             let _ = writeln!(
                 o,
                 "  record: {} (repo {}, id {})",
-                r.path, r.repo, r.record_id
+                line(&r.path),
+                line(&r.repo),
+                line(&r.record_id)
             );
         }
         if let Some(pr) = &d.pr_url {
-            let _ = writeln!(o, "  pr: {pr}");
+            let _ = writeln!(o, "  pr: {}", line(pr));
         }
     }
     let _ = writeln!(o, "\n## Blockers\n");
@@ -683,7 +734,7 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
             "- {} [{}] {}",
             mark(Level::of_kind(b.kind), &b.key),
             state_word(b.delivery),
-            b.title
+            line(&b.title)
         );
     }
     let _ = writeln!(o, "\n## Criteria\n");
@@ -691,7 +742,12 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
         let _ = writeln!(o, "none");
     }
     for k in &c.story.criteria {
-        let _ = writeln!(o, "- [{}] {}", if k.done { "x" } else { " " }, k.text);
+        let _ = writeln!(
+            o,
+            "- [{}] {}",
+            if k.done { "x" } else { " " },
+            line(&k.text)
+        );
     }
     let _ = writeln!(o, "\n## Comments\n");
     if c.comments.is_empty() {
@@ -1261,6 +1317,7 @@ pub fn sprint_planning(x: &SprintsDto, p: &SprintPlanningDto) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hostile::{assert_no_stored_text, assert_one_line, assert_shown};
     use chrono::TimeZone;
 
     fn dto(prs: Vec<PullRequestDto>) -> StoryDto {
@@ -1499,6 +1556,600 @@ mod tests {
             urgent_sources: vec![],
             links: None,
             web_links: None,
+        }
+    }
+
+    fn fact() -> PromiseFactDto {
+        PromiseFactDto {
+            on: "2026-11-20".parse().unwrap(),
+            by: "dan@example.com".into(),
+            at: now(),
+            to: Some("Anna".into()),
+        }
+    }
+
+    /// A story's promise in one of the three shapes `promise::line_text` words differently.
+    fn promised(own: bool, epic: bool) -> StoryPromiseDto {
+        StoryPromiseDto {
+            own: own.then(fact),
+            epic: epic.then(|| EpicPromiseRefDto {
+                key: "ABC-2".parse().unwrap(),
+                fact: fact(),
+            }),
+            on: "2026-11-20".parse().unwrap(),
+            holder: if own {
+                PromiseHolder::Own
+            } else {
+                PromiseHolder::Epic
+            },
+            state: Some(PromiseState::Open),
+            due: None,
+            days: None,
+        }
+    }
+
+    fn marked() -> UrgentMarkDto {
+        UrgentMarkDto {
+            reason: Some("customer waiting".into()),
+            ..own_mark(true, false)
+        }
+    }
+
+    fn web_link() -> WebLinkDto {
+        WebLinkDto {
+            id: 1,
+            title: "Spec".into(),
+            url: "https://example.com/spec".into(),
+        }
+    }
+
+    /// A story with every optional text set and every list holding an entry.
+    fn full_story(promise: StoryPromiseDto) -> StoryDto {
+        StoryDto {
+            title: "Booking".into(),
+            description: "Long text".into(),
+            criteria: vec![CriterionDto {
+                text: "a customer books".into(),
+                done: true,
+            }],
+            owner: Some("dan@example.com".into()),
+            labels: vec!["web".into(), "api".into()],
+            external_ref: Some("SCRUM-1".into()),
+            urgent_mark: Some(marked()),
+            urgent_sources: vec![ref_("ABC-1", ItemType::Story)],
+            promise: Some(promise),
+            links: Some(vec![item_link(
+                ItemLinkType::Follows,
+                ItemLinkDirection::Out,
+                "ABC-9",
+                ItemType::Story,
+                "Earlier",
+            )]),
+            web_links: Some(vec![web_link()]),
+            ..dto(vec![PullRequestDto {
+                repo: "acme/portal".into(),
+                number: 5,
+                url: "https://github.com/acme/portal/pull/5".into(),
+                title: "fix".into(),
+                status: PrStatus::Open,
+                updated_at: now(),
+            }])
+        }
+    }
+
+    fn blocker() -> StoryDto {
+        StoryDto {
+            key: "ABC-8".parse().unwrap(),
+            title: "Hosting".into(),
+            owner: Some("eva@example.com".into()),
+            delivery: DeliveryState::InProgress,
+            ..dto(vec![])
+        }
+    }
+
+    /// The three promise shapes, each with the recipient and setter fields its words print.
+    fn promise_shapes() -> Vec<(StoryPromiseDto, Vec<&'static str>)> {
+        vec![
+            (
+                promised(true, true),
+                vec!["/promise/own/to", "/promise/epic/fact/to"],
+            ),
+            (
+                promised(true, false),
+                vec!["/promise/own/to", "/promise/own/by"],
+            ),
+            (
+                promised(false, true),
+                vec!["/promise/epic/fact/to", "/promise/epic/fact/by"],
+            ),
+        ]
+    }
+
+    /// A story's one-line fields, in every form a story is printed in: `show`, its row, the promise answer and
+    /// `story context`'s form with the blocker itself.
+    #[test]
+    fn a_storys_fields_stay_on_their_lines() {
+        for (p, promise_fields) in promise_shapes() {
+            let s = full_story(p);
+            let shown = assert_one_line(&s, story);
+            assert_shown(
+                &shown,
+                &[
+                    "/title",
+                    "/owner",
+                    "/labels/0",
+                    "/labels/1",
+                    "/external_ref",
+                    "/criteria/0/text",
+                    "/prs/0/repo",
+                    "/prs/0/title",
+                    "/prs/0/url",
+                ],
+            );
+            let shown = assert_one_line(&s, |s| story_show(s, now()));
+            assert_shown(
+                &shown,
+                &[
+                    "/urgent_mark/by",
+                    "/urgent_mark/reason",
+                    "/links/0/label",
+                    "/links/0/item/title",
+                    "/web_links/0/title",
+                    "/web_links/0/url",
+                ],
+            );
+            assert_shown(&shown, &promise_fields);
+            assert_shown(
+                &assert_one_line(&(s.clone(), ready()), |(s, r)| story_row(s, r)),
+                &["/0/title"],
+            );
+            assert_one_line(&s, story_promise_answer);
+            let blocked = StoryDto {
+                blocked_by: vec!["ABC-8".parse().unwrap()],
+                ..s
+            };
+            let shown = assert_one_line(&(blocked, vec![blocker()]), |(s, b)| {
+                story_with_relations(s, b, now())
+            });
+            assert_shown(&shown, &["/1/0/title", "/1/0/owner"]);
+        }
+    }
+
+    /// Every reason that carries text.
+    fn text_reasons() -> Vec<Reason> {
+        let title = || "Pick a host".to_string();
+        vec![
+            Reason::DecisionNoRecord {
+                decision_id: 7,
+                title: title(),
+            },
+            Reason::DecisionUnchecked {
+                decision_id: 7,
+                title: title(),
+            },
+            Reason::DecisionProposedPrOpen {
+                decision_id: 7,
+                title: title(),
+            },
+            Reason::DecisionRecordNotFound {
+                decision_id: 7,
+                title: title(),
+            },
+            Reason::DecisionRepoNotConfigured {
+                decision_id: 7,
+                title: title(),
+            },
+            Reason::DecisionNotAccepted {
+                decision_id: 7,
+                title: title(),
+                status: "proposed".into(),
+                superseded_by: None,
+            },
+            Reason::DecisionNotAccepted {
+                decision_id: 7,
+                title: title(),
+                status: "superseded".into(),
+                superseded_by: Some("kb/ADR-0009".into()),
+            },
+            Reason::BlockedBy {
+                story: "ABC-8".parse().unwrap(),
+                delivery: DeliveryState::Todo,
+                owner: Some("eva@example.com".into()),
+            },
+            Reason::BlockedBy {
+                story: "ABC-8".parse().unwrap(),
+                delivery: DeliveryState::InProgress,
+                owner: Some("eva@example.com".into()),
+            },
+        ]
+    }
+
+    /// Every reason's text: the seven titles, a status, a successor and two blockers' owners, eleven fields in all.
+    /// (The superseded reason prints its successor, not its status.)
+    #[test]
+    fn a_reasons_text_stays_on_its_line() {
+        assert_eq!(assert_one_line(&text_reasons(), |rs| reasons(rs)).len(), 11);
+        let r = Readiness {
+            ready: false,
+            reasons: text_reasons(),
+        };
+        assert_eq!(assert_one_line(&r, readiness).len(), 11);
+    }
+
+    fn full_decision(check: CheckResult) -> RequiredDecisionDto {
+        RequiredDecisionDto {
+            id: 7,
+            on: "ABC-1".parse().unwrap(),
+            on_type: ItemType::Story,
+            title: "Pick a host".into(),
+            decider: "dan@example.com".into(),
+            due: None,
+            reversibility: None,
+            record: Some(RecordRefDto {
+                repo: "acme/kb".into(),
+                path: "adrs/0009-host.md".into(),
+                record_id: "kb/ADR-0009".into(),
+                browse_url: Some("https://github.com/acme/kb/blob/HEAD/adrs/0009-host.md".into()),
+            }),
+            pr_url: Some("https://github.com/acme/kb/pull/9".into()),
+            check,
+            checked_at: None,
+            closed: Some(ClosedDto {
+                at: now(),
+                by: "dan@example.com".into(),
+                reason: "chosen".into(),
+                kind: Some(ClosureKind::Decided),
+                via: None,
+            }),
+            created_at: now(),
+            version: 2,
+        }
+    }
+
+    /// The check results that print text, each with the field it prints.
+    fn checks() -> [(CheckResult, &'static str); 3] {
+        let commit = || "0123456789abcdef".to_string();
+        [
+            (
+                CheckResult::Accepted {
+                    commit: commit(),
+                    reversibility: None,
+                },
+                "/check/commit",
+            ),
+            (
+                CheckResult::NotAccepted {
+                    status: "proposed".into(),
+                    superseded_by: None,
+                    commit: commit(),
+                    reversibility: None,
+                },
+                "/check/status",
+            ),
+            (
+                CheckResult::NotAccepted {
+                    status: "superseded".into(),
+                    superseded_by: Some("kb/ADR-0010".into()),
+                    commit: commit(),
+                    reversibility: None,
+                },
+                "/check/superseded_by",
+            ),
+        ]
+    }
+
+    /// A required decision is one row wherever it is listed: its title, decider, record, pull request, check and
+    /// closing reason cannot break it.
+    #[test]
+    fn a_decisions_fields_stay_on_its_row() {
+        for (check, check_field) in checks() {
+            let d = full_decision(check);
+            let shown = assert_one_line(&d, decision);
+            assert_shown(
+                &shown,
+                &[
+                    "/title",
+                    "/decider",
+                    "/record/repo",
+                    "/record/path",
+                    "/record/record_id",
+                    "/pr_url",
+                    "/closed/reason",
+                    check_field,
+                ],
+            );
+            assert_one_line(&vec![d.clone(), d], |ds| decisions_block(ds));
+        }
+    }
+
+    fn full_initiative() -> InitiativeDto {
+        InitiativeDto {
+            title: "Leave the old host".into(),
+            brief: "Long text".into(),
+            target_month: Some("2026-12".into()),
+            owner: Some("dan@example.com".into()),
+            external_ref: Some("JPD-30".into()),
+            urgent_mark: Some(marked()),
+            urgent_sources: vec![ref_("ABC-3", ItemType::Initiative)],
+            links: Some(vec![item_link(
+                ItemLinkType::RelatesTo,
+                ItemLinkDirection::Out,
+                "ABC-9",
+                ItemType::Epic,
+                "Other",
+            )]),
+            web_links: Some(vec![web_link()]),
+            ..initiative_dto()
+        }
+    }
+
+    fn full_epic() -> EpicDto {
+        EpicDto {
+            title: "Hosting".into(),
+            brief: "Long text".into(),
+            initiative: Some("ABC-3".parse().unwrap()),
+            external_ref: Some("SCRUM-480".into()),
+            urgent_mark: Some(marked()),
+            urgent_sources: vec![ref_("ABC-2", ItemType::Epic)],
+            promise: Some(EpicPromiseDto {
+                fact: fact(),
+                due: None,
+                past: false,
+            }),
+            links: Some(vec![item_link(
+                ItemLinkType::Duplicates,
+                ItemLinkDirection::In,
+                "ABC-9",
+                ItemType::Epic,
+                "Other",
+            )]),
+            web_links: Some(vec![web_link()]),
+            ..epic_dto()
+        }
+    }
+
+    /// An initiative's and an epic's one-line fields, in their one-line form, in `show` and in the promise answer;
+    /// findings; the war room's rows.
+    #[test]
+    fn an_initiatives_and_an_epics_fields_stay_on_their_lines() {
+        let i = full_initiative();
+        assert_shown(
+            &assert_one_line(&i, initiative),
+            &[
+                "/title",
+                "/horizon",
+                "/target_month",
+                "/owner",
+                "/external_ref",
+            ],
+        );
+        assert_shown(
+            &assert_one_line(&i, |i| initiative_show(i, now())),
+            &[
+                "/urgent_mark/reason",
+                "/links/0/label",
+                "/links/0/item/title",
+                "/web_links/0/url",
+            ],
+        );
+        let e = full_epic();
+        assert_shown(&assert_one_line(&e, epic), &["/title", "/external_ref"]);
+        assert_shown(
+            &assert_one_line(&e, |e| epic_show(e, now())),
+            &[
+                "/urgent_mark/by",
+                "/promise/fact/to",
+                "/promise/fact/by",
+                "/links/0/item/title",
+            ],
+        );
+        assert_shown(
+            &assert_one_line(&e, epic_promise_answer),
+            &["/promise/fact/to"],
+        );
+        let fs = vec![
+            Finding::BriefCitesWithoutDecision {
+                cites: vec!["Jira".into(), "decided".into()],
+            },
+            Finding::DiscoveryCompleteWithOpenDecision {
+                decision_id: 7,
+                title: "Pick a host".into(),
+            },
+        ];
+        assert_eq!(assert_one_line(&fs, |fs| findings(fs)).len(), 3);
+        let rows = vec![WarRoomEntryDto {
+            mark: marked(),
+            ..war_room_row("ABC-1", ItemType::Story, Some("Leave"), false)
+        }];
+        assert_shown(
+            &assert_one_line(&rows, |rows| war_room_rows(rows, now())),
+            &[
+                "/0/title",
+                "/0/initiative/title",
+                "/0/mark/by",
+                "/0/mark/reason",
+            ],
+        );
+    }
+
+    fn full_comment() -> CommentDto {
+        CommentDto {
+            id: 1,
+            on_story: Some("ABC-1".parse().unwrap()),
+            on_decision: None,
+            on_initiative: None,
+            on_epic: None,
+            author: "dan@example.com".into(),
+            body: "Long text".into(),
+            at: now(),
+            external_ref: Some("SCRUM-1#c1".into()),
+        }
+    }
+
+    /// A comment's author is one-line; its body is long text and is the guard's, with its lines kept.
+    #[test]
+    fn a_comments_author_stays_on_its_line_and_its_body_keeps_its_lines() {
+        assert_eq!(assert_one_line(&full_comment(), comment), ["/author"]);
+        let c = CommentDto {
+            body: "first\r\nsecond \u{1b}[2J\u{202e}".into(),
+            ..full_comment()
+        };
+        assert_eq!(
+            crate::terminal::block(&comment(&c)),
+            "2026-11-10 12:00 dan@example.com: first\nsecond \\u{1b}[2J\\u{202e}"
+        );
+    }
+
+    /// `story context`: every one-line field in every section; the description, the briefs and the comment bodies
+    /// are long text and the guard's.
+    #[test]
+    fn the_context_bundles_one_line_fields_stay_on_their_lines() {
+        let ctx = StoryContextDto {
+            story: StoryDto {
+                blocked_by: vec!["ABC-8".parse().unwrap()],
+                ..full_story(promised(true, false))
+            },
+            epic: Some(full_epic()),
+            initiative: Some(full_initiative()),
+            required_decisions: vec![full_decision(checks()[1].0.clone())],
+            blockers: vec![blocker()],
+            comments: vec![full_comment()],
+            readiness: Readiness {
+                ready: false,
+                reasons: text_reasons(),
+            },
+            goals: vec![],
+            attachments: vec![],
+        };
+        let shown = assert_one_line(&ctx, |c| context_markdown(c, now()));
+        assert_shown(
+            &shown,
+            &[
+                "/story/title",
+                "/story/criteria/0/text",
+                "/blockers/0/title",
+                "/epic/title",
+                "/initiative/title",
+                "/required_decisions/0/title",
+                "/required_decisions/0/decider",
+                "/required_decisions/0/record/path",
+                "/required_decisions/0/pr_url",
+                "/comments/0/author",
+                "/readiness/reasons/0/title",
+            ],
+        );
+    }
+
+    /// Long text keeps its line breaks wherever it is printed: a renderer that forced a description, a brief or a
+    /// comment's body through `line` would print `\n` here. The hostile helper cannot see that mistake (its long text
+    /// holds no line break), so this test is its other half.
+    #[test]
+    fn long_text_keeps_its_line_breaks() {
+        const TWO: &str = "first line\nsecond line";
+        let body = CommentDto {
+            body: TWO.into(),
+            ..full_comment()
+        };
+        let ctx = StoryContextDto {
+            story: StoryDto {
+                description: TWO.into(),
+                ..full_story(promised(true, false))
+            },
+            epic: Some(EpicDto {
+                brief: TWO.into(),
+                ..full_epic()
+            }),
+            initiative: Some(InitiativeDto {
+                brief: TWO.into(),
+                ..full_initiative()
+            }),
+            required_decisions: vec![],
+            blockers: vec![],
+            comments: vec![body.clone()],
+            readiness: ready(),
+            goals: vec![],
+            attachments: vec![],
+        };
+        let md = context_markdown(&ctx, now());
+        // The description, the initiative's brief, the epic's brief and the comment's body.
+        assert_eq!(md.matches(TWO).count(), 4, "{md}");
+        assert!(
+            comment(&body).ends_with(&format!(": {TWO}")),
+            "{}",
+            comment(&body)
+        );
+        assert!(comments(std::slice::from_ref(&body)).ends_with(&format!(": {TWO}")));
+    }
+
+    /// An item's comments under its `show`: each author on its line; the bodies are long text.
+    #[test]
+    fn the_comments_authors_stay_on_their_lines() {
+        let cs = vec![
+            full_comment(),
+            CommentDto {
+                id: 2,
+                ..full_comment()
+            },
+        ];
+        assert_shown(
+            &assert_one_line(&cs, |cs| comments(cs)),
+            &["/0/author", "/1/author"],
+        );
+    }
+
+    /// The decision queue: each entry is its decision's row, whose fields cannot break it.
+    #[test]
+    fn a_queue_entrys_decision_stays_on_its_row() {
+        // Through JSON: the entry's lane, window, next step and nesting take their defaults, as from an older server.
+        let entry: DecisionQueueEntryDto = serde_json::from_value(serde_json::json!({
+            "decision": full_decision(checks()[0].0.clone()),
+            "group": "blocking",
+            "blocks": [{"key": "ABC-1", "title": "Booking", "owner": "dan@example.com"}],
+        }))
+        .unwrap();
+        let q = DecisionQueueDto {
+            entries: vec![entry],
+            discoveries: vec![],
+            summary: DecisionQueueSummaryDto::default(),
+        };
+        assert_shown(
+            &assert_one_line(&q, queue),
+            &[
+                "/entries/0/decision/title",
+                "/entries/0/decision/decider",
+                "/entries/0/decision/record/path",
+                "/entries/0/decision/closed/reason",
+            ],
+        );
+    }
+
+    /// The answer to marking an item urgent: the mark's author and reason, each on its line.
+    #[test]
+    fn an_urgent_answers_mark_stays_on_its_line() {
+        let fixture = (
+            "ABC-1".parse::<Key>().unwrap(),
+            Some(marked()),
+            vec![
+                ref_("ABC-1", ItemType::Story),
+                ref_("ABC-3", ItemType::Initiative),
+            ],
+        );
+        let shown = assert_one_line(&fixture, |(key, own, sources)| {
+            urgent_answer(Level::Story, key, own.as_ref(), sources, now())
+        });
+        assert_shown(&shown, &["/1/by", "/1/reason"]);
+    }
+
+    /// The answer to `story promise --clear` prints keys, a date and its own words only, in all four of its shapes:
+    /// with every string of the story hostile, none reaches it.
+    #[test]
+    fn a_cleared_promise_prints_no_stored_text() {
+        for (cleared, epic) in [(true, false), (false, false), (true, true), (false, true)] {
+            let c = StoryPromiseCleared {
+                cleared,
+                story: full_story(promised(true, epic)),
+            };
+            assert_no_stored_text(&c, story_promise_cleared);
         }
     }
 

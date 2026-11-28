@@ -8,6 +8,8 @@ mod commands;
 mod config;
 mod git;
 pub mod glyphs;
+#[cfg(test)]
+mod hostile;
 mod jira;
 mod promise;
 mod relations;

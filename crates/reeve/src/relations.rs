@@ -2,6 +2,7 @@
 //! tells a `follows` from a blocker, and the `relations:` and `web links:` blocks of `show`, `story context` and
 //! `link ls`.
 use crate::glyphs::{Level, mark};
+use crate::terminal::line;
 use reeve_protocol::*;
 use std::fmt::Write;
 
@@ -53,7 +54,7 @@ pub fn relations(blockers: &[BlockerLine<'_>], links: &[ItemLinkDto]) -> Option<
     }
     let width = links
         .iter()
-        .map(|l| l.label.chars().count())
+        .map(|l| line(&l.label).chars().count())
         .chain(blockers.iter().map(|_| BLOCKED_BY.len()))
         .max()
         .unwrap_or(0);
@@ -63,9 +64,9 @@ pub fn relations(blockers: &[BlockerLine<'_>], links: &[ItemLinkDto]) -> Option<
             Some(s) => format!(
                 "{} {} ({}, {})",
                 mark(Level::of_kind(s.kind), b.key),
-                s.title,
+                line(&s.title),
                 crate::render::state_phrase(s.delivery),
-                s.owner.as_deref().unwrap_or("no owner")
+                s.owner.as_deref().map(line).unwrap_or("no owner".into())
             ),
             None => mark(Level::Story, b.key),
         };
@@ -75,9 +76,9 @@ pub fn relations(blockers: &[BlockerLine<'_>], links: &[ItemLinkDto]) -> Option<
         let _ = write!(
             out,
             "\n  {:<width$}  {} {}",
-            l.label,
+            line(&l.label),
             mark(Level::of_item(l.item.level), &l.item.key),
-            l.item.title
+            line(&l.item.title)
         );
     }
     Some(out)
@@ -105,12 +106,7 @@ pub fn web_links(links: &[WebLinkDto]) -> Option<String> {
     }
     let mut out = String::from("web links:");
     for l in links {
-        let _ = write!(
-            out,
-            "\n  {}  {}",
-            crate::terminal::line(&l.title),
-            crate::terminal::line(&l.url)
-        );
+        let _ = write!(out, "\n  {}  {}", line(&l.title), line(&l.url));
     }
     Some(out)
 }
@@ -294,6 +290,34 @@ mod tests {
                 (ItemType::Story, &other)
             ),
             None
+        );
+    }
+
+    /// `reeve link ls`: an item link's label and title and a web link's title and URL, each on its row.
+    #[test]
+    fn a_listings_text_stays_on_its_rows() {
+        use crate::hostile::{assert_one_line, assert_shown};
+        let v = LinkListingDto {
+            links: vec![ItemLinkDto {
+                link_type: ItemLinkType::Follows,
+                direction: ItemLinkDirection::Out,
+                label: "follows".into(),
+                item: LinkedItemDto {
+                    key: "ABC-5".parse().unwrap(),
+                    level: ItemType::Epic,
+                    title: "Billing".into(),
+                },
+            }],
+            web_links: vec![web(1, "Board", "http://example.com/board")],
+        };
+        assert_shown(
+            &assert_one_line(&v, listing),
+            &[
+                "/links/0/label",
+                "/links/0/item/title",
+                "/web_links/0/title",
+                "/web_links/0/url",
+            ],
         );
     }
 }
