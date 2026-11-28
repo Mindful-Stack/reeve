@@ -79,6 +79,9 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       # The tests wait on PostgreSQL, not the CPU: twice the runner's four cores.
       NEXTEST_TEST_THREADS: "8"
+      # A full run's databases come to about 7 GB and the runner has only 16 GB, which the build shares: the data
+      # directory stays on disk, as it always was here, rather than in memory.
+      REEVE_TEST_PG_TMPFS: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch; rust-toolchain.toml picks the toolchain

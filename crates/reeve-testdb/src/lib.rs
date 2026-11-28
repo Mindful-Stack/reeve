@@ -2,10 +2,13 @@
 //!
 //! With `REEVE_TEST_DATABASE_URL` set (scripts/test.sh starts one PostgreSQL 16 per run and exports it), every call
 //! creates a database of its own, cloned from a template that the migration set's first caller builds by running the
-//! committed migrator. Unset, every call starts a PostgreSQL 16 container of its own, as the tests always did. Nothing
-//! is ever skipped: an unreachable server fails the test.
+//! committed migrator; with `REEVE_TEST_DROP_DATABASES=1` as well, the database is dropped when the test's `TestDb`
+//! is. With `REEVE_TEST_DATABASE_URL` unset, every call starts a PostgreSQL 16 container of its own, as the tests
+//! always did. Nothing is ever skipped: an unreachable server fails the test.
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, Executor, PgConnection, PgPool, migrate::Migrator};
+use std::io::Write;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use testcontainers_modules::{
     postgres::Postgres,
@@ -39,6 +42,21 @@ fn source(var: Option<String>) -> Source {
     }
 }
 
+/// Whether a test's database on the run's server is dropped with its `TestDb`; scripts/test.sh refuses other values.
+pub const DROP_VAR: &str = "REEVE_TEST_DROP_DATABASES";
+
+fn drops(var: Option<&str>) -> bool {
+    match var {
+        None | Some("" | "0") => false,
+        Some("1") => true,
+        Some(other) => panic!("{DROP_VAR} is 1 or 0, not {other:?}"),
+    }
+}
+
+fn drops_from_env() -> bool {
+    drops(std::env::var(DROP_VAR).ok().as_deref())
+}
+
 fn source_from_env() -> Source {
     source(std::env::var_os(URL_VAR).map(|v| {
         v.into_string()
@@ -64,8 +82,10 @@ fn url_for(base: &str, database: &str) -> String {
 }
 
 /// A test's database. Dropping it leaves the database on the run's server (the server is discarded with the run)
-/// or, for `database()` and `empty_database()` in container mode, stops the test's own container. The container of
-/// `own_container()` is the caller's.
+/// unless `REEVE_TEST_DROP_DATABASES=1`, which drops it and its siblings there and ends any session still on them: a
+/// full run keeps about 7 GB of finished tests' databases, and dropping them trades that for a slower run. For
+/// `database()` and `empty_database()` in container mode, dropping it stops the test's own container. The container of
+/// `own_container()` is the caller's. Keep the `TestDb` bound for as long as anything uses its database.
 pub struct TestDb {
     /// A pool on the test's database.
     pub pool: PgPool,
@@ -75,13 +95,84 @@ pub struct TestDb {
     pub name: String,
     /// Where `CREATE DATABASE` goes: the run server's maintenance database, or the container's.
     admin: String,
+    /// The databases `drop` removes from the run's server: this one and its siblings. Empty in container mode and
+    /// when the run keeps its databases.
+    owned: Mutex<Vec<String>>,
     _container: Option<ContainerAsync<Postgres>>,
 }
 
-// Exists so that moving a field out of a TestDb is a compile error (E0509): `database(&m).await.pool` would drop the
-// fallback container under a live pool. Callers keep the TestDb bound and clone its pool.
+// That TestDb has a Drop also makes moving a field out of it a compile error (E0509): `database(&m).await.pool` would
+// drop the database, or the fallback container, under a live pool. Callers keep the TestDb bound and clone its pool.
 impl Drop for TestDb {
-    fn drop(&mut self) {}
+    /// Drops the owned databases, if any, blocking until the server has done it or `DROP_TIMEOUT` has passed: nextest
+    /// runs each test in a process of its own, which may exit right after. A failure is reported and never panics
+    /// (this may run while a failed test unwinds); the database then stays until the run's server is discarded.
+    fn drop(&mut self) {
+        let names = std::mem::take(&mut *self.owned.lock().unwrap_or_else(|e| e.into_inner()));
+        if names.is_empty() {
+            return;
+        }
+        let admin = self.admin.clone();
+        // A thread with a runtime of its own: `drop` is not async, and the caller's runtime may be this very thread.
+        let failed = std::thread::Builder::new()
+            .spawn(move || drop_databases(&admin, &names))
+            .map_err(|e| format!("no thread to drop it on: {e}"))
+            .and_then(|t| {
+                t.join()
+                    .map_err(|_| "the dropping thread panicked".to_string())
+            });
+        let why = match failed {
+            Ok(failed) if failed.is_empty() => return,
+            Ok(failed) => failed.join("; "),
+            Err(e) => e,
+        };
+        // Not eprintln!, which panics when stderr is closed.
+        let _ = writeln!(
+            std::io::stderr(),
+            "reeve-testdb: {} was not dropped: {why}",
+            self.name
+        );
+    }
+}
+
+/// How long a `TestDb`'s drop waits for the server to drop its databases: a server that stopped answering must not
+/// hold the test until the runner's own timeout.
+const DROP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Drops `names` from the server at `admin`, each whatever became of the one before, within `DROP_TIMEOUT` in all.
+/// Returns what failed, one message each; never panics.
+fn drop_databases(admin: &str, names: &[String]) -> Vec<String> {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => return vec![format!("no runtime to drop it on: {e}")],
+    };
+    runtime.block_on(async {
+        let dropping = async {
+            let mut conn = match PgConnection::connect(admin).await {
+                Ok(conn) => conn,
+                Err(e) => return vec![format!("connecting to the server: {e}")],
+            };
+            let mut failed = Vec::new();
+            for name in names {
+                let sql = format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)");
+                if let Err(e) = conn.execute(sql.as_str()).await {
+                    failed.push(format!("{name}: {e}"));
+                }
+            }
+            failed
+        };
+        tokio::time::timeout(DROP_TIMEOUT, dropping)
+            .await
+            .unwrap_or_else(|_| {
+                vec![format!(
+                    "the server did not finish within {} s",
+                    DROP_TIMEOUT.as_secs()
+                )]
+            })
+    })
 }
 
 impl TestDb {
@@ -101,6 +192,12 @@ impl TestDb {
             "a sibling's name fits PostgreSQL's 63-byte identifier limit, which truncates silently: {name:?}"
         );
         create_database(&self.admin, &name, "template0").await;
+        let mut owned = self.owned.lock().unwrap_or_else(|e| e.into_inner());
+        // Nothing is owned in container mode (the container goes with the TestDb, or is the caller's) or when the run
+        // keeps its databases.
+        if !owned.is_empty() {
+            owned.push(name.clone());
+        }
         name
     }
 }
@@ -253,7 +350,7 @@ async fn template(admin: &str, migrator: &Migrator) -> String {
 }
 
 /// A new database on the run's server at `admin`: a clone of `migrator`'s template, or empty when `None`.
-async fn on_run_server(admin: &str, migrator: Option<&Migrator>) -> TestDb {
+async fn on_run_server(admin: &str, migrator: Option<&Migrator>, drops: bool) -> TestDb {
     let source = match migrator {
         Some(m) => template(admin, m).await,
         None => "template0".to_string(),
@@ -265,6 +362,11 @@ async fn on_run_server(admin: &str, migrator: Option<&Migrator>) -> TestDb {
     TestDb {
         pool,
         url,
+        owned: Mutex::new(if drops {
+            vec![name.clone()]
+        } else {
+            Vec::new()
+        }),
         name,
         admin: admin.to_string(),
         _container: None,
@@ -295,7 +397,7 @@ async fn start_container() -> (ContainerAsync<Postgres>, String) {
 /// A fresh database migrated by `migrator`: a clone of its template on the run's server, or a container of its own.
 pub async fn database(migrator: &Migrator) -> TestDb {
     match source_from_env() {
-        Source::Run(url) => on_run_server(&url, Some(migrator)).await,
+        Source::Run(url) => on_run_server(&url, Some(migrator), drops_from_env()).await,
         Source::Container => in_container(Some(migrator)).await,
     }
 }
@@ -303,7 +405,7 @@ pub async fn database(migrator: &Migrator) -> TestDb {
 /// A fresh, empty database, for a test that runs a partial migrator itself.
 pub async fn empty_database() -> TestDb {
     match source_from_env() {
-        Source::Run(url) => on_run_server(&url, None).await,
+        Source::Run(url) => on_run_server(&url, None, drops_from_env()).await,
         Source::Container => in_container(None).await,
     }
 }
@@ -320,6 +422,7 @@ pub async fn own_container(migrator: &Migrator) -> (ContainerAsync<Postgres>, Te
         url: url.clone(),
         name: "postgres".into(),
         admin: url,
+        owned: Mutex::new(Vec::new()),
         _container: None,
     };
     (c, db)
@@ -336,6 +439,7 @@ async fn in_container(migrator: Option<&Migrator>) -> TestDb {
         url: url.clone(),
         name: "postgres".into(),
         admin: url,
+        owned: Mutex::new(Vec::new()),
         _container: Some(c),
     }
 }
@@ -377,6 +481,68 @@ mod tests {
         );
         assert_ne!(name, template_name(&changed), "changed SQL, new template");
         assert_ne!(name, template_name(&more), "added migration, new template");
+    }
+
+    #[test]
+    fn databases_are_kept_unless_the_variable_says_to_drop_them() {
+        assert!(!drops(None));
+        assert!(!drops(Some("")));
+        assert!(!drops(Some("0")));
+        assert!(drops(Some("1")));
+        assert!(std::panic::catch_unwind(|| drops(Some("yes"))).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_kept_test_database_and_its_sibling_outlive_the_testdb() {
+        let (_c, url) = server().await;
+        let (_d, m) = migrator(&[("1_a.sql", "CREATE TABLE a (id int);")]).await;
+        let db = on_run_server(&url, Some(&m), false).await;
+        let sibling = db.sibling("other").await;
+        let name = db.name.clone();
+        drop(db);
+        let mut admin = PgConnection::connect(&url).await.unwrap();
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_database WHERE datname IN ($1, $2)")
+                .bind(&name)
+                .bind(&sibling)
+                .fetch_one(&mut admin)
+                .await
+                .unwrap();
+        assert_eq!(left, 2);
+    }
+
+    #[test]
+    fn a_drop_that_cannot_reach_the_server_reports_it_and_does_not_panic() {
+        let failed = drop_databases(
+            "postgres://postgres:postgres@127.0.0.1:1/postgres",
+            &["reeve_test_a".to_string(), "reeve_test_a_other".to_string()],
+        );
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(
+            failed[0].starts_with("connecting to the server: "),
+            "{failed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_database_that_cannot_be_dropped_does_not_stop_the_next_one() {
+        let (_c, url) = server().await;
+        let mut admin = PgConnection::connect(&url).await.unwrap();
+        admin.execute("CREATE DATABASE reeve_test_b").await.unwrap();
+        // template1 is a template, which DROP DATABASE refuses.
+        let names = ["template1".to_string(), "reeve_test_b".to_string()];
+        let admin_url = url.clone();
+        let failed = tokio::task::spawn_blocking(move || drop_databases(&admin_url, &names))
+            .await
+            .unwrap();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].starts_with("template1: "), "{failed:?}");
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pg_database WHERE datname = 'reeve_test_b'")
+                .fetch_one(&mut admin)
+                .await
+                .unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]
@@ -461,7 +627,7 @@ mod tests {
                 let (url, m, start) = (url.clone(), m.clone(), start.clone());
                 tokio::spawn(async move {
                     start.wait().await; // every caller is running before any asks for the template
-                    on_run_server(&url, Some(&*m)).await
+                    on_run_server(&url, Some(&*m), false).await
                 })
             })
             .collect();
@@ -494,7 +660,7 @@ mod tests {
         let m = std::sync::Arc::new(m);
         let first = {
             let (url, m) = (url.clone(), m.clone());
-            tokio::spawn(async move { on_run_server(&url, Some(&*m)).await }).await
+            tokio::spawn(async move { on_run_server(&url, Some(&*m), false).await }).await
         };
         assert!(
             first
@@ -510,7 +676,7 @@ mod tests {
         );
         let mut admin = PgConnection::connect(&url).await.unwrap();
         admin.execute("CREATE DATABASE reeve_go").await.unwrap();
-        let db = on_run_server(&url, Some(&m)).await;
+        let db = on_run_server(&url, Some(&m), false).await;
         assert_eq!(tables(&db.pool).await, vec!["_sqlx_migrations", "a"]);
         assert_eq!(templates(&url).await, vec![template_name(&m)]);
     }
@@ -531,7 +697,7 @@ mod tests {
             .unwrap();
         half.execute("CREATE TABLE junk (id int)").await.unwrap();
         // A session of the dead builder that never closed: the rebuild must not wait for it.
-        let db = on_run_server(&url, Some(&m)).await;
+        let db = on_run_server(&url, Some(&m), false).await;
         assert_eq!(
             tables(&db.pool).await,
             vec!["_sqlx_migrations", "a"],
@@ -541,11 +707,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_a_test_database_drops_it_and_its_siblings_and_nothing_else() {
+        let (_c, url) = server().await;
+        let (_d, m) = migrator(&[("1_a.sql", "CREATE TABLE a (id int);")]).await;
+        let gone = on_run_server(&url, Some(&m), true).await;
+        let kept = on_run_server(&url, Some(&m), true).await;
+        let sibling = gone.sibling("other").await;
+        let (gone_name, kept_name) = (gone.name.clone(), kept.name.clone());
+        // A session still on the database (a server the test left running) does not keep it alive.
+        let left_open = gone.pool.clone();
+        sqlx::query("SELECT 1").execute(&left_open).await.unwrap();
+        drop(gone);
+        let mut admin = PgConnection::connect(&url).await.unwrap();
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT datname::text FROM pg_database WHERE datname LIKE 'reeve_t%' ORDER BY 1",
+        )
+        .fetch_all(&mut admin)
+        .await
+        .unwrap();
+        let mut expected = vec![kept_name, template_name(&m)];
+        expected.sort();
+        assert_eq!(left, expected, "{gone_name} and {sibling} are gone");
+        assert!(sqlx::query("SELECT 1").execute(&left_open).await.is_err());
+    }
+
+    #[tokio::test]
     async fn clones_and_siblings_are_isolated() {
         let (_c, url) = server().await;
         let (_d, m) = migrator(&[("1_a.sql", "CREATE TABLE a (id int);")]).await;
-        let one = on_run_server(&url, Some(&m)).await;
-        let two = on_run_server(&url, Some(&m)).await;
+        let one = on_run_server(&url, Some(&m), false).await;
+        let two = on_run_server(&url, Some(&m), false).await;
         sqlx::query("INSERT INTO a VALUES (1)")
             .execute(&one.pool)
             .await
@@ -573,8 +764,8 @@ mod tests {
             ("2_b.sql", "CREATE TABLE b (id int);"),
         ])
         .await;
-        let one = on_run_server(&url, Some(&a)).await;
-        let two = on_run_server(&url, Some(&ab)).await;
+        let one = on_run_server(&url, Some(&a), false).await;
+        let two = on_run_server(&url, Some(&ab), false).await;
         assert_eq!(tables(&one.pool).await, vec!["_sqlx_migrations", "a"]);
         assert_eq!(tables(&two.pool).await, vec!["_sqlx_migrations", "a", "b"]);
         assert_eq!(templates(&url).await.len(), 2);
@@ -588,6 +779,7 @@ mod tests {
             on_run_server(
                 "postgres://postgres:postgres@127.0.0.1:1/postgres",
                 Some(&*m),
+                false,
             )
             .await
         })
@@ -650,7 +842,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let db = on_run_server(&url, Some(&m)).await;
+        let db = on_run_server(&url, Some(&m), false).await;
         assert_eq!(
             tables(&db.pool).await,
             vec!["_sqlx_migrations", "a"],
