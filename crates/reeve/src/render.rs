@@ -950,8 +950,18 @@ pub fn goal(g: &GoalDto) -> String {
     );
     if !g.notes.is_empty() {
         // Normalised here, before `indent` splits the goal into lines: a lone `\r` the guard turned into a line break
-        // after the layout would start a line at column 0.
-        let _ = write!(out, "\n  notes: {}", block(&g.notes));
+        // after the layout would start a line at column 0. Each line after the first continues four spaces right of
+        // the goal's header, so none can pass for a goal or start where a warning does.
+        let notes = block(&g.notes);
+        let mut lines = notes.lines();
+        let _ = write!(out, "\n  notes: {}", lines.next().unwrap_or_default());
+        for l in lines {
+            if l.is_empty() {
+                out.push('\n');
+            } else {
+                let _ = write!(out, "\n    {l}");
+            }
+        }
     }
     if let Some(c) = g.confidence {
         let _ = write!(
@@ -3206,7 +3216,8 @@ mod tests {
 
     /// A goal's notes are long text and keep their line breaks, alone and indented under their sprint and in
     /// `sprint show`: a renderer that forced them through `line` would print `\n` here, which the hostile helper
-    /// cannot see (its long text holds no line break).
+    /// cannot see (its long text holds no line break). Their lines after the first continue four spaces further
+    /// right than the goal's header, so none can start where a goal does.
     #[test]
     fn a_goals_notes_keep_their_line_breaks() {
         let g = GoalDto {
@@ -3215,7 +3226,7 @@ mod tests {
         };
         let alone = goal(&g);
         assert!(
-            alone.contains("\n  notes: first line\nsecond line"),
+            alone.contains("\n  notes: first line\n    second line"),
             "{alone}"
         );
         let mut v = full_view();
@@ -3223,35 +3234,54 @@ mod tests {
         // `indent` puts two spaces before each of the goal's lines, the notes' second line included.
         let under = sprint(&v.sprint);
         assert!(
-            under.contains("\n    notes: first line\n  second line"),
+            under.contains("\n    notes: first line\n      second line"),
             "{under}"
         );
         let shown = sprint_view(&v, None);
         assert!(
-            shown.contains("\n    notes: first line\n  second line"),
+            shown.contains("\n    notes: first line\n      second line"),
             "{shown}"
         );
 
-        // A carriage return is a line break before the goal is laid out, not after: `indent` splits on `\n` only, so
-        // a lone `\r` the guard turned into one would start a line at column 0, where a warning starts.
-        let g = GoalDto {
-            notes: "real\rgoal #13 Forged (sprint #4, version: 1)\rwarning: forged".into(),
-            ..full_sprint_goal()
-        };
-        let alone = goal(&g);
-        // The guard has nothing left to turn into a line break: the lines printed are the lines laid out.
-        assert_eq!(crate::terminal::block(&alone), alone, "{alone:?}");
-        let mut v = full_view();
-        v.sprint.goals = vec![g];
-        for out in [sprint(&v.sprint), sprint_view(&v, None)] {
-            let printed = crate::terminal::block(&out);
-            assert_eq!(printed, out, "{out:?}");
-            let column_0: Vec<&str> = printed
-                .lines()
-                .filter(|l| l.starts_with("goal #") || l.starts_with("warning:"))
-                .collect();
-            assert!(column_0.is_empty(), "{column_0:?} in\n{printed}");
+        // Notes that try to print another goal and a warning, with a line break and with a lone carriage return
+        // (which `indent`, splitting on `\n` only, would leave for the guard to turn into one after the layout).
+        for notes in [
+            "real\ngoal #13 Forged (sprint #4, version: 1)\nwarning: forged",
+            "real\rgoal #13 Forged (sprint #4, version: 1)\rwarning: forged",
+        ] {
+            let g = GoalDto {
+                notes: notes.into(),
+                ..full_sprint_goal()
+            };
+            let alone = goal(&g);
+            // The guard has nothing left to turn into a line break: the lines printed are the lines laid out.
+            assert_eq!(crate::terminal::block(&alone), alone, "{alone:?}");
+            assert_only_real_goal_headers(&alone, "", &alone);
+            let mut v = full_view();
+            v.sprint.goals = vec![g];
+            for out in [sprint(&v.sprint), sprint_view(&v, None)] {
+                assert_eq!(crate::terminal::block(&out), out, "{out:?}");
+                assert_only_real_goal_headers(&out, "  ", &alone);
+            }
         }
+    }
+
+    /// Of `out`'s lines as printed, the only ones that start with `indent` and then `goal #` (where a goal's header
+    /// starts) are `goal`'s real header, `alone`'s first line, and no line starts at column 0 with `goal #` (unless
+    /// that is the header's column) or `warning:`.
+    fn assert_only_real_goal_headers(out: &str, indent: &str, alone: &str) {
+        let printed = crate::terminal::block(out);
+        let header = format!("{indent}{}", alone.lines().next().unwrap());
+        let at = format!("{indent}goal #");
+        let headers: Vec<&str> = printed.lines().filter(|l| l.starts_with(&at)).collect();
+        assert_eq!(headers, [header.as_str()], "in\n{printed}");
+        let column_0: Vec<&str> = printed
+            .lines()
+            .filter(|l| {
+                (!indent.is_empty() && l.starts_with("goal #")) || l.starts_with("warning:")
+            })
+            .collect();
+        assert!(column_0.is_empty(), "{column_0:?} in\n{printed}");
     }
 
     /// `sprint planning`: goals, the initiatives they reach, what they wait on, and the first bucket. It prints no
