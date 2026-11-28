@@ -2,7 +2,7 @@
 use crate::glyphs::{Level, mark};
 use crate::promise;
 use crate::relations::{BlockerLine, relations, web_links};
-use crate::terminal::line;
+use crate::terminal::{block, line};
 use crate::urgency::{own_mark_text, urgent_lines, urgent_marker};
 use chrono::{DateTime, Utc};
 use reeve_protocol::*;
@@ -949,7 +949,9 @@ pub fn goal(g: &GoalDto) -> String {
         line(&g.owner)
     );
     if !g.notes.is_empty() {
-        let _ = write!(out, "\n  notes: {}", g.notes);
+        // Normalised here, before `indent` splits the goal into lines: a lone `\r` the guard turned into a line break
+        // after the layout would start a line at column 0.
+        let _ = write!(out, "\n  notes: {}", block(&g.notes));
     }
     if let Some(c) = g.confidence {
         let _ = write!(
@@ -2162,14 +2164,13 @@ mod tests {
     /// are long text and the guard's.
     #[test]
     fn the_context_bundles_one_line_fields_stay_on_their_lines() {
+        // The decision the fixture holds and the paths it leaves empty come from the same values.
+        let (check, closed) = (checks()[1].0.clone(), Some(ClosureKind::Decided));
         let ctx = StoryContextDto {
             story: full_story(promised(true, false)),
             epic: Some(full_epic()),
             initiative: Some(full_initiative()),
-            required_decisions: vec![full_decision(
-                checks()[1].0.clone(),
-                Some(ClosureKind::Decided),
-            )],
+            required_decisions: vec![full_decision(check.clone(), closed)],
             blockers: vec![blocker()],
             comments: vec![full_comment()],
             readiness: Readiness {
@@ -2200,10 +2201,7 @@ mod tests {
         // blockers' descriptions and the goals' notes are not printed, so they stay one-line.
         let paths = story_paths(true, false)
             .under("/story")
-            .and(
-                decision_paths(&checks()[1].0, Some(ClosureKind::Decided))
-                    .under("/required_decisions/*"),
-            )
+            .and(decision_paths(&check, closed).under("/required_decisions/*"))
             .and(blocker_paths().under("/blockers/*"))
             .and(comment_paths().under("/comments/*"))
             .and(reasons_paths().under("/readiness/reasons"))
@@ -3233,6 +3231,27 @@ mod tests {
             shown.contains("\n    notes: first line\n  second line"),
             "{shown}"
         );
+
+        // A carriage return is a line break before the goal is laid out, not after: `indent` splits on `\n` only, so
+        // a lone `\r` the guard turned into one would start a line at column 0, where a warning starts.
+        let g = GoalDto {
+            notes: "real\rgoal #13 Forged (sprint #4, version: 1)\rwarning: forged".into(),
+            ..full_sprint_goal()
+        };
+        let alone = goal(&g);
+        // The guard has nothing left to turn into a line break: the lines printed are the lines laid out.
+        assert_eq!(crate::terminal::block(&alone), alone, "{alone:?}");
+        let mut v = full_view();
+        v.sprint.goals = vec![g];
+        for out in [sprint(&v.sprint), sprint_view(&v, None)] {
+            let printed = crate::terminal::block(&out);
+            assert_eq!(printed, out, "{out:?}");
+            let column_0: Vec<&str> = printed
+                .lines()
+                .filter(|l| l.starts_with("goal #") || l.starts_with("warning:"))
+                .collect();
+            assert!(column_0.is_empty(), "{column_0:?} in\n{printed}");
+        }
     }
 
     /// `sprint planning`: goals, the initiatives they reach, what they wait on, and the first bucket. It prints no
