@@ -449,3 +449,118 @@ async fn an_epic_mark_elsewhere_refetches_and_marks_the_descendant() {
         "the frame came on the open connection, not through a reconnect"
     );
 }
+
+/// How many characters `escaped_by_line` yields; a change to the copy below changes it. `terminal.rs`'s
+/// `line_escapes_79_characters_as_the_tui_pins_copy_says` pins the same count on the original.
+const COUNT: usize = 79;
+
+/// What `terminal::line` escapes. This mirrors `escaped_in_line` in `crates/reeve/src/terminal.rs` (a private module,
+/// so it is copied) and must be kept equal to it.
+fn escaped_in_line(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Every character `terminal::line` escapes: all of Unicode `Cc` (C0, DEL, C1), the bidirectional controls and the
+/// line and paragraph separators.
+fn escaped_by_line() -> Vec<char> {
+    (0..=0x10FFFF)
+        .filter_map(char::from_u32)
+        .filter(|c| escaped_in_line(*c))
+        .collect()
+}
+
+/// The screen's rows. `screen()` joins them with `\n`, so a raw line break drawn into a cell would show as a row too
+/// many.
+fn rows(screen: &str) -> Vec<&str> {
+    screen.split('\n').collect()
+}
+
+/// Stored text cannot drive the terminal through the TUI: every Paragraph the TUI draws stored text in drops control
+/// characters and zero-width characters (the bidirectional controls included) when ratatui writes a cell, so none of
+/// them, in a title or a description, reaches the board or the drawer, and the text around it is drawn. The line and
+/// paragraph separators (U+2028, U+2029) are the exception, observed in a run: they are drawn as ordinary one-column
+/// characters in a cell, on the row of the text around them, so they cannot start a line or move the cursor. The TUI
+/// applies no rule of its own; this pins ratatui's behaviour (GRA-882), so an upgrade that changed it fails here.
+/// Block titles in the TUI carry only item keys (typed, ASCII) and fixed words, and a free-text title placed there
+/// would let bidirectional controls through, which this test would catch only for the story title.
+#[tokio::test]
+async fn no_control_character_or_bidirectional_control_reaches_the_screen() {
+    let chars = escaped_by_line();
+    assert_eq!(chars.len(), COUNT, "the copy of `escaped_in_line` changed");
+    for c in chars {
+        let s = Script::new();
+        let mut item = story("ABC-1", Todo, 1, Some("dan@example.com"));
+        item.story.title = format!("Alpha{c}Omega");
+        item.story.description = format!("Gamma{c}Delta");
+        *s.stories.lock().unwrap() = vec![item];
+        let mut t = started(s.clone()).await;
+        t.until("the board", WAIT, |d| d.screen().contains("ABC-1"))
+            .await;
+        let board = t.d.screen();
+        // The card shows the title on the board, with the character dropped (or, for a separator, drawn).
+        let title = if matches!(c, '\u{2028}' | '\u{2029}') {
+            format!("Alpha{c}Omega")
+        } else {
+            "AlphaOmega".to_string()
+        };
+        assert!(board.contains(&title), "{c:?} on the board:\n{board:?}");
+        t.press(KeyCode::Enter);
+        t.until("the drawer", WAIT, |d| d.screen().contains("readiness"))
+            .await;
+        let drawer = t.d.screen();
+        for (screen, what) in [(&board, "board"), (&drawer, "drawer")] {
+            let shown = rows(screen);
+            // The test terminal is 140 by 40 (`support/mod.rs:511`): a line break in a cell would make a 41st row.
+            assert_eq!(shown.len(), 40, "{c:?} on the {what}:\n{screen:?}");
+            if !matches!(c, '\u{2028}' | '\u{2029}') {
+                assert!(
+                    !shown.iter().any(|r| r.contains(c)),
+                    "{c:?} reached the {what}:\n{screen:?}"
+                );
+            }
+        }
+        if matches!(c, '\u{2028}' | '\u{2029}') {
+            // Observed (see the run): a separator is not dropped and does not split a row; it is drawn in one cell
+            // like a letter, so the text around it stays on one row, and the row count above is still 40.
+            assert_eq!(
+                drawer.matches(&title).count(),
+                2,
+                "{c:?}: the title on the card and in the drawer:\n{drawer:?}"
+            );
+            assert!(
+                drawer.contains(&format!("Gamma{c}Delta")),
+                "{c:?}:\n{drawer:?}"
+            );
+            continue;
+        }
+        // The text around the character is drawn, not dropped with it. The drawer prints the title with `Line::raw`,
+        // which turns a `\n` into two spans on one line, so the title is always one word; it prints the description
+        // a line at a time (`str::lines`), so a `\n` there is the description's own line break, and the words land on
+        // two rows.
+        assert_eq!(
+            drawer.matches(&title).count(),
+            2,
+            "{c:?}: the title on the card and in the drawer:\n{drawer:?}"
+        );
+        if c == '\n' {
+            assert!(
+                drawer.contains("Gamma")
+                    && drawer.contains("Delta")
+                    && !drawer.contains("GammaDelta"),
+                "{drawer:?}"
+            );
+        } else {
+            assert!(drawer.contains("GammaDelta"), "{c:?}:\n{drawer:?}");
+        }
+    }
+}

@@ -134,6 +134,31 @@ fn serve_lazy_with(
     (url, handle)
 }
 
+/// `serve`, with each body written as given rather than as JSON (`serve_raw` for several answers): a body that holds a
+/// raw line break, such as a Jira error page. Every answer must be the request it names.
+fn serve_texts(answers: Vec<(&'static str, u16, String)>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        for (want, status, body) in answers {
+            let stream = accept(&listener);
+            let (line, _) = read_request(&stream);
+            let mut w = stream;
+            write!(
+                w,
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            assert!(
+                line.starts_with(&format!("{want} ")),
+                "expected `{want}`, got `{line}`"
+            );
+        }
+    });
+    (url, handle)
+}
+
 fn git(dir: &std::path::Path, args: &[&str]) {
     let out = std::process::Command::new("git")
         .args(args)
@@ -1661,7 +1686,7 @@ fn apply_sends_links_and_web_links_from_yaml_and_json_and_prints_them() {
     }
 
     // A web link's title and URL are stored text: a control or bidirectional character in either is printed
-    // escaped (`relations::for_terminal`), as `reeve link ls` prints it, and `--json` stays lossless.
+    // escaped (`terminal::line`), as `reeve link ls` prints it, and `--json` stays lossless.
     let mut hostile = applied();
     hostile["web_links"][0]["title"] = serde_json::json!("Scenario\u{1b}[2J page");
     hostile["web_links"][0]["url"] = serde_json::json!("https://example.com/\u{202e}gnp.exe");
@@ -1916,6 +1941,710 @@ fn link_to_an_unconfigured_repository_is_kept_and_not_checked() {
         "{v}"
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("not configured"));
+}
+
+/// Repository names a hostile or corrupted server could store: a line break that would forge a line of its own, an
+/// escape sequence, a right-to-left override, a tab, a trailing space. None is one clean directory name.
+const HOSTILE_REPOS: [&str; 5] = [
+    "kb\nwarning: forged",
+    "kb\u{1b}[2J",
+    "kb\u{202e}x",
+    "kb\tx",
+    "kb ",
+];
+
+/// What the refusal of a hostile repository name must look like on stderr: one line, the refusal of the name (not
+/// a missing clone found under it), and none of the characters raw.
+fn assert_repo_name_refused_on_one_line(repo: &str, out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{repo:?}: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{repo:?}: {stderr:?}");
+    assert!(
+        lines[0].starts_with("decision 7: repository name `"),
+        "{repo:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].contains("is not a single directory name"),
+        "{repo:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with("; nothing recorded"),
+        "{repo:?}: {stderr:?}"
+    );
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{repo:?}: {c:?} raw in {stderr:?}");
+    }
+}
+
+/// `decision check` refuses a stored repository name that is not one clean word, on one line, before it joins it to
+/// the household or runs git.
+#[test]
+fn decision_check_refuses_a_hostile_repository_name_on_one_line() {
+    for repo in HOSTILE_REPOS {
+        let hh = household();
+        let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+        d["record"]["repo"] = repo.into();
+        let (url, server) = serve(vec![(
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([d])),
+        )]);
+        let out = reeve_at(
+            &url,
+            &[
+                "decision",
+                "check",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_repo_name_refused_on_one_line(repo, &out);
+    }
+}
+
+/// `decision link` checks the reference the server stored: a hostile repository name there (configured, so the
+/// immediate check runs) is refused on one line too.
+#[test]
+fn decision_link_refuses_a_hostile_stored_repository_name_on_one_line() {
+    for repo in HOSTILE_REPOS {
+        let hh = household();
+        let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+        d["record"]["repo"] = repo.into();
+        let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":[repo],"sign_in_configured":true});
+        let (url, server) = serve(vec![
+            ("POST /api/v1/decisions/7/link", 200, ok(d.clone())),
+            ("GET /api/v1/config", 200, ok(config)),
+            ("GET /api/v1/decisions/7", 200, ok(d)),
+        ]);
+        let out = reeve_at(
+            &url,
+            &[
+                "--json",
+                "decision",
+                "link",
+                "7",
+                "--record",
+                "kb/ADR-0001",
+                "--repo",
+                "kb",
+                "--path",
+                "adrs/0001.md",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_repo_name_refused_on_one_line(repo, &out);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["immediate_check"]["outcome"], "unreadable", "{v}");
+    }
+}
+
+/// Record paths a hostile or corrupted server could store: a reviewer's path whose pathspec magic made git echo it,
+/// line breaks and all, a lone carriage return, an escape sequence, a right-to-left override, and nothing at all.
+const HOSTILE_PATHS: [&str; 5] = [
+    ":(glob)x\nwarning: forged line\nerror: another",
+    "adrs/0001.md\rerror: forged",
+    "adrs/\u{1b}[2J0001.md",
+    "adrs/\u{202e}dm.1000",
+    "",
+];
+
+/// What the refusal of a hostile record path must look like on stderr: one line, the refusal of the path (not a git
+/// error that echoes it), and none of its characters raw.
+fn assert_path_refused_on_one_line(path: &str, out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{path:?}: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{path:?}: {stderr:?}");
+    assert!(
+        lines[0].starts_with("decision 7: record path `"),
+        "{path:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with("` is empty or not one clean line; nothing recorded"),
+        "{path:?}: {stderr:?}"
+    );
+    for c in ['\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{path:?}: {c:?} raw in {stderr:?}");
+    }
+}
+
+/// `decision check` refuses a stored record path that is not one clean line, on one line, before it hands it to git.
+#[test]
+fn decision_check_refuses_a_hostile_record_path_on_one_line() {
+    for path in HOSTILE_PATHS {
+        let hh = household();
+        let d = decision(path, serde_json::json!({"kind":"unchecked"}));
+        let (url, server) = serve(vec![(
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([d])),
+        )]);
+        let out = reeve_at(
+            &url,
+            &[
+                "decision",
+                "check",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_path_refused_on_one_line(path, &out);
+    }
+}
+
+/// `decision link`'s immediate check reads the path the server stored: a hostile one is refused on one line too.
+#[test]
+fn decision_link_refuses_a_hostile_stored_record_path_on_one_line() {
+    for path in HOSTILE_PATHS {
+        let hh = household();
+        let d = decision(path, serde_json::json!({"kind":"unchecked"}));
+        let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":["kb"],"sign_in_configured":true});
+        let (url, server) = serve(vec![
+            ("POST /api/v1/decisions/7/link", 200, ok(d.clone())),
+            ("GET /api/v1/config", 200, ok(config)),
+            ("GET /api/v1/decisions/7", 200, ok(d)),
+        ]);
+        let out = reeve_at(
+            &url,
+            &[
+                "--json",
+                "decision",
+                "link",
+                "7",
+                "--record",
+                "kb/ADR-0001",
+                "--repo",
+                "kb",
+                "--path",
+                "adrs/0001.md",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_path_refused_on_one_line(path, &out);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["immediate_check"]["outcome"], "unreadable", "{v}");
+    }
+}
+
+/// A clean path that spells pathspec magic is a file name, not a glob: git looks for a file called `:(glob)*.md`,
+/// finds none, and the check posts not found (without literal pathspecs git refused the magic: unreadable).
+#[test]
+fn decision_check_takes_a_pathspec_magic_path_literally() {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([decision(
+                ":(glob)*.md",
+                serde_json::json!({"kind":"unchecked"})
+            )])),
+        ),
+        (
+            "POST /api/v1/decisions/7/check",
+            200,
+            ok(decision(
+                ":(glob)*.md",
+                serde_json::json!({"kind":"not_found"}),
+            )),
+        ),
+    ]);
+    let out = reeve_at(
+        &url,
+        &[
+            "--json",
+            "decision",
+            "check",
+            "--household",
+            hh.path().to_str().unwrap(),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let bodies = server.join().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let posted: serde_json::Value = serde_json::from_str(&bodies[1]).unwrap();
+    assert_eq!(posted["check"]["kind"], "not_found", "{posted}");
+}
+
+/// The import's preflight refusal names the caller by the email `/me` answered: a line break, tab, escape sequence
+/// or override in it is shown escaped, so the refusal stays on one line.
+#[test]
+fn the_import_preflight_refusal_names_the_caller_on_one_line() {
+    let email = "a@x\nerror: forged\t\u{1b}[2J\u{202e}\r";
+    let (url, server) = serve(vec![(
+        "GET /api/v1/me",
+        200,
+        ok(serde_json::json!({"email":email,"role":"member","token_kind":"interactive"})),
+    )]);
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let out = reeve_at(&url, &["import", "jira", "--mapping", mapping]);
+    server.join().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{stderr:?}");
+    assert!(
+        lines[0].starts_with(
+            "error: import needs an admin with an interactive token; a@x\\nerror: forged\\t"
+        ),
+        "{stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with(" is member with an interactive token"),
+        "{stderr:?}"
+    );
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+}
+
+/// With `--json` the same refusal's envelope carries the email exactly, not its escaped form; standard error still
+/// names it escaped, on one line.
+#[test]
+fn the_import_preflight_refusal_carries_the_email_exactly_in_json() {
+    let email = "a@x\nerror: forged\t\u{1b}[2J\u{202e}\r";
+    let (url, server) = serve(vec![(
+        "GET /api/v1/me",
+        200,
+        ok(serde_json::json!({"email":email,"role":"member","token_kind":"interactive"})),
+    )]);
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let out = reeve_at(&url, &["--json", "import", "jira", "--mapping", mapping]);
+    server.join().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["outcome"], "error", "{v}");
+    assert_eq!(v["code"], "forbidden", "{v}");
+    assert_eq!(
+        v["message"],
+        format!(
+            "import needs an admin with an interactive token; {email} is member with an interactive token"
+        ),
+        "{v}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr:?}");
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+}
+
+/// `reeve` against `url` with `env` set as well (a Jira token, say).
+fn reeve_at_with(url: &str, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    let mut c = reeve_cmd();
+    c.env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.args(args)
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap()
+}
+
+/// Standard error is one line holding none of the hostile characters raw.
+fn assert_one_stderr_line(out: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(stderr.lines().count(), 1, "{stderr:?}");
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+    stderr
+}
+
+const FORGED: &str = "\nerror (Forbidden): your token was revoked\t\u{1b}[2J\u{202e}\r";
+
+fn import_admin() -> serde_json::Value {
+    ok(serde_json::json!({"email":"admin@example.com","role":"admin","token_kind":"interactive"}))
+}
+
+/// The import's mapping refusal names the instance's horizons, which are the server's text: a horizon holding a line
+/// break cannot start a forged `error` line of its own. With `--json`, the envelope carries the horizons exactly.
+#[test]
+fn the_import_mapping_refusal_names_the_servers_horizons_on_one_line() {
+    let bucket = format!("Now{FORGED}");
+    let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":[bucket, "Next"],"repos":[],
+        "sign_in_configured":true});
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let message = format!(
+        "jira-import.toml: bucket_to_horizon.\"Later\" = \"Later\" is not one of {bucket}|Next"
+    );
+    for json in [false, true] {
+        let (url, server) = serve(vec![
+            ("GET /api/v1/me", 200, import_admin()),
+            ("GET /api/v1/config", 200, ok(config.clone())),
+        ]);
+        let mut args = vec!["import", "jira", "--mapping", mapping];
+        if json {
+            args.insert(0, "--json");
+        }
+        let out = reeve_at(&url, &args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(
+            stderr.starts_with("error: jira-import.toml: bucket_to_horizon.\"Later\" = \"Later\" is not one of Now\\nerror (Forbidden)"),
+            "{stderr:?}"
+        );
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(v["code"], "validation", "{v}");
+            assert_eq!(v["message"], message, "{v}");
+        }
+    }
+}
+
+/// A Jira page that failed is named with Jira's own answer (up to 500 characters of it): a body holding a line break
+/// cannot forge a line of the CLI's output. With `--json`, the envelope's message carries it exactly.
+#[test]
+fn the_import_fetch_failure_names_jiras_answer_on_one_line() {
+    let body = format!("{{\"errorMessages\":[\"nope\"]}}{FORGED}");
+    for json in [false, true] {
+        let body = body.clone();
+        let config = ok(
+            serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now","Next","Upcoming",
+            "Later","Won't do"],"repos":[],"sign_in_configured":true}),
+        );
+        let (url, server) = serve_texts(vec![
+            ("GET /api/v1/me", 200, import_admin().to_string()),
+            ("GET /api/v1/config", 200, config.to_string()),
+            // A 400 is not retried, so the first page fails the fetch.
+            (
+                "GET /rest/api/3/search/jql?jql=project+%3D+%22JPD%22+ORDER+BY+key+ASC&fields=summary%2Cdescription%2C\
+                 status%2Cresolution%2Cissuetype%2Cassignee%2Clabels%2Cparent%2Ccreated%2Cissuelinks%2C\
+                 customfield_10042%2Ccustomfield_10043&maxResults=100",
+                400,
+                body,
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let example = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../jira-import.example.toml"
+        ))
+        .unwrap();
+        let mapping = dir.path().join("jira-import.toml");
+        std::fs::write(
+            &mapping,
+            example.replace("https://acme-team.atlassian.net", &url),
+        )
+        .unwrap();
+        let mut args = vec!["import", "jira", "--mapping", mapping.to_str().unwrap()];
+        if json {
+            args.insert(0, "--json");
+        }
+        let out = reeve_at_with(&url, &args, &[("JIRA_TOKEN", "jira_test")]);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(
+            stderr.starts_with("error: jira: ideas of JPD: search page 1 failed (HTTP 400): "),
+            "{stderr:?}"
+        );
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(
+                v["message"],
+                format!(
+                    "jira: ideas of JPD: search page 1 failed (HTTP 400): {{\"errorMessages\":[\"nope\"]}}{FORGED}; \
+                     nothing written: a partial fetch is never imported"
+                ),
+                "{v}"
+            );
+        }
+    }
+}
+
+/// An answer the CLI cannot decode is named with the value it refused (an invalid key, an enum word it does not
+/// know): a value holding a line break cannot forge a row. With `--json`, the envelope's message carries it exactly.
+#[test]
+fn an_undecodable_answer_names_the_servers_value_on_one_line() {
+    let story = |field: &str, value: &str| {
+        let mut s = serde_json::to_value(urgent_story(vec![])).unwrap();
+        s[field] = value.into();
+        s
+    };
+    for (field, value) in [
+        ("key", format!("ABC-1\nABC-9 [done] forged row{FORGED}")),
+        ("delivery", format!("done{FORGED}")),
+    ] {
+        for json in [false, true] {
+            let (url, server) = serve(vec![(
+                "GET /api/v1/stories/ABC-1",
+                200,
+                ok(story(field, &value)),
+            )]);
+            let mut args = vec!["story", "show", "ABC-1"];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_at(&url, &args);
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{field} {out:?}");
+            let stderr = assert_one_stderr_line(&out);
+            assert!(stderr.starts_with("error: "), "{stderr:?}");
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                let message = v["message"].as_str().unwrap();
+                assert!(message.contains(&value), "{field}: {v}");
+            }
+        }
+    }
+}
+
+/// A line the server's text tries to pass for a line of the CLI's own output.
+const STORED: &str = "\ndecision 8: stored";
+
+/// The lines of standard error that start at column 0 with text: the CLI's own lines, never a continuation.
+fn column_zero_lines(out: &std::process::Output) -> Vec<String> {
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with(char::is_whitespace))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `decision check` for decision 7 (accepted on the default branch), the post answered `status` `answer`.
+fn check_answered(json: bool, status: u16, answer: serde_json::Value) -> std::process::Output {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([decision(
+                "adrs/0001.md",
+                serde_json::json!({"kind":"unchecked"})
+            )])),
+        ),
+        ("POST /api/v1/decisions/7/check", status, answer),
+    ]);
+    let mut args = vec![
+        "decision",
+        "check",
+        "--household",
+        hh.path().to_str().unwrap(),
+    ];
+    if json {
+        args.insert(0, "--json");
+    }
+    let out = reeve_at(&url, &args);
+    server.join().unwrap();
+    out
+}
+
+/// `decision link 7` whose immediate check is held and whose read-back is answered `status` `answer`.
+fn link_read_back(json: bool, status: u16, answer: serde_json::Value) -> std::process::Output {
+    let hh = household();
+    let (url, server) = serve(vec![
+        (
+            "POST /api/v1/decisions/7/link",
+            200,
+            ok(decision(
+                "adrs/0001.md",
+                serde_json::json!({"kind":"unchecked"}),
+            )),
+        ),
+        (
+            "GET /api/v1/config",
+            200,
+            ok(
+                serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":["kb"],"sign_in_configured":true}),
+            ),
+        ),
+        ("POST /api/v1/decisions/7/check", 403, forbidden()),
+        ("GET /api/v1/decisions/7", status, answer),
+    ]);
+    let mut args = vec![
+        "decision",
+        "link",
+        "7",
+        "--record",
+        "kb/ADR-0001",
+        "--repo",
+        "kb",
+        "--path",
+        "adrs/0001.md",
+        "--household",
+        hh.path().to_str().unwrap(),
+    ];
+    if json {
+        args.insert(0, "--json");
+    }
+    let out = reeve_at(&url, &args);
+    server.join().unwrap();
+    out
+}
+
+fn internal(message: &str) -> serde_json::Value {
+    serde_json::json!({"outcome":"error","code":"internal","message":message})
+}
+
+/// Decision 7 holding an `on_type` the CLI cannot decode, with a line break in it.
+fn undecodable_decision() -> serde_json::Value {
+    let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+    d["on_type"] = format!("story{STORED}").into();
+    d
+}
+
+/// A decode error names the server's value, so in text mode it stays on one line, in `decision check`'s post and in
+/// `decision link`'s read-back; `--json` carries it exactly.
+#[test]
+fn a_decisions_decode_error_stays_on_one_line() {
+    for json in [false, true] {
+        let out = check_answered(json, 200, ok(undecodable_decision()));
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(stderr.starts_with("decision 7: "), "{stderr:?}");
+        assert!(stderr.contains("story\\ndecision 8: stored"), "{stderr:?}");
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let e = v["value"]["results"][0]["error"].as_str().unwrap();
+            assert!(e.contains(&format!("story{STORED}")), "{v}");
+        }
+
+        let out = link_read_back(json, 200, ok(undecodable_decision()));
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let lines = column_zero_lines(&out);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[1]
+                .starts_with("decision 7: linked, but it could not be read back after the check: "),
+            "{lines:?}"
+        );
+        assert!(lines[1].contains("story\\ndecision 8: stored"), "{lines:?}");
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let e = v["refresh_error"].as_str().unwrap();
+            assert!(e.contains(&format!("story{STORED}")), "{v}");
+        }
+    }
+}
+
+/// The server's error message is long text: in text mode its further lines continue indented, so none passes for a
+/// line of the CLI's own; a one-line message prints as it always has, and `--json` carries the message exactly.
+#[test]
+fn a_servers_error_message_continues_indented() {
+    let hostile = format!("boom{STORED}");
+    for (message, check_says, finish_says) in [
+        (
+            hostile.as_str(),
+            "decision 7: Internal boom\n  decision 8: stored\n",
+            "error (Internal): boom\n  decision 8: stored\n",
+        ),
+        (
+            "boom",
+            "decision 7: Internal boom\n",
+            "error (Internal): boom\n",
+        ),
+    ] {
+        for json in [false, true] {
+            // `decision check`'s post.
+            let out = check_answered(json, 500, internal(message));
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            assert_eq!(String::from_utf8_lossy(&out.stderr), check_says);
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(
+                    v["value"]["results"][0]["error"],
+                    format!("Internal {message}"),
+                    "{v}"
+                );
+            }
+
+            // `decision link`'s read-back.
+            let out = link_read_back(json, 500, internal(message));
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            let said = check_says.replacen(
+                "decision 7: ",
+                "decision 7: linked, but it could not be read back after the check: ",
+                1,
+            );
+            assert!(stderr.ends_with(&said), "{stderr:?}");
+            assert_eq!(column_zero_lines(&out).len(), 2, "{stderr:?}");
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(v["refresh_error"], format!("Internal {message}"), "{v}");
+            }
+
+            // Any command's error envelope (`finish`).
+            let (url, server) = serve(vec![("GET /api/v1/stories/ABC-1", 500, internal(message))]);
+            let mut args = vec!["story", "show", "ABC-1"];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_at(&url, &args);
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            if json {
+                // The envelope is the answer; standard error stays empty.
+                assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+                assert_eq!(
+                    String::from_utf8_lossy(&out.stdout),
+                    format!("{}\n", internal(message))
+                );
+            } else {
+                assert_eq!(String::from_utf8_lossy(&out.stderr), finish_says);
+            }
+
+            // A login the server refused.
+            let (url, server) = serve(vec![("GET /api/v1/me", 500, internal(message))]);
+            let cfg = tempfile::tempdir().unwrap();
+            let mut args = vec!["auth", "login", "--no-browser", "--url", &url];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_cmd()
+                .env_remove("REEVE_URL")
+                .env_remove("REEVE_TOKEN")
+                .env("REEVE_CONFIG_DIR", cfg.path())
+                .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+                .env_remove("REEVE_UPDATE_NOTICE")
+                .args(&args)
+                .write_stdin("reeve_test\n")
+                .timeout(Duration::from_secs(30))
+                .output()
+                .unwrap();
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{out:?}");
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            let said = finish_says.replacen("error (Internal): ", "error: ", 1);
+            assert!(stderr.ends_with(&said), "{stderr:?}");
+            assert_eq!(
+                column_zero_lines(&out).len(),
+                2,
+                "the prompt and the error: {stderr:?}"
+            );
+            if json {
+                assert_eq!(
+                    String::from_utf8_lossy(&out.stdout),
+                    format!("{}\n", internal(message))
+                );
+            }
+        }
+    }
 }
 
 /// `story create --owner` and `story edit --owner` set a story's owner; `story edit --no-owner` clears it.
@@ -5925,5 +6654,341 @@ fn a_create_refuses_a_template_beside_a_brief() {
                 "{base:?} {extra:?}: {err}"
             );
         }
+    }
+}
+
+/// What stored text must not be able to do to a terminal: clear the screen, start a line of its own, reorder what
+/// follows.
+const HOSTILE: &str = "a\u{1b}[2Jb\r\nc\u{202e}d";
+
+/// Whether `c` could drive a terminal or reorder the text after it. A line break and a tab are the CLI's own.
+fn drives(c: char) -> bool {
+    (c.is_control() && c != '\n' && c != '\t')
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+fn hostile_story() -> serde_json::Value {
+    serde_json::json!({
+        "key": "TST-1", "title": HOSTILE, "kind": "chore", "epic": null, "description": HOSTILE,
+        "criteria": [{"text": HOSTILE, "done": false}], "owner": HOSTILE, "labels": [HOSTILE], "rank": 0,
+        "blocked_by": [], "delivery": "todo", "resolution": null, "external_ref": HOSTILE, "version": 1, "prs": []
+    })
+}
+
+/// An answer, a refusal and an error from the server each reach the terminal escaped, on the stream each is printed
+/// on; the same three with `--json` are exact: standard output is the whole envelope, byte for byte, and its line
+/// break.
+#[test]
+fn server_text_reaches_the_terminal_escaped_and_json_exact() {
+    let refused = serde_json::json!({"outcome":"refused","overridable":true,
+        "reasons":[{"reason":"decision_no_record","decision_id":7,"title":HOSTILE}]});
+    let error = serde_json::json!({"outcome":"error","code":"validation","message":HOSTILE});
+    // The envelopes `finish` writes, built through the real DTOs, so every field the client serialises (defaults
+    // included) is in the expected bytes, and the keys come in the order the client writes them.
+    let story: reeve_protocol::StoryDto = serde_json::from_value(hostile_story()).unwrap();
+    let reasons: Vec<reeve_protocol::Reason> =
+        serde_json::from_value(refused["reasons"].clone()).unwrap();
+    type Case<'a> = (
+        &'a str,
+        u16,
+        serde_json::Value,
+        &'a [&'a str],
+        i32,
+        serde_json::Value,
+    );
+    let cases: [Case; 3] = [
+        (
+            "GET /api/v1/stories/TST-1",
+            200,
+            ok(hostile_story()),
+            &["story", "show", "TST-1"],
+            0,
+            serde_json::json!({"outcome":"ok","value":story}),
+        ),
+        (
+            "POST /api/v1/stories/TST-1/move",
+            422,
+            refused.clone(),
+            &["story", "mv", "TST-1", "in-progress", "--version", "1"],
+            2,
+            serde_json::json!({"outcome":"refused","reasons":reasons,"overridable":true}),
+        ),
+        (
+            "GET /api/v1/stories/TST-1",
+            400,
+            error.clone(),
+            &["story", "show", "TST-1"],
+            1,
+            serde_json::json!({"outcome":"error","code":"validation","message":HOSTILE}),
+        ),
+    ];
+    for (want, status, body, args, code, envelope) in cases {
+        let (url, server) = serve(vec![(want, status, body.clone())]);
+        let out = reeve_at(&url, args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?}");
+        let (stdout, stderr) = (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        );
+        assert!(!stdout.chars().any(drives), "{args:?} stdout: {stdout:?}");
+        assert!(!stderr.chars().any(drives), "{args:?} stderr: {stderr:?}");
+        // The text is there, escaped, not dropped.
+        assert!(
+            format!("{stdout}{stderr}").contains("a\\u{1b}[2Jb"),
+            "{args:?}: {stdout:?} {stderr:?}"
+        );
+
+        let (url, server) = serve(vec![(want, status, body.clone())]);
+        let mut json_args = vec!["--json"];
+        json_args.extend_from_slice(args);
+        let out = reeve_at(&url, &json_args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "--json {args:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("{envelope}\n"),
+            "--json {args:?}"
+        );
+    }
+}
+
+/// An answer that matches no outcome fails the client with "unexpected response: <body>", which reaches the outer
+/// error path in `lib.rs`: its line on standard error is guarded, and with `--json` the `internal` envelope is exact.
+#[test]
+fn the_outer_error_path_reaches_the_terminal_guarded() {
+    let body = serde_json::json!({"surprise": HOSTILE});
+    let args = &["story", "show", "TST-1"];
+    let want = "GET /api/v1/stories/TST-1";
+
+    let (url, server) = serve(vec![(want, 200, body.clone())]);
+    let out = reeve_at(&url, args);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let (stdout, stderr) = (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    );
+    assert!(!stdout.chars().any(drives), "stdout: {stdout:?}");
+    assert!(!stderr.chars().any(drives), "stderr: {stderr:?}");
+    assert!(
+        stderr.contains("error: unexpected response: "),
+        "{stderr:?}"
+    );
+    assert!(stderr.contains("\\u{202e}"), "{stderr:?}");
+
+    let (url, server) = serve(vec![(want, 200, body.clone())]);
+    let out = reeve_at(&url, &["--json", "story", "show", "TST-1"]);
+    server.join().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    // The envelope lib.rs writes: the error chain as the message, exact.
+    let envelope = serde_json::json!({"outcome":"error","code":"internal",
+        "message":format!("unexpected response: {body}")});
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!("{envelope}\n")
+    );
+}
+
+/// `reeve export` writes a JSON document with or without `--json`: it is exempt from the guard, and what it writes
+/// parses back to exactly what the server sent.
+#[test]
+fn export_writes_the_servers_document_untouched() {
+    let doc = serde_json::json!({"stories": [hostile_story()], "activity": [], "note": "\u{2028}\u{200e}\u{7f}"});
+    for args in [&["export"][..], &["--json", "export"][..]] {
+        let (url, server) = serve(vec![("GET /api/v1/export", 200, ok(doc.clone()))]);
+        let out = reeve_at(&url, args);
+        server.join().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let written: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(written, doc, "{args:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()),
+            "{args:?}"
+        );
+    }
+}
+
+/// A title holding a line break cannot pass for a second line of output: `story show` prints as many lines whatever
+/// the one-line fields hold.
+#[test]
+fn a_title_cannot_start_a_line_of_its_own() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories/TST-1",
+        200,
+        ok(hostile_story()),
+    )]);
+    let out = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let mut plain = hostile_story();
+    for field in ["title", "owner", "external_ref"] {
+        plain[field] = "abcd".into();
+    }
+    plain["labels"] = serde_json::json!(["abcd"]);
+    plain["criteria"] = serde_json::json!([{"text": "abcd", "done": false}]);
+    let (url, server) = serve(vec![("GET /api/v1/stories/TST-1", 200, ok(plain))]);
+    let reference = reeve_at(&url, &["story", "show", "TST-1"]);
+    server.join().unwrap();
+    assert!(reference.status.success(), "{reference:?}");
+    let lines = String::from_utf8(reference.stdout).unwrap().lines().count();
+    // Two empty outputs would compare equal.
+    assert!(lines > 0, "the reference printed nothing");
+    assert_eq!(stdout.lines().count(), lines, "{stdout:?}");
+}
+
+/// Runs `reeve` against `url` with standard output going to `stdout` (a file or a pipe, never captured) and standard
+/// error captured; killed if it runs past a minute.
+#[cfg(target_os = "linux")]
+fn reeve_to(url: &str, args: &[&str], stdout: std::process::Stdio) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_reeve"));
+    for v in isolation::PROXY_VARS {
+        cmd.env_remove(v);
+    }
+    let mut child = cmd
+        .env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("reeve {args:?} ran past a minute");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().unwrap()
+}
+
+/// Standard output on a full disk (`/dev/full` fails every write with ENOSPC).
+#[cfg(target_os = "linux")]
+fn full_disk() -> std::process::Stdio {
+    std::fs::File::create("/dev/full").unwrap().into()
+}
+
+/// Standard output a pipe whose reader went away before anything was written (`reeve story ls | head -0`).
+#[cfg(target_os = "linux")]
+fn closed_pipe() -> std::process::Stdio {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    writer.into()
+}
+
+#[cfg(target_os = "linux")]
+fn one_story_row() -> serde_json::Value {
+    ok(serde_json::json!([{
+        "story": urgent_story(vec![]),
+        "readiness": {"ready": true, "reasons": []}
+    }]))
+}
+
+#[cfg(target_os = "linux")]
+fn refused_interactive_only() -> serde_json::Value {
+    serde_json::json!({"outcome":"refused","reasons":[{"reason":"interactive_only"}],"overridable":false})
+}
+
+#[cfg(target_os = "linux")]
+fn assert_said_write_failed(out: &std::process::Output) {
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("error: writing standard output: "), "{err}");
+}
+
+/// Text output redirected to a full disk is a failure (exit status 1, said on standard error), not a silent 0 with
+/// nothing written: `reeve story ls > stories.txt` must not look like it worked.
+#[cfg(target_os = "linux")]
+#[test]
+fn text_output_to_a_full_disk_exits_1() {
+    let (url, server) = serve(vec![("GET /api/v1/stories", 200, one_story_row())]);
+    let out = reeve_to(&url, &["story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// An envelope that cannot be written is exit status 1, whatever the outcome it carried: a refusal whose envelope never
+/// reached the reader is not a delivered refusal (2).
+#[cfg(target_os = "linux")]
+#[test]
+fn an_envelope_to_a_full_disk_exits_1_even_for_a_refusal() {
+    let (url, server) = serve(vec![("GET /api/v1/stories", 200, one_story_row())]);
+    let out = reeve_to(&url, &["--json", "story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+    let (url, server) = serve(vec![(
+        "GET /api/v1/stories",
+        403,
+        refused_interactive_only(),
+    )]);
+    let out = reeve_to(&url, &["--json", "story", "ls"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// `reeve export > backup.json` on a full disk cannot exit 0 with half a document behind it.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_export_to_a_full_disk_exits_1() {
+    let (url, server) = serve(vec![(
+        "GET /api/v1/export",
+        200,
+        ok(serde_json::json!({"stories": [], "activity": []})),
+    )]);
+    let out = reeve_to(&url, &["export"], full_disk());
+    server.join().unwrap();
+    assert_said_write_failed(&out);
+}
+
+/// A reader that went away (`| head -1`) is not this command's failure: the command exits with its own status, text or
+/// `--json`, success or refusal, and says nothing about the write.
+#[cfg(target_os = "linux")]
+#[test]
+fn output_to_a_closed_pipe_keeps_the_commands_own_status() {
+    let export = ok(serde_json::json!({"stories": [], "activity": []}));
+    for (args, path, status, body, code) in [
+        (
+            &["story", "ls"][..],
+            "GET /api/v1/stories",
+            200,
+            one_story_row(),
+            0,
+        ),
+        (
+            &["--json", "story", "ls"][..],
+            "GET /api/v1/stories",
+            200,
+            one_story_row(),
+            0,
+        ),
+        (
+            &["--json", "story", "ls"][..],
+            "GET /api/v1/stories",
+            403,
+            refused_interactive_only(),
+            2,
+        ),
+        (&["export"][..], "GET /api/v1/export", 200, export, 0),
+    ] {
+        let (url, server) = serve(vec![(path, status, body)]);
+        let out = reeve_to(&url, args, closed_pipe());
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(code), "{args:?} {out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("writing standard output"), "{args:?} {err}");
     }
 }

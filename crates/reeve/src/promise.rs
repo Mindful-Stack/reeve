@@ -1,6 +1,7 @@
 //! The words of a promise (kb/ADR-0025), as the web says them (`web/src/lib/promise.ts`): every value comes from the
 //! server, which derives state, due period and days on read, so nothing here reads a clock or computes a date
 //! (kb/ADR-0011 R9).
+use crate::terminal::line;
 use chrono::NaiveDate;
 use reeve_protocol::{
     EpicPromiseDto, PromiseDue, PromiseFactDto, PromiseHolder, PromiseState, SprintPromiseDto,
@@ -96,13 +97,13 @@ pub fn epic_chip_text(p: &EpicPromiseDto) -> String {
 
 fn to(f: &PromiseFactDto) -> String {
     match f.to.as_deref() {
-        Some(t) if !t.is_empty() => format!(" to {t}"),
+        Some(t) if !t.is_empty() => format!(" to {}", line(t)),
         _ => String::new(),
     }
 }
 
 fn set_by(f: &PromiseFactDto) -> String {
-    format!(" · set by {}", short(&f.by))
+    format!(" · set by {}", line(short(&f.by)))
 }
 
 /// The drawer's promise line: who promised what by which date (with its year) to whom, both promises when the story
@@ -172,7 +173,7 @@ pub fn sprint_row_text(p: &SprintPromiseDto) -> String {
         _ => base,
     };
     match p.to.as_deref() {
-        Some(t) if !t.is_empty() => format!("to {t} · {base}"),
+        Some(t) if !t.is_empty() => format!("to {} · {base}", line(t)),
         _ => base,
     }
 }
@@ -200,21 +201,24 @@ fn field<'a>(v: &'a serde_json::Value, name: &str) -> Option<&'a str> {
         .filter(|x| !x.is_empty())
 }
 
-/// An ISO date as a line gives it ("20 Nov 2026"); anything else unchanged (the web's `dateLabel`).
+/// An ISO date as a line gives it ("20 Nov 2026"); anything else as one-line text (the web's `dateLabel`).
 fn payload_date(iso: &str) -> String {
     iso.parse::<NaiveDate>()
         .map(date_label)
-        .unwrap_or_else(|_| iso.to_string())
+        .unwrap_or_else(|_| line(iso).into_owned())
 }
 
 /// A promise activity entry's words, as the web's `actionLabel` gives them (`web/src/lib/format.ts`): a `promised`
 /// entry's chosen by comparing `on` and `to` with `previous`, a `promise_cleared` entry's fixed. `key` names the item
-/// where the words are not already about it. `None` for every other action.
+/// where the words are not already about it; it is the server's text, and prints as one line. `None` for every other
+/// action.
 pub fn activity_words(
     action: &str,
     payload: &serde_json::Value,
     key: Option<&str>,
 ) -> Option<String> {
+    let key = key.map(line);
+    let key = key.as_deref();
     match action {
         "promise_cleared" => Some(match key {
             Some(k) => format!("cleared the promise on {k}"),
@@ -241,7 +245,7 @@ fn promised_words(payload: &serde_json::Value, key: Option<&str>) -> String {
         "promised {}by {}{}",
         key.map(|k| format!("{k} ")).unwrap_or_default(),
         payload_date(on),
-        to.map(|t| format!(" to {t}")).unwrap_or_default()
+        to.map(|t| format!(" to {}", line(t))).unwrap_or_default()
     );
     let prev = match payload.get("previous") {
         Some(p) if p.is_object() => p,
@@ -253,13 +257,13 @@ fn promised_words(payload: &serde_json::Value, key: Option<&str>) -> String {
         return match to {
             _ if to == prev_to => change,
             None => format!("{change} and removed its recipient"),
-            Some(t) => format!("{change} and its recipient to {t}"),
+            Some(t) => format!("{change} and its recipient to {}", line(t)),
         };
     }
     match to {
         _ if to == prev_to => fresh,
         None => format!("removed {recipient}"),
-        Some(t) => format!("changed {recipient} to {t}"),
+        Some(t) => format!("changed {recipient} to {}", line(t)),
     }
 }
 
@@ -435,5 +439,54 @@ mod tests {
         assert_eq!(day_label(date("2026-11-02")), "2 Nov");
         assert_eq!(day_label(date("2026-01-20")), "20 Jan");
         assert_eq!(date_label(date("2026-01-02")), "2 Jan 2026");
+    }
+
+    /// A promise entry's date and recipient are the payload's text, one line each, in the fresh wording and in the
+    /// changed one (`previous` names another date and recipient).
+    #[test]
+    fn a_promise_entrys_text_stays_on_its_line() {
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
+        let fresh = serde_json::json!({"on": "2026-11-20", "to": "Anna"});
+        let changed = serde_json::json!({"on": "2026-11-20", "to": "Anna",
+            "previous": {"on": "2026-11-18", "to": "Bo"}});
+        for payload in [fresh, changed] {
+            let shown = assert_one_line(&payload, &Paths::none(), |p| {
+                activity_words("promised", p, Some("ABC-1")).expect("a promised entry has words")
+            });
+            assert_shown(&shown, &["/on", "/to"]);
+        }
+        // The helper gives `on` and `previous.on` different texts, so it never reaches the wording for a changed
+        // recipient alone (same date, another recipient); that arm is written by hand.
+        let recipient_only = serde_json::json!({"on": "2026-11-20", "to": "Anna\n\u{1b}[2J\u{202e}x",
+            "previous": {"on": "2026-11-20", "to": "Bo"}});
+        assert_eq!(
+            activity_words("promised", &recipient_only, Some("ABC-1"))
+                .expect("a promised entry has words"),
+            "changed the recipient of the promise on ABC-1 to Anna\\n\\u{1b}[2J\\u{202e}x"
+        );
+    }
+
+    /// The key an entry names is the server's text too (an activity entry's `entity_key`), one line in every wording
+    /// that names it: a fresh promise, a changed one, one without a date, and a cleared one.
+    #[test]
+    fn a_promise_entrys_key_stays_on_its_line() {
+        use crate::hostile::{Paths, assert_one_line, assert_shown};
+        let changed = serde_json::json!({"on": "2026-11-20", "to": "Anna",
+            "previous": {"on": "2026-11-18", "to": "Bo"}});
+        for (action, payload) in [
+            (
+                "promised",
+                serde_json::json!({"on": "2026-11-20", "to": "Anna"}),
+            ),
+            ("promised", changed),
+            ("promised", serde_json::json!({"to": "Anna"})),
+            ("promise_cleared", serde_json::json!({"to": "Anna"})),
+        ] {
+            let fixture = ("ABC-1".to_string(), payload);
+            let shown = assert_one_line(&fixture, &Paths::none(), |(k, p)| {
+                activity_words(action, p, Some(k)).expect("a promise entry has words")
+            });
+            assert_shown(&shown, &["/0"]);
+        }
     }
 }

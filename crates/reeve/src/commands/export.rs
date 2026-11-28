@@ -3,6 +3,9 @@
 //!
 //! The document is read as an untyped JSON value and written back unchanged (pretty-printed), so a CLI older than the
 //! server neither drops fields it does not know nor fails on an enum value it does not know.
+//!
+//! The document is JSON with or without `--json`, so it is written through `terminal::document`, never the guard; a
+//! failed write (other than to a reader that went away) is exit status 1.
 use super::finish;
 use crate::client::{Client, Outcome};
 use clap::Args;
@@ -32,14 +35,19 @@ pub async fn run(c: &Client, cmd: Export, json: bool) -> anyhow::Result<i32> {
             crate::atomic_file::write_atomically(path, text.as_bytes())?;
             let count = |k: &str| doc.get(k).and_then(|v| v.as_array()).map(Vec::len);
             match (count("stories"), count("activity")) {
-                (Some(s), Some(a)) => eprintln!(
+                (Some(s), Some(a)) => crate::terminal::err(&format!(
                     "exported {s} stories and {a} activity entries to {}",
                     path.display()
-                ),
-                _ => eprintln!("exported to {}", path.display()),
+                )),
+                _ => crate::terminal::err(&format!("exported to {}", path.display())),
             }
         }
-        None => print!("{text}"),
+        None => {
+            return Ok(crate::terminal::status(
+                crate::terminal::document(&text),
+                out.exit_code(),
+            ));
+        }
     }
     Ok(out.exit_code())
 }

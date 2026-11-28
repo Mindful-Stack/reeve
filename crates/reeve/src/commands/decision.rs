@@ -153,7 +153,7 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             reversibility,
         } => {
             if due.is_none() {
-                eprintln!("no decide-by date; the queue will flag it");
+                crate::terminal::err("no decide-by date; the queue will flag it");
             }
             // The protocol type, not a hand-built object: a renamed field fails to compile here, not at the server.
             let req = RequireDecision {
@@ -262,50 +262,58 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                     outcome: "repo_not_configured",
                     check: None,
                     error: None,
+                    shown: None,
                     refused: None,
                 }
             };
             report(id, &entry);
             // The link is stored and the check has run, so the answer is always the ok envelope with both. `value` is the
             // decision read back after the check, as before; when that read fails (a transport error or an error
-            // envelope), it falls back to the link's own response and `refresh_error` says why.
-            let (value, refresh_error) = match c
+            // envelope), it falls back to the link's own response and `refresh_error` says why, as the CLI words it (a
+            // refusal's reasons through `render::reasons`, titles escaped).
+            // Text mode shows that sentence as `shown` (see `CheckEntry::shown`).
+            let (value, refresh_error, shown) = match c
                 .get::<RequiredDecisionDto>(&format!("/decisions/{id}"))
                 .await
             {
-                Ok(Outcome::Ok(now)) => (now, None),
-                Ok(Outcome::Refused { reasons: rs, .. }) => (
-                    d.clone(),
-                    Some(format!("refused:\n{}", crate::render::reasons(&rs))),
-                ),
-                Ok(Outcome::Error { code, message, .. }) => {
-                    (d.clone(), Some(format!("{code:?} {message}")))
+                Ok(Outcome::Ok(now)) => (now, None, None),
+                Ok(Outcome::Refused { reasons: rs, .. }) => {
+                    let e = format!("refused:\n{}", crate::render::reasons(&rs));
+                    (d.clone(), Some(e.clone()), Some(e))
                 }
-                Err(e) => (d.clone(), Some(format!("{e:#}"))),
+                Ok(Outcome::Error { code, message, .. }) => {
+                    let (e, shown) = server_error(code, &message);
+                    (d.clone(), Some(e), Some(shown))
+                }
+                Err(e) => {
+                    let (e, shown) = decode_error(&e);
+                    (d.clone(), Some(e), Some(shown))
+                }
             };
-            if let Some(e) = &refresh_error {
-                eprintln!(
+            if let Some(e) = &shown {
+                crate::terminal::err(&format!(
                     "decision {id}: linked, but it could not be read back after the check: {e}"
-                );
+                ));
             }
-            if json {
+            let written = if json {
                 let mut out =
                     serde_json::json!({"outcome":"ok","value":value,"immediate_check":entry});
                 if let Some(e) = &refresh_error {
                     out["refresh_error"] = e.clone().into();
                 }
-                println!("{out}");
+                crate::terminal::exact(&out.to_string())
             } else {
-                println!("{}", crate::render::decision(&value));
-            }
+                crate::terminal::out(&crate::render::decision(&value))
+            };
             // 0 only when the check stored its result or held it for the scheduled run, and the decision shown is current.
-            if refresh_error.is_none()
+            let code = if refresh_error.is_none()
                 && matches!(entry.outcome, "stored" | "held" | "repo_not_configured")
             {
                 0
             } else {
                 1
-            }
+            };
+            crate::terminal::status(written, code)
         }
         Decision::Check {
             household,
@@ -327,15 +335,16 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
                 && selected.is_empty()
             {
                 let message = format!("no open decision with a record has id {o}");
-                if json {
-                    println!(
-                        "{}",
-                        serde_json::json!({"outcome":"error","code":"not_found","message":message})
-                    );
+                let written = if json {
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"error","code":"not_found","message":message})
+                            .to_string(),
+                    )
                 } else {
-                    eprintln!("error: {message}");
-                }
-                return Ok(1);
+                    crate::terminal::err(&format!("error: {message}"));
+                    Ok(())
+                };
+                return Ok(crate::terminal::status(written, 1));
             }
             let mut fetched = Fetched::new();
             let mut results = vec![];
@@ -365,21 +374,23 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             let value = serde_json::json!({"checked": checked, "held": held, "skipped": skipped, "unreadable": unreadable, "failed": failed, "results": results});
             // Held is not bad, except under `--strict`; skipped is never bad.
             let bad = unreadable + failed + if strict { held } else { 0 };
-            if json {
+            let written = if json {
                 if bad == 0 {
-                    println!("{}", serde_json::json!({"outcome":"ok","value":value}))
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"ok","value":value}).to_string(),
+                    )
                 } else {
-                    println!(
-                        "{}",
-                        serde_json::json!({"outcome":"error","code":"internal","message":format!("{bad} of {} checks failed", results.len()),"value":value})
+                    crate::terminal::exact(
+                        &serde_json::json!({"outcome":"error","code":"internal","message":format!("{bad} of {} checks failed", results.len()),"value":value})
+                            .to_string(),
                     )
                 }
             } else {
-                println!(
+                crate::terminal::out(&format!(
                     "checked {checked} decision(s), {held} held, {skipped} skipped, {unreadable} unreadable, {failed} failed"
-                )
-            }
-            if bad == 0 { 0 } else { 1 }
+                ))
+            };
+            crate::terminal::status(written, if bad == 0 { 0 } else { 1 })
         }
         Decision::Close {
             id,
@@ -465,16 +476,16 @@ const HELD: &str =
 
 /// The stderr line for an entry that did not simply store: its error, or the held line.
 fn report(id: i64, e: &CheckEntry) {
-    if let Some(err) = &e.error {
-        eprintln!("decision {id}: {err}");
+    if let Some(err) = e.shown.as_ref().or(e.error.as_ref()) {
+        crate::terminal::err(&format!("decision {id}: {err}"));
     }
     if e.outcome == "held" {
-        eprintln!("decision {id}: {HELD}");
+        crate::terminal::err(&format!("decision {id}: {HELD}"));
     }
     if e.outcome == "repo_not_configured" {
-        eprintln!(
+        crate::terminal::err(&format!(
             "decision {id}: linked; its repository is not configured on the server, so the record is not checked yet (the scheduled check reads it once the repository is configured)"
-        );
+        ));
     }
 }
 
@@ -501,25 +512,51 @@ struct CheckEntry {
     outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     check: Option<CheckResult>,
+    /// What went wrong, as the CLI words it: the refusal of a record's repository name or path (the value through
+    /// `terminal::line`), git's message, a refused post's reasons (`render::reasons`, titles escaped), or the server's
+    /// error or the transport's. `--json` carries this sentence as written in `results[].error` (`decision check`) and
+    /// `immediate_check.error` (`decision link`), so a value it names may appear escaped there.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// `error` as text mode prints it on standard error, when that differs: the server's message laid out by
+    /// `render::continued`, or a transport or decoding error through `terminal::line`.
+    #[serde(skip)]
+    shown: Option<String>,
     /// The code of the server's own refusal of the post, if that is why the entry failed.
     #[serde(skip)]
     refused: Option<ErrorCode>,
 }
 
 /// A repository name from the server is used as one directory under the household: it must be a single normal path
-/// component that git cannot read as an option, or the checker would run git somewhere the household does not own.
+/// component that git cannot read as an option, or the checker would run git somewhere the household does not own. It
+/// is also one clean word, at least as strict as the server's own rule (no leading `.`, no whitespace): no whitespace,
+/// no control character and nothing `terminal::line` escapes, so every message that names it, or a path built from it,
+/// stays on its line. The refusal itself prints the name through `line`.
 fn valid_repo_name(repo: &str) -> Result<(), String> {
     if repo.is_empty()
-        || repo == "."
-        || repo == ".."
         || repo.contains('/')
         || repo.contains('\\')
-        || repo.starts_with('-')
+        || repo.starts_with(['-', '.'])
+        || repo.chars().any(char::is_whitespace)
+        || crate::terminal::line(repo) != repo
     {
         return Err(format!(
-            "repository name `{repo}` is not a single directory name"
+            "repository name `{}` is not a single directory name",
+            crate::terminal::line(repo)
+        ));
+    }
+    Ok(())
+}
+
+/// A record path from the server is handed to git, and git may name it in an error: it must not be empty, and it must
+/// hold nothing `terminal::line` escapes (no control character, line or paragraph separator or bidirectional control),
+/// so every message that names it, git's own included, stays on its line. The refusal itself prints the path through
+/// `line`. Git takes it literally (`git::command` sets literal pathspecs).
+fn valid_record_path(path: &str) -> Result<(), String> {
+    if path.is_empty() || crate::terminal::line(path) != path {
+        return Err(format!(
+            "record path `{}` is empty or not one clean line",
+            crate::terminal::line(path)
         ));
     }
     Ok(())
@@ -556,9 +593,10 @@ fn record_result(r: crate::git::RecordStatus, record_id: &str) -> CheckResult {
 /// and the file is absent from it (kb/ADR-0004 R4); a file that exists at that commit but whose front matter cannot be
 /// parsed is a fact about the record and is posted as not accepted with status `unparsable front matter`, so a broken
 /// edit on the default branch unsatisfies the decision instead of leaving it accepted. Anything that says more about
-/// this checkout than about the record (an invalid repository name, a missing clone, a failed fetch, an unresolvable
-/// `origin/HEAD`) posts nothing: the decision keeps its last result and the entry is reported `unreadable`, which
-/// makes the run exit 1.
+/// this checkout than about the record (a missing clone, a failed fetch, an unresolvable `origin/HEAD`) posts nothing:
+/// the decision keeps its last result and the entry is reported `unreadable`, which makes the run exit 1. A repository
+/// name or record path the CLI refuses (`valid_repo_name`, `valid_record_path`) never reaches here: `check_one`
+/// reports it `unreadable` the same way before git runs, and posts nothing.
 fn check_from_read(
     read: Result<crate::git::RecordStatus, crate::git::RecordReadError>,
     record_id: &str,
@@ -592,9 +630,13 @@ async fn check_one(
         outcome: "unreadable",
         check: None,
         error: Some(format!("{e}; nothing recorded")),
+        shown: None,
         refused: None,
     };
     if let Err(e) = valid_repo_name(t.repo) {
+        return Ok(unreadable(e));
+    }
+    if let Err(e) = valid_record_path(t.path) {
         return Ok(unreadable(e));
     }
     let dir = repo_dir(household, t.repo);
@@ -640,28 +682,53 @@ fn posted_entry(
         }) => Some(*code),
         _ => None,
     };
-    let (outcome, error) = match posted {
-        Ok(Outcome::Ok(_)) => ("stored", None),
+    let (outcome, error, shown) = match posted {
+        Ok(Outcome::Ok(_)) => ("stored", None, None),
         Ok(Outcome::Refused { reasons: rs, .. }) => (
             "failed",
             Some(format!("refused:\n{}", crate::render::reasons(&rs))),
+            None,
         ),
         // Property: held is exactly a forbidden answer to the satisfying result; anything else refused is failed.
         Ok(Outcome::Error {
             code: ErrorCode::Forbidden,
             envelope: true,
             ..
-        }) if matches!(check, CheckResult::Accepted { .. }) => ("held", None),
-        Ok(Outcome::Error { code, message, .. }) => ("failed", Some(format!("{code:?} {message}"))),
-        Err(e) => ("failed", Some(format!("{e:#}"))),
+        }) if matches!(check, CheckResult::Accepted { .. }) => ("held", None, None),
+        Ok(Outcome::Error { code, message, .. }) => {
+            let (e, shown) = server_error(code, &message);
+            ("failed", Some(e), Some(shown))
+        }
+        Err(e) => {
+            let (e, shown) = decode_error(&e);
+            ("failed", Some(e), Some(shown))
+        }
     };
     CheckEntry {
         id,
         outcome,
         check: Some(check),
         error,
+        shown,
         refused,
     }
+}
+
+/// A server's error envelope as an entry's error says it (`Internal boom`), and as standard error shows it: the message
+/// is long text, so its further lines continue two spaces in, clear of the `decision N:` lines' start.
+fn server_error(code: ErrorCode, message: &str) -> (String, String) {
+    (
+        format!("{code:?} {message}"),
+        format!("{code:?} {}", crate::render::continued(message, "  ")),
+    )
+}
+
+/// A transport or decoding error as an entry's error says it, and as standard error shows it: through
+/// `terminal::line`, on one line, since a decoding error quotes the server's value (an enum word it does not know).
+fn decode_error(e: &anyhow::Error) -> (String, String) {
+    let e = format!("{e:#}");
+    let shown = crate::terminal::line(&e).into_owned();
+    (e, shown)
 }
 
 /// A post the server refused because the decision moved on after the run listed it is `skipped`: a 409 (stale) when
@@ -693,10 +760,9 @@ async fn skip_if_moved_on(c: &Client, listed_version: i64, mut e: CheckEntry) ->
         return e;
     };
     e.outcome = "skipped";
-    e.error = Some(format!(
-        "{}; skipped: {why} during the run, so the next run checks it",
-        e.error.unwrap_or_default()
-    ));
+    let skipped = format!("; skipped: {why} during the run, so the next run checks it");
+    e.shown = e.shown.map(|s| s + &skipped);
+    e.error = Some(e.error.unwrap_or_default() + &skipped);
     e
 }
 
@@ -834,7 +900,29 @@ mod tests {
         for ok in ["knowledge-base", "orion", "a.b"] {
             assert!(valid_repo_name(ok).is_ok(), "{ok}");
         }
-        for bad in ["", ".", "..", "../x", "a/b", "/abs", "a\\b", "-c"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            "/abs",
+            "a\\b",
+            "-c",
+            ".hidden",
+            "kb\nwarning: forged",
+            "kb\r",
+            "kb\tx",
+            "kb ",
+            " kb",
+            "kb\u{a0}x",
+            "kb\u{1b}[2J",
+            "kb\u{7f}",
+            "kb\u{202e}x",
+            "kb\u{2066}x",
+            "kb\u{200e}",
+            "kb\u{2028}x",
+        ] {
             assert!(valid_repo_name(bad).is_err(), "{bad}");
         }
     }

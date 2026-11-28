@@ -3,6 +3,7 @@
 //! with the same words and rounding, lowercase as the CLI is. The server decides what is urgent (`urgent_sources`) and
 //! whether a mark is active; this only words its answer.
 use crate::glyphs::Level;
+use crate::terminal::line;
 use chrono::{DateTime, Utc};
 use reeve_protocol::{ItemRefDto, Key, UrgentMarkDto};
 
@@ -58,11 +59,11 @@ pub fn expiry(m: &UrgentMarkDto, now: DateTime<Utc>) -> String {
 pub fn own_mark_text(m: &UrgentMarkDto, now: DateTime<Utc>) -> String {
     let mut parts = vec![format!(
         "marked by {}, {}",
-        local_part(&m.by),
+        line(local_part(&m.by)),
         days_ago(m.at, now)
     )];
     if let Some(r) = &m.reason {
-        parts.push(format!("'{r}'"));
+        parts.push(format!("'{}'", line(r)));
     }
     parts.push(expiry(m, now));
     parts.join(" · ")

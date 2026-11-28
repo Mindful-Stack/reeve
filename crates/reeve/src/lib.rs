@@ -8,10 +8,13 @@ mod commands;
 mod config;
 mod git;
 pub mod glyphs;
+#[cfg(test)]
+mod hostile;
 mod jira;
 mod promise;
 mod relations;
 mod render;
+mod terminal;
 pub mod tui;
 mod urgency;
 
@@ -57,14 +60,19 @@ pub async fn cli() -> i32 {
     let code = match commands::run(cli.cmd, cli.json).await {
         Ok(code) => code,
         Err(e) => {
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"outcome":"error","code":"internal","message":format!("{e:#}")})
-                );
-            }
-            eprintln!("error: {e:#}");
-            1
+            let written = if cli.json {
+                terminal::exact(
+                    &serde_json::json!({"outcome":"error","code":"internal","message":format!("{e:#}")})
+                        .to_string(),
+                )
+            } else {
+                Ok(())
+            };
+            // The chain can name a value the server sent (a key or an enum word the CLI could not decode, an answer
+            // that is no envelope), so standard error gets it through `line`, on one line; the envelope keeps it exact.
+            // No error that reaches here is legitimately several lines.
+            terminal::err(&format!("error: {}", terminal::line(&format!("{e:#}"))));
+            terminal::status(written, 1)
         }
     };
     if !tui {

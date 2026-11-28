@@ -44,7 +44,7 @@ pub enum RecordReadError {
     Unparsable { path: String, commit: String },
 }
 
-/// The git command `run` starts: never prompting, with a stable locale, killed when dropped.
+/// The git command `run` starts: never prompting, with a stable locale and literal pathspecs, killed when dropped.
 fn command(repo: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
@@ -55,6 +55,8 @@ fn command(repo: &Path, args: &[&str]) -> Command {
         .stderr(Stdio::piped())
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
+        // A record's path is a file name: pathspec magic (`:(glob)`, `:!`, `:/`) and wildcards in it are never read.
+        .env("GIT_LITERAL_PATHSPECS", "1")
         // The token is the planner's: not git's, nor that of the ssh, credential helper or lazy fetch git starts.
         .env_remove("REEVE_TOKEN")
         .kill_on_drop(true);
@@ -493,6 +495,32 @@ mod tests {
         for p in ["knowledge/adrs/0031-*.md", "knowledge/adrs/0031-queue.m?"] {
             let r = read(&f, p).await;
             assert!(matches!(r, Err(RecordReadError::NotFound)), "{p}: {r:?}");
+        }
+    }
+
+    /// Git runs with literal pathspecs: a path spelling pathspec magic names a file of that name, so one that would
+    /// match the record as a glob, or from the top, is not found (without it, `ls-tree` refused the magic and echoed
+    /// the path in its error), and a file whose name really starts with `:(glob)` is read.
+    #[tokio::test]
+    async fn pathspec_magic_is_a_file_name() {
+        let f = repo_with(P, "---\nstatus: accepted\n---\n");
+        for p in [
+            ":(glob)*.md",
+            ":(glob)knowledge/adrs/*.md",
+            ":(icase)KNOWLEDGE/adrs/0031-queue.md",
+            ":/knowledge/adrs/0031-queue.md",
+        ] {
+            let r = read(&f, p).await;
+            assert!(matches!(r, Err(RecordReadError::NotFound)), "{p}: {r:?}");
+        }
+        if cfg!(unix) {
+            const Q: &str = ":(glob)q.md";
+            std::fs::write(f.work.join(Q), "---\nstatus: proposed\n---\n").unwrap();
+            sh(&f.work, &["add", "."]);
+            sh(&f.work, &["commit", "-q", "-m", "q"]);
+            sh(&f.work, &["push", "-q", "origin", "main"]);
+            let r = read(&f, Q).await;
+            assert!(matches!(&r, Ok(s) if s.status == "proposed"), "{r:?}");
         }
     }
 

@@ -119,7 +119,7 @@ pub async fn run(cmd: Cmd, json: bool) -> anyhow::Result<i32> {
         Cmd::Auth(a) => auth::run(a, json).await,
         // The TUI resolves its own credential (kb/ADR-0011 R7), so it branches before `resolve()`.
         Cmd::Tui if json => {
-            eprintln!("error: --json is not supported by `reeve tui`");
+            crate::terminal::err("error: --json is not supported by `reeve tui`");
             Ok(1)
         }
         Cmd::Tui => Ok(crate::tui::main().await),
@@ -310,14 +310,17 @@ pub async fn promise<T: Serialize + DeserializeOwned, C: Serialize + Deserialize
     ))
 }
 
-/// Print an outcome and return the exit code. JSON mode prints the whole envelope; text mode renders.
+/// Print an outcome and return the exit code. JSON mode prints the whole envelope, exactly; text mode renders, and
+/// what it renders passes the guard (`terminal::out`, `terminal::err`). An answer on standard output, text or envelope,
+/// that cannot be written (other than to a reader that went away) makes the status 1 (`terminal::status`).
 pub fn finish<T: Serialize>(out: Outcome<T>, json: bool, render: impl Fn(&T) -> String) -> i32 {
-    match &out {
+    use crate::terminal;
+    let written = match &out {
         Outcome::Ok(v) => {
             if json {
-                println!("{}", serde_json::json!({"outcome":"ok","value":v}))
+                terminal::exact(&serde_json::json!({"outcome":"ok","value":v}).to_string())
             } else {
-                println!("{}", render(v))
+                terminal::out(&render(v))
             }
         }
         Outcome::Refused {
@@ -325,12 +328,13 @@ pub fn finish<T: Serialize>(out: Outcome<T>, json: bool, render: impl Fn(&T) -> 
             overridable,
         } => {
             if json {
-                println!(
-                    "{}",
-                    serde_json::json!({"outcome":"refused","reasons":reasons,"overridable":overridable})
+                terminal::exact(
+                    &serde_json::json!({"outcome":"refused","reasons":reasons,"overridable":overridable})
+                        .to_string(),
                 )
             } else {
-                eprintln!("refused:\n{}", crate::render::reasons(reasons))
+                terminal::err(&format!("refused:\n{}", crate::render::reasons(reasons)));
+                Ok(())
             }
         }
         Outcome::Error {
@@ -349,18 +353,23 @@ pub fn finish<T: Serialize>(out: Outcome<T>, json: bool, render: impl Fn(&T) -> 
                 if let Some(c) = current {
                     v["current"] = (*c).into();
                 }
-                println!("{v}")
+                terminal::exact(&v.to_string())
             } else {
-                eprintln!("error ({code:?}): {message}");
+                // The message is long text: its further lines continue two spaces in, clear of a line's start.
+                terminal::err(&format!(
+                    "error ({code:?}): {}",
+                    crate::render::continued(message, "  ")
+                ));
                 if let (ErrorCode::Conflict, Some(c)) = (code, current)
                     && *c >= 0
                 {
-                    eprintln!("current version: {c}")
+                    terminal::err(&format!("current version: {c}"))
                 }
+                Ok(())
             }
         }
-    }
-    out.exit_code()
+    };
+    terminal::status(written, out.exit_code())
 }
 
 #[cfg(test)]

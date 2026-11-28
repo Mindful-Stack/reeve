@@ -64,15 +64,19 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         other => return Ok(finish(other, json, |_| String::new())),
     };
     if me.role != Role::Admin || me.token_kind != TokenKind::Interactive {
-        return Ok(fail(
-            json,
-            ErrorCode::Forbidden,
-            &format!(
-                "import needs an admin with an interactive token; {} is {} with an {} token",
-                me.email,
+        // `--json` carries the email exactly; standard error names it through `line`, so it stays on one line.
+        let refusal = |email: &str| {
+            format!(
+                "import needs an admin with an interactive token; {email} is {} with an {} token",
                 wire(&me.role),
                 wire(&me.token_kind)
-            ),
+            )
+        };
+        return Ok(fail_with(
+            json,
+            ErrorCode::Forbidden,
+            &refusal(&me.email),
+            &refusal(&crate::terminal::line(&me.email)),
             2,
             None,
         ));
@@ -94,7 +98,19 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         .and_then(|()| mapping.api_url())
     {
         Ok(u) => u,
-        Err(e) => return Ok(invalid(e.to_string())),
+        // `Invalid` names the instance's horizons, the server's text: exact in `--json`, through `line` on standard
+        // error. Every variant is one line once escaped.
+        Err(e) => {
+            let e = e.to_string();
+            return Ok(fail_with(
+                json,
+                ErrorCode::Validation,
+                &e,
+                &crate::terminal::line(&e),
+                1,
+                None,
+            ));
+        }
     };
     let Some(token) = crate::config::env_nonempty(&a.token_from_env) else {
         return Ok(invalid(format!(
@@ -106,11 +122,15 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
 
     let (ideas, issues, comments) = match fetch(&jira, &mapping).await {
         Ok(f) => f,
+        // The failure names a Jira issue key and up to 500 characters of Jira's answer: exact in `--json`, through
+        // `line` on standard error, so it stays one line.
         Err(e) => {
-            return Ok(fail(
+            let message = format!("{e}; nothing written: a partial fetch is never imported");
+            return Ok(fail_with(
                 json,
                 ErrorCode::Internal,
-                &format!("{e}; nothing written: a partial fetch is never imported"),
+                &message,
+                &crate::terminal::line(&message),
                 1,
                 Some(serde_json::json!({"page": e.page, "status": e.status, "written": false})),
             ));
@@ -128,12 +148,12 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         0
     };
     // One shape for every report, partial failures included: the exit code and `value.apply.failed` carry them.
-    if json {
-        println!("{}", serde_json::json!({"outcome": "ok", "value": report}));
+    let written = if json {
+        crate::terminal::exact(&serde_json::json!({"outcome": "ok", "value": report}).to_string())
     } else {
-        println!("{}", crate::render::import_report(&report));
-    }
-    Ok(code)
+        crate::terminal::out(&crate::render::import_report(&report))
+    };
+    Ok(crate::terminal::status(written, code))
 }
 
 /// A refusal or failure with no report: stderr always, and with `--json` the protocol's error envelope (a protocol
@@ -145,15 +165,30 @@ fn fail(
     exit: i32,
     extra: Option<serde_json::Value>,
 ) -> i32 {
-    if json {
-        let mut v = serde_json::json!({"outcome":"error","code":code,"message":message});
+    fail_with(json, code, message, message, exit, extra)
+}
+
+/// `fail` for a message that names a server value: `exact` (the value as it is) goes into the `--json` envelope, and
+/// `shown` (the value through `terminal::line`) to standard error.
+fn fail_with(
+    json: bool,
+    code: ErrorCode,
+    exact: &str,
+    shown: &str,
+    exit: i32,
+    extra: Option<serde_json::Value>,
+) -> i32 {
+    let written = if json {
+        let mut v = serde_json::json!({"outcome":"error","code":code,"message":exact});
         if let (Some(serde_json::Value::Object(extra)), Some(obj)) = (extra, v.as_object_mut()) {
             obj.extend(extra);
         }
-        println!("{v}");
-    }
-    eprintln!("error: {message}");
-    exit
+        crate::terminal::exact(&v.to_string())
+    } else {
+        Ok(())
+    };
+    crate::terminal::err(&format!("error: {shown}"));
+    crate::terminal::status(written, exit)
 }
 
 /// A page that failed, named with what was being read (`issues of SCRUM: search page 2`).
@@ -276,6 +311,8 @@ pub(crate) struct Failure {
     pub step: &'static str,
     pub cause: Cause,
     pub code: Option<ErrorCode>,
+    /// The server's error message as sent, a refusal's reasons in `render::reason`'s words (stored titles escaped),
+    /// or the transport's error. `skipped` and `stopped` quote it.
     pub message: String,
     pub exit: i32,
 }
@@ -609,6 +646,48 @@ mod tests {
     use crate::jira::plan::{PlannedComment, PlannedEpic, PlannedStory};
     use reeve_protocol::{DeliveryState, Kind};
     use std::sync::Mutex;
+
+    /// The report's rows hold values Jira supplied (keys, account ids, link type names) and the server's messages: a
+    /// line break in one cannot start a row of its own, and an escape sequence, a tab, a carriage return, an override and
+    /// a line separator are shown escaped.
+    #[test]
+    fn a_jira_value_cannot_start_a_row_of_its_own() {
+        const H: &str = "SCRUM-1\nSCRUM-2: forged\u{1b}[2J\t\r\u{202e}\u{2028}x";
+        const SHOWN: &str = "SCRUM-1\\nSCRUM-2: forged\\u{1b}[2J\\t\\r\\u{202e}\\u{2028}x";
+        let mut report = Report::of(&ImportPlan {
+            warnings: vec![Warning::UnresolvedOwner {
+                issue: H.into(),
+                account_id: H.into(),
+            }],
+            link_types_seen: [(H.to_string(), 1)].into(),
+            grandfathered_stories: vec![H.into()],
+            marked_epics: vec![H.into()],
+            marked_initiatives: vec![H.into()],
+            ..Default::default()
+        });
+        report.apply = Some(ApplyReport {
+            created: Counts::default(),
+            existing: Counts::default(),
+            failed: vec![Failure {
+                jira_key: H.into(),
+                step: "story",
+                cause: Cause::Error,
+                code: Some(ErrorCode::Validation),
+                message: H.into(),
+                exit: 1,
+            }],
+            skipped: vec![(H.into(), H.into())],
+            stopped: Some(H.into()),
+        });
+        let text = crate::render::import_report(&report);
+        assert!(!text.lines().any(|l| l.starts_with("SCRUM-2")), "{text}");
+        for c in ['\u{1b}', '\t', '\r', '\u{202e}', '\u{2028}'] {
+            assert!(!text.contains(c), "{c:?} raw in {text:?}");
+        }
+        // The warning line twice, the link type, three key lists, the failure's key and message, the skip's key and
+        // reason, and the stop.
+        assert_eq!(text.matches(SHOWN).count(), 11, "{text}");
+    }
 
     /// Records every external reference sent and answers from `refuse` (by reference), else creates.
     #[derive(Default)]

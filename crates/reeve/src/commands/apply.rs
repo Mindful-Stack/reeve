@@ -3,7 +3,7 @@
 use super::finish;
 use crate::client::Client;
 use crate::glyphs::{Level, mark};
-use crate::relations::for_terminal;
+use crate::terminal::line;
 use anyhow::Context;
 use clap::Args;
 use reeve_protocol::*;
@@ -90,20 +90,26 @@ fn state(created: bool) -> &'static str {
 }
 
 /// One line per name: its key and whether this apply created it; then each blocker edge, each item link and each
-/// web link. A web link's title and URL are stored text, so they print through `for_terminal`.
+/// web link. A web link's title and URL are stored text, so they print through `terminal::line`.
 fn render(p: &PlanApplied) -> String {
     let mut out = String::new();
     for i in &p.items {
         let _ = writeln!(
             out,
             "{}\t{}\t{}",
-            i.name,
+            line(&i.name),
             mark(Level::of_item(i.item), &i.key),
             state(i.created)
         );
     }
     for d in &p.decisions {
-        let _ = writeln!(out, "{}\tdecision #{}\t{}", d.name, d.id, state(d.created));
+        let _ = writeln!(
+            out,
+            "{}\tdecision #{}\t{}",
+            line(&d.name),
+            d.id,
+            state(d.created)
+        );
     }
     for b in &p.blocks {
         let _ = writeln!(
@@ -129,8 +135,8 @@ fn render(p: &PlanApplied) -> String {
             out,
             "web link on {}: {}  {}\t{}",
             mark(Level::of_item(w.level), &w.on),
-            for_terminal(&w.title),
-            for_terminal(&w.url),
+            line(&w.title),
+            line(&w.url),
             state(w.created)
         );
     }
@@ -143,4 +149,58 @@ fn render(p: &PlanApplied) -> String {
         let _ = writeln!(out, "{FOLLOWS_NOTE}");
     }
     out.trim_end().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hostile::{Paths, assert_one_line, assert_shown};
+
+    /// A plan's names come back from the server: one row per name, and a web link's title and URL on its row.
+    #[test]
+    fn a_plans_names_stay_in_their_rows() {
+        let applied = PlanApplied {
+            items: vec![PlannedItem {
+                name: "step-1".into(),
+                item: ItemType::Story,
+                key: "ABC-1".parse().unwrap(),
+                created: true,
+            }],
+            decisions: vec![PlannedDecision {
+                name: "host".into(),
+                id: 7,
+                created: false,
+            }],
+            blocks: vec![PlannedBlock {
+                story: "ABC-1".parse().unwrap(),
+                blocked_by: "ABC-2".parse().unwrap(),
+                created: true,
+            }],
+            links: vec![PlannedLink {
+                from: "ABC-1".parse().unwrap(),
+                from_level: ItemType::Story,
+                link_type: ItemLinkType::Follows,
+                to: "ABC-3".parse().unwrap(),
+                to_level: ItemType::Epic,
+                created: true,
+            }],
+            web_links: vec![PlannedWebLink {
+                on: "ABC-1".parse().unwrap(),
+                level: ItemType::Story,
+                id: 1,
+                title: "Spec".into(),
+                url: "https://example.com/spec".into(),
+                created: true,
+            }],
+        };
+        assert_shown(
+            &assert_one_line(&applied, &Paths::none(), render),
+            &[
+                "/items/0/name",
+                "/decisions/0/name",
+                "/web_links/0/title",
+                "/web_links/0/url",
+            ],
+        );
+    }
 }
