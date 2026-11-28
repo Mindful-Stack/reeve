@@ -209,7 +209,8 @@ impl Handlers {
         .await
     }
 
-    /// `edit_story`, claiming `attachments` for the story in its transaction (kb/ADR-0022 R2).
+    /// `edit_story`, claiming `attachments` for the story in its transaction (kb/ADR-0022 R2). Answers the story as
+    /// this write left it (`StoryRepo::update_story`'s answer), not a later read of it.
     pub async fn edit_story_attaching(
         &self,
         c: &Ctx,
@@ -273,7 +274,10 @@ impl Handlers {
             r,
             cur.version(),
         );
-        self.ports
+        // The story as this write left it: every field `next` carries, with the rank the row has (kept unless
+        // `rank` names one) and the version raised by one.
+        let written = self
+            .ports
             .stories
             .update_story(&mut tx, &next, rank, version, c.now)
             .await?;
@@ -292,7 +296,8 @@ impl Handlers {
             )
             .await?;
         tx.commit().await?;
-        Ok(self.ports.stories.get_story(key).await?)
+        // Never a read after the commit, which another writer can land before.
+        Ok(written)
     }
 
     pub async fn get_story(&self, key: &Key) -> Result<Story, HandlerError> {
