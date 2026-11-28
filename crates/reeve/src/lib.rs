@@ -68,7 +68,10 @@ pub async fn cli() -> i32 {
             } else {
                 Ok(())
             };
-            terminal::err(&format!("error: {e:#}"));
+            // The chain can name a value the server sent (a key or an enum word the CLI could not decode, an answer
+            // that is no envelope), so standard error gets it through `line`, on one line; the envelope keeps it exact.
+            // No error that reaches here is legitimately several lines.
+            terminal::err(&format!("error: {}", terminal::line(&format!("{e:#}"))));
             terminal::status(written, 1)
         }
     };

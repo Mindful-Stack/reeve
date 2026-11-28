@@ -134,6 +134,31 @@ fn serve_lazy_with(
     (url, handle)
 }
 
+/// `serve`, with each body written as given rather than as JSON (`serve_raw` for several answers): a body that holds a
+/// raw line break, such as a Jira error page. Every answer must be the request it names.
+fn serve_texts(answers: Vec<(&'static str, u16, String)>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        for (want, status, body) in answers {
+            let stream = accept(&listener);
+            let (line, _) = read_request(&stream);
+            let mut w = stream;
+            write!(
+                w,
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            assert!(
+                line.starts_with(&format!("{want} ")),
+                "expected `{want}`, got `{line}`"
+            );
+        }
+    });
+    (url, handle)
+}
+
 fn git(dir: &std::path::Path, args: &[&str]) {
     let out = std::process::Command::new("git")
         .args(args)
@@ -2214,6 +2239,178 @@ fn the_import_preflight_refusal_carries_the_email_exactly_in_json() {
     assert_eq!(stderr.lines().count(), 1, "{stderr:?}");
     for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
         assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+}
+
+/// `reeve` against `url` with `env` set as well (a Jira token, say).
+fn reeve_at_with(url: &str, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let cfg = tempfile::tempdir().unwrap();
+    let mut c = reeve_cmd();
+    c.env("REEVE_URL", url)
+        .env("REEVE_TOKEN", "reeve_test")
+        .env("REEVE_CONFIG_DIR", cfg.path())
+        .env_remove("REEVE_CLI_VERSION_OVERRIDE")
+        .env_remove("REEVE_UPDATE_NOTICE")
+        .env_remove("REEVE_ASCII");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    c.args(args)
+        .timeout(Duration::from_secs(60))
+        .output()
+        .unwrap()
+}
+
+/// Standard error is one line holding none of the hostile characters raw.
+fn assert_one_stderr_line(out: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(stderr.lines().count(), 1, "{stderr:?}");
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+    stderr
+}
+
+const FORGED: &str = "\nerror (Forbidden): your token was revoked\t\u{1b}[2J\u{202e}\r";
+
+fn import_admin() -> serde_json::Value {
+    ok(serde_json::json!({"email":"admin@example.com","role":"admin","token_kind":"interactive"}))
+}
+
+/// The import's mapping refusal names the instance's horizons, which are the server's text: a horizon holding a line
+/// break cannot start a forged `error` line of its own. With `--json`, the envelope carries the horizons exactly.
+#[test]
+fn the_import_mapping_refusal_names_the_servers_horizons_on_one_line() {
+    let bucket = format!("Now{FORGED}");
+    let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":[bucket, "Next"],"repos":[],
+        "sign_in_configured":true});
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let message = format!(
+        "jira-import.toml: bucket_to_horizon.\"Later\" = \"Later\" is not one of {bucket}|Next"
+    );
+    for json in [false, true] {
+        let (url, server) = serve(vec![
+            ("GET /api/v1/me", 200, import_admin()),
+            ("GET /api/v1/config", 200, ok(config.clone())),
+        ]);
+        let mut args = vec!["import", "jira", "--mapping", mapping];
+        if json {
+            args.insert(0, "--json");
+        }
+        let out = reeve_at(&url, &args);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(
+            stderr.starts_with("error: jira-import.toml: bucket_to_horizon.\"Later\" = \"Later\" is not one of Now\\nerror (Forbidden)"),
+            "{stderr:?}"
+        );
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(v["code"], "validation", "{v}");
+            assert_eq!(v["message"], message, "{v}");
+        }
+    }
+}
+
+/// A Jira page that failed is named with Jira's own answer (up to 500 characters of it): a body holding a line break
+/// cannot forge a line of the CLI's output. With `--json`, the envelope's message carries it exactly.
+#[test]
+fn the_import_fetch_failure_names_jiras_answer_on_one_line() {
+    let body = format!("{{\"errorMessages\":[\"nope\"]}}{FORGED}");
+    for json in [false, true] {
+        let body = body.clone();
+        let config = ok(
+            serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now","Next","Upcoming",
+            "Later","Won't do"],"repos":[],"sign_in_configured":true}),
+        );
+        let (url, server) = serve_texts(vec![
+            ("GET /api/v1/me", 200, import_admin().to_string()),
+            ("GET /api/v1/config", 200, config.to_string()),
+            // A 400 is not retried, so the first page fails the fetch.
+            (
+                "GET /rest/api/3/search/jql?jql=project+%3D+%22JPD%22+ORDER+BY+key+ASC&fields=summary%2Cdescription%2C\
+                 status%2Cresolution%2Cissuetype%2Cassignee%2Clabels%2Cparent%2Ccreated%2Cissuelinks%2C\
+                 customfield_10042%2Ccustomfield_10043&maxResults=100",
+                400,
+                body,
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let example = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../jira-import.example.toml"
+        ))
+        .unwrap();
+        let mapping = dir.path().join("jira-import.toml");
+        std::fs::write(
+            &mapping,
+            example.replace("https://acme-team.atlassian.net", &url),
+        )
+        .unwrap();
+        let mut args = vec!["import", "jira", "--mapping", mapping.to_str().unwrap()];
+        if json {
+            args.insert(0, "--json");
+        }
+        let out = reeve_at_with(&url, &args, &[("JIRA_TOKEN", "jira_test")]);
+        server.join().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = assert_one_stderr_line(&out);
+        assert!(
+            stderr.starts_with("error: jira: ideas of JPD: search page 1 failed (HTTP 400): "),
+            "{stderr:?}"
+        );
+        if json {
+            let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(
+                v["message"],
+                format!(
+                    "jira: ideas of JPD: search page 1 failed (HTTP 400): {{\"errorMessages\":[\"nope\"]}}{FORGED}; \
+                     nothing written: a partial fetch is never imported"
+                ),
+                "{v}"
+            );
+        }
+    }
+}
+
+/// An answer the CLI cannot decode is named with the value it refused (an invalid key, an enum word it does not
+/// know): a value holding a line break cannot forge a row. With `--json`, the envelope's message carries it exactly.
+#[test]
+fn an_undecodable_answer_names_the_servers_value_on_one_line() {
+    let story = |field: &str, value: &str| {
+        let mut s = serde_json::to_value(urgent_story(vec![])).unwrap();
+        s[field] = value.into();
+        s
+    };
+    for (field, value) in [
+        ("key", format!("ABC-1\nABC-9 [done] forged row{FORGED}")),
+        ("delivery", format!("done{FORGED}")),
+    ] {
+        for json in [false, true] {
+            let (url, server) = serve(vec![(
+                "GET /api/v1/stories/ABC-1",
+                200,
+                ok(story(field, &value)),
+            )]);
+            let mut args = vec!["story", "show", "ABC-1"];
+            if json {
+                args.insert(0, "--json");
+            }
+            let out = reeve_at(&url, &args);
+            server.join().unwrap();
+            assert_eq!(out.status.code(), Some(1), "{field} {out:?}");
+            let stderr = assert_one_stderr_line(&out);
+            assert!(stderr.starts_with("error: "), "{stderr:?}");
+            if json {
+                let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+                let message = v["message"].as_str().unwrap();
+                assert!(message.contains(&value), "{field}: {v}");
+            }
+        }
     }
 }
 

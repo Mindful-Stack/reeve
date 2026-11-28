@@ -98,7 +98,19 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
         .and_then(|()| mapping.api_url())
     {
         Ok(u) => u,
-        Err(e) => return Ok(invalid(e.to_string())),
+        // `Invalid` names the instance's horizons, the server's text: exact in `--json`, through `line` on standard
+        // error. Every variant is one line once escaped.
+        Err(e) => {
+            let e = e.to_string();
+            return Ok(fail_with(
+                json,
+                ErrorCode::Validation,
+                &e,
+                &crate::terminal::line(&e),
+                1,
+                None,
+            ));
+        }
     };
     let Some(token) = crate::config::env_nonempty(&a.token_from_env) else {
         return Ok(invalid(format!(
@@ -110,11 +122,15 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
 
     let (ideas, issues, comments) = match fetch(&jira, &mapping).await {
         Ok(f) => f,
+        // The failure names a Jira issue key and up to 500 characters of Jira's answer: exact in `--json`, through
+        // `line` on standard error, so it stays one line.
         Err(e) => {
-            return Ok(fail(
+            let message = format!("{e}; nothing written: a partial fetch is never imported");
+            return Ok(fail_with(
                 json,
                 ErrorCode::Internal,
-                &format!("{e}; nothing written: a partial fetch is never imported"),
+                &message,
+                &crate::terminal::line(&message),
                 1,
                 Some(serde_json::json!({"page": e.page, "status": e.status, "written": false})),
             ));
