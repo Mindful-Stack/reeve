@@ -126,8 +126,8 @@ fn type_name(t: ItemType) -> &'static str {
 /// `key`). That only happens when another apply of this plan id created the item after this apply's check
 /// (`check_name_levels`) passed, so this apply has stopped part-way. It does not open as the check's message does,
 /// which means nothing was written, and it claims only what is always true: items are written initiatives first,
-/// then epics, then stories; some before this one may exist, written by this apply or by the other; nothing after
-/// it was written, and decisions, blockers and links come last.
+/// then epics, then stories; some before this one may exist, written by this apply or by the other; this apply
+/// wrote nothing after it, and no decisions, blockers or links (the other apply may have written all of them).
 fn name_taken_meanwhile(name: &str, level: ItemType, key: &Key) -> HandlerError {
     let a_level = match level {
         ItemType::Initiative => "an initiative",
@@ -137,8 +137,8 @@ fn name_taken_meanwhile(name: &str, level: ItemType, key: &Key) -> HandlerError 
     HandlerError::Validation(format!(
         "{name:?} is {a_level} ({key}), created by another apply of this plan while this one ran; a name keeps \
          its level. This apply stopped at {name:?}: items written before it (initiatives, then epics, then \
-         stories) may exist; nothing after it was written, and no decisions, blockers or links. List {name:?} \
-         as {a_level}, or give it a new name, and apply the same id again; what exists is reused."
+         stories) may exist; this apply wrote nothing after it, and no decisions, blockers or links. List \
+         {name:?} as {a_level}, or give it a new name, and apply the same id again; what exists is reused."
     ))
 }
 

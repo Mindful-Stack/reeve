@@ -73,7 +73,7 @@ enum Scope {
 /// idempotency key has at this level, and whether this call inserted it; or the item of another level that already
 /// has the key, in which case this call wrote nothing.
 #[derive(Debug)]
-pub(crate) enum Guarded<T> {
+enum Guarded<T> {
     Item { item: T, created: bool },
     HeldElsewhere { level: ItemType, key: Key },
 }
@@ -264,7 +264,7 @@ impl Handlers {
     /// transaction-scoped lock, taken first. The lock is what makes the look and the insert after it one step for
     /// two creates under one key at different levels: the second waits here, then sees the first one's item. Shaped
     /// as `ref_holder` (`handler/import.rs`), which guards an external reference the same way.
-    pub(super) async fn idempotency_holder_elsewhere(
+    async fn idempotency_holder_elsewhere(
         &self,
         tx: &mut Transaction<'_, Postgres>,
         item: ItemType,

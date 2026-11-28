@@ -125,7 +125,7 @@ impl Handlers {
     }
 
     /// `create_story_reporting` for plan apply (`create_initiative_guarded` says what it adds).
-    pub(crate) async fn create_story_guarded(
+    pub(super) async fn create_story_guarded(
         &self,
         c: &Ctx,
         idem: &str,

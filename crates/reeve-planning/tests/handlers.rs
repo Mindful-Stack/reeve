@@ -12847,8 +12847,20 @@ async fn a_brief_template_and_its_entry_commit_together() {
     assert_eq!(h.brief_template(t.id).await.unwrap().name, "Tech debt");
 }
 
+/// How many ungranted advisory locks in this database match `waiting`, a condition on `pg_locks`'s columns.
+async fn advisory_waiters(conn: &mut sqlx::PgConnection, waiting: &str) -> i64 {
+    sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+         AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND ({waiting})"
+    ))
+    .fetch_one(conn)
+    .await
+    .unwrap()
+}
+
 /// Holds an advisory lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once both
-/// are seen waiting on an advisory lock in `pg_locks`, or after five seconds when they never are. `lock` is the
+/// are seen waiting on an advisory lock in `pg_locks` that matches `waiting` (a condition on `pg_locks`'s columns,
+/// naming the lock under test), or after five seconds when they never are. `lock` is the
 /// exact statement the adapter under test sends, written out by the caller with its one argument in `arg` (never
 /// the port: a no-op adapter must not also make the holder a no-op). Answers both results and whether both waited.
 /// The holder is released whether or not they waited, so a run without the lock ends in a failed assertion, not a
@@ -12860,6 +12872,7 @@ async fn while_both_wait_on<A, B>(
     pool: &sqlx::PgPool,
     lock: &str,
     arg: Option<&str>,
+    waiting: &str,
     a: impl std::future::Future<Output = A>,
     b: impl std::future::Future<Output = B>,
 ) -> (A, B, bool) {
@@ -12878,14 +12891,7 @@ async fn while_both_wait_on<A, B>(
         {
             let mut conn = pool.acquire().await.unwrap();
             for _ in 0..250 {
-                let n: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
-                     AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-                )
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap();
-                if n >= 2 {
+                if advisory_waiters(&mut conn, waiting).await >= 2 {
                     waited = true;
                     break;
                 }
@@ -12902,7 +12908,7 @@ async fn while_both_wait_on<A, B>(
     .expect("the two calls did not end within 30 seconds of the lock being taken")
 }
 
-/// `while_both_wait_on` the brief template lock.
+/// `while_both_wait_on` the brief template lock, a single bigint key (`objsubid` 1 in `pg_locks`).
 async fn while_both_wait<A, B>(
     pool: &sqlx::PgPool,
     a: impl std::future::Future<Output = A>,
@@ -12912,6 +12918,7 @@ async fn while_both_wait<A, B>(
         pool,
         "SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))",
         None,
+        "objsubid = 1",
         a,
         b,
     )
@@ -13443,79 +13450,135 @@ async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the
 }
 
 /// The lock plan apply's creates take on a plan item's idempotency key: the adapter's statement with its key space
-/// (`IDEMPOTENCY_LOCK_SPACE`, 1) written out.
+/// (`IDEMPOTENCY_LOCK_SPACE` in `repo/keys.rs`, 1, private to the crate) written out.
 const IDEMPOTENCY_LOCK: &str = "SELECT pg_advisory_xact_lock(1, hashtext($1))";
 
-/// Two applies of one plan id that give the name `s` different levels, made to overlap, not hoped to: a holder
-/// takes the key's lock first, both applies have passed the plan's check (nothing exists yet, so the level check
-/// finds nothing) and are seen queued on the lock inside their creates, and only then is it released. Exactly one
-/// item exists for the name afterwards; the other apply is refused and told which item has the name. Catches: the
-/// fault GRA-888 names (both create, since an idempotency key is unique per table only), a lock in another key
-/// space, under another key or none (`waited` is false), and a refusal in the words of the check, which would say
-/// nothing was written.
+/// That lock as `pg_locks` shows it: a lock taken with two integer keys has the first key in `classid`, the second
+/// in `objid` and `objsubid` 2 (a single bigint key has `objsubid` 1). The 1 in `classid` is
+/// `IDEMPOTENCY_LOCK_SPACE`, as in `IDEMPOTENCY_LOCK`.
+const IDEMPOTENCY_LOCK_WAIT: &str = "classid = 1 AND objsubid = 2";
+
+/// Two applies of one plan id that give one name different levels, made to overlap, not hoped to, at every pair of
+/// levels (initiative and epic, initiative and story, epic and story) and in both orders, each case under a plan id
+/// of its own: a holder takes the key's lock first; the first apply passes the plan's check (nothing exists yet, so
+/// the level check finds nothing) and is seen queued on that very lock inside its create; only then does the second
+/// start, pass the check and queue behind it; and once both are seen waiting the lock is released. PostgreSQL grants
+/// the lock in queue order, so the first apply creates and the second, the one whose guard is under test, is
+/// refused and told which item has the name; sent again with the name at the winner's level it answers that item.
+/// Exactly one item exists for the name afterwards across the three tables. Both orders matter: each level's look
+/// must find each of the other two, and a look at a wrong level is only reached by the apply that comes second.
+/// Catches: the fault GRA-888 names (both create, since an idempotency key is unique per table only), any of the
+/// three plan creates left unguarded (an ordinary create in `apply_plan`), a look that skips a level, a lock in
+/// another key space, under another key or none (`waited` is false), and a refusal in the words of the check, which
+/// would say nothing was written.
 #[tokio::test]
 async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
     let (_c, pool) = common::pg().await;
     let (h, _sink) = mk(pool.clone());
     let dan = ctx("dan@example.com", false);
     let erin = ctx("erin@example.com", false);
-    let plan = |list: &str| -> reeve_protocol::ApplyPlan {
-        serde_json::from_value(
-            serde_json::json!({"id": "race", list: [{"name": "s", "title": "S"}]}),
-        )
-        .unwrap()
+    // A plan of one item named `name` in `list`; an initiative needs its horizon.
+    let plan = |id: &str, list: &str, name: &str| -> reeve_protocol::ApplyPlan {
+        let mut item = serde_json::json!({"name": name, "title": "T"});
+        if list == "initiatives" {
+            item["horizon"] = serde_json::json!("Now");
+        }
+        serde_json::from_value(serde_json::json!({"id": id, list: [item]})).unwrap()
+    };
+    let level = |list: &str| match list {
+        "initiatives" => "an initiative",
+        "epics" => "an epic",
+        "stories" => "a story",
+        other => panic!("{other}"),
     };
     // `plan_key`: "plan:<length of the id>:<id>:<name>".
-    let key = "plan:4:race:s";
-    let (as_story, as_epic, waited) = while_both_wait_on(
-        &pool,
-        IDEMPOTENCY_LOCK,
-        Some(key),
-        h.apply_plan(&dan, plan("stories")),
-        h.apply_plan(&erin, plan("epics")),
-    )
-    .await;
-    assert!(
-        waited,
-        "the two applies never both waited on the idempotency key's lock"
-    );
-    let (stories, epics): (i64, i64) =
-        sqlx::query_as("SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM epics)")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        stories + epics,
-        1,
-        "{stories} stories and {epics} epics for one name"
-    );
-    let (won, lost, level) = match (as_story, as_epic) {
-        (Ok(won), Err(lost)) => (won, lost, "a story"),
-        (Err(lost), Ok(won)) => (won, lost, "an epic"),
-        other => panic!("wanted one apply to create and one to be refused, got {other:?}"),
-    };
-    assert_eq!((won.items.len(), won.items[0].created), (1, true));
-    let made = &won.items[0].key;
-    let HandlerError::Validation(m) = &lost else {
-        panic!("{lost:?}")
-    };
-    assert_eq!(
-        m,
-        &format!(
-            "\"s\" is {level} ({made}), created by another apply of this plan while this one ran; a name keeps \
-             its level. This apply stopped at \"s\": items written before it (initiatives, then epics, then \
-             stories) may exist; nothing after it was written, and no decisions, blockers or links. List \"s\" \
-             as {level}, or give it a new name, and apply the same id again; what exists is reused."
+    for (id, name, key, first, second) in [
+        ("race-ie", "ie", "plan:7:race-ie:ie", "initiatives", "epics"),
+        ("race-ei", "ei", "plan:7:race-ei:ei", "epics", "initiatives"),
+        (
+            "race-is",
+            "is",
+            "plan:7:race-is:is",
+            "initiatives",
+            "stories",
+        ),
+        (
+            "race-si",
+            "si",
+            "plan:7:race-si:si",
+            "stories",
+            "initiatives",
+        ),
+        ("race-es", "es", "plan:7:race-es:es", "epics", "stories"),
+        ("race-se", "se", "plan:7:race-se:se", "stories", "epics"),
+    ] {
+        let case = format!("{first}, then {second}");
+        // The second apply starts once the first is seen queued on the lock, so it queues behind it.
+        let after_the_first = async {
+            {
+                let mut conn = pool.acquire().await.unwrap();
+                for _ in 0..250 {
+                    if advisory_waiters(&mut conn, IDEMPOTENCY_LOCK_WAIT).await >= 1 {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+            h.apply_plan(&erin, plan(id, second, name)).await
+        };
+        let (won, lost, waited) = while_both_wait_on(
+            &pool,
+            IDEMPOTENCY_LOCK,
+            Some(key),
+            IDEMPOTENCY_LOCK_WAIT,
+            h.apply_plan(&dan, plan(id, first, name)),
+            after_the_first,
         )
-    );
-    // The loser applied again as the message says: the same name at the winner's level answers the one item.
-    let list = if level == "a story" {
-        "stories"
-    } else {
-        "epics"
-    };
-    let again = h.apply_plan(&erin, plan(list)).await.unwrap();
-    assert_eq!((&again.items[0].key, again.items[0].created), (made, false));
+        .await;
+        assert!(
+            waited,
+            "{case}: the two applies never both waited on the idempotency key's lock"
+        );
+        let (initiatives, epics, stories): (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM initiatives WHERE idempotency_key = $1), \
+             (SELECT count(*) FROM epics WHERE idempotency_key = $1), \
+             (SELECT count(*) FROM stories WHERE idempotency_key = $1)",
+        )
+        .bind(key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            initiatives + epics + stories,
+            1,
+            "{case}: {initiatives} initiatives, {epics} epics and {stories} stories for one name"
+        );
+        let won = won.unwrap_or_else(|e| panic!("{case}: the first apply was refused: {e:?}"));
+        assert_eq!((won.items.len(), won.items[0].created), (1, true), "{case}");
+        let made = &won.items[0].key;
+        let Err(HandlerError::Validation(m)) = &lost else {
+            panic!("{case}: wanted the second apply refused, got {lost:?}")
+        };
+        let a_level = level(first);
+        assert_eq!(
+            m,
+            &format!(
+                "\"{name}\" is {a_level} ({made}), created by another apply of this plan while this one ran; a \
+                 name keeps its level. This apply stopped at \"{name}\": items written before it (initiatives, \
+                 then epics, then stories) may exist; this apply wrote nothing after it, and no decisions, \
+                 blockers or links. List \"{name}\" as {a_level}, or give it a new name, and apply the same id \
+                 again; what exists is reused."
+            ),
+            "{case}"
+        );
+        // The loser applied again as the message says: the same name at the winner's level answers the one item.
+        let again = h.apply_plan(&erin, plan(id, first, name)).await.unwrap();
+        assert_eq!(
+            (&again.items[0].key, again.items[0].created),
+            (made, false),
+            "{case}"
+        );
+    }
 }
 
 /// What does not take the lock. While a holder has the lock of a plan item's key, a second apply of the plan that
@@ -13573,7 +13636,7 @@ async fn a_replayed_plan_and_a_single_create_never_wait_on_the_idempotency_lock(
     assert_eq!(
         (stories, epics),
         (1, 1),
-        "the known limit (GRA-984): a single create under a plan's key at another level is not stopped"
+        "known limit, not wanted (GRA-984): a single create under a plan's key at another level is not stopped"
     );
     holder.rollback().await.unwrap();
 }

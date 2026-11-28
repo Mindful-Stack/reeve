@@ -75,7 +75,7 @@ impl Handlers {
     }
 
     /// `create_epic_reporting` for plan apply (`create_initiative_guarded` says what it adds).
-    pub(crate) async fn create_epic_guarded(
+    pub(super) async fn create_epic_guarded(
         &self,
         c: &Ctx,
         idem: &str,

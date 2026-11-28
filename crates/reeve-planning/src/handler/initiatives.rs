@@ -115,7 +115,7 @@ impl Handlers {
     /// transaction first takes the lock on `idem` and looks for it at the other two levels
     /// (`idempotency_holder_elsewhere`): an item found there is answered as `Guarded::HeldElsewhere` and nothing is
     /// written; none, and the initiative is created as `create_initiative_reporting` creates it.
-    pub(crate) async fn create_initiative_guarded(
+    pub(super) async fn create_initiative_guarded(
         &self,
         c: &Ctx,
         idem: &str,
