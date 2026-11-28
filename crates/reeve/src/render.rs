@@ -660,7 +660,8 @@ pub fn comments(cs: &[CommentDto]) -> String {
     }
     let mut out = "comments:".to_string();
     for c in cs {
-        let _ = write!(out, "\n  - {}", comment_continued(c, "    "));
+        // The header's text starts at column 4, past `  - `; the body's further lines start two further in.
+        let _ = write!(out, "\n  - {}", comment_continued(c, "      "));
     }
     out
 }
@@ -672,8 +673,8 @@ pub fn comment(c: &CommentDto) -> String {
 }
 
 /// A comment whose body's lines after the first start with `continuation`, which the caller sets right of the column
-/// its comment headers start at: stored text cannot take leading spaces away, so no line of a body can start where a
-/// comment does. The body is normalised first, so a lone `\r` is a line break here and never one the guard makes
+/// its comment headers' text (the time) starts at: stored text cannot take leading spaces away, so no line of a body
+/// can start where a comment does, nor put a time in the column a header's time is in. The body is normalised first, so a lone `\r` is a line break here and never one the guard makes
 /// after the layout. An empty line of the body stays empty.
 fn comment_continued(c: &CommentDto, continuation: &str) -> String {
     let body = block(&c.body);
@@ -774,8 +775,10 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
         let _ = writeln!(o, "none");
     }
     for k in &c.comments {
-        // A list item: the body's further lines stay inside it, two spaces in.
-        let _ = writeln!(o, "- {}", comment_continued(k, "  "));
+        // A list item whose text starts at column 2: the body's further lines start two further in, four spaces, which
+        // CommonMark still reads as a continuation of the item's paragraph (an indented code block cannot interrupt a
+        // paragraph, and it would need six after a blank line).
+        let _ = writeln!(o, "- {}", comment_continued(k, "    "));
     }
     o
 }
@@ -2300,13 +2303,13 @@ mod tests {
         // The description, the initiative's brief and the epic's brief; the comment's body continues inside its list
         // item, and alone and under a `show` right of its header.
         assert_eq!(md.matches(TWO).count(), 3, "{md}");
-        assert!(md.contains(": first line\n  second line\n"), "{md}");
+        assert!(md.contains(": first line\n    second line\n"), "{md}");
         assert!(
             comment(&body).ends_with(": first line\n  second line"),
             "{}",
             comment(&body)
         );
-        assert!(comments(std::slice::from_ref(&body)).ends_with(": first line\n    second line"));
+        assert!(comments(std::slice::from_ref(&body)).ends_with(": first line\n      second line"));
     }
 
     /// An item's comments under its `show`: each author on its line; the bodies are long text.
@@ -2364,13 +2367,19 @@ mod tests {
 
     /// Of `out`'s lines as printed, the only ones shaped like a comment header at `prefix` (where the renderer puts a
     /// comment's header) are the real comments' headers, taken from `cs`'s own times and authors, in order; and the
-    /// forged line is printed at `continuation`, right of the header's column, with the prefix it imitates.
+    /// forged line is printed at `continuation`, right of the header's column, with the prefix it imitates. The
+    /// continuation is deeper than `prefix`, so a body's line starts right of the column a header's time starts at and
+    /// a forged time never sits under a real one.
     fn assert_only_real_comment_headers(
         out: &str,
         prefix: &str,
         continuation: &str,
         cs: &[CommentDto],
     ) {
+        assert!(
+            continuation.len() > prefix.len() && continuation.trim().is_empty(),
+            "{continuation:?} must be spaces right of {prefix:?}"
+        );
         let printed = crate::terminal::block(out);
         let real: Vec<String> = cs
             .iter()
@@ -2422,7 +2431,7 @@ mod tests {
             let cs = forged_thread(&body);
             let under = comments(&cs);
             assert_eq!(crate::terminal::block(&under), under, "{under:?}");
-            assert_only_real_comment_headers(&under, "  - ", "    ", &cs);
+            assert_only_real_comment_headers(&under, "  - ", "      ", &cs);
         }
         assert_eq!(
             comments(&[full_comment()]),
@@ -2442,7 +2451,7 @@ mod tests {
             };
             let md = context_markdown(&ctx, now());
             assert_eq!(crate::terminal::block(&md), md, "{md:?}");
-            assert_only_real_comment_headers(&md, "- ", "  ", &cs);
+            assert_only_real_comment_headers(&md, "- ", "    ", &cs);
         }
     }
 
