@@ -13517,12 +13517,18 @@ async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
         let after_the_first = async {
             {
                 let mut conn = pool.acquire().await.unwrap();
+                let mut seen = false;
                 for _ in 0..250 {
                     if advisory_waiters(&mut conn, IDEMPOTENCY_LOCK_WAIT).await >= 1 {
+                        seen = true;
                         break;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 }
+                assert!(
+                    seen,
+                    "{case}: the first apply never queued on the idempotency key's lock"
+                );
             }
             h.apply_plan(&erin, plan(id, second, name)).await
         };
