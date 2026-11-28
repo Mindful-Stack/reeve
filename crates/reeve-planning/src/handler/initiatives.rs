@@ -112,10 +112,10 @@ impl Handlers {
 
     /// The insert every initiative create entry shares, in `tx`, which it ends. It claims the external reference,
     /// takes a key, builds the initiative, inserts it, claims `attachments` and records the entry, then commits and
-    /// answers the initiative with true. When a retry of this create already holds the reference, or the insert
-    /// finds `idem` taken by a concurrent create, it rolls back (the key the sequence handed out with it) and
-    /// answers the initiative `idem` has, with false. Its caller has answered a replay and taken any lock of its
-    /// own before calling it.
+    /// answers the initiative with true. When a retry of this create already holds the reference (before any key
+    /// is taken), or the insert finds `idem` taken by a concurrent create (the key the sequence handed out rolls
+    /// back with it), it rolls back and answers the initiative `idem` has, with false. Its caller has answered a
+    /// replay and taken any lock of its own before calling it.
     async fn finish_initiative_create(
         &self,
         mut tx: Transaction<'_, Postgres>,

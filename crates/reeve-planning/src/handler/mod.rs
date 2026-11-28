@@ -221,8 +221,9 @@ impl Handlers {
     /// What a create of an initiative or an epic does before it writes anything, in this order: its checks that come
     /// before the idempotency lookup (the attachment ids: deduplicated, at most `MAX_CLAIM`), then the lookup of
     /// `idem` in `item`'s own table. Answers the ids to claim and the key a create under `idem` already made, if one
-    /// did. The one place that sequence is written: both create handlers and `made_under` call it, so a replay is
-    /// refused for the same reasons whichever of them answers it.
+    /// did. The one place that sequence is written: both create handlers and `made_under` call it (the epic's
+    /// through `before_epic_create`, which adds its own check after it), so a replay is refused for the same reasons
+    /// whichever of them answers it.
     pub(super) async fn before_create(
         &self,
         item: ItemType,
