@@ -932,7 +932,7 @@ pub fn warnings(ws: &[SprintWarning]) -> String {
 
 fn with_note(word: &str, note: &Option<String>) -> String {
     match note.as_deref() {
-        Some(n) if !n.is_empty() => format!("{word} ({n})"),
+        Some(n) if !n.is_empty() => format!("{word} ({})", line(n)),
         _ => word.to_string(),
     }
 }
@@ -941,7 +941,12 @@ fn with_note(word: &str, note: &Option<String>) -> String {
 pub fn goal(g: &GoalDto) -> String {
     let mut out = format!(
         "goal #{} {} (sprint #{}, version: {})\n  we'll know when: {}\n  owner: {}",
-        g.id, g.outcome, g.sprint_id, g.version, g.check, g.owner
+        g.id,
+        line(&g.outcome),
+        g.sprint_id,
+        g.version,
+        line(&g.check),
+        line(&g.owner)
     );
     if !g.notes.is_empty() {
         let _ = write!(out, "\n  notes: {}", g.notes);
@@ -960,7 +965,7 @@ pub fn goal(g: &GoalDto) -> String {
             with_note(confidence_word(c), &g.suggested_note),
             g.suggested_by
                 .as_deref()
-                .map(|b| format!(" by {b}"))
+                .map(|b| format!(" by {}", line(b)))
                 .unwrap_or_default()
         );
     }
@@ -1117,7 +1122,7 @@ pub fn sprint_view(v: &SprintViewDto, closed_entry: Option<&SprintCountsDto>) ->
         if !v.demo.is_empty() {
             out.push_str("\ndone in the last 7 days:");
             for d in &v.demo {
-                let _ = write!(out, "\n  {} {}", mark(Level::Story, &d.key), d.title);
+                let _ = write!(out, "\n  {} {}", mark(Level::Story, &d.key), line(&d.title));
             }
         }
         if v.promises.is_empty() {
@@ -1133,7 +1138,7 @@ pub fn sprint_view(v: &SprintViewDto, closed_entry: Option<&SprintCountsDto>) ->
                     out,
                     "\n  {} {} · {}",
                     mark(Level::Story, &p.key),
-                    p.title,
+                    line(&p.title),
                     promise::sprint_row_text(p)
                 );
             }
@@ -1149,7 +1154,7 @@ pub fn sprint_view(v: &SprintViewDto, closed_entry: Option<&SprintCountsDto>) ->
 /// `reeve sprint ls`: the active sprint, the draft and the closed sprints (newest first), each with its goals, their
 /// confidence and verdicts. No counts: `reeve sprint show <id>` gives those.
 pub fn sprint_list(x: &SprintsDto) -> String {
-    let line = |s: &SprintDto| {
+    let row = |s: &SprintDto| {
         let mut out = format!(
             "#{} [{}] {} – {}",
             s.id,
@@ -1158,7 +1163,7 @@ pub fn sprint_list(x: &SprintsDto) -> String {
             s.ends_on
         );
         for g in &s.goals {
-            let _ = write!(out, "\n  goal #{} {}", g.id, g.outcome);
+            let _ = write!(out, "\n  goal #{} {}", g.id, line(&g.outcome));
             if let Some(c) = g.confidence {
                 let _ = write!(out, " [{}]", confidence_word(c));
             }
@@ -1174,12 +1179,12 @@ pub fn sprint_list(x: &SprintsDto) -> String {
     };
     let mut parts = vec![];
     if let Some(a) = &x.active {
-        parts.push(line(&a.sprint));
+        parts.push(row(&a.sprint));
     }
     if let Some(d) = &x.draft {
-        parts.push(line(d));
+        parts.push(row(d));
     }
-    parts.extend(x.closed.iter().map(line));
+    parts.extend(x.closed.iter().map(row));
     if parts.is_empty() {
         return "no sprints yet: `reeve goal add` starts the first draft".into();
     }
@@ -1195,7 +1200,7 @@ fn goal_initiatives(g: &GoalGatesDto, marked: bool) -> String {
     }
     g.initiatives
         .iter()
-        .map(|i| format!("{} {}{}", i.key, i.horizon, mark(!i.in_first_bucket)))
+        .map(|i| format!("{} {}{}", i.key, line(&i.horizon), mark(!i.in_first_bucket)))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -1209,14 +1214,14 @@ fn planned_goal(
     counts: Option<&SprintCountsDto>,
     marked: bool,
 ) {
-    let _ = write!(out, "\n  goal #{} {}", g.id, g.outcome);
+    let _ = write!(out, "\n  goal #{} {}", g.id, line(&g.outcome));
     match gates {
         Some(gg) => {
             let _ = write!(out, "\n    initiatives: {}", goal_initiatives(gg, marked));
         }
         None => out.push_str("\n    initiatives: (not in the planning answer)"),
     }
-    let _ = write!(out, "\n    owner: {}", g.owner);
+    let _ = write!(out, "\n    owner: {}", line(&g.owner));
     if let Some(c) = counts.and_then(|c| c.goals.iter().find(|c| c.goal_id == g.id)) {
         let _ = write!(
             out,
@@ -1236,7 +1241,12 @@ fn planned_goal(
             // Discovery is a mark on initiatives and epics (kb/ADR-0002 R3): the server never gates on a story.
             ItemType::Epic | ItemType::Story => "epic",
         };
-        let _ = write!(out, "\n      {} {}: {item} in discovery", d.key, d.title);
+        let _ = write!(
+            out,
+            "\n      {} {}: {item} in discovery",
+            d.key,
+            line(&d.title)
+        );
     }
     for d in &gg.decisions {
         let _ = write!(out, "\n      {} (on {})", reason(&d.reason), d.on);
@@ -1246,14 +1256,14 @@ fn planned_goal(
 /// The first bucket's initiatives with the goals that reach them, each goal's outcome and sprint from the planning
 /// answer itself.
 fn bucket_section(bucket: &str, p: &SprintPlanningDto) -> String {
-    let mut out = format!("{bucket} initiatives");
+    let mut out = format!("{} initiatives", line(bucket));
     if p.first_bucket_initiatives.is_empty() {
         out.push_str("\n  none");
     }
     for i in &p.first_bucket_initiatives {
         let mut notes = vec![];
         if let Some(m) = &i.target_month {
-            notes.push(m.clone());
+            notes.push(line(m).into_owned());
         }
         if i.discovery_complete.is_none() {
             notes.push("in discovery".into());
@@ -1263,7 +1273,7 @@ fn bucket_section(bucket: &str, p: &SprintPlanningDto) -> String {
         } else {
             format!(" ({})", notes.join(", "))
         };
-        let _ = write!(out, "\n  {} {}{notes}", i.key, i.title);
+        let _ = write!(out, "\n  {} {}{notes}", i.key, line(&i.title));
         if i.goals.is_empty() {
             out.push_str("\n    no goal");
         }
@@ -1273,7 +1283,7 @@ fn bucket_section(bucket: &str, p: &SprintPlanningDto) -> String {
             } else {
                 "next sprint"
             };
-            let _ = write!(out, "\n    #{} {} ({which})", g.id, g.outcome);
+            let _ = write!(out, "\n    #{} {} ({which})", g.id, line(&g.outcome));
         }
     }
     out
@@ -3062,6 +3072,220 @@ mod tests {
             promises: vec![],
             promises_after: None,
         }
+    }
+
+    /// What a sprint fixture built from `full_view` leaves empty. No long text: each renderer that prints a goal's
+    /// notes names them itself.
+    fn sprint_absent() -> Paths {
+        Paths::none()
+            .absent("/closed_at", "a sprint not closed")
+            .absent("/warnings", "a sprint of one goal has no warning")
+    }
+
+    /// An active sprint with a full goal, a demo story and a promise.
+    fn full_view() -> SprintViewDto {
+        let mut v = view(SprintState::Active, vec![progress(12, 1, 2)]);
+        v.sprint.opened_at = Some("2026-11-03T09:00:00Z".parse().unwrap());
+        v.sprint.goals = vec![full_sprint_goal()];
+        v.promises = vec![SprintPromiseDto {
+            key: "ABC-7".parse().unwrap(),
+            title: "Demo me".into(),
+            on: "2026-11-12".parse().unwrap(),
+            to: Some("Anna".into()),
+            holder: PromiseHolder::Own,
+            epic_key: None,
+            state: PromiseState::Open,
+            done_on: None,
+            days: None,
+        }];
+        v.promises_after = Some("2026-11-02".parse().unwrap());
+        v
+    }
+
+    /// What `full_view` leaves empty.
+    fn view_absent() -> Paths {
+        sprint_absent()
+            .under("/sprint")
+            .absent("/promises/0/epic_key", "the story's own promise")
+            .absent("/promises/0/done_on", "an open promise is not done")
+            .absent("/promises/0/days", "an open promise counts no days")
+    }
+
+    fn draft_of(v: &SprintViewDto) -> SprintDto {
+        SprintDto {
+            state: SprintState::Draft,
+            opened_at: None,
+            ..v.sprint.clone()
+        }
+    }
+
+    fn closed_of(v: &SprintViewDto) -> SprintDto {
+        SprintDto {
+            state: SprintState::Closed,
+            closed_at: Some("2026-11-17T17:00:00Z".parse().unwrap()),
+            ..v.sprint.clone()
+        }
+    }
+
+    /// `sprint ls`'s and `sprint planning`'s fixture: `full_view` active, its draft, and (`closed`) a closed copy;
+    /// with the paths it leaves empty, from the inputs that built it. No long text: neither renderer prints a goal's
+    /// notes, so they are one-line there and must not be printed raw.
+    fn full_sprints(closed: bool) -> (SprintsDto, Paths) {
+        let v = full_view();
+        let mut paths = view_absent().under("/active").and(
+            sprint_absent()
+                .under("/draft")
+                .absent("/draft/opened_at", "a draft is not open"),
+        );
+        paths = if closed {
+            paths.absent("/closed/0/warnings", "a sprint of one goal has no warning")
+        } else {
+            paths.absent("/closed", "no sprint closed yet")
+        };
+        let sprints = SprintsDto {
+            active: Some(v.clone()),
+            draft: Some(draft_of(&v)),
+            closed: if closed { vec![closed_of(&v)] } else { vec![] },
+            today: Some("2026-11-10".parse().unwrap()),
+        };
+        (sprints, paths)
+    }
+
+    /// A goal's one-line fields, alone and under its sprint, in `sprint show`, `sprint ls` and the open and close
+    /// answers. `notes` is long text where it is printed (a goal alone, a sprint, `sprint show`).
+    #[test]
+    fn a_goals_fields_stay_on_their_lines() {
+        let fields = [
+            "/outcome",
+            "/check",
+            "/owner",
+            "/confidence_note",
+            "/suggested_note",
+            "/suggested_by",
+            "/verdict_note",
+        ];
+        assert_shown(
+            &assert_one_line(&full_sprint_goal(), &Paths::none().long(&["/notes"]), goal),
+            &fields,
+        );
+        let under: Vec<String> = fields.iter().map(|f| format!("/goals/0{f}")).collect();
+        assert_shown(
+            &assert_one_line(
+                &full_view().sprint,
+                &sprint_absent().long(&["/goals/*/notes"]),
+                sprint,
+            ),
+            &under.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        let under: Vec<String> = fields
+            .iter()
+            .map(|f| format!("/sprint/goals/0{f}"))
+            .collect();
+        let shown = assert_one_line(
+            &full_view(),
+            &view_absent().long(&["/sprint/goals/*/notes"]),
+            |v| sprint_view(v, None),
+        );
+        assert_shown(
+            &shown,
+            &under.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert_shown(
+            &shown,
+            &["/demo/0/title", "/promises/0/title", "/promises/0/to"],
+        );
+        let (sprints, paths) = full_sprints(true);
+        assert_shown(
+            &assert_one_line(&sprints, &paths, sprint_list),
+            &[
+                "/active/sprint/goals/0/outcome",
+                "/draft/goals/0/outcome",
+                "/closed/0/goals/0/outcome",
+                "/closed/0/goals/0/verdict_note",
+            ],
+        );
+    }
+
+    /// A goal's notes are long text and keep their line breaks, alone and indented under their sprint and in
+    /// `sprint show`: a renderer that forced them through `line` would print `\n` here, which the hostile helper
+    /// cannot see (its long text holds no line break).
+    #[test]
+    fn a_goals_notes_keep_their_line_breaks() {
+        let g = GoalDto {
+            notes: "first line\nsecond line".into(),
+            ..full_sprint_goal()
+        };
+        let alone = goal(&g);
+        assert!(
+            alone.contains("\n  notes: first line\nsecond line"),
+            "{alone}"
+        );
+        let mut v = full_view();
+        v.sprint.goals = vec![g];
+        // `indent` puts two spaces before each of the goal's lines, the notes' second line included.
+        let under = sprint(&v.sprint);
+        assert!(
+            under.contains("\n    notes: first line\n  second line"),
+            "{under}"
+        );
+        let shown = sprint_view(&v, None);
+        assert!(
+            shown.contains("\n    notes: first line\n  second line"),
+            "{shown}"
+        );
+    }
+
+    /// `sprint planning`: goals, the initiatives they reach, what they wait on, and the first bucket. It prints no
+    /// long text.
+    #[test]
+    fn the_planning_views_fields_stay_on_their_lines() {
+        let mut gates = gates_of(12, vec![reaches("ABC-3", "Now", false)]);
+        gates.discoveries = vec![DiscoveryGateDto {
+            key: "ABC-3".parse().unwrap(),
+            item: ItemType::Initiative,
+            title: "Leave".into(),
+        }];
+        gates.decisions = vec![DecisionGateDto {
+            on: "ABC-1".parse().unwrap(),
+            reason: Reason::DecisionNoRecord {
+                decision_id: 7,
+                title: "Pick a host".into(),
+            },
+        }];
+        let planning = SprintPlanningDto {
+            goals: vec![gates],
+            first_bucket: Some("Now".into()),
+            first_bucket_initiatives: vec![BucketInitiativeDto {
+                key: "ABC-3".parse().unwrap(),
+                title: "Leave".into(),
+                target_month: Some("2026-12".into()),
+                discovery_complete: Some(DiscoveryMarkDto {
+                    at: "2026-11-01T09:00:00Z".parse().unwrap(),
+                    by: "dan@example.com".into(),
+                }),
+                goals: vec![bucket_goal(12, "Bookings work", true)],
+            }],
+        };
+        let (sprints, paths) = full_sprints(false);
+        let shown = assert_one_line(&(sprints, planning), &paths.under("/0"), |(x, p)| {
+            sprint_planning(x, p)
+        });
+        assert_shown(
+            &shown,
+            &[
+                "/0/active/sprint/goals/0/outcome",
+                "/0/active/sprint/goals/0/owner",
+                "/0/draft/goals/0/outcome",
+                "/0/draft/goals/0/owner",
+                "/1/first_bucket",
+                "/1/goals/0/initiatives/0/horizon",
+                "/1/goals/0/discoveries/0/title",
+                "/1/goals/0/decisions/0/reason/title",
+                "/1/first_bucket_initiatives/0/title",
+                "/1/first_bucket_initiatives/0/target_month",
+                "/1/first_bucket_initiatives/0/goals/0/outcome",
+            ],
+        );
     }
 
     /// A sprint lists its promises under the range heading, each row the key, title, recipient and state words, then the
