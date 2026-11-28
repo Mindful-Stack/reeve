@@ -93,6 +93,50 @@ impl Handlers {
         delivery: DeliveryState,
         attachments: &[Uuid],
     ) -> Result<(Story, bool), HandlerError> {
+        let (attachments, made) = self
+            .before_story_create(
+                idem,
+                epic.as_ref(),
+                external_ref.as_deref(),
+                delivery,
+                attachments,
+            )
+            .await?;
+        if let Some(k) = made {
+            return Ok((self.ports.stories.get_story(&k).await?, false));
+        }
+        let tx = self.pool.begin().await?;
+        self.finish_story_create(
+            tx,
+            c,
+            idem,
+            title,
+            kind,
+            epic,
+            description,
+            criteria,
+            labels,
+            external_ref,
+            owner,
+            delivery,
+            &attachments,
+        )
+        .await
+    }
+
+    /// What a create of a story does before it writes anything, in this order: the attachment ids (deduplicated, at
+    /// most `MAX_CLAIM`), the state it may be created in, the lookup of `idem` among stories, and, when no story
+    /// has it, that the named epic exists. Answers the ids to claim and the key a create under `idem` already made,
+    /// if one did. Every story create entry calls it, so a replay is answered for the same reasons whichever is
+    /// called (`before_create` is the same for an initiative, `before_epic_create` for an epic).
+    async fn before_story_create(
+        &self,
+        idem: &str,
+        epic: Option<&Key>,
+        external_ref: Option<&str>,
+        delivery: DeliveryState,
+        attachments: &[Uuid],
+    ) -> Result<(Vec<Uuid>, Option<Key>), HandlerError> {
         let attachments = attachment_ids(attachments)?;
         if delivery != DeliveryState::Todo
             && (external_ref.is_none() || delivery == DeliveryState::Done)
@@ -107,12 +151,32 @@ impl Handlers {
             .find_by_idempotency(ItemType::Story, idem)
             .await?
         {
-            return Ok((self.ports.stories.get_story(&k).await?, false));
+            return Ok((attachments, Some(k)));
         }
-        if let Some(ek) = &epic {
+        if let Some(ek) = epic {
             self.ports.epics.get_epic(ek).await?;
         }
-        let mut tx = self.pool.begin().await?;
+        Ok((attachments, None))
+    }
+
+    /// The insert every story create entry shares, in `tx`, which it ends (`finish_initiative_create` says how). Its
+    /// caller has run `before_story_create` and taken any lock of its own before calling it.
+    async fn finish_story_create(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        kind: Kind,
+        epic: Option<Key>,
+        description: &str,
+        criteria: Vec<String>,
+        labels: Vec<String>,
+        external_ref: Option<String>,
+        owner: Option<String>,
+        delivery: DeliveryState,
+        attachments: &[Uuid],
+    ) -> Result<(Story, bool), HandlerError> {
         let r = match self
             .claim_ref(&mut tx, ItemType::Story, idem, external_ref)
             .await?
@@ -155,7 +219,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.stories.get_story(&k).await?, false));
         }
-        self.claim_attachments(&mut tx, c, &attachments, ItemType::Story, s.key())
+        self.claim_attachments(&mut tx, c, attachments, ItemType::Story, s.key())
             .await?;
         let (action, payload) = match s.external_ref() {
             Some(r) if delivery != DeliveryState::Todo => {

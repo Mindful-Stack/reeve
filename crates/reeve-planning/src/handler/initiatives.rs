@@ -94,7 +94,41 @@ impl Handlers {
         if let Some(k) = made {
             return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
-        let mut tx = self.pool.begin().await?;
+        let tx = self.pool.begin().await?;
+        self.finish_initiative_create(
+            tx,
+            c,
+            idem,
+            title,
+            brief,
+            horizon,
+            target_month,
+            owner,
+            external_ref,
+            &attachments,
+        )
+        .await
+    }
+
+    /// The insert every initiative create entry shares, in `tx`, which it ends. It claims the external reference,
+    /// takes a key, builds the initiative, inserts it, claims `attachments` and records the entry, then commits and
+    /// answers the initiative with true. When a retry of this create already holds the reference, or the insert
+    /// finds `idem` taken by a concurrent create, it rolls back (the key the sequence handed out with it) and
+    /// answers the initiative `idem` has, with false. Its caller has answered a replay and taken any lock of its
+    /// own before calling it.
+    async fn finish_initiative_create(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        brief: &str,
+        horizon: &str,
+        target_month: Option<String>,
+        owner: Option<String>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<(Initiative, bool), HandlerError> {
         let r = match self
             .claim_ref(&mut tx, ItemType::Initiative, idem, external_ref)
             .await?
@@ -135,7 +169,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.initiatives.get_initiative(&k).await?, false));
         }
-        self.claim_attachments(&mut tx, c, &attachments, ItemType::Initiative, i.key())
+        self.claim_attachments(&mut tx, c, attachments, ItemType::Initiative, i.key())
             .await?;
         self.activity
             .record(

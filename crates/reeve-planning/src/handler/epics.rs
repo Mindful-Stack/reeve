@@ -55,15 +55,61 @@ impl Handlers {
         attachments: &[Uuid],
     ) -> Result<(Epic, bool), HandlerError> {
         let (attachments, made) = self
-            .before_create(ItemType::Epic, idem, attachments)
+            .before_epic_create(idem, initiative.as_ref(), attachments)
             .await?;
         if let Some(k) = made {
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
-        if let Some(ik) = &initiative {
+        let tx = self.pool.begin().await?;
+        self.finish_epic_create(
+            tx,
+            c,
+            idem,
+            title,
+            initiative,
+            brief,
+            external_ref,
+            &attachments,
+        )
+        .await
+    }
+
+    /// What a create of an epic does before it writes anything, in this order: `before_create` (the attachment ids
+    /// and the lookup of `idem` among epics), and, when no epic has it, that the named initiative exists. Answers
+    /// the ids to claim and the key a create under `idem` already made, if one did. Every epic create entry calls
+    /// it, as every story create entry calls `before_story_create`. `made_under` keeps calling `before_create`
+    /// alone: a replay is judged before the initiative is looked at.
+    async fn before_epic_create(
+        &self,
+        idem: &str,
+        initiative: Option<&Key>,
+        attachments: &[Uuid],
+    ) -> Result<(Vec<Uuid>, Option<Key>), HandlerError> {
+        let (attachments, made) = self
+            .before_create(ItemType::Epic, idem, attachments)
+            .await?;
+        if made.is_some() {
+            return Ok((attachments, made));
+        }
+        if let Some(ik) = initiative {
             self.ports.initiatives.get_initiative(ik).await?;
         }
-        let mut tx = self.pool.begin().await?;
+        Ok((attachments, None))
+    }
+
+    /// The insert every epic create entry shares, in `tx`, which it ends (`finish_initiative_create` says how). Its
+    /// caller has run `before_epic_create` and taken any lock of its own before calling it.
+    async fn finish_epic_create(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        initiative: Option<Key>,
+        brief: &str,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<(Epic, bool), HandlerError> {
         let r = match self
             .claim_ref(&mut tx, ItemType::Epic, idem, external_ref)
             .await?
@@ -95,7 +141,7 @@ impl Handlers {
                 .ok_or(HandlerError::NotFound)?;
             return Ok((self.ports.epics.get_epic(&k).await?, false));
         }
-        self.claim_attachments(&mut tx, c, &attachments, ItemType::Epic, e.key())
+        self.claim_attachments(&mut tx, c, attachments, ItemType::Epic, e.key())
             .await?;
         self.activity
             .record(
