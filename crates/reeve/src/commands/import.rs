@@ -311,6 +311,8 @@ pub(crate) struct Failure {
     pub step: &'static str,
     pub cause: Cause,
     pub code: Option<ErrorCode>,
+    /// The server's error message as sent, a refusal's reasons in `render::reason`'s words (stored titles escaped),
+    /// or the transport's error. `skipped` and `stopped` quote it.
     pub message: String,
     pub exit: i32,
 }

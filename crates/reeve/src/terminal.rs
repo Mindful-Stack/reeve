@@ -1,10 +1,17 @@
-//! What reaches the reader's terminal. Two rules for server-supplied text, and the only functions in this crate that
-//! write to standard output or standard error (`tests/print_sites.rs` refuses a print macro or an opened standard
-//! stream anywhere else).
+//! What reaches the reader's terminal: two rules for server-supplied text (`line`, `block`), and the writers every
+//! command's output goes through (`out`, `err`, `exact`, `document`). `tests/print_sites.rs` refuses a print macro or
+//! an opened standard stream anywhere else in the crate, with two writers that are not a command's output: the TUI's
+//! own terminal, `tui/term.rs` (the alternate screen, the ratatui backend, the clipboard sequence), and clap's help,
+//! version and usage output (`e.print()` in `lib.rs`).
 //!
-//! Text mode is for reading; `--json` carries server values exactly, never through `line` or `block`. A sentence the
-//! CLI itself writes about a value it refuses to use (a record's repository name or path, refused in
-//! `results[].error` and `immediate_check.error`) may name that value in escaped form.
+//! Text mode is for reading. `--json` carries the server's values exactly: an envelope never passes through `line` or
+//! `block`. An envelope field that is a sentence the CLI wrote (an error it reports, a refusal's reasons in words)
+//! carries that sentence as rendered, so a stored value it names appears escaped; the knowledge base lists those
+//! fields (`lore/knowledge/general/architecture.md`).
+//!
+//! Every write to standard output follows one rule, text or exact: a reader that went away (a closed pipe) is
+//! success, and any other failure is returned for `status`, which makes it exit status 1. A failed write to standard
+//! error is ignored.
 use std::borrow::Cow;
 use std::io::{self, Write};
 

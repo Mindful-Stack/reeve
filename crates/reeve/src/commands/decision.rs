@@ -268,7 +268,8 @@ pub async fn run(c: &Client, d: Decision, json: bool) -> anyhow::Result<i32> {
             report(id, &entry);
             // The link is stored and the check has run, so the answer is always the ok envelope with both. `value` is the
             // decision read back after the check, as before; when that read fails (a transport error or an error
-            // envelope), it falls back to the link's own response and `refresh_error` says why.
+            // envelope), it falls back to the link's own response and `refresh_error` says why, as the CLI words it (a
+            // refusal's reasons through `render::reasons`, titles escaped).
             let (value, refresh_error) = match c
                 .get::<RequiredDecisionDto>(&format!("/decisions/{id}"))
                 .await
@@ -505,6 +506,10 @@ struct CheckEntry {
     outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     check: Option<CheckResult>,
+    /// What went wrong, as the CLI words it: the refusal of a record's repository name or path (the value through
+    /// `terminal::line`), git's message, a refused post's reasons (`render::reasons`, titles escaped), or the server's
+    /// error or the transport's. `--json` carries this sentence as written in `results[].error` (`decision check`) and
+    /// `immediate_check.error` (`decision link`), so a value it names may appear escaped there.
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     /// The code of the server's own refusal of the post, if that is why the entry failed.
@@ -578,9 +583,10 @@ fn record_result(r: crate::git::RecordStatus, record_id: &str) -> CheckResult {
 /// and the file is absent from it (kb/ADR-0004 R4); a file that exists at that commit but whose front matter cannot be
 /// parsed is a fact about the record and is posted as not accepted with status `unparsable front matter`, so a broken
 /// edit on the default branch unsatisfies the decision instead of leaving it accepted. Anything that says more about
-/// this checkout than about the record (an invalid repository name, a missing clone, a failed fetch, an unresolvable
-/// `origin/HEAD`) posts nothing: the decision keeps its last result and the entry is reported `unreadable`, which
-/// makes the run exit 1.
+/// this checkout than about the record (a missing clone, a failed fetch, an unresolvable `origin/HEAD`) posts nothing:
+/// the decision keeps its last result and the entry is reported `unreadable`, which makes the run exit 1. A repository
+/// name or record path the CLI refuses (`valid_repo_name`, `valid_record_path`) never reaches here: `check_one`
+/// reports it `unreadable` the same way before git runs, and posts nothing.
 fn check_from_read(
     read: Result<crate::git::RecordStatus, crate::git::RecordReadError>,
     record_id: &str,

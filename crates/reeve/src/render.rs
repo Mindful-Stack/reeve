@@ -1,4 +1,6 @@
-//! Short text renderers; `--json` bypasses all of these.
+//! Short text renderers for text mode. `--json` prints the server's values, not these, except where an envelope field
+//! is a sentence the CLI writes from them (a refusal's reasons in `reason`'s words, which escape stored titles): the
+//! knowledge base lists those fields (`lore/knowledge/general/architecture.md`).
 use crate::glyphs::{Level, mark};
 use crate::promise;
 use crate::relations::{BlockerLine, relations, web_links};
