@@ -69,7 +69,7 @@ async fn jira(c: &Client, a: JiraArgs, json: bool) -> anyhow::Result<i32> {
             ErrorCode::Forbidden,
             &format!(
                 "import needs an admin with an interactive token; {} is {} with an {} token",
-                me.email,
+                crate::terminal::line(&me.email),
                 wire(&me.role),
                 wire(&me.token_kind)
             ),
@@ -614,11 +614,12 @@ mod tests {
     use std::sync::Mutex;
 
     /// The report's rows hold values Jira supplied (keys, account ids, link type names) and the server's messages: a
-    /// line break in one cannot start a row of its own, and an escape sequence is shown escaped.
+    /// line break in one cannot start a row of its own, and an escape sequence, a tab, a carriage return, an override and
+    /// a line separator are shown escaped.
     #[test]
     fn a_jira_value_cannot_start_a_row_of_its_own() {
-        const H: &str = "SCRUM-1\nSCRUM-2: forged\u{1b}[2J";
-        const SHOWN: &str = "SCRUM-1\\nSCRUM-2: forged\\u{1b}[2J";
+        const H: &str = "SCRUM-1\nSCRUM-2: forged\u{1b}[2J\t\r\u{202e}\u{2028}x";
+        const SHOWN: &str = "SCRUM-1\\nSCRUM-2: forged\\u{1b}[2J\\t\\r\\u{202e}\\u{2028}x";
         let mut report = Report::of(&ImportPlan {
             warnings: vec![Warning::UnresolvedOwner {
                 issue: H.into(),
@@ -646,7 +647,9 @@ mod tests {
         });
         let text = crate::render::import_report(&report);
         assert!(!text.lines().any(|l| l.starts_with("SCRUM-2")), "{text}");
-        assert!(!text.contains('\u{1b}'), "{text:?}");
+        for c in ['\u{1b}', '\t', '\r', '\u{202e}', '\u{2028}'] {
+            assert!(!text.contains(c), "{c:?} raw in {text:?}");
+        }
         // The warning line twice, the link type, three key lists, the failure's key and message, the skip's key and
         // reason, and the stop.
         assert_eq!(text.matches(SHOWN).count(), 11, "{text}");

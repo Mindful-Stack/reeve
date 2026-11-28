@@ -1918,6 +1918,140 @@ fn link_to_an_unconfigured_repository_is_kept_and_not_checked() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("not configured"));
 }
 
+/// Repository names a hostile or corrupted server could store: a line break that would forge a line of its own, an
+/// escape sequence, a right-to-left override, a tab, a trailing space. None is one clean directory name.
+const HOSTILE_REPOS: [&str; 5] = [
+    "kb\nwarning: forged",
+    "kb\u{1b}[2J",
+    "kb\u{202e}x",
+    "kb\tx",
+    "kb ",
+];
+
+/// What the refusal of a hostile repository name must look like on stderr: one line, the refusal of the name (not
+/// a missing clone found under it), and none of the characters raw.
+fn assert_repo_name_refused_on_one_line(repo: &str, out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{repo:?}: {stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{repo:?}: {stderr:?}");
+    assert!(
+        lines[0].starts_with("decision 7: repository name `"),
+        "{repo:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].contains("is not a single directory name"),
+        "{repo:?}: {stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with("; nothing recorded"),
+        "{repo:?}: {stderr:?}"
+    );
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{repo:?}: {c:?} raw in {stderr:?}");
+    }
+}
+
+/// `decision check` refuses a stored repository name that is not one clean word, on one line, before it joins it to
+/// the household or runs git.
+#[test]
+fn decision_check_refuses_a_hostile_repository_name_on_one_line() {
+    for repo in HOSTILE_REPOS {
+        let hh = household();
+        let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+        d["record"]["repo"] = repo.into();
+        let (url, server) = serve(vec![(
+            "GET /api/v1/decisions?open_with_record=true",
+            200,
+            ok(serde_json::json!([d])),
+        )]);
+        let out = reeve_at(
+            &url,
+            &[
+                "decision",
+                "check",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_repo_name_refused_on_one_line(repo, &out);
+    }
+}
+
+/// `decision link` checks the reference the server stored: a hostile repository name there (configured, so the
+/// immediate check runs) is refused on one line too.
+#[test]
+fn decision_link_refuses_a_hostile_stored_repository_name_on_one_line() {
+    for repo in HOSTILE_REPOS {
+        let hh = household();
+        let mut d = decision("adrs/0001.md", serde_json::json!({"kind":"unchecked"}));
+        d["record"]["repo"] = repo.into();
+        let config = serde_json::json!({"key_prefix":"TST","horizon_buckets":["Now"],"repos":[repo],"sign_in_configured":true});
+        let (url, server) = serve(vec![
+            ("POST /api/v1/decisions/7/link", 200, ok(d.clone())),
+            ("GET /api/v1/config", 200, ok(config)),
+            ("GET /api/v1/decisions/7", 200, ok(d)),
+        ]);
+        let out = reeve_at(
+            &url,
+            &[
+                "--json",
+                "decision",
+                "link",
+                "7",
+                "--record",
+                "kb/ADR-0001",
+                "--repo",
+                "kb",
+                "--path",
+                "adrs/0001.md",
+                "--household",
+                hh.path().to_str().unwrap(),
+            ],
+        );
+        server.join().unwrap();
+        assert_repo_name_refused_on_one_line(repo, &out);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["immediate_check"]["outcome"], "unreadable", "{v}");
+    }
+}
+
+/// The import's preflight refusal names the caller by the email `/me` answered: a line break, tab, escape sequence
+/// or override in it is shown escaped, so the refusal stays on one line.
+#[test]
+fn the_import_preflight_refusal_names_the_caller_on_one_line() {
+    let email = "a@x\nerror: forged\t\u{1b}[2J\u{202e}\r";
+    let (url, server) = serve(vec![(
+        "GET /api/v1/me",
+        200,
+        ok(serde_json::json!({"email":email,"role":"member","token_kind":"interactive"})),
+    )]);
+    let mapping = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../jira-import.example.toml"
+    );
+    let out = reeve_at(&url, &["import", "jira", "--mapping", mapping]);
+    server.join().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{stderr:?}");
+    assert!(
+        lines[0].starts_with(
+            "error: import needs an admin with an interactive token; a@x\\nerror: forged\\t"
+        ),
+        "{stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with(" is member with an interactive token"),
+        "{stderr:?}"
+    );
+    for c in ['\t', '\u{1b}', '\u{202e}', '\r'] {
+        assert!(!stderr.contains(c), "{c:?} raw in {stderr:?}");
+    }
+}
+
 /// `story create --owner` and `story edit --owner` set a story's owner; `story edit --no-owner` clears it.
 #[test]
 fn story_owner_is_set_on_create_and_edit_and_cleared() {

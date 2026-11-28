@@ -515,17 +515,21 @@ struct CheckEntry {
 }
 
 /// A repository name from the server is used as one directory under the household: it must be a single normal path
-/// component that git cannot read as an option, or the checker would run git somewhere the household does not own.
+/// component that git cannot read as an option, or the checker would run git somewhere the household does not own. It
+/// is also one clean word, at least as strict as the server's own rule (no leading `.`, no whitespace): no whitespace,
+/// no control character and nothing `terminal::line` escapes, so every message that names it, or a path built from it,
+/// stays on its line. The refusal itself prints the name through `line`.
 fn valid_repo_name(repo: &str) -> Result<(), String> {
     if repo.is_empty()
-        || repo == "."
-        || repo == ".."
         || repo.contains('/')
         || repo.contains('\\')
-        || repo.starts_with('-')
+        || repo.starts_with(['-', '.'])
+        || repo.chars().any(|c| c.is_whitespace() || c.is_control())
+        || crate::terminal::line(repo) != repo
     {
         return Err(format!(
-            "repository name `{repo}` is not a single directory name"
+            "repository name `{}` is not a single directory name",
+            crate::terminal::line(repo)
         ));
     }
     Ok(())
@@ -840,7 +844,29 @@ mod tests {
         for ok in ["knowledge-base", "orion", "a.b"] {
             assert!(valid_repo_name(ok).is_ok(), "{ok}");
         }
-        for bad in ["", ".", "..", "../x", "a/b", "/abs", "a\\b", "-c"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            "/abs",
+            "a\\b",
+            "-c",
+            ".hidden",
+            "kb\nwarning: forged",
+            "kb\r",
+            "kb\tx",
+            "kb ",
+            " kb",
+            "kb\u{a0}x",
+            "kb\u{1b}[2J",
+            "kb\u{7f}",
+            "kb\u{202e}x",
+            "kb\u{2066}x",
+            "kb\u{200e}",
+            "kb\u{2028}x",
+        ] {
             assert!(valid_repo_name(bad).is_err(), "{bad}");
         }
     }
