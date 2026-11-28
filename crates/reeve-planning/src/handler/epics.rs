@@ -74,6 +74,51 @@ impl Handlers {
         .await
     }
 
+    /// `create_epic_reporting` for plan apply (`create_initiative_guarded` says what it adds).
+    pub(crate) async fn create_epic_guarded(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        initiative: Option<Key>,
+        brief: &str,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Guarded<Epic>, HandlerError> {
+        let (attachments, made) = self
+            .before_epic_create(idem, initiative.as_ref(), attachments)
+            .await?;
+        if let Some(k) = made {
+            let item = self.ports.epics.get_epic(&k).await?;
+            return Ok(Guarded::Item {
+                item,
+                created: false,
+            });
+        }
+        let mut tx = self.pool.begin().await?;
+        // First in the transaction: before the external reference's lock, the key sequence and the activity lock.
+        if let Some((level, key)) = self
+            .idempotency_holder_elsewhere(&mut tx, ItemType::Epic, idem)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(Guarded::HeldElsewhere { level, key });
+        }
+        let (item, created) = self
+            .finish_epic_create(
+                tx,
+                c,
+                idem,
+                title,
+                initiative,
+                brief,
+                external_ref,
+                &attachments,
+            )
+            .await?;
+        Ok(Guarded::Item { item, created })
+    }
+
     /// What a create of an epic does before it writes anything, in this order: `before_create` (the attachment ids
     /// and the lookup of `idem` among epics), and, when no epic has it, that the named initiative exists. Answers
     /// the ids to claim and the key a create under `idem` already made, if one did. Every epic create entry calls

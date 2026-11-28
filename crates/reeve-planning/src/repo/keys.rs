@@ -1,5 +1,10 @@
 use super::*;
 
+/// The first number of the idempotency key's lock, `pg_advisory_xact_lock(IDEMPOTENCY_LOCK_SPACE, hashtext(<key>))`.
+/// No other lock uses this number, and PostgreSQL's two-integer keys are apart from the single-bigint keys, so no
+/// key's hash can equal another lock. The other locks: `lore/knowledge/general/architecture.md`, the lock order.
+const IDEMPOTENCY_LOCK_SPACE: i32 = 1;
+
 #[async_trait]
 impl KeyRepo for PgPlanningRepo {
     async fn next_key(
@@ -128,6 +133,18 @@ impl KeyRepo for PgPlanningRepo {
     ) -> Result<(), RepoError> {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_import:' || $1))")
             .bind(external_ref)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+    async fn lock_idempotency_key(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        idem: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2))")
+            .bind(IDEMPOTENCY_LOCK_SPACE)
+            .bind(idem)
             .execute(&mut **tx)
             .await?;
         Ok(())

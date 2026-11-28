@@ -110,6 +110,59 @@ impl Handlers {
         .await
     }
 
+    /// `create_initiative_reporting` for plan apply, where a plan's name must be one item across the three levels.
+    /// A replay (`idem` already made an initiative) is answered first, as there, and writes nothing. Otherwise the
+    /// transaction first takes the lock on `idem` and looks for it at the other two levels
+    /// (`idempotency_holder_elsewhere`): an item found there is answered as `Guarded::HeldElsewhere` and nothing is
+    /// written; none, and the initiative is created as `create_initiative_reporting` creates it.
+    pub(crate) async fn create_initiative_guarded(
+        &self,
+        c: &Ctx,
+        idem: &str,
+        title: &str,
+        brief: &str,
+        horizon: &str,
+        target_month: Option<String>,
+        owner: Option<String>,
+        external_ref: Option<String>,
+        attachments: &[Uuid],
+    ) -> Result<Guarded<Initiative>, HandlerError> {
+        let (attachments, made) = self
+            .before_create(ItemType::Initiative, idem, attachments)
+            .await?;
+        if let Some(k) = made {
+            let item = self.ports.initiatives.get_initiative(&k).await?;
+            return Ok(Guarded::Item {
+                item,
+                created: false,
+            });
+        }
+        let mut tx = self.pool.begin().await?;
+        // First in the transaction: before the external reference's lock, the key sequence and the activity lock.
+        if let Some((level, key)) = self
+            .idempotency_holder_elsewhere(&mut tx, ItemType::Initiative, idem)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(Guarded::HeldElsewhere { level, key });
+        }
+        let (item, created) = self
+            .finish_initiative_create(
+                tx,
+                c,
+                idem,
+                title,
+                brief,
+                horizon,
+                target_month,
+                owner,
+                external_ref,
+                &attachments,
+            )
+            .await?;
+        Ok(Guarded::Item { item, created })
+    }
+
     /// The insert every initiative create entry shares, in `tx`, which it ends. It claims the external reference,
     /// takes a key, builds the initiative, inserts it, claims `attachments` and records the entry, then commits and
     /// answers the initiative with true. When a retry of this create already holds the reference (before any key

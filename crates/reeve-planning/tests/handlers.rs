@@ -12847,24 +12847,32 @@ async fn a_brief_template_and_its_entry_commit_together() {
     assert_eq!(h.brief_template(t.id).await.unwrap().name, "Tech debt");
 }
 
-/// Holds the brief template lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once
-/// both are seen waiting on an advisory lock in `pg_locks`, or after five seconds when they never are. The holder takes
-/// the exact lock the adapter takes (its SQL, not the port, so a no-op adapter cannot also make the holder a no-op).
-/// Answers both results and whether both writers waited. The holder is released whether or not they waited, so a run
-/// without the lock ends in a failed assertion, not a hang. pg_locks is server-wide and every test has a database of
-/// its own on one server, so the count is scoped to this database; `mk`'s memory sink takes no lock of its own, so the
-/// only advisory locks in this database are the template lock's.
-async fn while_both_wait<A, B>(
+/// Holds an advisory lock in a transaction of its own, runs `a` and `b` while it is held, and releases it once both
+/// are seen waiting on an advisory lock in `pg_locks`, or after five seconds when they never are. `lock` is the
+/// exact statement the adapter under test sends, written out by the caller with its one argument in `arg` (never
+/// the port: a no-op adapter must not also make the holder a no-op). Answers both results and whether both waited.
+/// The holder is released whether or not they waited, so a run without the lock ends in a failed assertion, not a
+/// hang; and the whole, the release included, must end within 30 seconds, so a call that stalls after the release
+/// fails here by name rather than at nextest's termination. pg_locks is server-wide and every test has a database
+/// of its own on one server, so the count is scoped to this database; `mk`'s memory sink takes no lock of its own,
+/// so the only advisory locks in this database are the ones under test.
+async fn while_both_wait_on<A, B>(
     pool: &sqlx::PgPool,
+    lock: &str,
+    arg: Option<&str>,
     a: impl std::future::Future<Output = A>,
     b: impl std::future::Future<Output = B>,
 ) -> (A, B, bool) {
     use std::time::Duration;
     let mut holder = pool.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))")
-        .execute(&mut *holder)
-        .await
-        .unwrap();
+    let held = sqlx::query(lock);
+    match arg {
+        Some(arg) => held.bind(arg),
+        None => held,
+    }
+    .execute(&mut *holder)
+    .await
+    .unwrap();
     let release = async {
         let mut waited = false;
         {
@@ -12887,7 +12895,27 @@ async fn while_both_wait<A, B>(
         holder.commit().await.unwrap();
         waited
     };
-    tokio::join!(a, b, release)
+    tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::join!(a, b, release)
+    })
+    .await
+    .expect("the two calls did not end within 30 seconds of the lock being taken")
+}
+
+/// `while_both_wait_on` the brief template lock.
+async fn while_both_wait<A, B>(
+    pool: &sqlx::PgPool,
+    a: impl std::future::Future<Output = A>,
+    b: impl std::future::Future<Output = B>,
+) -> (A, B, bool) {
+    while_both_wait_on(
+        pool,
+        "SELECT pg_advisory_xact_lock(hashtext('reeve_brief_templates'))",
+        None,
+        a,
+        b,
+    )
+    .await
 }
 
 /// Template writes that overlap are serialised by the advisory lock: each reads what the other committed. Each pair
@@ -13412,4 +13440,140 @@ async fn an_initiative_dto_as_written_keeps_the_written_initiative_and_reads_the
         "another table: read from the store"
     );
     assert_eq!(dto.links, Some(vec![]));
+}
+
+/// The lock plan apply's creates take on a plan item's idempotency key: the adapter's statement with its key space
+/// (`IDEMPOTENCY_LOCK_SPACE`, 1) written out.
+const IDEMPOTENCY_LOCK: &str = "SELECT pg_advisory_xact_lock(1, hashtext($1))";
+
+/// Two applies of one plan id that give the name `s` different levels, made to overlap, not hoped to: a holder
+/// takes the key's lock first, both applies have passed the plan's check (nothing exists yet, so the level check
+/// finds nothing) and are seen queued on the lock inside their creates, and only then is it released. Exactly one
+/// item exists for the name afterwards; the other apply is refused and told which item has the name. Catches: the
+/// fault GRA-888 names (both create, since an idempotency key is unique per table only), a lock in another key
+/// space, under another key or none (`waited` is false), and a refusal in the words of the check, which would say
+/// nothing was written.
+#[tokio::test]
+async fn two_applies_of_one_plan_cannot_give_a_name_two_levels() {
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let erin = ctx("erin@example.com", false);
+    let plan = |list: &str| -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(
+            serde_json::json!({"id": "race", list: [{"name": "s", "title": "S"}]}),
+        )
+        .unwrap()
+    };
+    // `plan_key`: "plan:<length of the id>:<id>:<name>".
+    let key = "plan:4:race:s";
+    let (as_story, as_epic, waited) = while_both_wait_on(
+        &pool,
+        IDEMPOTENCY_LOCK,
+        Some(key),
+        h.apply_plan(&dan, plan("stories")),
+        h.apply_plan(&erin, plan("epics")),
+    )
+    .await;
+    assert!(
+        waited,
+        "the two applies never both waited on the idempotency key's lock"
+    );
+    let (stories, epics): (i64, i64) =
+        sqlx::query_as("SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM epics)")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stories + epics,
+        1,
+        "{stories} stories and {epics} epics for one name"
+    );
+    let (won, lost, level) = match (as_story, as_epic) {
+        (Ok(won), Err(lost)) => (won, lost, "a story"),
+        (Err(lost), Ok(won)) => (won, lost, "an epic"),
+        other => panic!("wanted one apply to create and one to be refused, got {other:?}"),
+    };
+    assert_eq!((won.items.len(), won.items[0].created), (1, true));
+    let made = &won.items[0].key;
+    let HandlerError::Validation(m) = &lost else {
+        panic!("{lost:?}")
+    };
+    assert_eq!(
+        m,
+        &format!(
+            "\"s\" is {level} ({made}), created by another apply of this plan while this one ran; a name keeps \
+             its level. This apply stopped at \"s\": items written before it (initiatives, then epics, then \
+             stories) may exist; nothing after it was written, and no decisions, blockers or links. List \"s\" \
+             as {level}, or give it a new name, and apply the same id again; what exists is reused."
+        )
+    );
+    // The loser applied again as the message says: the same name at the winner's level answers the one item.
+    let list = if level == "a story" {
+        "stories"
+    } else {
+        "epics"
+    };
+    let again = h.apply_plan(&erin, plan(list)).await.unwrap();
+    assert_eq!((&again.items[0].key, again.items[0].created), (made, false));
+}
+
+/// What does not take the lock. While a holder has the lock of a plan item's key, a second apply of the plan that
+/// made the item answers it (the same-level replay is answered before the lock, and writes nothing), and a single
+/// create under that very key at another level is not held up (a single create never takes the lock). Both are
+/// given five seconds and must not need the holder to let go. Catches: a replay that queues behind another apply's
+/// create, and the lock leaking into creates that are not a plan's. The single create's outcome, a second item
+/// for the plan's name at another level, is not wanted: it pins a known limit (the property covers applies of one
+/// plan id, not a single create that sends a plan's key by hand). GRA-984 makes single creates refuse a key with
+/// the `plan:` prefix; that story replaces this half of the test with the refusal.
+#[tokio::test]
+async fn a_replayed_plan_and_a_single_create_never_wait_on_the_idempotency_lock() {
+    use std::time::Duration;
+    let (_c, pool) = common::pg().await;
+    let (h, _sink) = mk(pool.clone());
+    let dan = ctx("dan@example.com", false);
+    let plan = || -> reeve_protocol::ApplyPlan {
+        serde_json::from_value(
+            serde_json::json!({"id": "once", "stories": [{"name": "s", "title": "S"}]}),
+        )
+        .unwrap()
+    };
+    let first = h.apply_plan(&dan, plan()).await.unwrap();
+    let key = "plan:4:once:s";
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query(IDEMPOTENCY_LOCK)
+        .bind(key)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let again = tokio::time::timeout(Duration::from_secs(5), h.apply_plan(&dan, plan()))
+        .await
+        .expect("a replay waited on the idempotency key's lock")
+        .unwrap();
+    assert_eq!(
+        (&again.items[0].key, again.items[0].created),
+        (&first.items[0].key, false)
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        h.create_epic(&dan, key, "An epic under a plan's key", None, "", None),
+    )
+    .await
+    .expect("a single create waited on the idempotency key's lock")
+    .unwrap();
+    // The known limit (GRA-984), read from the tables: the plan's name now has a story and an epic.
+    let (stories, epics): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM stories WHERE idempotency_key = $1), \
+         (SELECT count(*) FROM epics WHERE idempotency_key = $1)",
+    )
+    .bind(key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (stories, epics),
+        (1, 1),
+        "the known limit (GRA-984): a single create under a plan's key at another level is not stopped"
+    );
+    holder.rollback().await.unwrap();
 }

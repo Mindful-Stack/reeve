@@ -69,6 +69,15 @@ enum Scope {
     Any,
 }
 
+/// What a plan's create answers (`create_initiative_guarded` and its epic and story forms): the item its
+/// idempotency key has at this level, and whether this call inserted it; or the item of another level that already
+/// has the key, in which case this call wrote nothing.
+#[derive(Debug)]
+pub(crate) enum Guarded<T> {
+    Item { item: T, created: bool },
+    HeldElsewhere { level: ItemType, key: Key },
+}
+
 #[derive(Clone)]
 pub struct Handlers {
     pub ports: PlanningPorts,
@@ -249,6 +258,33 @@ impl Handlers {
         self.before_create(item, idem, attachments)
             .await
             .map(|(_, made)| made)
+    }
+
+    /// The item of another level than `item` that has the idempotency key `idem`, read under the key's
+    /// transaction-scoped lock, taken first. The lock is what makes the look and the insert after it one step for
+    /// two creates under one key at different levels: the second waits here, then sees the first one's item. Shaped
+    /// as `ref_holder` (`handler/import.rs`), which guards an external reference the same way.
+    pub(super) async fn idempotency_holder_elsewhere(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        item: ItemType,
+        idem: &str,
+    ) -> Result<Option<(ItemType, Key)>, HandlerError> {
+        self.ports.keys.lock_idempotency_key(tx, idem).await?;
+        for other in [ItemType::Initiative, ItemType::Epic, ItemType::Story] {
+            if other == item {
+                continue;
+            }
+            if let Some(k) = self
+                .ports
+                .keys
+                .find_by_idempotency_in(tx, other, idem)
+                .await?
+            {
+                return Ok(Some((other, k)));
+            }
+        }
+        Ok(None)
     }
 
     /// The type of the item that has `key` as its native key, checked across every type; NotFound when none has it.
