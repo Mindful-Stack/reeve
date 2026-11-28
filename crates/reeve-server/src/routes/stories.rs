@@ -43,8 +43,8 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<StoryDto>>, AppError> {
-    // The story as this edit wrote it, never a read after the commit: the CLI and the web client reuse the
-    // version it carries.
+    // What the story carries is as this edit wrote it, and the rest is read after the commit (`Edited`): the CLI
+    // and the web client reuse the version it carries.
     let edited = crate::actions::edit_story(&s, &c.acting(), &key, b).await?;
     Ok(ok(edited.answer))
 }

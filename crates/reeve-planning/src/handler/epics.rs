@@ -370,9 +370,10 @@ impl Handlers {
     }
 
     /// The answer of an edit: `epic_dto` of the epic as the edit wrote it. Every field the `Epic` carries is
-    /// `written`'s; what it does not carry (its urgent mark and urgency, its promise, its item links and its web
-    /// links) is read here, after the commit, in one read-only snapshot, and can be a moment newer than the written
-    /// epic (`story_dto_as_written` says what follows).
+    /// `written`'s; what it does not carry (the urgent mark and the promise, on the epic's row but in no aggregate,
+    /// and what other tables hold: its urgency, its item links and its web links) is read here, after the commit,
+    /// in one read-only snapshot, and can be a moment newer than the written epic (`story_dto_as_written` says what
+    /// follows).
     pub async fn epic_dto_as_written(
         &self,
         written: &Epic,

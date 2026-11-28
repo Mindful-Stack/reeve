@@ -7,8 +7,9 @@
 //!
 //! It answers what its route sends, and beside it what its tool's receipt needs when that is more. A create
 //! answers a pair, the DTO and whether this call created it (`create_story`: `(StoryDto, bool)`): the route sends
-//! the DTO, and the receipt needs the flag. An edit whose receipt needs the item as its write left it answers an
-//! `Edited` (`edit_epic`, `edit_initiative`). A comment action answers the comment's id and whether this call wrote
+//! the DTO, and the receipt needs the flag. An edit answers an `Edited` (`edit_story`, `edit_epic`,
+//! `edit_initiative`): what its route sends (`answer`) and the item as its write left it (`written`), which its
+//! receipt is built from. A comment action answers the comment's id and whether this call wrote
 //! it (`Commented`), and for an item what it resolved; its route reads the thread it sends from that. A link
 //! action answers a struct (`ItemLinkWritten`, `WebLinkWritten`): the list its route sends, and what a receipt
 //! needs beside it (each item as resolved, the web link's id, whether this call changed anything).
@@ -48,10 +49,11 @@ pub(crate) use stories::{
 };
 
 /// What an edit answers. `answer` is what the route sends: every field the aggregate carries as this call's write
-/// left it (`written`'s), and what it does not carry (what other tables hold, and marks the aggregate leaves out)
-/// read after the commit, so those can be a moment newer than the write (`Handlers::story_dto_as_written`, whose
-/// doc lists them and states that accepted limit, and its epic and initiative forms). `written` is the item as this
-/// call's write left it, which a tool's receipt is built from alone. Neither reports another caller's title or
+/// left it (`written`'s), and what it does not carry (the urgent mark and the promise, on the item's row but in no
+/// aggregate, and what other tables hold) read after the commit, so those can be a moment newer than the write
+/// (`Handlers::story_dto_as_written`, whose doc lists them and states that accepted limit, and its epic and
+/// initiative forms). `written` is the item as this call's write left it, which a tool's receipt is built from
+/// alone. Neither reports another caller's title or
 /// version as this call's when one lands between the commit and the read: a caller that sent that later version
 /// with text it read before would overwrite a change it never saw.
 pub(crate) struct Edited<D, I> {

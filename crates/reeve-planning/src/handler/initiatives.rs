@@ -380,8 +380,9 @@ impl Handlers {
     }
 
     /// The answer of an edit: `initiative_dto` of the initiative as the edit wrote it. Every field the `Initiative`
-    /// carries is `written`'s; what it does not carry (its progress, its urgent mark and urgency, its item links and
-    /// its web links) is read here, after the commit, in one read-only snapshot.
+    /// carries is `written`'s; what it does not carry (the urgent mark, on the initiative's row but in no aggregate,
+    /// and what other tables hold: its progress, its urgency, its item links and its web links; an initiative has no
+    /// promise) is read here, after the commit, in one read-only snapshot.
     pub async fn initiative_dto_as_written(
         &self,
         written: &Initiative,

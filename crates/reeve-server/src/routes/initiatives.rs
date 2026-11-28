@@ -42,7 +42,7 @@ async fn edit(
     ApiPath(key): ApiPath<String>,
     ApiJson(b): ApiJson<EditItem>,
 ) -> Result<Json<Response<InitiativeDto>>, AppError> {
-    // The initiative as this edit wrote it, never a read after the commit.
+    // What the initiative carries is as this edit wrote it, and the rest is read after the commit (`Edited`).
     let edited = crate::actions::edit_initiative(&s, &c.acting(), &key, b).await?;
     Ok(ok(edited.answer))
 }
