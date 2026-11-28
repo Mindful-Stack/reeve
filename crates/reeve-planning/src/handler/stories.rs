@@ -834,8 +834,8 @@ impl Handlers {
 
     /// The answer of an edit: `story_dto` of the story as the edit wrote it. Every field the `Story` carries is
     /// `written`'s, so the title and the version are this write's whatever commits afterwards; what it does not
-    /// carry (the urgent mark and the promise, on the story's row or its epic's but in no aggregate, and what other tables hold:
-    /// blockers, pull requests, goals, urgency, item links, web links) is read here, after the commit, in one
+    /// carry (the urgent mark and the promise, on the story's row or its epic's but in no aggregate, and what other
+    /// tables hold: blockers, pull requests, goals, urgency, item links, web links) is read here, after the commit, in one
     /// read-only snapshot. Those fields can therefore be a moment newer than the written story: after a concurrent
     /// move to another epic, goals, promise or urgency may be reached through that other epic. No rule depends on
     /// the pairing; the version is the write's, so a write based on this answer conflicts.
