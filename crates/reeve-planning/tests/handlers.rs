@@ -13144,6 +13144,18 @@ async fn a_story_dto_as_written_keeps_the_written_story_and_reads_the_rest() {
         .await
         .unwrap();
     assert_eq!((written.title(), written.version()), ("Mine", 2));
+    // Another writer reranks a neighbour before it, which renumbers the column and gives the story another stored
+    // rank (a rerank bumps only the moved story's version, so the story stays at version 2).
+    // (Both start at rank 0 and tie by key: the blocker goes last, then back before the story.)
+    for before in [None, Some(s.key())] {
+        let v = h.get_story(blocker.key()).await.unwrap().version();
+        h.rank_story(&dan, blocker.key(), v, before).await.unwrap();
+    }
+    assert_ne!(
+        h.get_story(s.key()).await.unwrap().rank(),
+        written.rank(),
+        "the control: the stored rank is not the written one"
+    );
     // Another writer lands before the answer is built.
     h.edit_story(
         &dan,

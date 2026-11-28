@@ -773,6 +773,8 @@ impl Handlers {
             .story_dtos_in(tx, std::slice::from_ref(story), &urg, &clock)
             .await?
             .pop()
+            // Never NotFound: `story_dtos_in` answers one DTO per story passed in, and one was passed. This
+            // also holds for the written story, which is not read from the store.
             .ok_or(HandlerError::NotFound)?;
         dto.links = Some(self.item_link_dtos_in(tx, story.key()).await?);
         dto.web_links = Some(self.web_link_dtos_in(tx, story.key()).await?);
