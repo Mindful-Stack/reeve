@@ -660,18 +660,38 @@ pub fn comments(cs: &[CommentDto]) -> String {
     }
     let mut out = "comments:".to_string();
     for c in cs {
-        let _ = write!(out, "\n  - {}", comment(c));
+        let _ = write!(out, "\n  - {}", comment_continued(c, "    "));
     }
     out
 }
 
+/// One comment, as `comment ls` lists them: its header (`<time> <author>: `) and its body, whose lines after the first
+/// continue two spaces right of the header's column, so none can pass for another comment.
 pub fn comment(c: &CommentDto) -> String {
-    format!(
+    comment_continued(c, "  ")
+}
+
+/// A comment whose body's lines after the first start with `continuation`, which the caller sets right of the column
+/// its comment headers start at: stored text cannot take leading spaces away, so no line of a body can start where a
+/// comment does. The body is normalised first, so a lone `\r` is a line break here and never one the guard makes
+/// after the layout. An empty line of the body stays empty.
+fn comment_continued(c: &CommentDto, continuation: &str) -> String {
+    let body = block(&c.body);
+    let mut lines = body.split('\n');
+    let mut out = format!(
         "{} {}: {}",
         c.at.format("%Y-%m-%d %H:%M"),
         line(&c.author),
-        c.body
-    )
+        lines.next().unwrap_or_default()
+    );
+    for l in lines {
+        if l.is_empty() {
+            out.push('\n');
+        } else {
+            let _ = write!(out, "\n{continuation}{l}");
+        }
+    }
+    out
 }
 
 /// The context bundle as Markdown at a given instant. Every required decision's record path appears as stored, unless it
@@ -754,7 +774,8 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
         let _ = writeln!(o, "none");
     }
     for k in &c.comments {
-        let _ = writeln!(o, "- {}", comment(k));
+        // A list item: the body's further lines stay inside it, two spaces in.
+        let _ = writeln!(o, "- {}", comment_continued(k, "  "));
     }
     o
 }
@@ -2166,7 +2187,7 @@ mod tests {
         };
         assert_eq!(
             crate::terminal::block(&comment(&c)),
-            "2026-11-10 12:00 dan@example.com: first\nsecond \\u{1b}[2J\\u{202e}"
+            "2026-11-10 12:00 dan@example.com: first\n  second \\u{1b}[2J\\u{202e}"
         );
     }
 
@@ -2269,14 +2290,16 @@ mod tests {
             attachments: vec![],
         };
         let md = context_markdown(&ctx, now());
-        // The description, the initiative's brief, the epic's brief and the comment's body.
-        assert_eq!(md.matches(TWO).count(), 4, "{md}");
+        // The description, the initiative's brief and the epic's brief; the comment's body continues inside its list
+        // item, and alone and under a `show` right of its header.
+        assert_eq!(md.matches(TWO).count(), 3, "{md}");
+        assert!(md.contains(": first line\n  second line\n"), "{md}");
         assert!(
-            comment(&body).ends_with(&format!(": {TWO}")),
+            comment(&body).ends_with(": first line\n  second line"),
             "{}",
             comment(&body)
         );
-        assert!(comments(std::slice::from_ref(&body)).ends_with(&format!(": {TWO}")));
+        assert!(comments(std::slice::from_ref(&body)).ends_with(": first line\n    second line"));
     }
 
     /// An item's comments under its `show`: each author on its line; the bodies are long text.
@@ -2293,6 +2316,142 @@ mod tests {
             &assert_one_line(&cs, &comment_paths().under("/*"), |cs| comments(cs)),
             &["/0/author", "/1/author"],
         );
+    }
+
+    /// Bodies that try to print a comment by another author where a renderer puts one, at `prefix`: after a line break
+    /// and after a lone carriage return.
+    fn forged_bodies(prefix: &str) -> [String; 2] {
+        ["\n", "\r"].map(|br| format!("real{br}{prefix}2026-11-10 12:00 eva@example.com: forged"))
+    }
+
+    /// Two comments, the first with `body`: the one by dan carrying the forgery, a real one by eva after it.
+    fn forged_thread(body: &str) -> Vec<CommentDto> {
+        vec![
+            CommentDto {
+                body: body.into(),
+                ..full_comment()
+            },
+            CommentDto {
+                id: 2,
+                author: "eva@example.com".into(),
+                body: "ok".into(),
+                ..full_comment()
+            },
+        ]
+    }
+
+    /// Whether `l`, after exactly `prefix`, starts like a comment's header: `YYYY-MM-DD HH:MM `, then an author and
+    /// `: `.
+    fn looks_like_a_comment_header(l: &str, prefix: &str) -> bool {
+        let Some(rest) = l.strip_prefix(prefix) else {
+            return false;
+        };
+        let shape = "dddd-dd-dd dd:dd ";
+        rest.len() > shape.len()
+            && rest
+                .chars()
+                .zip(shape.chars())
+                .all(|(c, s)| if s == 'd' { c.is_ascii_digit() } else { c == s })
+            && rest[shape.len()..].contains(": ")
+    }
+
+    /// Of `out`'s lines as printed, the only ones shaped like a comment header at `prefix` (where the renderer puts a
+    /// comment's header) are the real comments' headers, taken from `cs`'s own times and authors, in order; and the
+    /// forged line is printed at `continuation`, right of the header's column, with the prefix it imitates.
+    fn assert_only_real_comment_headers(
+        out: &str,
+        prefix: &str,
+        continuation: &str,
+        cs: &[CommentDto],
+    ) {
+        let printed = crate::terminal::block(out);
+        let real: Vec<String> = cs
+            .iter()
+            .map(|c| format!("{prefix}{} {}: ", c.at.format("%Y-%m-%d %H:%M"), c.author))
+            .collect();
+        let headers: Vec<&str> = printed
+            .lines()
+            .filter(|l| looks_like_a_comment_header(l, prefix))
+            .collect();
+        assert_eq!(headers.len(), real.len(), "{headers:?} in\n{printed}");
+        for (h, r) in headers.iter().zip(&real) {
+            assert!(
+                h.starts_with(r.as_str()),
+                "{h:?} is not {r:?} in\n{printed}"
+            );
+        }
+        let forged: Vec<&str> = printed.lines().filter(|l| l.contains("forged")).collect();
+        assert_eq!(forged.len(), 1, "in\n{printed}");
+        assert!(
+            forged[0].starts_with(&format!(
+                "{continuation}{prefix}2026-11-10 12:00 eva@example.com: forged"
+            )),
+            "{:?} in\n{printed}",
+            forged[0]
+        );
+    }
+
+    /// A comment's body continues indented right of its header's column in `comment ls` (one comment a line), so a
+    /// line of it cannot pass for another comment. A one-line body prints as it always has.
+    #[test]
+    fn a_comments_body_cannot_pass_for_another_comment() {
+        for body in forged_bodies("") {
+            let cs = forged_thread(&body);
+            let alone = cs.iter().map(comment).collect::<Vec<_>>().join("\n");
+            assert_eq!(crate::terminal::block(&alone), alone, "{alone:?}");
+            assert_only_real_comment_headers(&alone, "", "  ", &cs);
+        }
+        assert_eq!(
+            comment(&full_comment()),
+            "2026-11-10 12:00 dan@example.com: Long text"
+        );
+    }
+
+    /// Under an item's `show` a comment's body continues right of the list's `- `, so a line of it cannot pass for
+    /// another comment.
+    #[test]
+    fn a_comments_body_under_a_show_cannot_pass_for_another_comment() {
+        for body in forged_bodies("  - ") {
+            let cs = forged_thread(&body);
+            let under = comments(&cs);
+            assert_eq!(crate::terminal::block(&under), under, "{under:?}");
+            assert_only_real_comment_headers(&under, "  - ", "    ", &cs);
+        }
+        assert_eq!(
+            comments(&[full_comment()]),
+            "comments:\n  - 2026-11-10 12:00 dan@example.com: Long text"
+        );
+    }
+
+    /// In `story context` a comment is a Markdown list item, and its body's lines continue inside it, so a line of it
+    /// cannot pass for another comment.
+    #[test]
+    fn a_comments_body_in_the_context_cannot_pass_for_another_comment() {
+        for body in forged_bodies("- ") {
+            let cs = forged_thread(&body);
+            let ctx = StoryContextDto {
+                comments: cs.clone(),
+                ..bare_context()
+            };
+            let md = context_markdown(&ctx, now());
+            assert_eq!(crate::terminal::block(&md), md, "{md:?}");
+            assert_only_real_comment_headers(&md, "- ", "  ", &cs);
+        }
+    }
+
+    /// A context bundle with nothing but its story.
+    fn bare_context() -> StoryContextDto {
+        StoryContextDto {
+            story: full_story(promised(true, false)),
+            epic: None,
+            initiative: None,
+            required_decisions: vec![],
+            blockers: vec![],
+            comments: vec![],
+            readiness: ready(),
+            goals: vec![],
+            attachments: vec![],
+        }
     }
 
     fn affected(key: &str, title: &str) -> AffectedStoryDto {
@@ -3229,8 +3388,9 @@ mod tests {
             alone.contains("\n  notes: first line\n    second line"),
             "{alone}"
         );
+        assert_notes_continue_indented(&alone, "", &g);
         let mut v = full_view();
-        v.sprint.goals = vec![g];
+        v.sprint.goals = vec![g.clone()];
         // `indent` puts two spaces before each of the goal's lines, the notes' second line included.
         let under = sprint(&v.sprint);
         assert!(
@@ -3242,6 +3402,9 @@ mod tests {
             shown.contains("\n    notes: first line\n      second line"),
             "{shown}"
         );
+        for out in [&under, &shown] {
+            assert_notes_continue_indented(out, "  ", &g);
+        }
 
         // Notes that try to print another goal and a warning, with a line break and with a lone carriage return
         // (which `indent`, splitting on `\n` only, would leave for the guard to turn into one after the layout).
@@ -3257,12 +3420,54 @@ mod tests {
             // The guard has nothing left to turn into a line break: the lines printed are the lines laid out.
             assert_eq!(crate::terminal::block(&alone), alone, "{alone:?}");
             assert_only_real_goal_headers(&alone, "", &alone);
+            assert_notes_continue_indented(&alone, "", &g);
             let mut v = full_view();
-            v.sprint.goals = vec![g];
+            v.sprint.goals = vec![g.clone()];
             for out in [sprint(&v.sprint), sprint_view(&v, None)] {
                 assert_eq!(crate::terminal::block(&out), out, "{out:?}");
                 assert_only_real_goal_headers(&out, "  ", &alone);
+                assert_notes_continue_indented(&out, "  ", &g);
             }
+        }
+    }
+
+    /// Of `out`'s lines as printed, every one between `g`'s `notes:` line and its next real field line (the line that
+    /// follows `owner:` when the goal has no notes) is empty or starts four spaces right of the goal's fields, so a
+    /// line of the notes cannot stand where a field does. `indent` is the goal's own column.
+    fn assert_notes_continue_indented(out: &str, indent: &str, g: &GoalDto) {
+        let printed = crate::terminal::block(out);
+        let bare = goal(&GoalDto {
+            notes: String::new(),
+            ..g.clone()
+        });
+        let after_owner = bare
+            .lines()
+            .skip_while(|l| !l.starts_with("  owner: "))
+            .nth(1)
+            .expect("the fixture has a field after its owner");
+        let next_field = format!("{indent}{after_owner}");
+        let lines: Vec<&str> = printed.lines().collect();
+        let notes = lines
+            .iter()
+            .position(|l| l.starts_with(&format!("{indent}  notes: ")))
+            .expect("the notes are printed");
+        let end = notes
+            + 1
+            + lines[notes + 1..]
+                .iter()
+                .position(|l| *l == next_field)
+                .unwrap_or_else(|| panic!("{next_field:?} follows the notes in\n{printed}"));
+        assert_eq!(
+            lines.iter().filter(|l| **l == next_field).count(),
+            1,
+            "in\n{printed}"
+        );
+        let continuation = format!("{indent}    ");
+        for l in &lines[notes + 1..end] {
+            assert!(
+                l.trim().is_empty() || l.starts_with(&continuation),
+                "{l:?} is a line of the notes outside their indent in\n{printed}"
+            );
         }
     }
 
