@@ -31,7 +31,8 @@ pub fn line(s: &str) -> Cow<'_, str> {
 }
 
 /// Long text (a brief, a description, a comment, a template body, an error message) as text output prints it: as
-/// `line`, except that line breaks and tabs are kept (`\r\n` and a lone `\r` become `\n`) and so are the three
+/// `line`, except that line breaks and tabs are kept (a run of `\r` ending in `\n`, `\r\n` included, becomes one
+/// `\n`, and every other `\r` becomes `\n`) and so are the three
 /// direction marks editors put in mixed right-to-left text (U+200E, U+200F, U+061C). The embeddings, overrides and
 /// isolates, which reorder what follows, are escaped. Applying it twice changes nothing.
 pub fn block(s: &str) -> Cow<'_, str> {
@@ -43,10 +44,17 @@ pub fn block(s: &str) -> Cow<'_, str> {
     while let Some(c) = chars.next() {
         match c {
             '\r' => {
-                if chars.peek() == Some(&'\n') {
+                let mut run = 1;
+                while chars.peek() == Some(&'\r') {
                     chars.next();
+                    run += 1;
                 }
-                out.push('\n');
+                if chars.peek() == Some(&'\n') {
+                    // `\r\r\n` (a CRLF file saved through a tool that added its own `\r`) is one line break.
+                    chars.next();
+                    run = 1;
+                }
+                out.extend(std::iter::repeat_n('\n', run));
             }
             c if escaped_in_block(c) => out.extend(c.escape_default()),
             c => out.push(c),
@@ -209,11 +217,21 @@ mod tests {
     }
 
     /// A CRLF file's lines are lines, and a lone carriage return cannot move the cursor back over what was printed.
+    /// A run of carriage returns ending in a line break is one line break; a run ending in anything else is one line
+    /// break per carriage return.
     #[test]
     fn block_turns_carriage_returns_into_line_breaks() {
         assert_eq!(block("one\r\ntwo\rthree\r"), "one\ntwo\nthree\n");
-        assert_eq!(block("\r\r\nx"), "\n\nx");
+        assert_eq!(block("\r\r\nx"), "\nx");
+        assert_eq!(block("a\r\r\r\nb\r\nc"), "a\nb\nc");
+        assert_eq!(block("\r\r\n\r\nx"), "\n\nx");
         assert_eq!(block("\rx"), "\nx");
+        assert_eq!(block("\r\rx"), "\n\nx");
+        assert_eq!(block("x\r\r"), "x\n\n");
+        for s in ["a\r\r\nb", "a\r\rb", "\r\r\r"] {
+            let once = block(s).into_owned();
+            assert_eq!(block(&once), once, "{s:?}");
+        }
     }
 
     /// Everything else that can drive the terminal or reorder what follows is escaped, in long text too.

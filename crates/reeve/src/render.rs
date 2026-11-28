@@ -674,23 +674,30 @@ pub fn comment(c: &CommentDto) -> String {
 
 /// A comment whose body's lines after the first start with `continuation`, which the caller sets right of the column
 /// its comment headers' text (the time) starts at: stored text cannot take leading spaces away, so no line of a body
-/// can start where a comment does, nor put a time in the column a header's time is in. The body is normalised first,
-/// so a lone `\r` is a line break here and never one the guard makes after the layout. An empty line of the body stays
-/// empty.
+/// can start where a comment does, nor put a time in the column a header's time is in (`continued`).
 fn comment_continued(c: &CommentDto, continuation: &str) -> String {
-    let body = block(&c.body);
-    let mut lines = body.split('\n');
-    let mut out = format!(
+    format!(
         "{} {}: {}",
         c.at.format("%Y-%m-%d %H:%M"),
         line(&c.author),
-        lines.next().unwrap_or_default()
-    );
+        continued(&c.body, continuation)
+    )
+}
+
+/// Long text laid out under a header that ends where the text starts: its first line as it is, every further line
+/// after `indent`, which the caller sets right of the column its headers start at, so no line can pass for a header.
+/// The text is normalised with `block` first, so a lone `\r` is a line break here and never one the guard makes after
+/// the layout. An empty line stays empty (no trailing spaces), and the text's trailing line breaks are not printed,
+/// so what follows starts on the next line whether or not the text ended in one.
+fn continued(text: &str, indent: &str) -> String {
+    let text = block(text);
+    let mut lines = text.trim_end_matches('\n').split('\n');
+    let mut out = lines.next().unwrap_or_default().to_string();
     for l in lines {
         if l.is_empty() {
             out.push('\n');
         } else {
-            let _ = write!(out, "\n{continuation}{l}");
+            let _ = write!(out, "\n{indent}{l}");
         }
     }
     out
@@ -698,7 +705,7 @@ fn comment_continued(c: &CommentDto, continuation: &str) -> String {
 
 /// The context bundle as Markdown at a given instant. Every required decision's record path appears as stored, unless it
 /// holds a character that could drive the terminal; `--json` is the exact form. The story's urgent lines follow its
-/// title line.
+/// title line. The description and the briefs are long text, through `block` here as at every other long-text site.
 pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
     let mut o = String::new();
     let _ = writeln!(
@@ -707,7 +714,7 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
         story_with_relations(&c.story, &c.blockers, now)
     );
     if !c.story.description.is_empty() {
-        let _ = writeln!(o, "{}\n", c.story.description);
+        let _ = writeln!(o, "{}\n", block(&c.story.description));
     }
     let _ = writeln!(o, "## Readiness\n\n{}\n", readiness(&c.readiness));
     if let Some(i) = &c.initiative {
@@ -715,11 +722,11 @@ pub fn context_markdown(c: &StoryContextDto, now: DateTime<Utc>) -> String {
             o,
             "## Initiative brief\n\n{}\n\n{}\n",
             initiative(i),
-            i.brief
+            block(&i.brief)
         );
     }
     if let Some(e) = &c.epic {
-        let _ = writeln!(o, "## Epic brief\n\n{}\n\n{}\n", epic(e), e.brief);
+        let _ = writeln!(o, "## Epic brief\n\n{}\n\n{}\n", epic(e), block(&e.brief));
     }
     let _ = writeln!(o, "## Required decisions\n");
     if c.required_decisions.is_empty() {
@@ -981,19 +988,9 @@ pub fn goal(g: &GoalDto) -> String {
         line(&g.owner)
     );
     if !g.notes.is_empty() {
-        // Normalised here, before `indent` splits the goal into lines: a lone `\r` the guard turned into a line break
-        // after the layout would start a line at column 0. Each line after the first continues four spaces right of
-        // the goal's header, so none can pass for a goal or start where a warning does.
-        let notes = block(&g.notes);
-        let mut lines = notes.lines();
-        let _ = write!(out, "\n  notes: {}", lines.next().unwrap_or_default());
-        for l in lines {
-            if l.is_empty() {
-                out.push('\n');
-            } else {
-                let _ = write!(out, "\n    {l}");
-            }
-        }
+        // Each line after the first continues four spaces right of the goal's header, so none can pass for a goal or
+        // start where a warning does.
+        let _ = write!(out, "\n  notes: {}", continued(&g.notes, "    "));
     }
     if let Some(c) = g.confidence {
         let _ = write!(
@@ -2406,6 +2403,38 @@ mod tests {
             "{:?} in\n{printed}",
             forged[0]
         );
+    }
+
+    /// The one layout for long text under a header: the first line as it is, every further line after the indent, an
+    /// empty line empty, carriage returns already line breaks, and no trailing line break, however many the text
+    /// ends in.
+    #[test]
+    fn continued_lays_long_text_out_under_its_header() {
+        for (text, laid_out) in [
+            ("", ""),
+            ("one line", "one line"),
+            ("one\ntwo", "one\n    two"),
+            ("one\n\nthree", "one\n\n    three"),
+            ("one\r\ntwo\rthree", "one\n    two\n    three"),
+            ("one\ntwo\n", "one\n    two"),
+            ("one\ntwo\r\n\n", "one\n    two"),
+            ("\nsecond", "\n    second"),
+            ("tab\there\n  spaced", "tab\there\n      spaced"),
+            ("a\u{1b}[2J\nb\u{202e}", "a\\u{1b}[2J\n    b\\u{202e}"),
+        ] {
+            assert_eq!(continued(text, "    "), laid_out, "{text:?}");
+        }
+        // A comment and a goal's notes now agree on a trailing line break: neither prints one.
+        let c = CommentDto {
+            body: "body\n".into(),
+            ..full_comment()
+        };
+        assert!(!comment(&c).ends_with('\n'), "{:?}", comment(&c));
+        let g = GoalDto {
+            notes: "notes\n".into(),
+            ..full_sprint_goal()
+        };
+        assert!(goal(&g).contains("\n  notes: notes\n  "), "{}", goal(&g));
     }
 
     /// A comment's body continues indented right of its header's column in `comment ls` (one comment a line), so a
